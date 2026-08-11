@@ -34,6 +34,7 @@ explicitly rather than silently treating either as authoritative.
 - [Implemented local API v1](reference/local-api.md)
 - [Milestone review template](reference/milestone-review-template.md)
 - [M0 completed milestone review](reviews/m00-buildable-repository.md)
+- [M1 completed milestone review](reviews/m01-daemon-api-spine.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 

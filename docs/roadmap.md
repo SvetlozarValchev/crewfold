@@ -7,9 +7,10 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 is complete**. Its implementation is recorded at commit
-`7bbe3f58b61e05992471e49d9413d48fabf41bb8` with the [milestone review
-evidence](reviews/m00-buildable-repository.md). M1 is the next milestone and has not
+Current status: **M0 and M1 are complete**. Evidence is recorded in the [M0
+review](reviews/m00-buildable-repository.md) and [M1
+review](reviews/m01-daemon-api-spine.md); M1's implementation commit is
+`417ff11095a95731514748ed84772371306c88a1`. M2 is the next milestone and has not
 started.
 
 ## Sequence
@@ -17,7 +18,7 @@ started.
 | Milestone | Increment | Demonstrable outcome | Depends on |
 | --- | --- | --- | --- |
 | M0 ✓ | Buildable repository | Build one binary; run version/help/self-check and local CI | Documentation baseline |
-| M1 | Daemon/API spine | Start, query, diagnose, and cleanly stop a local daemon | M0 |
+| M1 ✓ | Daemon/API spine | Start, query, diagnose, and cleanly stop a local daemon | M0 |
 | M2 | Persistent workspace | Commit an event, restart, restore, and inspect the same workspace | M1 |
 | M3 | Projects/checkouts | Register and observe a disposable Git repository without mutating it | M2 |
 | M4 | Agents/tasks | Define durable roles, tasks, dependencies, leases, and readiness | M3 |
@@ -167,15 +168,15 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M0 is the only approved implementation target after this plan is accepted:
+M2 is the next approved implementation target:
 
-1. choose the current stable Go toolchain and minimal CLI dependency;
-2. create the module and one `crewfold` entry point;
-3. implement version/help/self-check;
-4. establish offline unit/static checks;
-5. add the first checked-in acceptance scenario and review record template.
+1. add SQLite with embedded, forward-only migrations and required pragmas;
+2. persist the first workspace projection and append-only domain event;
+3. make command handling atomic and idempotent;
+4. expose workspace, event, database-health, and schema-version inspection;
+5. prove crash/restart behavior and migration from checked-in fixtures.
 
-M0 must not introduce SQLite, daemon code, provider SDKs, Herdr calls, MCP, or a
-web/TUI framework.
+M2 must not introduce projects, agents, runtimes, provider SDKs, Herdr calls, MCP,
+or a web/TUI framework. M0 and M1 acceptance scenarios remain required gates.
 
 No upstream repository should be created until the owner explicitly requests it.
