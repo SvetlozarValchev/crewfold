@@ -7,14 +7,16 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-The current repository is in planning/bootstrap state. No implementation milestone
-has started.
+Current status: **M0 is complete**. Its implementation is recorded at commit
+`7bbe3f58b61e05992471e49d9413d48fabf41bb8` with the [milestone review
+evidence](reviews/m00-buildable-repository.md). M1 is the next milestone and has not
+started.
 
 ## Sequence
 
 | Milestone | Increment | Demonstrable outcome | Depends on |
 | --- | --- | --- | --- |
-| M0 | Buildable repository | Build one binary; run version/help/self-check and local CI | Documentation baseline |
+| M0 ✓ | Buildable repository | Build one binary; run version/help/self-check and local CI | Documentation baseline |
 | M1 | Daemon/API spine | Start, query, diagnose, and cleanly stop a local daemon | M0 |
 | M2 | Persistent workspace | Commit an event, restart, restore, and inspect the same workspace | M1 |
 | M3 | Projects/checkouts | Register and observe a disposable Git repository without mutating it | M2 |
