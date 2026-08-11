@@ -13,9 +13,9 @@ than forcing the core to understand every terminal UI.
 
 ## Status
 
-Crewfold is in its implementation-bootstrap phase. The M0 binary provides
-`version`, `help`, and `doctor --self`; it does not yet contain a daemon, database,
-runtime, or usable orchestrator.
+Crewfold is in its implementation-bootstrap phase. M1 provides a foreground local
+daemon with an owner-only Unix socket, protocol negotiation, health status, and
+graceful stop. It does not yet contain a database, runtime, or usable orchestrator.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.
@@ -131,7 +131,8 @@ merging, a general workflow language, or a vector database.
 
 ## Development
 
-M0 uses Go 1.26.5 and only the standard library. Run the complete offline gate:
+The current implementation uses Go 1.26.5 and only the standard library. Run the
+complete offline gate:
 
 ```sh
 ./scripts/check.sh

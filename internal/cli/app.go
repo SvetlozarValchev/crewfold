@@ -2,13 +2,18 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
 	"crewfold/internal/buildinfo"
+	"crewfold/internal/daemon"
+	"crewfold/internal/localapi"
 )
 
 const (
@@ -33,6 +38,13 @@ type App struct {
 	stderr         io.Writer
 	info           buildinfo.Info
 	executablePath func() (string, error)
+	runDaemon      func(context.Context, daemon.Config) error
+	newClient      func(string) daemonClient
+}
+
+type daemonClient interface {
+	Status(context.Context) (localapi.StatusResult, error)
+	Stop(context.Context) (localapi.StopResult, error)
 }
 
 // New constructs a command runner with no process-global output dependencies.
@@ -42,11 +54,20 @@ func New(stdout, stderr io.Writer, info buildinfo.Info) *App {
 		stderr:         stderr,
 		info:           info,
 		executablePath: os.Executable,
+		runDaemon:      daemon.Run,
+		newClient: func(socketPath string) daemonClient {
+			return localapi.NewClient(socketPath)
+		},
 	}
 }
 
 // Run executes one command and returns a documented process exit code.
 func (a *App) Run(args []string) int {
+	return a.RunContext(context.Background(), args)
+}
+
+// RunContext executes one command with cancellation for long-running operations.
+func (a *App) RunContext(ctx context.Context, args []string) int {
 	mode, args, failure := extractOutputMode(args)
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
@@ -64,6 +85,10 @@ func (a *App) Run(args []string) int {
 		return a.runVersion(mode, args[1:])
 	case "doctor":
 		return a.runDoctor(mode, args[1:])
+	case "daemon":
+		return a.runDaemonCommand(ctx, mode, args[1:])
+	case "status":
+		return a.runStatus(ctx, mode, args[1:])
 	default:
 		return a.writeFailure(mode, commandFailure{
 			exitCode: ExitUsage,
@@ -72,6 +97,131 @@ func (a *App) Run(args []string) int {
 			hint:     "run 'crewfold help' to list available commands",
 		})
 	}
+}
+
+func (a *App) runDaemonCommand(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 0 {
+		return a.writeFailure(mode, usageFailure(
+			"daemon requires a subcommand",
+			"run 'crewfold help daemon' for usage",
+		))
+	}
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, daemonHelp)
+		return ExitOK
+	}
+
+	switch args[0] {
+	case "run":
+		return a.runDaemonForeground(ctx, mode, args[1:])
+	case "stop":
+		return a.runDaemonStop(ctx, mode, args[1:])
+	default:
+		return a.writeFailure(mode, commandFailure{
+			exitCode: ExitUsage,
+			code:     "unknown_daemon_command",
+			message:  fmt.Sprintf("unknown daemon command %q", args[0]),
+			hint:     "run 'crewfold help daemon' for usage",
+		})
+	}
+}
+
+func (a *App) runDaemonForeground(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, daemonRunHelp)
+		return ExitOK
+	}
+	options, failure := parseOptions(args, "data-dir", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	dataDir, failure := requiredOption(options, "data-dir")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+
+	logger := slog.New(slog.NewJSONHandler(a.stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	err := a.runDaemon(ctx, daemon.Config{
+		DataDir:    dataDir,
+		SocketPath: socketPath,
+		Version:    a.info,
+		Logger:     logger,
+	})
+	if err == nil {
+		return ExitOK
+	}
+	return a.writeFailure(mode, commandFailure{
+		exitCode: ExitFailure,
+		code:     daemon.ErrorCode(err),
+		message:  err.Error(),
+		hint:     daemonFailureHint(daemon.ErrorCode(err)),
+	})
+}
+
+func (a *App) runDaemonStop(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, daemonStopHelp)
+		return ExitOK
+	}
+	options, failure := parseOptions(args, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+
+	result, err := a.newClient(socketPath).Stop(ctx)
+	if err != nil {
+		return a.writeClientFailure(mode, "stop daemon", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write daemon stop output", err))
+		}
+	} else {
+		fmt.Fprintln(a.stdout, "daemon stopping")
+	}
+	return ExitOK
+}
+
+func (a *App) runStatus(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, statusHelp)
+		return ExitOK
+	}
+	options, failure := parseOptions(args, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+
+	result, err := a.newClient(socketPath).Status(ctx)
+	if err != nil {
+		return a.writeClientFailure(mode, "query daemon status", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write daemon status output", err))
+		}
+	} else {
+		fmt.Fprintln(a.stdout, "Crewfold daemon")
+		fmt.Fprintf(a.stdout, "status: %s\n", result.Status)
+		fmt.Fprintf(a.stdout, "protocol: %d\n", result.Protocol)
+		fmt.Fprintf(a.stdout, "version: %s\n", result.ServerVersion.Version)
+		fmt.Fprintf(a.stdout, "pid: %d\n", result.PID)
+		fmt.Fprintf(a.stdout, "started: %s\n", result.StartedAt)
+		fmt.Fprintf(a.stdout, "uptime_ms: %d\n", result.UptimeMillis)
+	}
+	return ExitOK
 }
 
 func (a *App) runHelp(args []string) int {
@@ -91,6 +241,10 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, versionHelp)
 	case "doctor":
 		fmt.Fprint(a.stdout, doctorHelp)
+	case "daemon":
+		fmt.Fprint(a.stdout, daemonHelp)
+	case "status":
+		fmt.Fprint(a.stdout, statusHelp)
 	case "help":
 		fmt.Fprint(a.stdout, helpHelp)
 	default:
@@ -102,6 +256,24 @@ func (a *App) runHelp(args []string) int {
 		})
 	}
 	return ExitOK
+}
+
+func (a *App) writeClientFailure(mode outputMode, operation string, err error) int {
+	var apiError *localapi.APIError
+	if errors.As(err, &apiError) {
+		return a.writeFailure(mode, commandFailure{
+			exitCode: ExitFailure,
+			code:     apiError.Code,
+			message:  fmt.Sprintf("%s: %s", operation, apiError.Message),
+			hint:     "run 'crewfold status --socket <path>' to inspect daemon availability",
+		})
+	}
+	return a.writeFailure(mode, commandFailure{
+		exitCode: ExitFailure,
+		code:     "daemon_unreachable",
+		message:  fmt.Sprintf("%s: %v", operation, err),
+		hint:     "verify the socket path and start the daemon with 'crewfold daemon run'",
+	})
 }
 
 func (a *App) runVersion(mode outputMode, args []string) int {
@@ -343,6 +515,89 @@ func parseOutputMode(value string) (outputMode, *commandFailure) {
 	}
 }
 
+func parseOptions(args []string, allowedNames ...string) (map[string]string, *commandFailure) {
+	allowed := make(map[string]struct{}, len(allowedNames))
+	for _, name := range allowedNames {
+		allowed[name] = struct{}{}
+	}
+
+	options := make(map[string]string, len(allowedNames))
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if !strings.HasPrefix(argument, "--") {
+			failure := usageFailure(
+				fmt.Sprintf("unexpected positional argument %q", argument),
+				"run the command with --help for usage",
+			)
+			return nil, &failure
+		}
+
+		nameValue := strings.TrimPrefix(argument, "--")
+		name, value, hasValue := strings.Cut(nameValue, "=")
+		if _, ok := allowed[name]; !ok {
+			failure := usageFailure(
+				fmt.Sprintf("unknown option --%s", name),
+				"run the command with --help for usage",
+			)
+			return nil, &failure
+		}
+		if _, duplicate := options[name]; duplicate {
+			failure := usageFailure(
+				fmt.Sprintf("--%s may be specified only once", name),
+				"remove the duplicate option",
+			)
+			return nil, &failure
+		}
+
+		if !hasValue {
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				failure := usageFailure(
+					fmt.Sprintf("--%s requires a value", name),
+					"run the command with --help for usage",
+				)
+				return nil, &failure
+			}
+			index++
+			value = args[index]
+		}
+		if strings.TrimSpace(value) == "" {
+			failure := usageFailure(
+				fmt.Sprintf("--%s requires a non-empty value", name),
+				"run the command with --help for usage",
+			)
+			return nil, &failure
+		}
+		options[name] = value
+	}
+
+	return options, nil
+}
+
+func requiredOption(options map[string]string, name string) (string, *commandFailure) {
+	value, ok := options[name]
+	if ok {
+		return value, nil
+	}
+	failure := usageFailure(
+		fmt.Sprintf("--%s is required", name),
+		"run the command with --help for usage",
+	)
+	return "", &failure
+}
+
+func daemonFailureHint(code string) string {
+	switch code {
+	case daemon.CodeDataDirInUse:
+		return "stop the daemon using this data directory or select another --data-dir"
+	case daemon.CodeSocketInUse:
+		return "use 'crewfold status --socket <path>' or select another --socket"
+	case daemon.CodeSocketPathOccupied:
+		return "inspect the exact socket path; Crewfold will not remove a live or non-socket file"
+	default:
+		return "run 'crewfold doctor --self' and verify --data-dir and --socket"
+	}
+}
+
 func usageFailure(message, hint string) commandFailure {
 	return commandFailure{
 		exitCode: ExitUsage,
@@ -383,13 +638,17 @@ Usage:
 Commands:
   version        Print build and platform information
   doctor --self  Run checks that need no daemon or external tools
+  daemon run     Run the local daemon in the foreground
+  daemon stop    Ask a running daemon to stop cleanly
+  status         Query daemon health through its local socket
   help [command] Show command help
 
 Global options:
   --output text|json  Select human or machine-readable output
   -h, --help          Show help
 
-This M0 build does not include a daemon, database, runtime, or provider.
+This M1 build keeps all daemon state in memory; it has no database, runtime, or
+provider integration.
 `
 
 const versionHelp = `Usage:
@@ -404,6 +663,34 @@ const doctorHelp = `Usage:
 
 Run checks for the current executable, embedded build metadata, and platform.
 M0 self-checks do not inspect a daemon, database, runtime, or provider.
+`
+
+const daemonHelp = `Usage:
+  crewfold daemon run --data-dir <path> --socket <path>
+  crewfold daemon stop --socket <path>
+
+Run the local daemon in the foreground or ask it to stop through the local API.
+M1 has no background-service installer and writes no domain/database state.
+`
+
+const daemonRunHelp = `Usage:
+  crewfold daemon run --data-dir <path> --socket <path> [--output text|json]
+
+Run the local daemon in the foreground. Logs are newline-delimited JSON on stderr.
+The socket is owner-only and the data directory is locked for this process.
+`
+
+const daemonStopHelp = `Usage:
+  crewfold daemon stop --socket <path> [--output text|json]
+
+Negotiate a protocol with the daemon, request graceful shutdown, and wait for its
+acknowledgement.
+`
+
+const statusHelp = `Usage:
+  crewfold status --socket <path> [--output text|json]
+
+Negotiate a protocol and query the daemon's in-memory health and build metadata.
 `
 
 const helpHelp = `Usage:

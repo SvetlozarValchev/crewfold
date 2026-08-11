@@ -2,9 +2,10 @@
 
 ## Implementation status
 
-M0 implements `crewfold help`, `crewfold version`, and
-`crewfold doctor --self`, including text and JSON output. Every other command in
-this document is an intended future contract and is not yet available.
+M1 implements `crewfold help`, `crewfold version`, `crewfold doctor --self`,
+`crewfold daemon run`, `crewfold daemon stop`, and `crewfold status`, including
+text and JSON output. Every other command in this document is an intended future
+contract and is not yet available.
 
 ## Goals
 
@@ -17,13 +18,16 @@ The examples below define intended behavior, not an implemented interface.
 ## Daemon and workspace
 
 ```sh
-crewfold daemon start
-crewfold daemon run --foreground
-crewfold doctor
-crewfold workspace init personal
-crewfold status
+crewfold daemon run --data-dir /path/to/state --socket /path/to/crewfold.sock
+crewfold daemon stop --socket /path/to/crewfold.sock
+crewfold status --socket /path/to/crewfold.sock
+# Planned after M1:
 crewfold watch
 ```
+
+M1 implements foreground `daemon run`, `daemon stop`, and `status` with explicit
+`--data-dir`/`--socket` paths. Background start, workspace initialization, and
+watching are later milestones.
 
 `doctor` checks the database, socket, Git, runtime drivers, provider adapters, and
 permissions without launching an agent.

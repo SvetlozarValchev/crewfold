@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:status-result:v1",
+  "title": "Crewfold local API status result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "type",
+    "status",
+    "protocol",
+    "pid",
+    "started_at",
+    "uptime_ms",
+    "server_version",
+    "active_requests",
+    "shutdown_pending"
+  ],
+  "properties": {
+    "schema": {
+      "const": "urn:crewfold:schema:local-api:status-result:v1"
+    },
+    "type": {
+      "const": "system_status"
+    },
+    "status": {
+      "const": "ok"
+    },
+    "protocol": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "uptime_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "server_version": {
+      "$ref": "../../cli/v1/version.response.schema.json"
+    },
+    "active_requests": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "shutdown_pending": {
+      "type": "boolean"
+    }
+  }
+}

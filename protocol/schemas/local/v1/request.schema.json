@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:request:v1",
+  "title": "Crewfold local API request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "method"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "protocol": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "method": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "object"
+    }
+  }
+}

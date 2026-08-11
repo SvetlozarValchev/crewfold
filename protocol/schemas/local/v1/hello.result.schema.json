@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:hello-result:v1",
+  "title": "Crewfold local API hello result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "selected_protocol",
+    "server_min_protocol",
+    "server_max_protocol",
+    "version"
+  ],
+  "properties": {
+    "type": {
+      "const": "hello"
+    },
+    "selected_protocol": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "server_min_protocol": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "server_max_protocol": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "version": {
+      "$ref": "../../cli/v1/version.response.schema.json"
+    }
+  }
+}

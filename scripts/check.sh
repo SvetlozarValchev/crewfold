@@ -33,3 +33,6 @@ fi
 
 printf 'M0 black-box acceptance\n'
 "$repo_root/test/scenarios/m00-buildable-repository/run.sh"
+
+printf 'M1 black-box acceptance\n'
+"$repo_root/test/scenarios/m01-daemon-api-spine/run.sh"

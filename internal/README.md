@@ -1,10 +1,13 @@
 # Internal packages
 
-Future private Go packages will live here, organized by capability rather than by
-provider:
+Private Go packages live here, organized by capability rather than by provider:
 
 ```text
-api/          local API and MCP translation
+localapi/     implemented local API protocol and client
+daemon/       implemented foreground daemon and socket lifecycle
+cli/          implemented human/machine command surface
+buildinfo/    implemented embedded build metadata
+api/          future domain API and MCP translation
 domain/       commands, invariants, and core types
 store/        SQLite migrations, queries, event journal, and queues
 scheduler/    deterministic placement and dependencies

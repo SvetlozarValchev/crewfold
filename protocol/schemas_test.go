@@ -2,6 +2,7 @@ package protocol_test
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,12 +29,21 @@ type objectSchema struct {
 func TestSchemasAreValidJSONWithUniqueIDs(t *testing.T) {
 	t.Parallel()
 
-	paths, err := filepath.Glob("schemas/cli/v1/*.schema.json")
+	var paths []string
+	err := filepath.WalkDir("schemas", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && filepath.Ext(path) == ".json" {
+			paths = append(paths, path)
+		}
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("filepath.Glob() error = %v", err)
+		t.Fatalf("filepath.WalkDir() error = %v", err)
 	}
-	if len(paths) != 3 {
-		t.Fatalf("schema count = %d, want 3; paths = %v", len(paths), paths)
+	if len(paths) < 3 {
+		t.Fatalf("schema count = %d, want at least 3; paths = %v", len(paths), paths)
 	}
 
 	ids := make(map[string]string, len(paths))
@@ -63,6 +73,50 @@ func TestSchemasAreValidJSONWithUniqueIDs(t *testing.T) {
 			t.Fatalf("schemas %q and %q share $id %q", previous, path, header.ID)
 		}
 		ids[header.ID] = path
+		validateLocalReferences(t, path, data)
+	}
+}
+
+func validateLocalReferences(t *testing.T, schemaPath string, data []byte) {
+	t.Helper()
+
+	var document any
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v", schemaPath, err)
+	}
+	walkJSON(document, func(reference string) {
+		if reference == "" || reference[0] == '#' || regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`).MatchString(reference) {
+			return
+		}
+		target := reference
+		if index := len(target); index > 0 {
+			if match := regexp.MustCompile(`#.*$`).FindStringIndex(target); match != nil {
+				target = target[:match[0]]
+			}
+		}
+		resolved := filepath.Clean(filepath.Join(filepath.Dir(schemaPath), filepath.FromSlash(target)))
+		if _, err := os.Stat(resolved); err != nil {
+			t.Errorf("schema %q reference %q does not resolve: %v", schemaPath, reference, err)
+		}
+	})
+}
+
+func walkJSON(value any, visitReference func(string)) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if key == "$ref" {
+				if reference, ok := child.(string); ok {
+					visitReference(reference)
+				}
+				continue
+			}
+			walkJSON(child, visitReference)
+		}
+	case []any:
+		for _, child := range typed {
+			walkJSON(child, visitReference)
+		}
 	}
 }
 

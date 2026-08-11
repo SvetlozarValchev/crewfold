@@ -23,7 +23,8 @@ $go_runner build -trimpath -o "$binary" ./cmd/crewfold
 
 "$binary" help >"$temp_dir/help.txt"
 grep -Fq 'Usage:' "$temp_dir/help.txt"
-grep -Fq 'This M0 build does not include a daemon' "$temp_dir/help.txt"
+grep -Fq 'version' "$temp_dir/help.txt"
+grep -Fq 'doctor --self' "$temp_dir/help.txt"
 
 "$binary" version >"$temp_dir/version.txt"
 grep -Fq 'crewfold dev' "$temp_dir/version.txt"
