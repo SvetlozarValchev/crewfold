@@ -23,16 +23,23 @@ personal control-plane scope while keeping provider and runtime boundaries clean
 - Do not assume that registered agents are all concurrently running.
 - Preserve stable IDs and provenance for every durable object.
 
-## Expected development workflow
+## Development workflow
 
-The implementation toolchain is not bootstrapped yet. The proposed baseline is Go
-for the daemon and CLI, SQLite for storage, JSON Schema for protocols, and
-TypeScript only where a browser UI or TypeScript SDK requires it. See
-[docs/stack.md](docs/stack.md).
+M0 is bootstrapped with Go 1.26.5 and the standard library. Run the complete local,
+offline gate before committing:
 
-When code exists, every change should include proportionate tests. Protocol and
-migration changes require compatibility fixtures. Runtime adapters require fake or
-recorded-driver tests so normal development does not launch paid agent sessions.
+```sh
+./scripts/check.sh
+```
+
+The command checks formatting, runs `go vet`, unit/schema tests, race tests when
+supported, and the black-box M0 scenario. It never invokes a model provider or
+uses credentials. See [docs/testing.md](docs/testing.md) for the long-term test
+strategy and [docs/stack.md](docs/stack.md) for the proposed later stack.
+
+Every change should include proportionate tests. Protocol and migration changes
+require compatibility fixtures. Runtime adapters require fake or recorded-driver
+tests so normal development does not launch paid agent sessions.
 
 ## Commits and pull requests
 

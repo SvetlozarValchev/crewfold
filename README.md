@@ -13,9 +13,9 @@ than forcing the core to understand every terminal UI.
 
 ## Status
 
-Crewfold is in its design and repository-bootstrap phase. This repository contains
-the initial product contract and architecture; it does not yet contain a usable
-orchestrator.
+Crewfold is in its implementation-bootstrap phase. The M0 binary provides
+`version`, `help`, and `doctor --self`; it does not yet contain a daemon, database,
+runtime, or usable orchestrator.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.
@@ -102,8 +102,8 @@ session formats.
 
 | Path | Purpose |
 | --- | --- |
-| `cmd/crewfold/` | Future Go entry point for the CLI and daemon |
-| `internal/` | Future local control-plane implementation |
+| `cmd/crewfold/` | Go entry point for the CLI and future daemon |
+| `internal/` | Local control-plane packages, currently M0 CLI/build metadata |
 | `protocol/` | Versioned API, event, and adapter schemas |
 | `integrations/herdr/` | Preferred interactive runtime driver |
 | `integrations/providers/` | Provider adapter contracts and implementations |
@@ -128,6 +128,19 @@ register project -> define agent -> assign task -> launch run
 
 It will not initially provide a hosted service, organization accounts, autonomous
 merging, a general workflow language, or a vector database.
+
+## Development
+
+M0 uses Go 1.26.5 and only the standard library. Run the complete offline gate:
+
+```sh
+./scripts/check.sh
+```
+
+`scripts/go.sh` uses `CREWFOLD_GO`, a `go` executable on `PATH`, or the versioned
+user-local development toolchain when present. The temporary module path is
+`crewfold`; a public import path will be selected only when the upstream namespace
+is deliberately created.
 
 ## Name
 

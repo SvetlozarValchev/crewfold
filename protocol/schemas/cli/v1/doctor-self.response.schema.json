@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:cli:doctor-self-response:v1",
+  "title": "Crewfold CLI self-doctor response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "checks", "version"],
+  "properties": {
+    "schema": {
+      "const": "urn:crewfold:schema:cli:doctor-self-response:v1"
+    },
+    "status": {
+      "enum": ["ok", "failed"]
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": ["ok", "failed"]
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "version": {
+      "$ref": "version.response.schema.json"
+    }
+  }
+}

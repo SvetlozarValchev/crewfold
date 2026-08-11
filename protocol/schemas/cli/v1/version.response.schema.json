@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:cli:version-response:v1",
+  "title": "Crewfold CLI version response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "version",
+    "commit",
+    "built_at",
+    "go_version",
+    "platform"
+  ],
+  "properties": {
+    "schema": {
+      "const": "urn:crewfold:schema:cli:version-response:v1"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 1
+    },
+    "built_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "go_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "platform": {
+      "type": "string",
+      "pattern": "^[^/]+/[^/]+$"
+    }
+  }
+}

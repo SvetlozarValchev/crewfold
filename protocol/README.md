@@ -11,6 +11,7 @@ conformance fixtures, and compatibility tests for:
 MCP tool schemas are generated or validated against the same domain payloads but
 remain a separate agent-facing surface.
 
-No schema is committed yet; the reference documents are still proposals. See the
-[event catalogue](../docs/reference/events.md) and
-[MCP tool contract](../docs/reference/mcp-tools.md).
+M0 publishes version, self-doctor, and error response schemas under
+`schemas/cli/v1/`. Later schemas remain proposals. See the
+[event catalogue](../docs/reference/events.md) and [MCP tool
+contract](../docs/reference/mcp-tools.md).

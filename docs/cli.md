@@ -1,5 +1,11 @@
 # CLI experience
 
+## Implementation status
+
+M0 implements `crewfold help`, `crewfold version`, and
+`crewfold doctor --self`, including text and JSON output. Every other command in
+this document is an intended future contract and is not yet available.
+
 ## Goals
 
 The CLI is both a human interface and a scriptable client. Commands should provide
@@ -154,3 +160,18 @@ crewfold policy explain --actor engine-impl --action git.push --project world-en
 - Exit code `0` means the requested operation reached its documented success state;
   accepted asynchronous intent is reported distinctly from completed effect.
 - Destructive or external commands support `--dry-run` where meaningful.
+
+### Exit codes
+
+M0 establishes these process exit classes:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The requested synchronous operation succeeded |
+| `1` | An operational/internal check or requested operation failed |
+| `2` | Command-line usage, arguments, or command selection were invalid |
+
+Machine-readable errors use the versioned [error response
+schema](../protocol/schemas/cli/v1/error.response.schema.json) and are written to
+stderr. Successful JSON responses are written to stdout. No command emits a stack
+trace unless a future explicit debug facility documents that behavior.

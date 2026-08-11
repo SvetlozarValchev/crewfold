@@ -1,7 +1,8 @@
 # `crewfold` command
 
-This directory will contain the single Go entry point for both client and daemon
-commands. It remains documentation-only until Milestone 0 implementation begins.
+This directory contains the single Go entry point. M0 implements `version`, `help`,
+and `doctor --self`; later milestones add daemon and client commands without
+creating a second binary by default.
 
 See [the CLI contract](../../docs/cli.md) and
 [technology stack](../../docs/stack.md).
