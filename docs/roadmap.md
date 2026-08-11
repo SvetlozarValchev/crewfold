@@ -7,12 +7,13 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M2 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M3 are complete**. Evidence is recorded in the [M0
 review](reviews/m00-buildable-repository.md), [M1
 review](reviews/m01-daemon-api-spine.md), and [M2
-review](reviews/m02-persistent-workspace.md); M2's implementation commit is
-`a705cbd641fbaf316d31dc7015eb8901f1e9e01d`. M3 is the next milestone and has not
-started.
+review](reviews/m02-persistent-workspace.md), and [M3
+review](reviews/m03-projects-checkouts.md). M3's implementation commits are
+`2be19905ccd003b045b3af20a452177ac2d5f127` and
+`76f7dcef6464917eacec5921cc4d0368a2e66cf1`. M4 is next and has not started.
 
 ## Sequence
 
@@ -21,7 +22,7 @@ started.
 | M0 ✓ | Buildable repository | Build one binary; run version/help/self-check and local CI | Documentation baseline |
 | M1 ✓ | Daemon/API spine | Start, query, diagnose, and cleanly stop a local daemon | M0 |
 | M2 ✓ | Persistent workspace | Commit an event, restart, restore, and inspect the same workspace | M1 |
-| M3 | Projects/checkouts | Register and observe a disposable Git repository without mutating it | M2 |
+| M3 ✓ | Projects/checkouts | Register and observe a disposable Git repository without mutating it | M2 |
 | M4 | Agents/tasks | Define durable roles, tasks, dependencies, leases, and readiness | M3 |
 | M5 | Fake-agent loop | Assign, launch, progress, block, complete, and hand off one task | M4 |
 | M6 | Direct runtime | Run and recover a real fixture subprocess with bounded output | M5 |
@@ -169,18 +170,19 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M3 is the next approved implementation target:
+M4 is the next approved implementation target:
 
-1. generate deterministic disposable Git repositories and worktrees for tests;
-2. add project, repository, and checkout projections/events through migration 2;
-3. register and observe repository identity, branch, HEAD, dirty state, and
-   worktree relationship without mutating source;
-4. expose add/list/inspect commands with explicit workspace and socket scope;
-5. prove missing/moved path, duplicate checkout, unavailable Git, malformed
-   output, and unchanged-registration failure cases.
+1. add durable agent definitions, objectives, tasks, dependencies, assignments,
+   leases, and budgets through the next forward-only migration;
+2. define and test task state transitions, optimistic revisions, dependency-cycle
+   rejection, and deterministic readiness explanations;
+3. expose create/list/show/update/assign operations through the local API and CLI;
+4. expire a fixture assignment with a controlled clock without deleting history;
+5. prove restart persistence and a two-writer revision conflict.
 
-M3 must not create or modify user worktrees, commits, branches, remotes, or files.
-Agents, tasks, runtimes, provider SDKs, Herdr calls, MCP, and web/TUI frameworks
-remain out of scope. M0 through M2 acceptance scenarios remain required gates.
+M4 must describe work and ownership without launching an agent or provider
+process. Runtime execution, messaging, Herdr, provider SDKs, MCP, claims,
+supervision, and automatic source mutation remain out of scope. M0 through M3
+acceptance scenarios remain required gates.
 
 No upstream repository should be created until the owner explicitly requests it.
