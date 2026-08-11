@@ -36,6 +36,7 @@ explicitly rather than silently treating either as authoritative.
 - [Milestone review template](reference/milestone-review-template.md)
 - [M0 completed milestone review](reviews/m00-buildable-repository.md)
 - [M1 completed milestone review](reviews/m01-daemon-api-spine.md)
+- [M2 completed milestone review](reviews/m02-persistent-workspace.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 
