@@ -46,7 +46,8 @@ func (s *Store) InitWorkspace(ctx context.Context, command InitWorkspaceCommand)
 	}
 	defer transaction.Rollback()
 
-	if replay, found, err := lookupIdempotency(ctx, transaction, key, "workspace.init", requestHash); err != nil {
+	var replay WorkspaceInitResult
+	if found, err := lookupIdempotency(ctx, transaction, key, "workspace.init", requestHash, &replay); err != nil {
 		return WorkspaceInitResult{}, err
 	} else if found {
 		return replay, nil
@@ -225,29 +226,28 @@ LIMIT ?`, after, limit)
 	return events, nil
 }
 
-func lookupIdempotency(ctx context.Context, transaction *sql.Tx, key, command, requestHash string) (WorkspaceInitResult, bool, error) {
+func lookupIdempotency(ctx context.Context, transaction *sql.Tx, key, command, requestHash string, target any) (bool, error) {
 	var storedCommand, storedHash, response string
 	err := transaction.QueryRowContext(ctx,
 		"SELECT command, request_hash, response_json FROM idempotency_keys WHERE key = ?",
 		key,
 	).Scan(&storedCommand, &storedHash, &response)
 	if errors.Is(err, sql.ErrNoRows) {
-		return WorkspaceInitResult{}, false, nil
+		return false, nil
 	}
 	if err != nil {
-		return WorkspaceInitResult{}, false, storageFailure("read idempotency record", err)
+		return false, storageFailure("read idempotency record", err)
 	}
 	if storedCommand != command || storedHash != requestHash {
-		return WorkspaceInitResult{}, false, &Error{
+		return false, &Error{
 			Code:    CodeIdempotencyConflict,
 			Message: "idempotency key was already used for a different command payload",
 		}
 	}
-	var result WorkspaceInitResult
-	if err := json.Unmarshal([]byte(response), &result); err != nil {
-		return WorkspaceInitResult{}, false, storageFailure("decode idempotent response", err)
+	if err := json.Unmarshal([]byte(response), target); err != nil {
+		return false, storageFailure("decode idempotent response", err)
 	}
-	return result, true, nil
+	return true, nil
 }
 
 type rowScanner interface {
@@ -292,7 +292,7 @@ func (s *Store) runMutationHook(stage string) error {
 		return nil
 	}
 	if err := s.mutationHook(stage); err != nil {
-		return storageFailure("workspace mutation interrupted at "+stage, err)
+		return storageFailure("mutation interrupted at "+stage, err)
 	}
 	return nil
 }

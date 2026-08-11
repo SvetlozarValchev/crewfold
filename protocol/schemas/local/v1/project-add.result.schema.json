@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:project-add-result:v1",
+  "title": "Crewfold local API project add result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "project", "repository", "checkout", "event_sequence"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:project-add-result:v1"},
+    "type": {"const": "project_registered"},
+    "project": {"$ref": "../../domain/v1/project.schema.json"},
+    "repository": {"$ref": "../../domain/v1/repository.schema.json"},
+    "checkout": {"$ref": "../../domain/v1/checkout.schema.json"},
+    "event_sequence": {"type": "integer", "minimum": 1}
+  }
+}

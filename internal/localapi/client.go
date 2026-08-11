@@ -117,6 +117,60 @@ func (c *Client) WorkspaceShow(ctx context.Context, identifier string) (Workspac
 	return result, nil
 }
 
+func (c *Client) ProjectAdd(ctx context.Context, workspace, name, repositoryPath, writeMode, idempotencyKey string) (ProjectAddResult, error) {
+	if idempotencyKey == "" {
+		idempotencyKey = "idem-" + requestID()
+	}
+	params, err := json.Marshal(ProjectAddParams{Workspace: workspace, Name: name, RepositoryPath: repositoryPath, WriteMode: writeMode, IdempotencyKey: idempotencyKey})
+	if err != nil {
+		return ProjectAddResult{}, fmt.Errorf("marshal project registration: %w", err)
+	}
+	var result ProjectAddResult
+	if err := c.call(ctx, MethodProjectAdd, params, &result); err != nil {
+		return ProjectAddResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ProjectInspect(ctx context.Context, workspace, project string) (ProjectInspectResult, error) {
+	params, err := json.Marshal(ProjectInspectParams{Workspace: workspace, Project: project})
+	if err != nil {
+		return ProjectInspectResult{}, fmt.Errorf("marshal project inspection: %w", err)
+	}
+	var result ProjectInspectResult
+	if err := c.call(ctx, MethodProjectInspect, params, &result); err != nil {
+		return ProjectInspectResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) CheckoutAdd(ctx context.Context, workspace, project, repositoryPath, writeMode, idempotencyKey string) (CheckoutAddResult, error) {
+	if idempotencyKey == "" {
+		idempotencyKey = "idem-" + requestID()
+	}
+	params, err := json.Marshal(CheckoutAddParams{Workspace: workspace, Project: project, RepositoryPath: repositoryPath, WriteMode: writeMode, IdempotencyKey: idempotencyKey})
+	if err != nil {
+		return CheckoutAddResult{}, fmt.Errorf("marshal checkout registration: %w", err)
+	}
+	var result CheckoutAddResult
+	if err := c.call(ctx, MethodCheckoutAdd, params, &result); err != nil {
+		return CheckoutAddResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) CheckoutList(ctx context.Context, workspace, project string) (CheckoutListResult, error) {
+	params, err := json.Marshal(CheckoutListParams{Workspace: workspace, Project: project})
+	if err != nil {
+		return CheckoutListResult{}, fmt.Errorf("marshal checkout query: %w", err)
+	}
+	var result CheckoutListResult
+	if err := c.call(ctx, MethodCheckoutList, params, &result); err != nil {
+		return CheckoutListResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) EventsList(ctx context.Context, after int64, limit int) (EventsListResult, error) {
 	paramsValue := EventsListParams{After: &after}
 	if limit != 0 {

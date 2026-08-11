@@ -1,8 +1,8 @@
 # Local API v1
 
-Status: implemented through M2. The transport/lifecycle methods from M1 remain,
-and M2 adds database diagnostics, workspace initialization/query, and cursor-based
-event inspection. Subscriptions and other domain commands arrive later.
+Status: implemented through M3. M3 adds read-only Git inspection and durable
+project, repository, and checkout commands to the M1/M2 transport, workspace, and
+event surfaces. Subscriptions and agent/task commands arrive later.
 
 ## Transport
 
@@ -15,7 +15,7 @@ with mode `0600` on `<data-dir>/daemon.lock` so another daemon cannot use the sa
 data directory, even with a different socket. A newly created data directory uses
 mode `0700`; Crewfold does not silently change the mode of an existing directory.
 
-M2 has no network listener and no remote transport.
+M3 has no network listener and no remote transport.
 
 ## Negotiation
 
@@ -162,6 +162,39 @@ Queries one workspace by stable ID first and then by unique name:
 
 A missing record returns `workspace_not_found`.
 
+### `project.add`
+
+Takes `workspace`, `name`, `repository_path`, optional `write_mode`, and
+`idempotency_key`. The daemon first performs bounded read-only Git inspection,
+then atomically creates a project, attaches or creates a repository identity,
+creates a checkout, appends events, and stores the idempotent result. The default
+write mode is `exclusive`.
+
+The path can be a standalone repository, an adjacent clone, or a linked worktree.
+Git failure occurs before the transaction, so `not_git_repository`,
+`git_unavailable`, or `git_output_invalid` creates no partial project.
+
+### `checkout.add`
+
+Takes `workspace`, `project`, `repository_path`, optional `write_mode`, and
+`idempotency_key`. Every normalized path receives its own checkout ID. If its
+history fingerprint is already known in the workspace, the existing repository
+ID is reused—even when the directories do not share Git worktree metadata.
+Duplicate normalized paths return `checkout_already_registered`.
+
+### `checkout.list`
+
+Takes `workspace` and `project`. It returns stored checkout projections without
+invoking Git, so unavailable locations remain visible.
+
+### `project.inspect`
+
+Takes `workspace` and `project`. It refreshes each stored path using read-only Git
+commands. Changed observations increment only the affected checkout revision and
+append `checkout.git_observed`. A missing/moved path becomes `unavailable` with a
+diagnostic while retaining its checkout ID, repository ID, registered path, and
+last-known branch/HEAD state.
+
 ### `events.list`
 
 Returns events in ascending local sequence order strictly after a supplied cursor:
@@ -172,7 +205,7 @@ Returns events in ascending local sequence order strictly after a supplied curso
 
 The default limit is 100 and the maximum is 1000. `next_after` is the final event
 sequence in the page, or the input cursor for an empty page. `has_more` tells the
-caller to issue another query from `next_after`. M2 is query-only; a resumable live
+caller to issue another query from `next_after`. M3 is query-only; a resumable live
 subscription arrives later.
 
 ## Socket startup safety
@@ -197,9 +230,10 @@ code when applicable. Logs do not include arbitrary request bodies.
 ## Limits and deferrals
 
 - Maximum request line: 64 KiB.
-- Local operating-system user is the only identity in M2; workspace events use
+- Local operating-system user is the only identity through M3; events use
   the explicit placeholder actor `local-owner` of type `human`.
-- Workspace initialization is the only domain mutation. Event cursors and command
-  idempotency are durable; subscriptions and streaming are not implemented.
-- Unix sockets are the only supported M2 transport; Windows named pipes are later.
+- Workspace, project, and checkout registration plus Git observation are the only
+  domain mutations. Event cursors and command idempotency are durable;
+  subscriptions and streaming are not implemented.
+- Unix sockets are the only supported transport; Windows named pipes are later.
 - Socket permission is a transport boundary, not future agent authorization.

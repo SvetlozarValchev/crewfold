@@ -2,11 +2,12 @@
 
 ## Implementation status
 
-M2 implements `crewfold help`, `crewfold version`, `crewfold doctor --self`,
+M3 implements `crewfold help`, `crewfold version`, `crewfold doctor --self`,
 `crewfold doctor --database`, `crewfold daemon run`, `crewfold daemon stop`,
 `crewfold status`, `crewfold workspace init/show`, and `crewfold events list`,
-including text and JSON output. Every other command in this document is an
-intended future contract and is not yet available.
+plus `crewfold project add/inspect` and `crewfold checkout add/list`, including
+text and JSON output. Every other command in this document is an intended future
+contract and is not yet available.
 
 ## Goals
 
@@ -44,13 +45,19 @@ agent.
 ## Projects and checkouts
 
 ```sh
-crewfold project add world-engine --repo ~/depot/dev/world-engine
-crewfold checkout add world-engine ~/depot/dev/world-engine-2 --mode exclusive
-crewfold checkout list world-engine
-crewfold project inspect world-engine
+crewfold project add world-engine --repo ~/depot/dev/world-engine \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold checkout add world-engine ~/depot/dev/world-engine-2 --mode exclusive \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold checkout list world-engine --workspace personal --socket /path/to/crewfold.sock
+crewfold project inspect world-engine --workspace personal --socket /path/to/crewfold.sock
 ```
 
-Registration is read-only. A separate command would create a Git worktree:
+Registration is read-only. “Checkout” means any concrete Git repository directory:
+an adjacent standalone clone/copy such as `world-engine-2` is as valid as a linked
+Git worktree. Crewfold groups checkouts by an observed Git-history fingerprint,
+not by directory name, parent directory, `.git` location, or shared worktree
+metadata. A future separate command would create a Git worktree:
 
 ```sh
 crewfold checkout create world-engine feature-a --branch crewfold/feature-a

@@ -49,6 +49,10 @@ type daemonClient interface {
 	DatabaseStatus(context.Context) (localapi.DatabaseStatusResult, error)
 	WorkspaceInit(context.Context, string, string) (localapi.WorkspaceInitResult, error)
 	WorkspaceShow(context.Context, string) (localapi.WorkspaceShowResult, error)
+	ProjectAdd(context.Context, string, string, string, string, string) (localapi.ProjectAddResult, error)
+	ProjectInspect(context.Context, string, string) (localapi.ProjectInspectResult, error)
+	CheckoutAdd(context.Context, string, string, string, string, string) (localapi.CheckoutAddResult, error)
+	CheckoutList(context.Context, string, string) (localapi.CheckoutListResult, error)
 	EventsList(context.Context, int64, int) (localapi.EventsListResult, error)
 }
 
@@ -96,6 +100,10 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runStatus(ctx, mode, args[1:])
 	case "workspace":
 		return a.runWorkspace(ctx, mode, args[1:])
+	case "project":
+		return a.runProject(ctx, mode, args[1:])
+	case "checkout":
+		return a.runCheckout(ctx, mode, args[1:])
 	case "events":
 		return a.runEvents(ctx, mode, args[1:])
 	default:
@@ -106,6 +114,202 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 			hint:     "run 'crewfold help' to list available commands",
 		})
 	}
+}
+
+func (a *App) runProject(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 0 {
+		return a.writeFailure(mode, usageFailure("project requires a subcommand", "run 'crewfold help project' for usage"))
+	}
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, projectHelp)
+		return ExitOK
+	}
+	switch args[0] {
+	case "add":
+		return a.runProjectAdd(ctx, mode, args[1:])
+	case "inspect":
+		return a.runProjectInspect(ctx, mode, args[1:])
+	default:
+		return a.writeFailure(mode, commandFailure{exitCode: ExitUsage, code: "unknown_project_command", message: fmt.Sprintf("unknown project command %q", args[0]), hint: "run 'crewfold help project' for usage"})
+	}
+}
+
+func (a *App) runProjectAdd(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, projectAddHelp)
+		return ExitOK
+	}
+	name, optionArgs, failure := requiredLeadingArgument(args, "project name")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "repo", "mode", "socket", "idempotency-key")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, failure := requiredOption(options, "workspace")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	repositoryPath, failure := requiredOption(options, "repo")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socketPath).ProjectAdd(ctx, workspace, name, repositoryPath, options["mode"], options["idempotency-key"])
+	if err != nil {
+		return a.writeClientFailure(mode, "register project", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write project registration output", err))
+		}
+	} else {
+		fmt.Fprintf(a.stdout, "project: %s (%s)\n", result.Project.Name, result.Project.ID)
+		fmt.Fprintf(a.stdout, "repository: %s\n", result.Repository.ID)
+		fmt.Fprintf(a.stdout, "checkout: %s (%s)\n", result.Checkout.Path, result.Checkout.ID)
+		fmt.Fprintf(a.stdout, "kind: %s\n", result.Checkout.CheckoutKind)
+	}
+	return ExitOK
+}
+
+func (a *App) runProjectInspect(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, projectInspectHelp)
+		return ExitOK
+	}
+	project, optionArgs, failure := requiredLeadingArgument(args, "project name or ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, failure := requiredOption(options, "workspace")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socketPath).ProjectInspect(ctx, workspace, project)
+	if err != nil {
+		return a.writeClientFailure(mode, "inspect project", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write project inspection output", err))
+		}
+	} else {
+		fmt.Fprintf(a.stdout, "project: %s (%s)\n", result.Project.Name, result.Project.ID)
+		fmt.Fprintf(a.stdout, "repositories: %d\n", len(result.Repositories))
+		for _, checkout := range result.Checkouts {
+			fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\tdirty=%t\n", checkout.ID, checkout.Path, checkout.Availability, checkout.Branch, checkout.Dirty)
+			if checkout.DiagnosticCode != "" {
+				fmt.Fprintf(a.stdout, "  diagnostic: %s: %s\n", checkout.DiagnosticCode, checkout.Diagnostic)
+			}
+		}
+	}
+	return ExitOK
+}
+
+func (a *App) runCheckout(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 0 {
+		return a.writeFailure(mode, usageFailure("checkout requires a subcommand", "run 'crewfold help checkout' for usage"))
+	}
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, checkoutHelp)
+		return ExitOK
+	}
+	switch args[0] {
+	case "add":
+		return a.runCheckoutAdd(ctx, mode, args[1:])
+	case "list":
+		return a.runCheckoutList(ctx, mode, args[1:])
+	default:
+		return a.writeFailure(mode, commandFailure{exitCode: ExitUsage, code: "unknown_checkout_command", message: fmt.Sprintf("unknown checkout command %q", args[0]), hint: "run 'crewfold help checkout' for usage"})
+	}
+}
+
+func (a *App) runCheckoutAdd(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, checkoutAddHelp)
+		return ExitOK
+	}
+	if len(args) < 2 || strings.HasPrefix(args[0], "--") || strings.HasPrefix(args[1], "--") {
+		return a.writeFailure(mode, usageFailure("checkout add requires a project and repository path", "run 'crewfold help checkout' for usage"))
+	}
+	project, repositoryPath := args[0], args[1]
+	options, failure := parseOptions(args[2:], "workspace", "mode", "socket", "idempotency-key")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, failure := requiredOption(options, "workspace")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socketPath).CheckoutAdd(ctx, workspace, project, repositoryPath, options["mode"], options["idempotency-key"])
+	if err != nil {
+		return a.writeClientFailure(mode, "register checkout", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write checkout registration output", err))
+		}
+	} else {
+		fmt.Fprintf(a.stdout, "checkout: %s (%s)\n", result.Checkout.Path, result.Checkout.ID)
+		fmt.Fprintf(a.stdout, "repository: %s\n", result.Repository.ID)
+		fmt.Fprintf(a.stdout, "kind: %s\n", result.Checkout.CheckoutKind)
+	}
+	return ExitOK
+}
+
+func (a *App) runCheckoutList(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, checkoutListHelp)
+		return ExitOK
+	}
+	project, optionArgs, failure := requiredLeadingArgument(args, "project name or ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, failure := requiredOption(options, "workspace")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socketPath).CheckoutList(ctx, workspace, project)
+	if err != nil {
+		return a.writeClientFailure(mode, "list checkouts", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write checkout list output", err))
+		}
+	} else if len(result.Checkouts) == 0 {
+		fmt.Fprintf(a.stdout, "no checkouts registered for %s\n", result.Project.Name)
+	} else {
+		for _, checkout := range result.Checkouts {
+			fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\t%s\n", checkout.ID, checkout.Path, checkout.CheckoutKind, checkout.WriteMode, checkout.Availability)
+		}
+	}
+	return ExitOK
 }
 
 func (a *App) runWorkspace(ctx context.Context, mode outputMode, args []string) int {
@@ -414,6 +618,10 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, statusHelp)
 	case "workspace":
 		fmt.Fprint(a.stdout, workspaceHelp)
+	case "project":
+		fmt.Fprint(a.stdout, projectHelp)
+	case "checkout":
+		fmt.Fprint(a.stdout, checkoutHelp)
 	case "events":
 		fmt.Fprint(a.stdout, eventsHelp)
 	case "help":
@@ -874,6 +1082,8 @@ Commands:
   daemon stop    Ask a running daemon to stop cleanly
   status         Query daemon health through its local socket
   workspace      Initialize or inspect a durable workspace
+  project        Register or inspect a project and its source locations
+  checkout       Register or list concrete repository directories
   events         Inspect the durable event journal
   help [command] Show command help
 
@@ -881,8 +1091,8 @@ Global options:
   --output text|json  Select human or machine-readable output
   -h, --help          Show help
 
-This M2 build persists workspaces and their events. It has no project, agent,
-runtime, or provider integration.
+This M3 build registers and observes projects, repositories, and checkouts. It
+does not launch agents or mutate source repositories.
 `
 
 const versionHelp = `Usage:
@@ -905,8 +1115,8 @@ const daemonHelp = `Usage:
   crewfold daemon stop --socket <path>
 
 Run the local daemon in the foreground or ask it to stop through the local API.
-M2 has no background-service installer. The selected data directory contains the
-SQLite workspace/event database.
+M3 has no background-service installer. The selected data directory contains the
+SQLite coordination database.
 `
 
 const daemonRunHelp = `Usage:
@@ -947,6 +1157,43 @@ const workspaceShowHelp = `Usage:
   crewfold workspace show <name-or-id> --socket <path> [--output text|json]
 
 Read one durable workspace without mutating it.
+`
+
+const projectHelp = `Usage:
+  crewfold project add <name> --workspace <name-or-id> --repo <path> --socket <path> [--mode <mode>] [--idempotency-key <key>]
+  crewfold project inspect <name-or-id> --workspace <name-or-id> --socket <path>
+
+Register a project from any local Git checkout, or refresh and inspect all of its
+registered checkouts. Adjacent clones and linked worktrees are both supported.
+`
+
+const projectAddHelp = `Usage:
+  crewfold project add <name> --workspace <name-or-id> --repo <path> --socket <path> [--mode exclusive|claimed|shared|read_only] [--idempotency-key <key>]
+
+Registration only reads Git state. The default write mode is exclusive.
+`
+
+const projectInspectHelp = `Usage:
+  crewfold project inspect <name-or-id> --workspace <name-or-id> --socket <path>
+
+Refresh repository state for every registered checkout, retaining missing paths
+as unavailable durable checkouts.
+`
+
+const checkoutHelp = `Usage:
+  crewfold checkout add <project> <path> --workspace <name-or-id> --socket <path> [--mode <mode>] [--idempotency-key <key>]
+  crewfold checkout list <project> --workspace <name-or-id> --socket <path>
+
+A checkout is any concrete Git repository directory. It need not be a Git linked
+worktree; adjacent standalone clones are first-class checkouts.
+`
+
+const checkoutAddHelp = `Usage:
+  crewfold checkout add <project> <path> --workspace <name-or-id> --socket <path> [--mode exclusive|claimed|shared|read_only] [--idempotency-key <key>]
+`
+
+const checkoutListHelp = `Usage:
+  crewfold checkout list <project> --workspace <name-or-id> --socket <path>
 `
 
 const eventsHelp = `Usage:

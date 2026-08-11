@@ -52,6 +52,13 @@ A stable identity for one Git history. Multiple local checkouts or worktrees may
 point to it. Remote URLs are attributes and cannot serve as the only identity
 because remotes can change or be absent.
 
+M3 derives a local history fingerprint from the repository object format and its
+sorted reachable root commits. This lets independently cloned adjacent directories
+share a repository record without depending on a remote URL or common Git
+directory. The fingerprint is an observation-based identity, not a Git-provided
+global UUID; a later reconciliation command handles histories that are rewritten
+or found to have been grouped incorrectly.
+
 ### Checkout
 
 A concrete filesystem location and branch/HEAD state on one node. A checkout has a
@@ -63,6 +70,8 @@ write policy:
 - `read_only`: no Crewfold-launched mutation.
 
 `exclusive` or separate Git worktrees are the default for implementation tasks.
+The term does not imply `git worktree`: a standalone clone, a copied repository,
+and a linked worktree are all checkouts when they occupy distinct concrete paths.
 
 ### Team
 

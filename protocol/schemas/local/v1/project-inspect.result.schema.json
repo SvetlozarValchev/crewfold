@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:project-inspect-result:v1",
+  "title": "Crewfold local API project inspection result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "project", "repositories", "checkouts"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:project-inspect-result:v1"},
+    "type": {"const": "project_inspection"},
+    "project": {"$ref": "../../domain/v1/project.schema.json"},
+    "repositories": {"type": "array", "items": {"$ref": "../../domain/v1/repository.schema.json"}},
+    "checkouts": {"type": "array", "items": {"$ref": "../../domain/v1/checkout.schema.json"}}
+  }
+}

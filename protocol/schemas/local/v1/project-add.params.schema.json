@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:project-add-params:v1",
+  "title": "Crewfold local API project add parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "name", "repository_path", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "repository_path": {"type": "string", "minLength": 1},
+    "write_mode": {"enum": ["exclusive", "claimed", "shared", "read_only"]},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

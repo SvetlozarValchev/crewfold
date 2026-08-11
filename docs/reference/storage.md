@@ -1,6 +1,6 @@
-# M2 storage contract
+# Storage contract through M3
 
-Status: implemented in M2.
+Status: implemented through M3.
 
 ## Location and ownership
 
@@ -19,7 +19,7 @@ vendored so `GOPROXY=off` builds and tests do not depend on a warm module cache.
 
 ## Connection policy
 
-M2 deliberately uses one open/idle database connection. This serializes a very
+Crewfold currently uses one open/idle database connection. This serializes a very
 small mutation volume, makes per-connection SQLite settings unambiguous, and keeps
 crash behavior easy to verify. Later load tests may justify a bounded pool without
 changing command or event semantics.
@@ -47,8 +47,8 @@ tracks the current binary schema.
 
 The daemon refuses a database whose version is newer than the binary. Every
 supported starting version has a checked-in fixture under
-`internal/store/testdata/`; M2 introduces the version-zero fixture and migration
-to schema version 1.
+`internal/store/testdata/`; M2 introduced the version-zero fixture and migration
+to schema version 1. M3 adds a version-one fixture and migration to version 2.
 
 ## Schema version 1
 
@@ -65,6 +65,26 @@ successful domain result. Keys are globally unique within this local database in
 M2. Retention/compaction is deferred until command volume makes it necessary.
 
 `schema_migrations` records the ordered migrations applied to the database.
+
+## Schema version 2
+
+`projects` scopes a named coordinated body of work to a workspace.
+
+`repositories` stores an observed Git-history identity: object format, sorted root
+commits, and their derived fingerprint. It deliberately stores no filesystem path
+as repository identity.
+
+`project_repositories` permits one project to span multiple histories and avoids
+duplicating a workspace repository identity.
+
+`checkouts` stores concrete normalized paths, write modes, availability,
+standalone/linked-worktree kind, branch, HEAD, dirty state, Git metadata paths,
+observation diagnostics, and durable revisions. The path is unique on the local
+node. A missing path updates availability; it does not delete the row.
+
+Project and checkout registration update all projections, append their events,
+and record idempotency responses in one transaction. Git probing happens before
+that transaction and uses only bounded read commands.
 
 ## Atomic command path
 
@@ -88,7 +108,7 @@ all three tables unchanged, and permits the same idempotency key to succeed.
 Normal restart reopens and validates the same database before serving requests.
 SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
-M2 does not yet expose backup/restore commands. A later milestone must use
+M3 does not yet expose backup/restore commands. A later milestone must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 1 contains no project, agent, task, message,
-knowledge, runtime, or provider state.
+without its WAL. Schema version 2 contains no agent, task, message, knowledge,
+runtime, or provider state.

@@ -39,3 +39,6 @@ printf 'M1 black-box acceptance\n'
 
 printf 'M2 black-box acceptance\n'
 "$repo_root/test/scenarios/m02-persistent-workspace/run.sh"
+
+printf 'M3 black-box acceptance\n'
+"$repo_root/test/scenarios/m03-projects-checkouts/run.sh"

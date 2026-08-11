@@ -13,11 +13,11 @@ than forcing the core to understand every terminal UI.
 
 ## Status
 
-Crewfold is in its implementation-bootstrap phase. M2 provides a foreground local
-daemon with an owner-only Unix socket and a SQLite database containing durable
-workspaces, an immutable event journal, migration metadata, and idempotency
-records. It does not yet contain projects, agents, runtimes, or a usable
-orchestrator.
+Crewfold is in its implementation-bootstrap phase. M3 provides a foreground local
+daemon, an owner-only Unix socket, and durable workspace/project/repository/
+checkout records in SQLite. It can register and refresh existing Git locations
+without mutating them, including adjacent standalone clones and linked worktrees.
+It does not yet contain agents, tasks, runtimes, or a usable orchestrator.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.

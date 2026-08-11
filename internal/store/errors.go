@@ -9,6 +9,12 @@ const (
 	CodeInvalidWorkspace    = "invalid_workspace"
 	CodeWorkspaceExists     = "workspace_already_exists"
 	CodeWorkspaceNotFound   = "workspace_not_found"
+	CodeInvalidProject      = "invalid_project"
+	CodeProjectExists       = "project_already_exists"
+	CodeProjectNotFound     = "project_not_found"
+	CodeInvalidCheckout     = "invalid_checkout"
+	CodeCheckoutExists      = "checkout_already_registered"
+	CodeRepositoryChanged   = "repository_identity_changed"
 	CodeIdempotencyConflict = "idempotency_conflict"
 	CodeStorageFailed       = "storage_failed"
 )

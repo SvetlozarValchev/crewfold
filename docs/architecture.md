@@ -178,6 +178,13 @@ Watchers observe:
 They emit observations with provenance. Reconciliation logic decides what those
 observations mean for durable state.
 
+M3's synchronous Git observer is the first watcher seam. It accepts a concrete
+directory and never assumes `git worktree` ownership: adjacent clones and linked
+worktrees are both checkouts. It executes only bounded `rev-parse`, `rev-list`, and
+`status` commands with optional locks disabled. Repository identity comes from
+history observations; checkout identity comes from the normalized local path and
+a durable opaque ID.
+
 ### Runtime drivers
 
 Runtime drivers create, attach, prompt, observe, and stop execution environments.

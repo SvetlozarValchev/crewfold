@@ -6,8 +6,9 @@ Build the local core as a single Go binary backed by SQLite. Expose a versioned
 local API and MCP server, integrate Herdr as the primary runtime, and defer the web
 console until the control plane works end to end.
 
-M0 through M2 implement the Go binary, local Unix transport, and SQLite storage.
-Later rows remain the proposed baseline until their milestone begins.
+M0 through M3 implement the Go binary, local Unix transport, SQLite storage, and
+read-only installed-Git observation. Later rows remain the proposed baseline until
+their milestone begins.
 
 ## Core
 

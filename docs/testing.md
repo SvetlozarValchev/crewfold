@@ -112,8 +112,10 @@ generic terminal process or MCP client and never calls a model provider.
 
 ### Fixture Git repository
 
-Generated in a temporary directory with known commits, branches, worktrees,
-conflicting paths, dirty state, and test commands. It contains no remote by default.
+Generated in a temporary directory with known commits, branches, adjacent
+standalone clones, a linked worktree, dirty state, and test commands. It contains
+no network remote. M3 hashes fixture contents before and after inspection to prove
+that observation does not mutate source or Git metadata.
 
 ### Fake/recorded Herdr endpoint
 

@@ -206,7 +206,7 @@ func TestInvalidOutputAndCommandArgumentsAreUsageErrors(t *testing.T) {
 func TestHelpTopics(t *testing.T) {
 	t.Parallel()
 
-	for _, topic := range []string{"version", "doctor", "daemon", "status", "workspace", "events", "help"} {
+	for _, topic := range []string{"version", "doctor", "daemon", "status", "workspace", "project", "checkout", "events", "help"} {
 		t.Run(topic, func(t *testing.T) {
 			t.Parallel()
 
@@ -219,6 +219,119 @@ func TestHelpTopics(t *testing.T) {
 			}
 			if stderr.Len() != 0 {
 				t.Fatalf("stderr = %q, want empty", stderr.String())
+			}
+		})
+	}
+}
+
+func TestM3ProjectAndCheckoutCommandsUseExplicitScopeAndStructuredResults(t *testing.T) {
+	t.Parallel()
+
+	project := domain.Project{ID: "prj_1234", WorkspaceID: "ws_1234", Name: "world-engine", Revision: 1}
+	repository := domain.Repository{ID: "repo_1234", WorkspaceID: "ws_1234", Fingerprint: "git_1234", Revision: 1}
+	checkout := domain.Checkout{ID: "co_1234", ProjectID: project.ID, RepositoryID: repository.ID, Path: "/work/world-engine", WriteMode: "exclusive", CheckoutKind: "standalone", Availability: "available", Revision: 1}
+	for name, test := range map[string]struct {
+		args       []string
+		wantSchema string
+		configure  func(*fakeDaemonClient)
+		assert     func(*testing.T, *fakeDaemonClient)
+	}{
+		"project add": {
+			args:       []string{"project", "add", "world-engine", "--workspace", "personal", "--repo", "/work/world-engine", "--mode", "claimed", "--socket", "/tmp/m3.sock", "--idempotency-key", "project-key", "--output=json"},
+			wantSchema: localapi.ProjectAddSchema,
+			configure: func(client *fakeDaemonClient) {
+				client.projectAdd = localapi.ProjectAddResult{Schema: localapi.ProjectAddSchema, Type: "project_registered", Project: project, Repository: repository, Checkout: checkout}
+			},
+			assert: func(t *testing.T, client *fakeDaemonClient) {
+				want := []string{"personal", "world-engine", "/work/world-engine", "claimed", "project-key"}
+				if strings.Join(client.projectArgs, "|") != strings.Join(want, "|") {
+					t.Fatalf("ProjectAdd args = %q, want %q", client.projectArgs, want)
+				}
+			},
+		},
+		"project inspect": {
+			args:       []string{"project", "inspect", "world-engine", "--workspace", "personal", "--socket", "/tmp/m3.sock", "--output=json"},
+			wantSchema: localapi.ProjectInspectSchema,
+			configure: func(client *fakeDaemonClient) {
+				client.projectInspect = localapi.ProjectInspectResult{Schema: localapi.ProjectInspectSchema, Type: "project_inspection", Project: project, Repositories: []domain.Repository{repository}, Checkouts: []domain.Checkout{checkout}}
+			},
+			assert: func(t *testing.T, client *fakeDaemonClient) {
+				if strings.Join(client.projectArgs, "|") != "personal|world-engine" {
+					t.Fatalf("ProjectInspect args = %q", client.projectArgs)
+				}
+			},
+		},
+		"checkout add adjacent clone": {
+			args:       []string{"checkout", "add", "world-engine", "/work/world-engine-2", "--workspace", "personal", "--mode", "exclusive", "--socket", "/tmp/m3.sock", "--idempotency-key", "checkout-key", "--output=json"},
+			wantSchema: localapi.CheckoutAddSchema,
+			configure: func(client *fakeDaemonClient) {
+				client.checkoutAdd = localapi.CheckoutAddResult{Schema: localapi.CheckoutAddSchema, Type: "checkout_registered", Repository: repository, Checkout: checkout}
+			},
+			assert: func(t *testing.T, client *fakeDaemonClient) {
+				want := []string{"personal", "world-engine", "/work/world-engine-2", "exclusive", "checkout-key"}
+				if strings.Join(client.checkoutArgs, "|") != strings.Join(want, "|") {
+					t.Fatalf("CheckoutAdd args = %q, want %q", client.checkoutArgs, want)
+				}
+			},
+		},
+		"checkout list": {
+			args:       []string{"checkout", "list", "world-engine", "--workspace", "personal", "--socket", "/tmp/m3.sock", "--output=json"},
+			wantSchema: localapi.CheckoutListSchema,
+			configure: func(client *fakeDaemonClient) {
+				client.checkoutList = localapi.CheckoutListResult{Schema: localapi.CheckoutListSchema, Type: "checkout_list", Project: project, Checkouts: []domain.Checkout{checkout}}
+			},
+			assert: func(t *testing.T, client *fakeDaemonClient) {
+				if strings.Join(client.checkoutArgs, "|") != "personal|world-engine" {
+					t.Fatalf("CheckoutList args = %q", client.checkoutArgs)
+				}
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &fakeDaemonClient{}
+			test.configure(client)
+			app, stdout, stderr := newTestApp()
+			app.newClient = func(socketPath string) daemonClient {
+				if socketPath != "/tmp/m3.sock" {
+					t.Fatalf("socketPath = %q, want /tmp/m3.sock", socketPath)
+				}
+				return client
+			}
+			if exitCode := app.Run(test.args); exitCode != ExitOK {
+				t.Fatalf("Run() exit code = %d, stderr = %q", exitCode, stderr.String())
+			}
+			var envelope struct {
+				Schema string `json:"schema"`
+			}
+			if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+				t.Fatalf("json.Unmarshal(stdout) error = %v; stdout = %q", err, stdout.String())
+			}
+			if envelope.Schema != test.wantSchema {
+				t.Fatalf("schema = %q, want %q", envelope.Schema, test.wantSchema)
+			}
+			test.assert(t, client)
+		})
+	}
+}
+
+func TestM3CommandsRejectMissingScopeAndPaths(t *testing.T) {
+	t.Parallel()
+
+	for name, args := range map[string][]string{
+		"project subcommand":      {"project"},
+		"project repository":      {"project", "add", "demo", "--workspace", "personal", "--socket", "/tmp/socket"},
+		"project workspace":       {"project", "inspect", "demo", "--socket", "/tmp/socket"},
+		"checkout subcommand":     {"checkout"},
+		"checkout path":           {"checkout", "add", "demo", "--workspace", "personal", "--socket", "/tmp/socket"},
+		"checkout list workspace": {"checkout", "list", "demo", "--socket", "/tmp/socket"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			app, _, stderr := newTestApp()
+			if exitCode := app.Run(args); exitCode != ExitUsage {
+				t.Fatalf("Run() exit code = %d, want %d", exitCode, ExitUsage)
+			}
+			if stderr.Len() == 0 {
+				t.Fatal("stderr is empty, want usage diagnosis")
 			}
 		})
 	}
@@ -527,11 +640,21 @@ type fakeDaemonClient struct {
 	workspaceInitErr  error
 	workspaceShow     localapi.WorkspaceShowResult
 	workspaceShowErr  error
+	projectAdd        localapi.ProjectAddResult
+	projectAddErr     error
+	projectInspect    localapi.ProjectInspectResult
+	projectInspectErr error
+	checkoutAdd       localapi.CheckoutAddResult
+	checkoutAddErr    error
+	checkoutList      localapi.CheckoutListResult
+	checkoutListErr   error
 	eventsList        localapi.EventsListResult
 	eventsListErr     error
 	initName          string
 	initKey           string
 	showIdentifier    string
+	projectArgs       []string
+	checkoutArgs      []string
 	eventsAfter       int64
 	eventsLimit       int
 }
@@ -557,6 +680,26 @@ func (client *fakeDaemonClient) WorkspaceInit(_ context.Context, name, key strin
 func (client *fakeDaemonClient) WorkspaceShow(_ context.Context, identifier string) (localapi.WorkspaceShowResult, error) {
 	client.showIdentifier = identifier
 	return client.workspaceShow, client.workspaceShowErr
+}
+
+func (client *fakeDaemonClient) ProjectAdd(_ context.Context, workspace, name, path, mode, key string) (localapi.ProjectAddResult, error) {
+	client.projectArgs = []string{workspace, name, path, mode, key}
+	return client.projectAdd, client.projectAddErr
+}
+
+func (client *fakeDaemonClient) ProjectInspect(_ context.Context, workspace, project string) (localapi.ProjectInspectResult, error) {
+	client.projectArgs = []string{workspace, project}
+	return client.projectInspect, client.projectInspectErr
+}
+
+func (client *fakeDaemonClient) CheckoutAdd(_ context.Context, workspace, project, path, mode, key string) (localapi.CheckoutAddResult, error) {
+	client.checkoutArgs = []string{workspace, project, path, mode, key}
+	return client.checkoutAdd, client.checkoutAddErr
+}
+
+func (client *fakeDaemonClient) CheckoutList(_ context.Context, workspace, project string) (localapi.CheckoutListResult, error) {
+	client.checkoutArgs = []string{workspace, project}
+	return client.checkoutList, client.checkoutListErr
 }
 
 func (client *fakeDaemonClient) EventsList(_ context.Context, after int64, limit int) (localapi.EventsListResult, error) {

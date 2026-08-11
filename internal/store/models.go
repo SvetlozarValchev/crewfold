@@ -3,7 +3,7 @@ package store
 import "crewfold/internal/domain"
 
 const (
-	LatestSchemaVersion = 1
+	LatestSchemaVersion = 2
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -32,6 +32,44 @@ type InitWorkspaceCommand struct {
 	Name           string
 	IdempotencyKey string
 	CorrelationID  string
+}
+
+type RegisterProjectCommand struct {
+	WorkspaceIdentifier string
+	Name                string
+	WriteMode           string
+	IdempotencyKey      string
+	CorrelationID       string
+	Observation         domain.CheckoutObservation
+}
+
+type AddCheckoutCommand struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	WriteMode           string
+	IdempotencyKey      string
+	CorrelationID       string
+	Observation         domain.CheckoutObservation
+}
+
+type ProjectRegistrationResult struct {
+	Project       domain.Project    `json:"project"`
+	Repository    domain.Repository `json:"repository"`
+	Checkout      domain.Checkout   `json:"checkout"`
+	EventSequence int64             `json:"event_sequence"`
+}
+
+type CheckoutRegistrationResult struct {
+	Repository        domain.Repository `json:"repository"`
+	Checkout          domain.Checkout   `json:"checkout"`
+	RepositoryCreated bool              `json:"repository_created"`
+	EventSequence     int64             `json:"event_sequence"`
+}
+
+type ProjectInspection struct {
+	Project      domain.Project      `json:"project"`
+	Repositories []domain.Repository `json:"repositories"`
+	Checkouts    []domain.Checkout   `json:"checkouts"`
 }
 
 type Options struct {

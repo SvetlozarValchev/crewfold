@@ -94,6 +94,42 @@ func TestMigrationUpgradesCheckedInVersionZeroFixture(t *testing.T) {
 	}
 }
 
+func TestMigrationUpgradesCheckedInVersionOneFixture(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	fixture, err := os.ReadFile("testdata/schema-v001.sql")
+	if err != nil {
+		t.Fatalf("os.ReadFile(fixture) error = %v", err)
+	}
+	database, err := sql.Open("sqlite3", filepath.Join(dataDir, databaseFilename))
+	if err != nil {
+		t.Fatalf("sql.Open(fixture) error = %v", err)
+	}
+	if _, err := database.Exec(string(fixture)); err != nil {
+		_ = database.Close()
+		t.Fatalf("apply fixture: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("close fixture database: %v", err)
+	}
+
+	storage := openTestStore(t, dataDir, Options{})
+	health, err := storage.Health(context.Background())
+	if err != nil {
+		t.Fatalf("Health() after migration error = %v", err)
+	}
+	if health.SchemaVersion != LatestSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", health.SchemaVersion, LatestSchemaVersion)
+	}
+	for _, table := range []string{"projects", "repositories", "project_repositories", "checkouts"} {
+		var count int
+		if err := storage.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
+			t.Fatalf("query migrated table %s: %v", table, err)
+		}
+	}
+}
+
 func TestWorkspaceInitIsAtomicIdempotentAndPersistent(t *testing.T) {
 	t.Parallel()
 

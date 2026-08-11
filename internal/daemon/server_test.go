@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"crewfold/internal/buildinfo"
+	"crewfold/internal/domain"
+	"crewfold/internal/gitstate"
 	"crewfold/internal/localapi"
 	"crewfold/internal/store"
 )
@@ -363,6 +365,156 @@ func TestWorkspaceAndEventsPersistAcrossDaemonRestart(t *testing.T) {
 	}
 }
 
+func TestProjectsObserveAdjacentClonesLinkedWorktreesDirtyAndMissingPathsAcrossRestart(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("Git is unavailable: %v", err)
+	}
+
+	fixtureRoot := t.TempDir()
+	createGitFixture(t, fixtureRoot)
+	config := testConfig(t)
+	first := startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+	if _, err := client.WorkspaceInit(context.Background(), "personal", "init-personal"); err != nil {
+		t.Fatalf("WorkspaceInit() error = %v", err)
+	}
+	project, err := client.ProjectAdd(context.Background(), "personal", "world-engine", filepath.Join(fixtureRoot, "world-engine"), domain.WriteModeExclusive, "project-world-engine")
+	if err != nil {
+		t.Fatalf("ProjectAdd() error = %v", err)
+	}
+	adjacent, err := client.CheckoutAdd(context.Background(), "personal", "world-engine", filepath.Join(fixtureRoot, "world-engine-2"), domain.WriteModeClaimed, "checkout-adjacent")
+	if err != nil {
+		t.Fatalf("CheckoutAdd(adjacent clone) error = %v", err)
+	}
+	linked, err := client.CheckoutAdd(context.Background(), "personal", "world-engine", filepath.Join(fixtureRoot, "world-engine-linked"), domain.WriteModeExclusive, "checkout-linked")
+	if err != nil {
+		t.Fatalf("CheckoutAdd(linked worktree) error = %v", err)
+	}
+	missingLater, err := client.CheckoutAdd(context.Background(), "personal", "world-engine", filepath.Join(fixtureRoot, "world-engine-5"), domain.WriteModeExclusive, "checkout-missing-later")
+	if err != nil {
+		t.Fatalf("CheckoutAdd(missing later) error = %v", err)
+	}
+	if adjacent.Repository.ID != project.Repository.ID || linked.Repository.ID != project.Repository.ID || missingLater.Repository.ID != project.Repository.ID {
+		t.Fatalf("repository IDs differ: project=%s adjacent=%s linked=%s third=%s", project.Repository.ID, adjacent.Repository.ID, linked.Repository.ID, missingLater.Repository.ID)
+	}
+	if adjacent.Checkout.ID == project.Checkout.ID || adjacent.Checkout.CheckoutKind != domain.CheckoutStandalone {
+		t.Fatalf("adjacent checkout = %#v, want distinct standalone checkout", adjacent.Checkout)
+	}
+	if linked.Checkout.CheckoutKind != domain.CheckoutLinkedWorktree {
+		t.Fatalf("linked checkout kind = %q, want linked_worktree", linked.Checkout.CheckoutKind)
+	}
+
+	dirtyFile := filepath.Join(fixtureRoot, "world-engine-2", "untracked.txt")
+	if err := os.WriteFile(dirtyFile, []byte("dirty\n"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(dirty fixture file) error = %v", err)
+	}
+	movedPath := filepath.Join(fixtureRoot, "world-engine-5-moved")
+	if err := os.Rename(filepath.Join(fixtureRoot, "world-engine-5"), movedPath); err != nil {
+		t.Fatalf("os.Rename(fixture checkout) error = %v", err)
+	}
+	inspection, err := client.ProjectInspect(context.Background(), "personal", project.Project.ID)
+	if err != nil {
+		t.Fatalf("ProjectInspect() error = %v", err)
+	}
+	if len(inspection.Repositories) != 1 || len(inspection.Checkouts) != 4 {
+		t.Fatalf("inspection has %d repositories and %d checkouts, want 1 and 4", len(inspection.Repositories), len(inspection.Checkouts))
+	}
+	byID := make(map[string]domain.Checkout)
+	for _, checkout := range inspection.Checkouts {
+		byID[checkout.ID] = checkout
+	}
+	if !byID[adjacent.Checkout.ID].Dirty {
+		t.Fatalf("adjacent checkout = %#v, want dirty", byID[adjacent.Checkout.ID])
+	}
+	unavailable := byID[missingLater.Checkout.ID]
+	if unavailable.Availability != domain.CheckoutUnavailable || unavailable.DiagnosticCode != gitstate.CodeCheckoutUnavailable || unavailable.ID != missingLater.Checkout.ID {
+		t.Fatalf("moved checkout = %#v, want same durable ID marked unavailable", unavailable)
+	}
+
+	listed, err := client.CheckoutList(context.Background(), "personal", "world-engine")
+	if err != nil || len(listed.Checkouts) != 4 {
+		t.Fatalf("CheckoutList() = %#v, %v, want four stored checkouts", listed, err)
+	}
+	if _, err := client.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(first) error = %v", err)
+	}
+	if err := first.wait(); err != nil {
+		t.Fatalf("Run(first) error = %v", err)
+	}
+
+	second := startTestServer(t, config)
+	restored, err := localapi.NewClient(config.SocketPath).CheckoutList(context.Background(), "personal", project.Project.ID)
+	if err != nil || len(restored.Checkouts) != 4 || restored.Checkouts[0].ID == "" {
+		t.Fatalf("CheckoutList(after restart) = %#v, %v", restored, err)
+	}
+	if _, err := localapi.NewClient(config.SocketPath).Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(second) error = %v", err)
+	}
+	if err := second.wait(); err != nil {
+		t.Fatalf("Run(second) error = %v", err)
+	}
+}
+
+func TestProjectRegistrationGitFailuresCreateNoPartialRecords(t *testing.T) {
+	t.Parallel()
+
+	for name, inspectErr := range map[string]error{
+		"Git unavailable":  &gitstate.Error{Code: gitstate.CodeGitUnavailable, Operation: "execute Git"},
+		"malformed output": &gitstate.Error{Code: gitstate.CodeGitOutputInvalid, Operation: "read repository roots"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			config := testConfig(t)
+			config.GitInspector = failingInspector{err: inspectErr}
+			running := startTestServer(t, config)
+			client := localapi.NewClient(config.SocketPath)
+			if _, err := client.WorkspaceInit(context.Background(), "personal", "init-personal"); err != nil {
+				t.Fatalf("WorkspaceInit() error = %v", err)
+			}
+			_, err := client.ProjectAdd(context.Background(), "personal", "world-engine", "/does/not/matter", domain.WriteModeExclusive, "project-world-engine")
+			if localAPIErrorCode(err) != gitstate.ErrorCode(inspectErr) {
+				t.Fatalf("ProjectAdd() error = %v, code = %q", err, localAPIErrorCode(err))
+			}
+			if _, err := client.CheckoutList(context.Background(), "personal", "world-engine"); localAPIErrorCode(err) != store.CodeProjectNotFound {
+				t.Fatalf("CheckoutList() error = %v, want project_not_found", err)
+			}
+			events, err := client.EventsList(context.Background(), 0, 100)
+			if err != nil || len(events.Events) != 1 {
+				t.Fatalf("EventsList() = %#v, %v, want only workspace event", events, err)
+			}
+			if _, err := client.Stop(context.Background()); err != nil {
+				t.Fatalf("Stop() error = %v", err)
+			}
+			if err := running.wait(); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestNonRepositoryRegistrationCreatesNoPartialRecords(t *testing.T) {
+	t.Parallel()
+
+	running := startTestServer(t, testConfig(t))
+	client := localapi.NewClient(running.config.SocketPath)
+	if _, err := client.WorkspaceInit(context.Background(), "personal", "init-personal"); err != nil {
+		t.Fatalf("WorkspaceInit() error = %v", err)
+	}
+	_, err := client.ProjectAdd(context.Background(), "personal", "not-a-repo", t.TempDir(), domain.WriteModeExclusive, "project-not-repo")
+	if localAPIErrorCode(err) != gitstate.CodeNotGitRepository {
+		t.Fatalf("ProjectAdd(non-repository) error = %v, code = %q", err, localAPIErrorCode(err))
+	}
+	if _, err := client.CheckoutList(context.Background(), "personal", "not-a-repo"); localAPIErrorCode(err) != store.CodeProjectNotFound {
+		t.Fatalf("CheckoutList() error = %v, want project_not_found", err)
+	}
+	if _, err := client.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := running.wait(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 func TestEventPaginationUsesResumableExclusiveCursor(t *testing.T) {
 	t.Parallel()
 
@@ -555,6 +707,26 @@ func localAPIErrorCode(err error) string {
 		return apiError.Code
 	}
 	return ""
+}
+
+type failingInspector struct {
+	err error
+}
+
+func (inspector failingInspector) Inspect(context.Context, string) (domain.CheckoutObservation, error) {
+	return domain.CheckoutObservation{}, inspector.err
+}
+
+func createGitFixture(t *testing.T, root string) {
+	t.Helper()
+	script, err := filepath.Abs(filepath.Join("..", "..", "test", "fixtures", "git", "create.sh"))
+	if err != nil {
+		t.Fatalf("filepath.Abs(fixture script) error = %v", err)
+	}
+	command := exec.Command(script, root)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("create Git fixture: %v\n%s", err, output)
+	}
 }
 
 type runningServer struct {

@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"crewfold/internal/buildinfo"
+	"crewfold/internal/domain"
+	"crewfold/internal/gitstate"
 	"crewfold/internal/localapi"
 	"crewfold/internal/store"
 )
@@ -34,6 +36,7 @@ type Config struct {
 	Version      buildinfo.Info
 	Logger       *slog.Logger
 	StoreOptions store.Options
+	GitInspector gitstate.Inspector
 }
 
 type server struct {
@@ -49,6 +52,7 @@ type server struct {
 	connections    map[net.Conn]struct{}
 	handlers       sync.WaitGroup
 	store          *store.Store
+	gitInspector   gitstate.Inspector
 }
 
 // Run owns the daemon lifecycle until the context is cancelled or system.stop is
@@ -95,13 +99,14 @@ func Run(ctx context.Context, config Config) error {
 	}
 
 	instance := &server{
-		config:      resolved,
-		listener:    listener,
-		socketInfo:  socketInfo,
-		startedAt:   time.Now().UTC(),
-		stopCh:      make(chan struct{}),
-		connections: make(map[net.Conn]struct{}),
-		store:       storage,
+		config:       resolved,
+		listener:     listener,
+		socketInfo:   socketInfo,
+		startedAt:    time.Now().UTC(),
+		stopCh:       make(chan struct{}),
+		connections:  make(map[net.Conn]struct{}),
+		store:        storage,
+		gitInspector: resolved.GitInspector,
 	}
 	defer instance.cleanupSocket()
 
@@ -147,6 +152,9 @@ func resolveConfig(config Config) (Config, error) {
 	}
 	if config.Logger == nil {
 		config.Logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
+	if config.GitInspector == nil {
+		config.GitInspector = gitstate.NewInspector()
 	}
 
 	config.DataDir = dataDir
@@ -348,6 +356,14 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleWorkspaceInit(request), false
 	case localapi.MethodWorkspaceShow:
 		return s.handleWorkspaceShow(request), false
+	case localapi.MethodProjectAdd:
+		return s.handleProjectAdd(request), false
+	case localapi.MethodProjectInspect:
+		return s.handleProjectInspect(request), false
+	case localapi.MethodCheckoutAdd:
+		return s.handleCheckoutAdd(request), false
+	case localapi.MethodCheckoutList:
+		return s.handleCheckoutList(request), false
 	case localapi.MethodEventsList:
 		return s.handleEventsList(request), false
 	default:
@@ -411,6 +427,102 @@ func (s *server) handleWorkspaceShow(request localapi.Request) localapi.Response
 		Schema:    localapi.WorkspaceShowSchema,
 		Type:      "workspace",
 		Workspace: workspace,
+	})
+}
+
+func (s *server) handleProjectAdd(request localapi.Request) localapi.Response {
+	var params localapi.ProjectAddParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "project.add requires workspace, name, repository_path, and idempotency_key")
+	}
+	observation, err := s.gitInspector.Inspect(context.Background(), params.RepositoryPath)
+	if err != nil {
+		return gitErrorResponse(request, err)
+	}
+	result, err := s.store.RegisterProject(context.Background(), store.RegisterProjectCommand{
+		WorkspaceIdentifier: params.Workspace,
+		Name:                params.Name,
+		WriteMode:           params.WriteMode,
+		IdempotencyKey:      params.IdempotencyKey,
+		CorrelationID:       request.ID,
+		Observation:         observation,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ProjectAddResult{
+		Schema: localapi.ProjectAddSchema, Type: "project_registered", Project: result.Project,
+		Repository: result.Repository, Checkout: result.Checkout, EventSequence: result.EventSequence,
+	})
+}
+
+func (s *server) handleCheckoutAdd(request localapi.Request) localapi.Response {
+	var params localapi.CheckoutAddParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "checkout.add requires workspace, project, repository_path, and idempotency_key")
+	}
+	observation, err := s.gitInspector.Inspect(context.Background(), params.RepositoryPath)
+	if err != nil {
+		return gitErrorResponse(request, err)
+	}
+	result, err := s.store.AddCheckout(context.Background(), store.AddCheckoutCommand{
+		WorkspaceIdentifier: params.Workspace,
+		ProjectIdentifier:   params.Project,
+		WriteMode:           params.WriteMode,
+		IdempotencyKey:      params.IdempotencyKey,
+		CorrelationID:       request.ID,
+		Observation:         observation,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.CheckoutAddResult{
+		Schema: localapi.CheckoutAddSchema, Type: "checkout_registered", Repository: result.Repository,
+		Checkout: result.Checkout, RepositoryCreated: result.RepositoryCreated, EventSequence: result.EventSequence,
+	})
+}
+
+func (s *server) handleCheckoutList(request localapi.Request) localapi.Response {
+	var params localapi.CheckoutListParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "checkout.list requires workspace and project")
+	}
+	inspection, err := s.store.InspectProject(context.Background(), params.Workspace, params.Project)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.CheckoutListResult{
+		Schema: localapi.CheckoutListSchema, Type: "checkout_list", Project: inspection.Project, Checkouts: inspection.Checkouts,
+	})
+}
+
+func (s *server) handleProjectInspect(request localapi.Request) localapi.Response {
+	var params localapi.ProjectInspectParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "project.inspect requires workspace and project")
+	}
+	current, err := s.store.InspectProject(context.Background(), params.Workspace, params.Project)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	observations := make(map[string]domain.CheckoutObservation, len(current.Checkouts))
+	for _, checkout := range current.Checkouts {
+		observation, inspectErr := s.gitInspector.Inspect(context.Background(), checkout.Path)
+		if inspectErr != nil {
+			observation = domain.CheckoutObservation{
+				Path: checkout.Path, Availability: domain.CheckoutUnavailable, CheckoutKind: domain.CheckoutKindUnknown,
+				DiagnosticCode: gitstate.ErrorCode(inspectErr), Diagnostic: inspectErr.Error(),
+			}
+		}
+		observations[checkout.ID] = observation
+	}
+	inspection, err := s.store.ApplyCheckoutObservations(context.Background(), params.Workspace, params.Project, request.ID, observations)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ProjectInspectResult{
+		Schema: localapi.ProjectInspectSchema, Type: "project_inspection", Project: inspection.Project,
+		Repositories: inspection.Repositories, Checkouts: inspection.Checkouts,
 	})
 }
 
@@ -478,6 +590,13 @@ func storeErrorResponse(request localapi.Request, err error) localapi.Response {
 		Code:      code,
 		Message:   err.Error(),
 		Retryable: code == store.CodeStorageFailed,
+	})
+}
+
+func gitErrorResponse(request localapi.Request, err error) localapi.Response {
+	code := gitstate.ErrorCode(err)
+	return localapi.ErrorResponse(request.ID, request.Protocol, &localapi.APIError{
+		Code: code, Message: err.Error(), Retryable: code == gitstate.CodeGitUnavailable || code == gitstate.CodeGitCommandFailed,
 	})
 }
 

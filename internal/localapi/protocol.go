@@ -20,6 +20,10 @@ const (
 	MethodDatabaseStatus = "database.status"
 	MethodWorkspaceInit  = "workspace.init"
 	MethodWorkspaceShow  = "workspace.show"
+	MethodProjectAdd     = "project.add"
+	MethodProjectInspect = "project.inspect"
+	MethodCheckoutAdd    = "checkout.add"
+	MethodCheckoutList   = "checkout.list"
 	MethodEventsList     = "events.list"
 
 	StatusSchema         = "urn:crewfold:schema:local-api:status-result:v1"
@@ -27,6 +31,10 @@ const (
 	DatabaseStatusSchema = "urn:crewfold:schema:local-api:database-status-result:v1"
 	WorkspaceInitSchema  = "urn:crewfold:schema:local-api:workspace-init-result:v1"
 	WorkspaceShowSchema  = "urn:crewfold:schema:local-api:workspace-show-result:v1"
+	ProjectAddSchema     = "urn:crewfold:schema:local-api:project-add-result:v1"
+	ProjectInspectSchema = "urn:crewfold:schema:local-api:project-inspect-result:v1"
+	CheckoutAddSchema    = "urn:crewfold:schema:local-api:checkout-add-result:v1"
+	CheckoutListSchema   = "urn:crewfold:schema:local-api:checkout-list-result:v1"
 	EventsListSchema     = "urn:crewfold:schema:local-api:events-list-result:v1"
 )
 
@@ -123,6 +131,65 @@ type WorkspaceShowResult struct {
 	Schema    string           `json:"schema"`
 	Type      string           `json:"type"`
 	Workspace domain.Workspace `json:"workspace"`
+}
+
+type ProjectAddParams struct {
+	Workspace      string `json:"workspace"`
+	Name           string `json:"name"`
+	RepositoryPath string `json:"repository_path"`
+	WriteMode      string `json:"write_mode,omitempty"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type ProjectAddResult struct {
+	Schema        string            `json:"schema"`
+	Type          string            `json:"type"`
+	Project       domain.Project    `json:"project"`
+	Repository    domain.Repository `json:"repository"`
+	Checkout      domain.Checkout   `json:"checkout"`
+	EventSequence int64             `json:"event_sequence"`
+}
+
+type ProjectInspectParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project"`
+}
+
+type ProjectInspectResult struct {
+	Schema       string              `json:"schema"`
+	Type         string              `json:"type"`
+	Project      domain.Project      `json:"project"`
+	Repositories []domain.Repository `json:"repositories"`
+	Checkouts    []domain.Checkout   `json:"checkouts"`
+}
+
+type CheckoutAddParams struct {
+	Workspace      string `json:"workspace"`
+	Project        string `json:"project"`
+	RepositoryPath string `json:"repository_path"`
+	WriteMode      string `json:"write_mode,omitempty"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type CheckoutAddResult struct {
+	Schema            string            `json:"schema"`
+	Type              string            `json:"type"`
+	Repository        domain.Repository `json:"repository"`
+	Checkout          domain.Checkout   `json:"checkout"`
+	RepositoryCreated bool              `json:"repository_created"`
+	EventSequence     int64             `json:"event_sequence"`
+}
+
+type CheckoutListParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project"`
+}
+
+type CheckoutListResult struct {
+	Schema    string            `json:"schema"`
+	Type      string            `json:"type"`
+	Project   domain.Project    `json:"project"`
+	Checkouts []domain.Checkout `json:"checkouts"`
 }
 
 type EventsListParams struct {
