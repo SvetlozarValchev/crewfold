@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:events-list-result:v1",
+  "title": "Crewfold local API events list result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "after", "next_after", "has_more", "events"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:events-list-result:v1"},
+    "type": {"const": "event_list"},
+    "after": {"type": "integer", "minimum": 0},
+    "next_after": {"type": "integer", "minimum": 0},
+    "has_more": {"type": "boolean"},
+    "events": {
+      "type": "array",
+      "items": {"$ref": "../../domain/v1/event.schema.json"}
+    }
+  }
+}

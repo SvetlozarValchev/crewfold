@@ -6,14 +6,15 @@ Build the local core as a single Go binary backed by SQLite. Expose a versioned
 local API and MCP server, integrate Herdr as the primary runtime, and defer the web
 console until the control plane works end to end.
 
-This is the proposed baseline, not yet bootstrapped code.
+M0 through M2 implement the Go binary, local Unix transport, and SQLite storage.
+Later rows remain the proposed baseline until their milestone begins.
 
 ## Core
 
 | Area | Choice | Reason |
 | --- | --- | --- |
 | Daemon and CLI | Go, current supported stable release | Single binary, strong process/concurrency support, low idle cost |
-| Local database | SQLite in WAL mode | Transactional, portable, operationally trivial at personal scale |
+| Local database | SQLite in WAL mode through `github.com/ncruces/go-sqlite3` | Transactional, CGO-free, portable, and operationally trivial at personal scale |
 | SQL access | Explicit SQL plus generated typed queries | Keeps schema and hot queries visible |
 | Migrations | Ordered embedded SQL migrations | Reproducible upgrades and simple backups |
 | Local transport | JSON messages over a Unix domain socket | Inspectable, stream-capable, user-local by default |
@@ -26,8 +27,9 @@ This is the proposed baseline, not yet bootstrapped code.
 | Logging | Structured logs with redaction | Debuggable local operation and future telemetry bridge |
 | Metrics/tracing | Optional OpenTelemetry hooks | Standard observability without requiring a collector |
 
-Specific Go libraries remain open until the first implementation spike. The
-architecture depends on interfaces and behavior, not library branding.
+The SQLite driver is vendored for reproducible offline builds. Other specific Go
+libraries remain open until their implementation spike. The architecture depends
+on interfaces and behavior, not library branding.
 
 ## Why Go for the core
 

@@ -2,10 +2,11 @@
 
 ## Implementation status
 
-M1 implements `crewfold help`, `crewfold version`, `crewfold doctor --self`,
-`crewfold daemon run`, `crewfold daemon stop`, and `crewfold status`, including
-text and JSON output. Every other command in this document is an intended future
-contract and is not yet available.
+M2 implements `crewfold help`, `crewfold version`, `crewfold doctor --self`,
+`crewfold doctor --database`, `crewfold daemon run`, `crewfold daemon stop`,
+`crewfold status`, `crewfold workspace init/show`, and `crewfold events list`,
+including text and JSON output. Every other command in this document is an
+intended future contract and is not yet available.
 
 ## Goals
 
@@ -13,7 +14,8 @@ The CLI is both a human interface and a scriptable client. Commands should provi
 readable tables by default when interactive and stable structured output with
 `--json`. Mutations should return the durable entity and event cursor they created.
 
-The examples below define intended behavior, not an implemented interface.
+The daemon/workspace examples below are implemented. Later sections define
+intended behavior, not an implemented interface.
 
 ## Daemon and workspace
 
@@ -21,16 +23,23 @@ The examples below define intended behavior, not an implemented interface.
 crewfold daemon run --data-dir /path/to/state --socket /path/to/crewfold.sock
 crewfold daemon stop --socket /path/to/crewfold.sock
 crewfold status --socket /path/to/crewfold.sock
-# Planned after M1:
+crewfold doctor --database --socket /path/to/crewfold.sock
+crewfold workspace init personal --socket /path/to/crewfold.sock \
+  --idempotency-key initialize-personal
+crewfold workspace show personal --socket /path/to/crewfold.sock
+crewfold events list --socket /path/to/crewfold.sock --after 0
+# Planned after M2:
 crewfold watch
 ```
 
-M1 implements foreground `daemon run`, `daemon stop`, and `status` with explicit
-`--data-dir`/`--socket` paths. Background start, workspace initialization, and
-watching are later milestones.
+M2 retains explicit `--data-dir`/`--socket` paths. Background start, default path
+discovery, and watching are later milestones. If `workspace init` omits an
+idempotency key, the client generates a unique one; callers that may retry should
+supply a stable key.
 
-`doctor` checks the database, socket, Git, runtime drivers, provider adapters, and
-permissions without launching an agent.
+M2 `doctor` checks this binary or the daemon database. Later milestones extend it
+to Git, runtime drivers, provider adapters, and permissions without launching an
+agent.
 
 ## Projects and checkouts
 

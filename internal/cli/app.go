@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 
 	"crewfold/internal/buildinfo"
@@ -45,6 +46,10 @@ type App struct {
 type daemonClient interface {
 	Status(context.Context) (localapi.StatusResult, error)
 	Stop(context.Context) (localapi.StopResult, error)
+	DatabaseStatus(context.Context) (localapi.DatabaseStatusResult, error)
+	WorkspaceInit(context.Context, string, string) (localapi.WorkspaceInitResult, error)
+	WorkspaceShow(context.Context, string) (localapi.WorkspaceShowResult, error)
+	EventsList(context.Context, int64, int) (localapi.EventsListResult, error)
 }
 
 // New constructs a command runner with no process-global output dependencies.
@@ -84,11 +89,15 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 	case "version", "--version":
 		return a.runVersion(mode, args[1:])
 	case "doctor":
-		return a.runDoctor(mode, args[1:])
+		return a.runDoctor(ctx, mode, args[1:])
 	case "daemon":
 		return a.runDaemonCommand(ctx, mode, args[1:])
 	case "status":
 		return a.runStatus(ctx, mode, args[1:])
+	case "workspace":
+		return a.runWorkspace(ctx, mode, args[1:])
+	case "events":
+		return a.runEvents(ctx, mode, args[1:])
 	default:
 		return a.writeFailure(mode, commandFailure{
 			exitCode: ExitUsage,
@@ -97,6 +106,164 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 			hint:     "run 'crewfold help' to list available commands",
 		})
 	}
+}
+
+func (a *App) runWorkspace(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 0 {
+		return a.writeFailure(mode, usageFailure("workspace requires a subcommand", "run 'crewfold help workspace' for usage"))
+	}
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, workspaceHelp)
+		return ExitOK
+	}
+	switch args[0] {
+	case "init":
+		return a.runWorkspaceInit(ctx, mode, args[1:])
+	case "show":
+		return a.runWorkspaceShow(ctx, mode, args[1:])
+	default:
+		return a.writeFailure(mode, commandFailure{
+			exitCode: ExitUsage,
+			code:     "unknown_workspace_command",
+			message:  fmt.Sprintf("unknown workspace command %q", args[0]),
+			hint:     "run 'crewfold help workspace' for usage",
+		})
+	}
+}
+
+func (a *App) runWorkspaceInit(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, workspaceInitHelp)
+		return ExitOK
+	}
+	name, optionArgs, failure := requiredLeadingArgument(args, "workspace name")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "socket", "idempotency-key")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+
+	result, err := a.newClient(socketPath).WorkspaceInit(ctx, name, options["idempotency-key"])
+	if err != nil {
+		return a.writeClientFailure(mode, "initialize workspace", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write workspace initialization output", err))
+		}
+	} else {
+		fmt.Fprintf(a.stdout, "workspace: %s (%s)\n", result.Workspace.Name, result.Workspace.ID)
+		fmt.Fprintf(a.stdout, "revision: %d\n", result.Workspace.Revision)
+		fmt.Fprintf(a.stdout, "event: %s (sequence %d)\n", result.EventID, result.EventSequence)
+	}
+	return ExitOK
+}
+
+func (a *App) runWorkspaceShow(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, workspaceShowHelp)
+		return ExitOK
+	}
+	identifier, optionArgs, failure := requiredLeadingArgument(args, "workspace name or ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+
+	result, err := a.newClient(socketPath).WorkspaceShow(ctx, identifier)
+	if err != nil {
+		return a.writeClientFailure(mode, "show workspace", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write workspace output", err))
+		}
+	} else {
+		fmt.Fprintf(a.stdout, "workspace: %s\n", result.Workspace.Name)
+		fmt.Fprintf(a.stdout, "id: %s\n", result.Workspace.ID)
+		fmt.Fprintf(a.stdout, "revision: %d\n", result.Workspace.Revision)
+		fmt.Fprintf(a.stdout, "created: %s\n", result.Workspace.CreatedAt)
+		fmt.Fprintf(a.stdout, "updated: %s\n", result.Workspace.UpdatedAt)
+	}
+	return ExitOK
+}
+
+func (a *App) runEvents(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 0 {
+		return a.writeFailure(mode, usageFailure("events requires a subcommand", "run 'crewfold help events' for usage"))
+	}
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, eventsHelp)
+		return ExitOK
+	}
+	if args[0] != "list" {
+		return a.writeFailure(mode, commandFailure{
+			exitCode: ExitUsage,
+			code:     "unknown_events_command",
+			message:  fmt.Sprintf("unknown events command %q", args[0]),
+			hint:     "run 'crewfold help events' for usage",
+		})
+	}
+	if len(args) == 2 && isHelp(args[1]) {
+		fmt.Fprint(a.stdout, eventsListHelp)
+		return ExitOK
+	}
+	options, failure := parseOptions(args[1:], "socket", "after", "limit")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	afterValue, failure := requiredOption(options, "after")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	after, parseErr := strconv.ParseInt(afterValue, 10, 64)
+	if parseErr != nil || after < 0 {
+		return a.writeFailure(mode, usageFailure("--after must be a non-negative integer", "use an event sequence such as --after 0"))
+	}
+	limit := 0
+	if value := options["limit"]; value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 1000 {
+			return a.writeFailure(mode, usageFailure("--limit must be an integer from 1 to 1000", "omit --limit to use 100"))
+		}
+		limit = parsed
+	}
+
+	result, err := a.newClient(socketPath).EventsList(ctx, after, limit)
+	if err != nil {
+		return a.writeClientFailure(mode, "list events", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write event list output", err))
+		}
+	} else if len(result.Events) == 0 {
+		fmt.Fprintf(a.stdout, "no events after sequence %d\n", result.After)
+	} else {
+		for _, event := range result.Events {
+			fmt.Fprintf(a.stdout, "%d\t%s\t%s\trevision %d\n", event.Sequence, event.Type, event.Entity.ID, event.Entity.Revision)
+		}
+		fmt.Fprintf(a.stdout, "next_after: %d\n", result.NextAfter)
+		fmt.Fprintf(a.stdout, "has_more: %t\n", result.HasMore)
+	}
+	return ExitOK
 }
 
 func (a *App) runDaemonCommand(ctx context.Context, mode outputMode, args []string) int {
@@ -245,6 +412,10 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, daemonHelp)
 	case "status":
 		fmt.Fprint(a.stdout, statusHelp)
+	case "workspace":
+		fmt.Fprint(a.stdout, workspaceHelp)
+	case "events":
+		fmt.Fprint(a.stdout, eventsHelp)
 	case "help":
 		fmt.Fprint(a.stdout, helpHelp)
 	default:
@@ -265,7 +436,7 @@ func (a *App) writeClientFailure(mode outputMode, operation string, err error) i
 			exitCode: ExitFailure,
 			code:     apiError.Code,
 			message:  fmt.Sprintf("%s: %s", operation, apiError.Message),
-			hint:     "run 'crewfold status --socket <path>' to inspect daemon availability",
+			hint:     clientFailureHint(apiError.Code),
 		})
 	}
 	return a.writeFailure(mode, commandFailure{
@@ -274,6 +445,23 @@ func (a *App) writeClientFailure(mode outputMode, operation string, err error) i
 		message:  fmt.Sprintf("%s: %v", operation, err),
 		hint:     "verify the socket path and start the daemon with 'crewfold daemon run'",
 	})
+}
+
+func clientFailureHint(code string) string {
+	switch code {
+	case "workspace_already_exists":
+		return "use 'crewfold workspace show <name> --socket <path>' or choose another name"
+	case "workspace_not_found":
+		return "verify the workspace name or stable ID"
+	case "idempotency_conflict":
+		return "retry the original command payload or choose a new idempotency key"
+	case "invalid_workspace", "invalid_request":
+		return "check the command arguments and run the command with --help"
+	case "storage_failed":
+		return "run 'crewfold doctor --database --socket <path>' and inspect daemon logs"
+	default:
+		return "run 'crewfold status --socket <path>' to inspect daemon availability"
+	}
 }
 
 func (a *App) runVersion(mode outputMode, args []string) int {
@@ -303,14 +491,17 @@ func (a *App) runVersion(mode outputMode, args []string) int {
 	return ExitOK
 }
 
-func (a *App) runDoctor(mode outputMode, args []string) int {
+func (a *App) runDoctor(ctx context.Context, mode outputMode, args []string) int {
 	if len(args) == 1 && isHelp(args[0]) {
 		fmt.Fprint(a.stdout, doctorHelp)
 		return ExitOK
 	}
+	if len(args) > 0 && args[0] == "--database" {
+		return a.runDatabaseDoctor(ctx, mode, args[1:])
+	}
 	if len(args) != 1 || args[0] != "--self" {
 		return a.writeFailure(mode, usageFailure(
-			"doctor requires --self in this milestone",
+			"doctor requires --self or --database in this milestone",
 			"run 'crewfold help doctor' for usage",
 		))
 	}
@@ -333,6 +524,37 @@ func (a *App) runDoctor(mode outputMode, args []string) int {
 	}
 
 	if report.Status != "ok" {
+		return ExitFailure
+	}
+	return ExitOK
+}
+
+func (a *App) runDatabaseDoctor(ctx context.Context, mode outputMode, args []string) int {
+	options, failure := parseOptions(args, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socketPath).DatabaseStatus(ctx)
+	if err != nil {
+		return a.writeClientFailure(mode, "check database", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write database doctor output", err))
+		}
+	} else {
+		fmt.Fprintln(a.stdout, "Crewfold database")
+		fmt.Fprintf(a.stdout, "status: %s\n", result.Status)
+		fmt.Fprintf(a.stdout, "schema: %d/%d\n", result.SchemaVersion, result.LatestSchemaVersion)
+		fmt.Fprintf(a.stdout, "journal: %s\n", result.JournalMode)
+		fmt.Fprintf(a.stdout, "foreign_keys: %t\n", result.ForeignKeys)
+		fmt.Fprintf(a.stdout, "integrity: %s\n", result.IntegrityCheck)
+	}
+	if result.Status != "ok" {
 		return ExitFailure
 	}
 	return ExitOK
@@ -585,6 +807,14 @@ func requiredOption(options map[string]string, name string) (string, *commandFai
 	return "", &failure
 }
 
+func requiredLeadingArgument(args []string, description string) (string, []string, *commandFailure) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "--") {
+		failure := usageFailure(description+" is required", "run the command with --help for usage")
+		return "", nil, &failure
+	}
+	return args[0], args[1:], nil
+}
+
 func daemonFailureHint(code string) string {
 	switch code {
 	case daemon.CodeDataDirInUse:
@@ -593,6 +823,8 @@ func daemonFailureHint(code string) string {
 		return "use 'crewfold status --socket <path>' or select another --socket"
 	case daemon.CodeSocketPathOccupied:
 		return "inspect the exact socket path; Crewfold will not remove a live or non-socket file"
+	case daemon.CodeDatabaseUnavailable:
+		return "inspect the data directory and database; Crewfold will not adopt an unrelated SQLite file"
 	default:
 		return "run 'crewfold doctor --self' and verify --data-dir and --socket"
 	}
@@ -637,18 +869,20 @@ Usage:
 
 Commands:
   version        Print build and platform information
-  doctor --self  Run checks that need no daemon or external tools
+  doctor --self  Check this binary (use --database for daemon storage)
   daemon run     Run the local daemon in the foreground
   daemon stop    Ask a running daemon to stop cleanly
   status         Query daemon health through its local socket
+  workspace      Initialize or inspect a durable workspace
+  events         Inspect the durable event journal
   help [command] Show command help
 
 Global options:
   --output text|json  Select human or machine-readable output
   -h, --help          Show help
 
-This M1 build keeps all daemon state in memory; it has no database, runtime, or
-provider integration.
+This M2 build persists workspaces and their events. It has no project, agent,
+runtime, or provider integration.
 `
 
 const versionHelp = `Usage:
@@ -660,9 +894,10 @@ does not invoke Git or access the network.
 
 const doctorHelp = `Usage:
   crewfold doctor --self [--output text|json]
+  crewfold doctor --database --socket <path> [--output text|json]
 
-Run checks for the current executable, embedded build metadata, and platform.
-M0 self-checks do not inspect a daemon, database, runtime, or provider.
+Run checks for the current executable or query the daemon's SQLite schema,
+journal mode, foreign-key enforcement, and integrity status.
 `
 
 const daemonHelp = `Usage:
@@ -670,7 +905,8 @@ const daemonHelp = `Usage:
   crewfold daemon stop --socket <path>
 
 Run the local daemon in the foreground or ask it to stop through the local API.
-M1 has no background-service installer and writes no domain/database state.
+M2 has no background-service installer. The selected data directory contains the
+SQLite workspace/event database.
 `
 
 const daemonRunHelp = `Usage:
@@ -690,7 +926,40 @@ acknowledgement.
 const statusHelp = `Usage:
   crewfold status --socket <path> [--output text|json]
 
-Negotiate a protocol and query the daemon's in-memory health and build metadata.
+Negotiate a protocol and query daemon process health and build metadata.
+`
+
+const workspaceHelp = `Usage:
+  crewfold workspace init <name> --socket <path> [--idempotency-key <key>]
+  crewfold workspace show <name-or-id> --socket <path>
+
+Initialize a durable workspace or inspect it by stable ID or unique name.
+`
+
+const workspaceInitHelp = `Usage:
+  crewfold workspace init <name> --socket <path> [--idempotency-key <key>] [--output text|json]
+
+Atomically create a workspace projection and workspace.created event. Reusing an
+idempotency key with the same name returns the original result.
+`
+
+const workspaceShowHelp = `Usage:
+  crewfold workspace show <name-or-id> --socket <path> [--output text|json]
+
+Read one durable workspace without mutating it.
+`
+
+const eventsHelp = `Usage:
+  crewfold events list --socket <path> --after <sequence> [--limit <count>]
+
+Inspect events in ascending local sequence order.
+`
+
+const eventsListHelp = `Usage:
+  crewfold events list --socket <path> --after <sequence> [--limit <count>] [--output text|json]
+
+Return events strictly after the supplied resumable cursor. The default limit is
+100 and the maximum is 1000.
 `
 
 const helpHelp = `Usage:

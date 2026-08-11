@@ -1,7 +1,8 @@
 # Event catalogue
 
-Status: naming and payload details are proposed. The catalogue defines coverage,
-not a frozen schema.
+Status: the v1 envelope and `workspace.created` event are implemented in M2.
+Remaining names and payload details are proposed; the catalogue defines their
+coverage, not a frozen schema.
 
 ## Envelope
 

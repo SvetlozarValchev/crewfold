@@ -39,7 +39,7 @@ should use focused rendering assertions rather than brittle full-output snapshot
 
 Exercise one real boundary at a time:
 
-- daemon plus real Unix socket and in-memory store;
+- daemon plus real Unix socket and SQLite store;
 - real SQLite store with direct command handlers;
 - direct runtime plus fixture worker;
 - MCP server plus fixture client;

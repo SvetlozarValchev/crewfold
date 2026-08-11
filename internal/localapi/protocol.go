@@ -7,18 +7,27 @@ import (
 	"fmt"
 
 	"crewfold/internal/buildinfo"
+	"crewfold/internal/domain"
 )
 
 const (
 	MinProtocol = 1
 	MaxProtocol = 1
 
-	MethodHello  = "system.hello"
-	MethodStatus = "system.status"
-	MethodStop   = "system.stop"
+	MethodHello          = "system.hello"
+	MethodStatus         = "system.status"
+	MethodStop           = "system.stop"
+	MethodDatabaseStatus = "database.status"
+	MethodWorkspaceInit  = "workspace.init"
+	MethodWorkspaceShow  = "workspace.show"
+	MethodEventsList     = "events.list"
 
-	StatusSchema = "urn:crewfold:schema:local-api:status-result:v1"
-	StopSchema   = "urn:crewfold:schema:local-api:stop-result:v1"
+	StatusSchema         = "urn:crewfold:schema:local-api:status-result:v1"
+	StopSchema           = "urn:crewfold:schema:local-api:stop-result:v1"
+	DatabaseStatusSchema = "urn:crewfold:schema:local-api:database-status-result:v1"
+	WorkspaceInitSchema  = "urn:crewfold:schema:local-api:workspace-init-result:v1"
+	WorkspaceShowSchema  = "urn:crewfold:schema:local-api:workspace-show-result:v1"
+	EventsListSchema     = "urn:crewfold:schema:local-api:events-list-result:v1"
 )
 
 // Request is one newline-delimited local API request. Hello requests omit
@@ -80,6 +89,54 @@ type StopResult struct {
 	Schema string `json:"schema"`
 	Type   string `json:"type"`
 	Status string `json:"status"`
+}
+
+type DatabaseStatusResult struct {
+	Schema              string `json:"schema"`
+	Type                string `json:"type"`
+	Status              string `json:"status"`
+	SchemaVersion       int    `json:"schema_version"`
+	LatestSchemaVersion int    `json:"latest_schema_version"`
+	JournalMode         string `json:"journal_mode"`
+	ForeignKeys         bool   `json:"foreign_keys"`
+	IntegrityCheck      string `json:"integrity_check"`
+}
+
+type WorkspaceInitParams struct {
+	Name           string `json:"name"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type WorkspaceInitResult struct {
+	Schema        string           `json:"schema"`
+	Type          string           `json:"type"`
+	Workspace     domain.Workspace `json:"workspace"`
+	EventID       string           `json:"event_id"`
+	EventSequence int64            `json:"event_sequence"`
+}
+
+type WorkspaceShowParams struct {
+	Identifier string `json:"identifier"`
+}
+
+type WorkspaceShowResult struct {
+	Schema    string           `json:"schema"`
+	Type      string           `json:"type"`
+	Workspace domain.Workspace `json:"workspace"`
+}
+
+type EventsListParams struct {
+	After *int64 `json:"after"`
+	Limit *int   `json:"limit,omitempty"`
+}
+
+type EventsListResult struct {
+	Schema    string         `json:"schema"`
+	Type      string         `json:"type"`
+	After     int64          `json:"after"`
+	NextAfter int64          `json:"next_after"`
+	HasMore   bool           `json:"has_more"`
+	Events    []domain.Event `json:"events"`
 }
 
 // MarshalResult constructs a response without exposing server-only wire types.

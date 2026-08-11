@@ -82,6 +82,77 @@ func (c *Client) Stop(ctx context.Context) (StopResult, error) {
 	return result, nil
 }
 
+func (c *Client) DatabaseStatus(ctx context.Context) (DatabaseStatusResult, error) {
+	var result DatabaseStatusResult
+	if err := c.call(ctx, MethodDatabaseStatus, nil, &result); err != nil {
+		return DatabaseStatusResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) WorkspaceInit(ctx context.Context, name, idempotencyKey string) (WorkspaceInitResult, error) {
+	if idempotencyKey == "" {
+		idempotencyKey = "idem-" + requestID()
+	}
+	params, err := json.Marshal(WorkspaceInitParams{Name: name, IdempotencyKey: idempotencyKey})
+	if err != nil {
+		return WorkspaceInitResult{}, fmt.Errorf("marshal workspace initialization: %w", err)
+	}
+	var result WorkspaceInitResult
+	if err := c.call(ctx, MethodWorkspaceInit, params, &result); err != nil {
+		return WorkspaceInitResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) WorkspaceShow(ctx context.Context, identifier string) (WorkspaceShowResult, error) {
+	params, err := json.Marshal(WorkspaceShowParams{Identifier: identifier})
+	if err != nil {
+		return WorkspaceShowResult{}, fmt.Errorf("marshal workspace query: %w", err)
+	}
+	var result WorkspaceShowResult
+	if err := c.call(ctx, MethodWorkspaceShow, params, &result); err != nil {
+		return WorkspaceShowResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) EventsList(ctx context.Context, after int64, limit int) (EventsListResult, error) {
+	paramsValue := EventsListParams{After: &after}
+	if limit != 0 {
+		paramsValue.Limit = &limit
+	}
+	params, err := json.Marshal(paramsValue)
+	if err != nil {
+		return EventsListResult{}, fmt.Errorf("marshal event query: %w", err)
+	}
+	var result EventsListResult
+	if err := c.call(ctx, MethodEventsList, params, &result); err != nil {
+		return EventsListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) call(ctx context.Context, method string, params json.RawMessage, result any) error {
+	connection, cancel, err := c.dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	defer connection.Close()
+
+	hello, err := negotiate(connection)
+	if err != nil {
+		return err
+	}
+	return roundTrip(connection, Request{
+		ID:       requestID(),
+		Protocol: hello.SelectedProtocol,
+		Method:   method,
+		Params:   params,
+	}, result)
+}
+
 func (c *Client) dial(ctx context.Context) (net.Conn, context.CancelFunc, error) {
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc

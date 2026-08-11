@@ -1,12 +1,12 @@
 # Local API v1
 
-Status: implemented transport spine in M1. Only `system.hello`, `system.status`, and
-`system.stop` exist. Domain commands, subscriptions, and durable events arrive in
-later milestones.
+Status: implemented through M2. The transport/lifecycle methods from M1 remain,
+and M2 adds database diagnostics, workspace initialization/query, and cursor-based
+event inspection. Subscriptions and other domain commands arrive later.
 
 ## Transport
 
-The daemon listens on an explicitly selected Unix domain socket. M1 accepts one or
+The daemon listens on an explicitly selected Unix domain socket. It accepts one or
 more newline-delimited JSON requests per connection and emits one response line per
 request.
 
@@ -15,7 +15,7 @@ with mode `0600` on `<data-dir>/daemon.lock` so another daemon cannot use the sa
 data directory, even with a different socket. A newly created data directory uses
 mode `0700`; Crewfold does not silently change the mode of an existing directory.
 
-M1 has no network listener and no remote transport.
+M2 has no network listener and no remote transport.
 
 ## Negotiation
 
@@ -104,7 +104,8 @@ Returns:
 - server build information;
 - current request count and whether shutdown is pending.
 
-The status is process health only. M1 has no database or project health to report.
+The status is process health only. Database health is reported separately so a
+healthy process cannot hide a failed storage check.
 
 ### `system.stop`
 
@@ -112,6 +113,67 @@ Returns `status: stopping`, then closes the listener and all accepted connection
 The server waits for handlers to exit and removes only the socket file it created.
 
 An idle or partially written client cannot hold shutdown open indefinitely.
+
+### `database.status`
+
+Takes no parameters. It reports:
+
+- current and latest embedded schema versions;
+- SQLite journal mode (`wal` is required);
+- whether foreign-key enforcement is active;
+- the result of `PRAGMA quick_check(1)`.
+
+The CLI exposes this as `crewfold doctor --database --socket <path>`.
+
+### `workspace.init`
+
+Atomically creates the first workspace projection, appends one
+`workspace.created` event, and records the successful response under an
+idempotency key:
+
+```json
+{
+  "id": "req-3",
+  "protocol": 1,
+  "method": "workspace.init",
+  "params": {
+    "name": "personal",
+    "idempotency_key": "initialize-personal"
+  }
+}
+```
+
+Workspace names start with a lowercase letter and contain at most 63 lowercase
+letters, digits, or hyphens. Repeating the same key and normalized command returns
+the stored result without appending another event. Reusing the key for another
+payload returns `idempotency_conflict`. A duplicate name under a new key returns
+`workspace_already_exists`; neither failure changes a projection or event.
+
+The request ID becomes the event correlation ID. The successful result contains
+the complete workspace record plus its event ID and local sequence.
+
+### `workspace.show`
+
+Queries one workspace by stable ID first and then by unique name:
+
+```json
+{"id":"req-4","protocol":1,"method":"workspace.show","params":{"identifier":"personal"}}
+```
+
+A missing record returns `workspace_not_found`.
+
+### `events.list`
+
+Returns events in ascending local sequence order strictly after a supplied cursor:
+
+```json
+{"id":"req-5","protocol":1,"method":"events.list","params":{"after":0,"limit":100}}
+```
+
+The default limit is 100 and the maximum is 1000. `next_after` is the final event
+sequence in the page, or the input cursor for an empty page. `has_more` tells the
+caller to issue another query from `next_after`. M2 is query-only; a resumable live
+subscription arrives later.
 
 ## Socket startup safety
 
@@ -135,7 +197,9 @@ code when applicable. Logs do not include arbitrary request bodies.
 ## Limits and deferrals
 
 - Maximum request line: 64 KiB.
-- Local operating-system user is the only identity in M1.
-- No subscriptions, commands, event cursors, idempotency, or persistent state yet.
-- Unix sockets are the only supported M1 transport; Windows named pipes are later.
+- Local operating-system user is the only identity in M2; workspace events use
+  the explicit placeholder actor `local-owner` of type `human`.
+- Workspace initialization is the only domain mutation. Event cursors and command
+  idempotency are durable; subscriptions and streaming are not implemented.
+- Unix sockets are the only supported M2 transport; Windows named pipes are later.
 - Socket permission is a transport boundary, not future agent authorization.

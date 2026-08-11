@@ -7,9 +7,9 @@ localapi/     implemented local API protocol and client
 daemon/       implemented foreground daemon and socket lifecycle
 cli/          implemented human/machine command surface
 buildinfo/    implemented embedded build metadata
+domain/       implemented storage/transport-neutral workspace and event records
+store/        implemented SQLite migrations, workspace projection, and event journal
 api/          future domain API and MCP translation
-domain/       commands, invariants, and core types
-store/        SQLite migrations, queries, event journal, and queues
 scheduler/    deterministic placement and dependencies
 supervisor/   conditions, recommendations, and policy responses
 knowledge/    curation, retrieval, and context packets

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:event:v1",
+  "title": "Crewfold event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "sequence",
+    "type",
+    "schema_version",
+    "occurred_at",
+    "recorded_at",
+    "actor",
+    "workspace_id",
+    "entity",
+    "correlation_id",
+    "data"
+  ],
+  "properties": {
+    "event_id": {"type": "string", "pattern": "^evt_[0-9a-f]{32}$"},
+    "sequence": {"type": "integer", "minimum": 1},
+    "type": {"type": "string", "minLength": 1},
+    "schema_version": {"type": "integer", "minimum": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor_id", "actor_type"],
+      "properties": {
+        "actor_id": {"type": "string", "minLength": 1},
+        "actor_type": {"type": "string", "enum": ["human", "agent_run", "subsystem", "integration"]}
+      }
+    },
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "revision"],
+      "properties": {
+        "type": {"type": "string", "minLength": 1},
+        "id": {"type": "string", "minLength": 1},
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "correlation_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "causation_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "data": {"type": "object"}
+  }
+}

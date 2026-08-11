@@ -11,6 +11,7 @@ const (
 	CodeSocketInUse          = "socket_in_use"
 	CodeSocketPathOccupied   = "socket_path_occupied"
 	CodeSocketUnavailable    = "socket_unavailable"
+	CodeDatabaseUnavailable  = "database_unavailable"
 )
 
 // StartupError gives the CLI a stable code while retaining the underlying cause.

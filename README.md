@@ -13,9 +13,11 @@ than forcing the core to understand every terminal UI.
 
 ## Status
 
-Crewfold is in its implementation-bootstrap phase. M1 provides a foreground local
-daemon with an owner-only Unix socket, protocol negotiation, health status, and
-graceful stop. It does not yet contain a database, runtime, or usable orchestrator.
+Crewfold is in its implementation-bootstrap phase. M2 provides a foreground local
+daemon with an owner-only Unix socket and a SQLite database containing durable
+workspaces, an immutable event journal, migration metadata, and idempotency
+records. It does not yet contain projects, agents, runtimes, or a usable
+orchestrator.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.
@@ -102,8 +104,8 @@ session formats.
 
 | Path | Purpose |
 | --- | --- |
-| `cmd/crewfold/` | Go entry point for the CLI and future daemon |
-| `internal/` | Local control-plane packages, currently M0 CLI/build metadata |
+| `cmd/crewfold/` | Single Go entry point for the CLI and foreground daemon |
+| `internal/` | Local API, daemon, CLI, domain records, and SQLite store |
 | `protocol/` | Versioned API, event, and adapter schemas |
 | `integrations/herdr/` | Preferred interactive runtime driver |
 | `integrations/providers/` | Provider adapter contracts and implementations |
@@ -131,8 +133,8 @@ merging, a general workflow language, or a vector database.
 
 ## Development
 
-The current implementation uses Go 1.26.5 and only the standard library. Run the
-complete offline gate:
+The current implementation uses Go 1.26.5 plus a vendored CGO-free SQLite driver.
+Run the complete offline gate:
 
 ```sh
 ./scripts/check.sh

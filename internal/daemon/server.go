@@ -20,6 +20,7 @@ import (
 
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/localapi"
+	"crewfold/internal/store"
 )
 
 const (
@@ -28,10 +29,11 @@ const (
 )
 
 type Config struct {
-	DataDir    string
-	SocketPath string
-	Version    buildinfo.Info
-	Logger     *slog.Logger
+	DataDir      string
+	SocketPath   string
+	Version      buildinfo.Info
+	Logger       *slog.Logger
+	StoreOptions store.Options
 }
 
 type server struct {
@@ -46,6 +48,7 @@ type server struct {
 	connectionsMu  sync.Mutex
 	connections    map[net.Conn]struct{}
 	handlers       sync.WaitGroup
+	store          *store.Store
 }
 
 // Run owns the daemon lifecycle until the context is cancelled or system.stop is
@@ -61,6 +64,12 @@ func Run(ctx context.Context, config Config) error {
 		return err
 	}
 	defer dataLock.release()
+
+	storage, err := store.Open(ctx, resolved.DataDir, resolved.StoreOptions)
+	if err != nil {
+		return &StartupError{Code: CodeDatabaseUnavailable, Message: "initialize Crewfold database", Cause: err}
+	}
+	defer storage.Close()
 
 	if err := prepareSocketPath(resolved.SocketPath); err != nil {
 		return err
@@ -92,6 +101,7 @@ func Run(ctx context.Context, config Config) error {
 		startedAt:   time.Now().UTC(),
 		stopCh:      make(chan struct{}),
 		connections: make(map[net.Conn]struct{}),
+		store:       storage,
 	}
 	defer instance.cleanupSocket()
 
@@ -332,6 +342,14 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 			Type:   "stop_acknowledgement",
 			Status: "stopping",
 		}), true
+	case localapi.MethodDatabaseStatus:
+		return s.handleDatabaseStatus(request), false
+	case localapi.MethodWorkspaceInit:
+		return s.handleWorkspaceInit(request), false
+	case localapi.MethodWorkspaceShow:
+		return s.handleWorkspaceShow(request), false
+	case localapi.MethodEventsList:
+		return s.handleEventsList(request), false
 	default:
 		return localapi.ErrorResponse(request.ID, request.Protocol, &localapi.APIError{
 			Code:      "method_not_found",
@@ -339,6 +357,128 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 			Retryable: false,
 		}), false
 	}
+}
+
+func (s *server) handleDatabaseStatus(request localapi.Request) localapi.Response {
+	health, err := s.store.Health(context.Background())
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.DatabaseStatusResult{
+		Schema:              localapi.DatabaseStatusSchema,
+		Type:                "database_status",
+		Status:              health.Status,
+		SchemaVersion:       health.SchemaVersion,
+		LatestSchemaVersion: health.LatestSchemaVersion,
+		JournalMode:         health.JournalMode,
+		ForeignKeys:         health.ForeignKeys,
+		IntegrityCheck:      health.IntegrityCheck,
+	})
+}
+
+func (s *server) handleWorkspaceInit(request localapi.Request) localapi.Response {
+	var params localapi.WorkspaceInitParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "workspace.init requires name and idempotency_key")
+	}
+	result, err := s.store.InitWorkspace(context.Background(), store.InitWorkspaceCommand{
+		Name:           params.Name,
+		IdempotencyKey: params.IdempotencyKey,
+		CorrelationID:  request.ID,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.WorkspaceInitResult{
+		Schema:        localapi.WorkspaceInitSchema,
+		Type:          "workspace_initialized",
+		Workspace:     result.Workspace,
+		EventID:       result.EventID,
+		EventSequence: result.EventSequence,
+	})
+}
+
+func (s *server) handleWorkspaceShow(request localapi.Request) localapi.Response {
+	var params localapi.WorkspaceShowParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "workspace.show requires an identifier")
+	}
+	workspace, err := s.store.Workspace(context.Background(), params.Identifier)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.WorkspaceShowResult{
+		Schema:    localapi.WorkspaceShowSchema,
+		Type:      "workspace",
+		Workspace: workspace,
+	})
+}
+
+func (s *server) handleEventsList(request localapi.Request) localapi.Response {
+	var params localapi.EventsListParams
+	if err := decodeParams(request.Params, &params); err != nil || params.After == nil || *params.After < 0 || (params.Limit != nil && (*params.Limit < 1 || *params.Limit > 1000)) {
+		return invalidParamsResponse(request, "events.list requires after >= 0 and limit between 1 and 1000 when supplied")
+	}
+	limit := 100
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	events, err := s.store.Events(context.Background(), *params.After, limit+1)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	hasMore := len(events) > limit
+	if hasMore {
+		events = events[:limit]
+	}
+	nextAfter := *params.After
+	if len(events) > 0 {
+		nextAfter = events[len(events)-1].Sequence
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.EventsListResult{
+		Schema:    localapi.EventsListSchema,
+		Type:      "event_list",
+		After:     *params.After,
+		NextAfter: nextAfter,
+		HasMore:   hasMore,
+		Events:    events,
+	})
+}
+
+func decodeParams(data json.RawMessage, target any) error {
+	if len(data) == 0 {
+		return errors.New("params are required")
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("params contain more than one value")
+		}
+		return err
+	}
+	return nil
+}
+
+func invalidParamsResponse(request localapi.Request, message string) localapi.Response {
+	return localapi.ErrorResponse(request.ID, request.Protocol, &localapi.APIError{
+		Code:      "invalid_request",
+		Message:   message,
+		Retryable: false,
+	})
+}
+
+func storeErrorResponse(request localapi.Request, err error) localapi.Response {
+	code := store.ErrorCode(err)
+	return localapi.ErrorResponse(request.ID, request.Protocol, &localapi.APIError{
+		Code:      code,
+		Message:   err.Error(),
+		Retryable: code == store.CodeStorageFailed,
+	})
 }
 
 func (s *server) handleHello(request localapi.Request) localapi.Response {

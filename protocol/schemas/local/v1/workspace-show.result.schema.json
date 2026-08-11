@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:workspace-show-result:v1",
+  "title": "Crewfold local API workspace show result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "workspace"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:workspace-show-result:v1"},
+    "type": {"const": "workspace"},
+    "workspace": {"$ref": "../../domain/v1/workspace.schema.json"}
+  }
+}

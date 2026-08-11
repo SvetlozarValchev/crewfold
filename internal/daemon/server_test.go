@@ -10,7 +10,9 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,6 +21,7 @@ import (
 
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/localapi"
+	"crewfold/internal/store"
 )
 
 func TestServerStatusStopAndSocketPermissions(t *testing.T) {
@@ -285,6 +288,273 @@ func TestRequestLogsCarryCorrelationFields(t *testing.T) {
 			t.Errorf("logs do not contain %q:\n%s", expected, logs)
 		}
 	}
+}
+
+func TestWorkspaceAndEventsPersistAcrossDaemonRestart(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t)
+	first := startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+
+	databaseStatus, err := client.DatabaseStatus(context.Background())
+	if err != nil {
+		t.Fatalf("DatabaseStatus() error = %v", err)
+	}
+	if databaseStatus.Status != "ok" || databaseStatus.SchemaVersion != store.LatestSchemaVersion || databaseStatus.JournalMode != "wal" || !databaseStatus.ForeignKeys {
+		t.Fatalf("DatabaseStatus() = %#v, want healthy current WAL database", databaseStatus)
+	}
+
+	created, err := client.WorkspaceInit(context.Background(), "personal", "init-personal")
+	if err != nil {
+		t.Fatalf("WorkspaceInit() error = %v", err)
+	}
+	replayed, err := client.WorkspaceInit(context.Background(), "personal", "init-personal")
+	if err != nil {
+		t.Fatalf("WorkspaceInit(replay) error = %v", err)
+	}
+	if !reflect.DeepEqual(created, replayed) {
+		t.Fatalf("replayed result changed:\ncreated = %#v\nreplayed = %#v", created, replayed)
+	}
+	if _, err := client.WorkspaceInit(context.Background(), "personal", "different-key"); localAPIErrorCode(err) != store.CodeWorkspaceExists {
+		t.Fatalf("duplicate workspace error = %v, code = %q", err, localAPIErrorCode(err))
+	}
+
+	shown, err := client.WorkspaceShow(context.Background(), "personal")
+	if err != nil {
+		t.Fatalf("WorkspaceShow() error = %v", err)
+	}
+	if !reflect.DeepEqual(shown.Workspace, created.Workspace) {
+		t.Fatalf("WorkspaceShow() = %#v, want %#v", shown.Workspace, created.Workspace)
+	}
+	events, err := client.EventsList(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatalf("EventsList() error = %v", err)
+	}
+	if len(events.Events) != 1 || events.Events[0].EventID != created.EventID || events.NextAfter != created.EventSequence || events.HasMore {
+		t.Fatalf("EventsList() = %#v, want one creation event", events)
+	}
+
+	if _, err := client.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(first) error = %v", err)
+	}
+	if err := first.wait(); err != nil {
+		t.Fatalf("Run(first) error = %v", err)
+	}
+
+	second := startTestServer(t, config)
+	restartedClient := localapi.NewClient(config.SocketPath)
+	restored, err := restartedClient.WorkspaceShow(context.Background(), created.Workspace.ID)
+	if err != nil {
+		t.Fatalf("WorkspaceShow(after restart) error = %v", err)
+	}
+	if !reflect.DeepEqual(restored.Workspace, created.Workspace) {
+		t.Fatalf("restored workspace = %#v, want %#v", restored.Workspace, created.Workspace)
+	}
+	restoredEvents, err := restartedClient.EventsList(context.Background(), 0, 100)
+	if err != nil || len(restoredEvents.Events) != 1 {
+		t.Fatalf("EventsList(after restart) = %#v, %v, want one event", restoredEvents, err)
+	}
+	if _, err := restartedClient.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(second) error = %v", err)
+	}
+	if err := second.wait(); err != nil {
+		t.Fatalf("Run(second) error = %v", err)
+	}
+}
+
+func TestEventPaginationUsesResumableExclusiveCursor(t *testing.T) {
+	t.Parallel()
+
+	running := startTestServer(t, testConfig(t))
+	client := localapi.NewClient(running.config.SocketPath)
+	for _, name := range []string{"alpha", "beta"} {
+		if _, err := client.WorkspaceInit(context.Background(), name, "init-"+name); err != nil {
+			t.Fatalf("WorkspaceInit(%s) error = %v", name, err)
+		}
+	}
+	first, err := client.EventsList(context.Background(), 0, 1)
+	if err != nil {
+		t.Fatalf("EventsList(first) error = %v", err)
+	}
+	if len(first.Events) != 1 || first.NextAfter != 1 || !first.HasMore {
+		t.Fatalf("first page = %#v, want sequence 1 and has_more", first)
+	}
+	second, err := client.EventsList(context.Background(), first.NextAfter, 1)
+	if err != nil {
+		t.Fatalf("EventsList(second) error = %v", err)
+	}
+	if len(second.Events) != 1 || second.Events[0].Sequence != 2 || second.NextAfter != 2 || second.HasMore {
+		t.Fatalf("second page = %#v, want final sequence 2", second)
+	}
+	if _, err := client.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := running.wait(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestWorkspaceMutationCrashIsAtomic(t *testing.T) {
+	if os.Getenv("CREWFOLD_M2_CRASH_HELPER") != "" {
+		t.Fatal("parent crash test unexpectedly running as helper")
+	}
+
+	for _, stage := range []string{store.MutationAfterProjection, store.MutationAfterEvent} {
+		t.Run(stage, func(t *testing.T) {
+			root := t.TempDir()
+			dataDir := filepath.Join(root, "data")
+			socketPath := filepath.Join(root, "crewfold.sock")
+			markerPath := filepath.Join(root, "mutation-reached")
+			command := exec.Command(os.Args[0], "-test.run=^TestM2CrashHelperProcess$")
+			command.Env = append(os.Environ(),
+				"CREWFOLD_M2_CRASH_HELPER=1",
+				"CREWFOLD_M2_DATA_DIR="+dataDir,
+				"CREWFOLD_M2_SOCKET="+socketPath,
+				"CREWFOLD_M2_MARKER="+markerPath,
+				"CREWFOLD_M2_STAGE="+stage,
+			)
+			var childOutput lockedBuffer
+			command.Stdout = &childOutput
+			command.Stderr = &childOutput
+			if err := command.Start(); err != nil {
+				t.Fatalf("start crash helper: %v", err)
+			}
+			childReaped := false
+			t.Cleanup(func() {
+				if !childReaped && command.Process != nil {
+					_ = command.Process.Kill()
+					_ = command.Wait()
+				}
+			})
+
+			client := localapi.NewClient(socketPath)
+			waitForCondition(t, 5*time.Second, func() bool {
+				_, err := client.Status(context.Background())
+				return err == nil
+			}, "crash helper readiness; output: "+childOutput.String())
+
+			requestDone := make(chan error, 1)
+			go func() {
+				_, err := client.WorkspaceInit(context.Background(), "personal", "crash-key")
+				requestDone <- err
+			}()
+			waitForCondition(t, 5*time.Second, func() bool {
+				_, err := os.Stat(markerPath)
+				return err == nil
+			}, "mutation barrier "+stage+"; output: "+childOutput.String())
+
+			if err := command.Process.Kill(); err != nil {
+				t.Fatalf("kill crash helper: %v", err)
+			}
+			if err := command.Wait(); err == nil {
+				t.Fatal("crash helper exited cleanly, want forced process death")
+			}
+			childReaped = true
+			select {
+			case <-requestDone:
+			case <-time.After(3 * time.Second):
+				t.Fatal("workspace request did not unblock after daemon process death")
+			}
+
+			config := Config{
+				DataDir:    dataDir,
+				SocketPath: socketPath,
+				Version:    buildinfo.Current(),
+				Logger:     slog.New(slog.NewJSONHandler(io.Discard, nil)),
+			}
+			restarted := startTestServer(t, config)
+			restartedClient := localapi.NewClient(socketPath)
+			if _, err := restartedClient.WorkspaceShow(context.Background(), "personal"); localAPIErrorCode(err) != store.CodeWorkspaceNotFound {
+				t.Fatalf("WorkspaceShow(after crash) error = %v, code = %q, want no partial projection", err, localAPIErrorCode(err))
+			}
+			events, err := restartedClient.EventsList(context.Background(), 0, 100)
+			if err != nil || len(events.Events) != 0 {
+				t.Fatalf("EventsList(after crash) = %#v, %v, want no partial event", events, err)
+			}
+			if _, err := restartedClient.WorkspaceInit(context.Background(), "personal", "crash-key"); err != nil {
+				t.Fatalf("WorkspaceInit(reuse key after crash) error = %v", err)
+			}
+			if _, err := restartedClient.Stop(context.Background()); err != nil {
+				t.Fatalf("Stop(restarted) error = %v", err)
+			}
+			if err := restarted.wait(); err != nil {
+				t.Fatalf("Run(restarted) error = %v", err)
+			}
+		})
+	}
+}
+
+func TestM2CrashHelperProcess(t *testing.T) {
+	if os.Getenv("CREWFOLD_M2_CRASH_HELPER") == "" {
+		t.Skip("helper process")
+	}
+	stage := os.Getenv("CREWFOLD_M2_STAGE")
+	marker := os.Getenv("CREWFOLD_M2_MARKER")
+	config := Config{
+		DataDir:    os.Getenv("CREWFOLD_M2_DATA_DIR"),
+		SocketPath: os.Getenv("CREWFOLD_M2_SOCKET"),
+		Version:    buildinfo.Current(),
+		Logger:     slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		StoreOptions: store.Options{MutationHook: func(current string) error {
+			if current != stage {
+				return nil
+			}
+			if err := os.WriteFile(marker, []byte(current+"\n"), 0o600); err != nil {
+				return err
+			}
+			select {}
+		}},
+	}
+	if err := Run(context.Background(), config); err != nil {
+		t.Fatalf("Run(crash helper) error = %v", err)
+	}
+}
+
+func TestDatabaseStartupFailureHasStableCode(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t)
+	if err := os.MkdirAll(config.DataDir, 0o700); err != nil {
+		t.Fatalf("os.MkdirAll(data dir) error = %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "user-database")
+	if err := os.WriteFile(target, []byte("preserve"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(target) error = %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(config.DataDir, "crewfold.db")); err != nil {
+		t.Fatalf("os.Symlink(database) error = %v", err)
+	}
+	err := Run(context.Background(), config)
+	if ErrorCode(err) != CodeDatabaseUnavailable {
+		t.Fatalf("Run() error = %v, code = %q, want %q", err, ErrorCode(err), CodeDatabaseUnavailable)
+	}
+	contents, readErr := os.ReadFile(target)
+	if readErr != nil || string(contents) != "preserve" {
+		t.Fatalf("target = %q, %v, want preserved", contents, readErr)
+	}
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, condition func() bool, description string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if condition() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", description)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func localAPIErrorCode(err error) string {
+	var apiError *localapi.APIError
+	if errors.As(err, &apiError) {
+		return apiError.Code
+	}
+	return ""
 }
 
 type runningServer struct {

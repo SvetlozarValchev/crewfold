@@ -156,12 +156,14 @@ durable domain state?
 **Visible result**
 
 ```sh
-crewfold workspace init personal
-crewfold workspace show personal
-crewfold events list --after 0
-crewfold daemon stop
-crewfold daemon start
-crewfold workspace show personal
+crewfold daemon run --data-dir "$tmp/data" --socket "$tmp/crewfold.sock"
+crewfold workspace init personal --socket "$tmp/crewfold.sock" \
+  --idempotency-key initialize-personal
+crewfold workspace show personal --socket "$tmp/crewfold.sock"
+crewfold events list --socket "$tmp/crewfold.sock" --after 0
+crewfold daemon stop --socket "$tmp/crewfold.sock"
+# Restart the foreground daemon with the same data/socket paths, then:
+crewfold workspace show personal --socket "$tmp/crewfold.sock"
 ```
 
 **Deliverables**

@@ -13,7 +13,8 @@ remain a separate agent-facing surface.
 
 M0 publishes version, self-doctor, and error response schemas under
 `schemas/cli/v1/`. M1 publishes the newline-delimited local request/response,
-hello, status, and stop schemas under `schemas/local/v1/`. Later schemas remain
-proposals. See the
+hello, status, and stop schemas under `schemas/local/v1/`. M2 adds durable
+workspace/event records plus database status, workspace mutation/query, and
+cursor-based event-list schemas. Later schemas remain proposals. See the
 [event catalogue](../docs/reference/events.md) and [MCP tool
 contract](../docs/reference/mcp-tools.md).

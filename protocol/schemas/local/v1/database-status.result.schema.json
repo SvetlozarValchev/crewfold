@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:database-status-result:v1",
+  "title": "Crewfold local API database status result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "status", "schema_version", "latest_schema_version", "journal_mode", "foreign_keys", "integrity_check"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:database-status-result:v1"},
+    "type": {"const": "database_status"},
+    "status": {"enum": ["ok", "failed"]},
+    "schema_version": {"type": "integer", "minimum": 0},
+    "latest_schema_version": {"type": "integer", "minimum": 1},
+    "journal_mode": {"type": "string", "minLength": 1},
+    "foreign_keys": {"type": "boolean"},
+    "integrity_check": {"type": "string", "minLength": 1}
+  }
+}

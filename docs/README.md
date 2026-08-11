@@ -32,6 +32,7 @@ explicitly rather than silently treating either as authoritative.
 - [MCP tool contract](reference/mcp-tools.md)
 - [Event catalogue](reference/events.md)
 - [Implemented local API v1](reference/local-api.md)
+- [Implemented M2 storage contract](reference/storage.md)
 - [Milestone review template](reference/milestone-review-template.md)
 - [M0 completed milestone review](reviews/m00-buildable-repository.md)
 - [M1 completed milestone review](reviews/m01-daemon-api-spine.md)
