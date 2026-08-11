@@ -164,7 +164,15 @@ func (i *GitInspector) gitText(ctx context.Context, path, operation string, argu
 }
 
 func (i *GitInspector) gitBytes(ctx context.Context, path string, arguments ...string) ([]byte, error) {
-	command := []string{"--no-optional-locks", "-c", "core.quotepath=false", "-C", path}
+	command := []string{
+		"--no-optional-locks",
+		"-c", "core.quotepath=false",
+		"-c", "core.fsmonitor=false",
+		"-c", "core.untrackedCache=false",
+		"-c", "maintenance.auto=0",
+		"-c", "gc.auto=0",
+		"-C", path,
+	}
 	command = append(command, arguments...)
 	return i.runner.Run(ctx, command...)
 }
@@ -179,7 +187,7 @@ func (r ExecRunner) Run(ctx context.Context, arguments ...string) ([]byte, error
 		executable = "git"
 	}
 	command := exec.CommandContext(ctx, executable, arguments...)
-	command.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
+	command.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
 	stdout := &limitedBuffer{limit: maxGitOutput}
 	stderr := &limitedBuffer{limit: maxGitOutput}
 	command.Stdout = stdout

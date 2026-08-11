@@ -26,6 +26,25 @@ func TestInspectorSupportsAdjacentClonesAndLinkedWorktreesWithoutMutation(t *tes
 		filepath.Join(fixtureRoot, "world-engine-5"),
 		filepath.Join(fixtureRoot, "world-engine-linked"),
 	}
+	hook := filepath.Join(t.TempDir(), "fsmonitor-hook")
+	marker := hook + ".invoked"
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nprintf invoked >\"$0.invoked\"\n"), 0o700); err != nil {
+		t.Fatalf("os.WriteFile(fsmonitor hook) error = %v", err)
+	}
+	configure := exec.Command("git", "-C", paths[0], "config", "core.fsmonitor", hook)
+	if output, err := configure.CombinedOutput(); err != nil {
+		t.Fatalf("configure hostile fsmonitor: %v\n%s", err, output)
+	}
+	control := exec.Command("git", "-C", paths[0], "status", "--porcelain=v2")
+	if output, err := control.CombinedOutput(); err != nil {
+		t.Fatalf("run fsmonitor control status: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("control status did not invoke configured fsmonitor hook: %v", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatalf("os.Remove(fsmonitor marker) error = %v", err)
+	}
 
 	before := treeDigest(t, fixtureRoot)
 	runner := &recordingRunner{delegate: ExecRunner{Executable: "git"}}
@@ -59,13 +78,26 @@ func TestInspectorSupportsAdjacentClonesAndLinkedWorktreesWithoutMutation(t *tes
 
 	allowed := map[string]bool{"rev-parse": true, "rev-list": true, "status": true}
 	for _, arguments := range runner.calls {
-		if len(arguments) < 6 || arguments[0] != "--no-optional-locks" || arguments[3] != "-C" {
+		verbIndex := gitVerbIndex(arguments)
+		if verbIndex < 0 || arguments[0] != "--no-optional-locks" {
 			t.Fatalf("unsafe Git invocation: %q", arguments)
 		}
-		if !allowed[arguments[5]] {
+		if !allowed[arguments[verbIndex]] {
 			t.Fatalf("mutating or unknown Git command invoked: %q", arguments)
 		}
 	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repository-configured fsmonitor hook was invoked: %v", err)
+	}
+}
+
+func gitVerbIndex(arguments []string) int {
+	for index, argument := range arguments {
+		if argument == "-C" && index+2 < len(arguments) {
+			return index + 2
+		}
+	}
+	return -1
 }
 
 func TestInspectorNormalizesSubdirectoryAndDetectsDirtyState(t *testing.T) {

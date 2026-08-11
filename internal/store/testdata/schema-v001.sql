@@ -55,6 +55,32 @@ CREATE TABLE idempotency_keys (
     created_at TEXT NOT NULL
 ) STRICT;
 
+INSERT INTO workspaces(id, name, revision, created_at, updated_at, created_by, updated_by)
+VALUES (
+    'ws_00000000000000000000000000000001', 'fixture-workspace', 1,
+    '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z', 'local-owner', 'local-owner'
+);
+
+INSERT INTO events(
+    event_id, type, schema_version, occurred_at, recorded_at,
+    actor_id, actor_type, workspace_id, entity_type, entity_id,
+    entity_revision, correlation_id, causation_id, data_json
+) VALUES (
+    'evt_00000000000000000000000000000001', 'workspace.created', 1,
+    '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z',
+    'local-owner', 'human', 'ws_00000000000000000000000000000001',
+    'workspace', 'ws_00000000000000000000000000000001', 1,
+    'fixture-request', NULL, '{"name":"fixture-workspace"}'
+);
+
+INSERT INTO idempotency_keys(key, command, request_hash, response_json, created_at)
+VALUES (
+    'fixture-workspace-key', 'workspace.init',
+    'fixture-request-hash',
+    '{"workspace":{"id":"ws_00000000000000000000000000000001","name":"fixture-workspace","revision":1,"created_at":"2026-08-12T00:00:00Z","updated_at":"2026-08-12T00:00:00Z","created_by":"local-owner","updated_by":"local-owner"},"event_id":"evt_00000000000000000000000000000001","event_sequence":1}',
+    '2026-08-12T00:00:00Z'
+);
+
 INSERT INTO schema_migrations(version, name, applied_at)
 VALUES (1, '001_workspace_and_events.sql', '2026-08-12T00:00:00Z');
 

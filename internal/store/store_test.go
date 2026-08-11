@@ -122,6 +122,18 @@ func TestMigrationUpgradesCheckedInVersionOneFixture(t *testing.T) {
 	if health.SchemaVersion != LatestSchemaVersion {
 		t.Fatalf("schema version = %d, want %d", health.SchemaVersion, LatestSchemaVersion)
 	}
+	workspace, err := storage.Workspace(context.Background(), "fixture-workspace")
+	if err != nil || workspace.ID != "ws_00000000000000000000000000000001" {
+		t.Fatalf("Workspace(fixture after migration) = %#v, %v", workspace, err)
+	}
+	events, err := storage.Events(context.Background(), 0, 100)
+	if err != nil || len(events) != 1 || events[0].EventID != "evt_00000000000000000000000000000001" {
+		t.Fatalf("Events(fixture after migration) = %#v, %v", events, err)
+	}
+	var idempotencyCount int
+	if err := storage.db.QueryRow("SELECT COUNT(*) FROM idempotency_keys WHERE key = 'fixture-workspace-key'").Scan(&idempotencyCount); err != nil || idempotencyCount != 1 {
+		t.Fatalf("fixture idempotency count = %d, %v, want 1", idempotencyCount, err)
+	}
 	for _, table := range []string{"projects", "repositories", "project_repositories", "checkouts"} {
 		var count int
 		if err := storage.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
