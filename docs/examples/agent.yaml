@@ -1,0 +1,56 @@
+# Illustrative future agent definition. No parser exists yet.
+schema: crewfold.dev/agent/v1alpha1
+kind: Agent
+
+metadata:
+  name: engine-implementer
+  labels:
+    team: engine
+
+spec:
+  role: implementer
+  description: Implements scoped engine tasks and provides evidence-backed handoffs.
+
+  provider:
+    kind: codex
+    profile: default
+
+  runtime:
+    preferred: herdr
+    fallback: direct
+
+  eligible_projects:
+    - world-engine
+
+  capabilities:
+    - code.read
+    - code.write
+    - tests.run
+    - crewfold.mcp
+
+  limits:
+    max_active_runs: 1
+    run_timeout: 2h
+    max_retries_per_task: 2
+
+  policy:
+    allow:
+      - coordination.read
+      - coordination.message
+      - coordination.claim
+      - task.report
+      - artifact.publish
+      - knowledge.propose
+      - workspace.write_assigned
+    approval_required:
+      - git.commit
+      - git.push
+    deny:
+      - git.merge
+      - production.deploy
+      - external.message
+
+  reporting:
+    heartbeat: 5m
+    checkpoint: 20m
+    require_handoff: true

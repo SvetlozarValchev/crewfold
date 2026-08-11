@@ -1,0 +1,33 @@
+# Build output
+/bin/
+/dist/
+/coverage/
+/web/dist/
+
+# Go
+*.test
+*.out
+
+# JavaScript tooling used by the future web console and SDK
+node_modules/
+.pnpm-store/
+
+# Local Crewfold runtime state
+.crewfold/runtime/
+.crewfold/cache/
+.crewfold/*.db
+.crewfold/*.db-shm
+.crewfold/*.db-wal
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
