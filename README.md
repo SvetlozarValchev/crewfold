@@ -112,7 +112,9 @@ session formats.
 
 Start with the [documentation map](docs/README.md), then read the
 [vision](docs/vision.md), [product definition](docs/product.md), and
-[architecture](docs/architecture.md).
+[architecture](docs/architecture.md). The executable delivery sequence is in the
+[implementation plan](docs/implementation-plan.md) and
+[testing strategy](docs/testing.md).
 
 ## Scope of the first implementation
 

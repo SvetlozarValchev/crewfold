@@ -20,13 +20,18 @@ explicitly rather than silently treating either as authoritative.
 8. [Technology stack](stack.md) — proposed implementation choices and rejected
    early complexity.
 9. [CLI experience](cli.md) — the intended human-facing command surface.
-10. [Roadmap](roadmap.md) — incremental delivery plan.
-11. [Open questions](open-questions.md) — choices that are deliberately not final.
+10. [Implementation plan](implementation-plan.md) — individually demoable,
+    testable vertical slices.
+11. [Testing strategy](testing.md) — fixtures, failure injection, and acceptance
+    gates.
+12. [Roadmap](roadmap.md) — compact sequence and release landmarks.
+13. [Open questions](open-questions.md) — choices that are deliberately not final.
 
 ## References
 
 - [MCP tool contract](reference/mcp-tools.md)
 - [Event catalogue](reference/events.md)
+- [Milestone review template](reference/milestone-review-template.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 
