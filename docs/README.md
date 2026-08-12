@@ -39,6 +39,7 @@ explicitly rather than silently treating either as authoritative.
 - [Persistent workspace milestone review](reviews/persistent-workspace.md)
 - [Projects/checkouts milestone review](reviews/projects-checkouts.md)
 - [Durable coordination milestone review](reviews/durable-coordination.md)
+- [Deterministic execution milestone review](reviews/deterministic-execution.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 
