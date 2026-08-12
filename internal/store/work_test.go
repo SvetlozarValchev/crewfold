@@ -163,6 +163,40 @@ func TestTaskAssignmentTransitionsAndDoubleAssignment(t *testing.T) {
 	}
 }
 
+func TestInvalidTaskTransitionsLeaveStateAndEventsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, project := initializeWorkTestProject(t, storage)
+	task := createWorkTestTask(t, storage, workspace.ID, project.ID, "state validation", "task-state-validation")
+	eventsBefore, err := storage.Events(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatalf("Events(before) error = %v", err)
+	}
+	for _, attempt := range []struct {
+		action string
+		reason string
+	}{
+		{action: "start"},
+		{action: "unblock"},
+		{action: "block"},
+		{action: "complete"},
+	} {
+		_, mutationErr := storage.TransitionTask(context.Background(), TransitionTaskCommand{WorkspaceIdentifier: workspace.ID, TaskID: task.Task.ID, Action: attempt.action, Reason: attempt.reason, ExpectedRevision: 1, IdempotencyKey: "invalid-" + attempt.action, CorrelationID: "request-invalid-" + attempt.action})
+		if ErrorCode(mutationErr) != CodeInvalidTransition {
+			t.Errorf("TransitionTask(%q) error = %v, code = %q, want %q", attempt.action, mutationErr, ErrorCode(mutationErr), CodeInvalidTransition)
+		}
+	}
+	detail, err := storage.TaskDetail(context.Background(), workspace.ID, task.Task.ID, "request-show-unchanged")
+	if err != nil || detail.Task.Status != domain.TaskReady || detail.Task.Revision != 1 {
+		t.Fatalf("TaskDetail(after invalid transitions) = %#v, %v", detail, err)
+	}
+	eventsAfter, err := storage.Events(context.Background(), 0, 100)
+	if err != nil || len(eventsAfter) != len(eventsBefore) {
+		t.Fatalf("events after invalid transitions = %#v, %v; before = %#v", eventsAfter, err, eventsBefore)
+	}
+}
+
 func TestAssignmentExpiryUsesControlledClockAndRetainsHistory(t *testing.T) {
 	t.Parallel()
 
@@ -191,6 +225,30 @@ func TestAssignmentExpiryUsesControlledClockAndRetainsHistory(t *testing.T) {
 	count, err = storage.ReconcileExpiredAssignments(context.Background(), workspace.ID, "request-expire-again")
 	if err != nil || count != 0 {
 		t.Fatalf("second reconciliation = %d, %v", count, err)
+	}
+}
+
+func TestBlockedTaskStaysBlockedWhenItsAssignmentExpires(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	storage := openTestStore(t, t.TempDir(), Options{Clock: func() time.Time { return now }})
+	workspace, project := initializeWorkTestProject(t, storage)
+	agent, _ := storage.CreateAgent(context.Background(), CreateAgentCommand{WorkspaceIdentifier: workspace.ID, Name: "implementer", Role: "implementer", Provider: "fake", IdempotencyKey: "blocked-agent", CorrelationID: "request-blocked-agent"})
+	task := createWorkTestTask(t, storage, workspace.ID, project.ID, "blocked lease", "blocked-task")
+	assigned, err := storage.AssignTask(context.Background(), AssignTaskCommand{WorkspaceIdentifier: workspace.ID, TaskID: task.Task.ID, AgentIdentifier: agent.Value.ID, LeaseSeconds: 60, ExpectedRevision: 1, IdempotencyKey: "blocked-assign", CorrelationID: "request-blocked-assign"})
+	if err != nil {
+		t.Fatalf("AssignTask() error = %v", err)
+	}
+	blocked := transitionWorkTestTask(t, storage, workspace.ID, task.Task.ID, "block", "waiting for input", assigned.Detail.Task.Revision)
+	now = now.Add(61 * time.Second)
+	detail, err := storage.TaskDetail(context.Background(), workspace.ID, task.Task.ID, "request-expire-blocked")
+	if err != nil || detail.Task.Status != domain.TaskBlocked || detail.Task.Revision != blocked.Task.Revision+1 || detail.Assignment != nil {
+		t.Fatalf("TaskDetail(blocked after expiry) = %#v, %v", detail, err)
+	}
+	unblocked := transitionWorkTestTask(t, storage, workspace.ID, task.Task.ID, "unblock", "", detail.Task.Revision)
+	if unblocked.Task.Status != domain.TaskReady || !unblocked.Readiness.Ready {
+		t.Fatalf("unblocked task after lease expiry = %#v, want ready", unblocked)
 	}
 }
 
