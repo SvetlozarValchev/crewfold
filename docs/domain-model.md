@@ -239,6 +239,41 @@ A special authoritative knowledge item with status `proposed`, `accepted`,
 `superseded`, or `rejected`. Decisions record alternatives, rationale, owner, scope,
 and consequences.
 
+### Outcome assessment
+
+A revisioned judgment about whether a promised deliverable was achieved. It is
+distinct from activity, a run result, and task lifecycle state. An assessment
+contains:
+
+- the objective, task, and deliverable commitment it evaluates;
+- review state `proposed`, `accepted`, `rejected`, or `superseded`;
+- conclusion `achieved`, `partial`, `not_achieved`, or `unknown`;
+- the delivered scope and any declared compatibility or stability effects;
+- material decision and rationale references;
+- evidence and verification references, including strength and freshness;
+- residual risks, disputed claims, unknowns, and follow-up work;
+- assessor, authority, revision, and effective timestamp.
+
+Agents and automated checks may propose assessments. Policy or an authorized
+reviewer accepts or rejects the assessment. Separating review state from
+conclusion allows an authority to accept a `partial` or `not_achieved` finding
+without pretending the deliverable succeeded. A completed run is therefore never
+sufficient by itself to assert that an outcome was delivered.
+
+### Management briefing
+
+A revisioned, derived projection over objective, task, outcome, decision,
+evidence, check, risk, overlap, and message records. A briefing declares its scope,
+event cursor, “as of” time, and optional base checkpoint. Its structured sections
+cover commitments, accepted delivery, deviations, rationale, verification,
+compatibility and stability, risks and unknowns, required decisions, and proposed
+next actions.
+
+A briefing is not a new source of truth and is not an agent-authored summary blob.
+Every material claim refers to the durable records from which it was derived. An
+optional narrative rendering may improve readability but cannot add facts or hide
+conflicts in the structured projection.
+
 ### Event
 
 An immutable fact that a domain mutation was accepted or an observation recorded.
@@ -272,3 +307,6 @@ launched it.
 8. Runtime termination cannot delete durable task or communication state.
 9. Every privileged action is attributable to an actor and policy decision.
 10. Provider-specific fields remain in adapter metadata, not core required fields.
+11. Run activity cannot imply an accepted outcome without an explicit assessment.
+12. Every material management-briefing claim is traceable to durable source
+    records at a declared event cursor.

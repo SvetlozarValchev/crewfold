@@ -206,6 +206,24 @@ crewfold context explain CONTEXT_PACKET_ID
 `context explain` shows why each item was included or excluded and the applied size
 budget.
 
+## Outcomes and management briefings
+
+```sh
+crewfold outcome propose --task TASK_A outcome.yaml
+crewfold outcome accept OUTCOME_REVISION
+crewfold checkpoint create --project world-engine
+crewfold briefing show --project world-engine --since CHECKPOINT_ID
+crewfold briefing explain BRIEFING_CLAIM_ID
+```
+
+An outcome assessment has a review state separate from its conclusion, so an
+authorized reviewer can accept that a deliverable is only partial or not achieved.
+`briefing show` derives a bounded view of commitments, accepted delivery,
+decisions, verification, compatibility/stability effects, risks, unknowns, and
+owner actions. `briefing explain` follows a material claim to its durable source
+records and event cursor. Neither command requires provider transcripts or an
+optional model-rendered narrative.
+
 ## Policy and approvals
 
 ```sh

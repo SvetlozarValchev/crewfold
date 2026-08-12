@@ -20,6 +20,15 @@ state from one place.
 Stop, restart, or switch a provider session without losing the task, its evidence,
 the messages it received, or the handoff from the prior attempt.
 
+### Understand delivery without inspecting every implementation
+
+Given more agent-produced code than the owner can personally read, explain what
+was promised, what was actually accepted, why material decisions were made, how
+strong and fresh the verification is, what changed for compatibility or
+stability, and what remains risky or unknown. The explanation must come from
+durable, provenance-linked records rather than polling sessions or reconciling
+agent-written Markdown.
+
 ### Coordinate overlapping work
 
 Detect when planned or actual change surfaces overlap. Make the conflict visible,
@@ -37,6 +46,13 @@ budget and without dumping every historical transcript.
 Let normal work continue without constant attention. Notify the owner when an
 agent is blocked, a dependency changes, a run exceeds budget, a claim conflicts,
 or an external side effect needs approval.
+
+### Decide what happens next
+
+At an owner checkpoint, show what changed since the prior checkpoint and the few
+choices that require attention. The owner should be able to continue, review,
+redirect, consolidate, retry, pause, or stop work from recommendations that cite
+their supporting facts and expose uncertainty.
 
 ## Roles in the first product
 
@@ -102,6 +118,15 @@ A failed or stopped run leaves the task intact. A replacement run receives the
 task, the latest accepted handoff/checkpoint, unresolved messages, relevant
 evidence, and current repository state.
 
+### 8. Review outcomes and continue
+
+Crewfold derives an owner briefing across runs, tasks, objectives, and projects.
+It separates attempted activity from accepted delivery; connects decisions and
+rationale to outcomes; grades verification strength and freshness; surfaces
+duplicates, contradictions, risks, and unknowns; and identifies decisions that
+need the owner. The owner can approve the next work, intervene, or drill into the
+supporting records without reading each session.
+
 ## Functional requirements
 
 ### Projects and checkouts
@@ -152,6 +177,27 @@ evidence, and current repository state.
 - Recommend retry, reassignment, review, meeting, or escalation.
 - Never exceed the action policy attached to the initiating identity.
 
+### Outcomes and management understanding
+
+- Record deliverable commitments and acceptance independently from agent activity.
+- Give outcome assessments a proposed, accepted, rejected, or superseded review
+  state and an achieved, partial, not-achieved, or unknown conclusion.
+- Link outcomes to evidence, decisions, compatibility effects, risks, unknowns,
+  and follow-up work.
+- Preserve material rationale and constraints without storing hidden model
+  reasoning or requiring full transcripts.
+- Distinguish self-reported evidence, mechanical checks, independent review, and
+  policy-accepted verification.
+- Maintain revisioned projections at run, task, objective, project, and workspace
+  scope.
+- Produce a bounded “since checkpoint” briefing of delivered changes, deviations,
+  failed verification, active risk, unknowns, and required owner actions.
+- Make every aggregate claim explainable through durable source records.
+- Keep stale, disputed, and contradictory evidence visible rather than blending
+  it into a confident narrative.
+- Treat code, diffs, logs, and transcripts as optional drill-down evidence, not as
+  the primary management interface.
+
 ### Auditability
 
 - Record who or what performed each coordination mutation.
@@ -169,6 +215,7 @@ evidence, and current repository state.
 | Recovery | Process restart does not lose committed coordination state |
 | Compatibility | Unknown providers can use generic terminal plus MCP mode |
 | Observability | Every scheduler and supervisor action has a human-readable reason |
+| Comprehension | Owner briefings explain accepted outcomes, rationale, evidence, risk, unknowns, and required decisions with provenance |
 | Safety | External/shared mutations require explicit policy and usually approval |
 | Portability | Linux first; macOS next; Windows through WSL before native support |
 
@@ -186,7 +233,18 @@ The first meaningful release passes this scenario:
 6. Detect a deliberately overlapping claim and create a two-agent coordination
    thread or meeting.
 7. Stop one run and resume the same durable agent and task in a new session.
-8. Show the owner a coherent status view and auditable event trail.
+8. Generate enough concurrent activity that reading every transcript is not a
+   viable way to understand the project.
+9. Show a bounded project briefing that separates attempted work from accepted
+   outcomes and captures material decisions and compatibility effects.
+10. Identify missing, stale, self-reported, and independently verified evidence;
+    never describe weakly supported work as reliable.
+11. Surface duplicated or contradictory work, unresolved risk, and the available
+    consolidation or escalation path.
+12. Answer what changed, why, how much to trust it, what remains, and what needs
+    the owner without requiring session transcripts.
+13. Drill every material briefing claim into durable records and its auditable
+    event trail.
 
 ## Explicitly deferred
 

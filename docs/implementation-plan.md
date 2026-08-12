@@ -29,6 +29,9 @@ Every milestone must provide all of the following:
    milestone's definition of done.
 8. **Documentation:** user-facing commands and architectural consequences are
    updated in the same change.
+9. **Outcome legibility:** the milestone states whether it changes a commitment,
+   accepted outcome, verification basis, active risk, or owner decision, so later
+   management projections do not have to infer meaning from activity logs.
 
 A milestone does not pass because its packages compile or because a unit test mocks
 away every boundary.
@@ -790,12 +793,15 @@ crewfold check inspect CHECK_RUN_ID
 - CI-watcher agent role and routing rules for task owners, reviewers, and manager.
 - Policy-controlled repair-task proposal.
 - Invalidated/stale result handling when repository HEAD changes.
+- Evidence classification that distinguishes agent self-report, mechanical check,
+  independent review, and policy acceptance.
 
 **Automated acceptance**
 
 - Passing check satisfies only the named acceptance criterion.
 - Failing check attaches evidence and notifies the correct task owner.
 - HEAD change marks the old result stale.
+- Missing or stale checks remain visible and cannot be summarized as verified.
 - Timeout, crash, and excessive output retain a bounded diagnostic artifact.
 - No result automatically pushes, merges, or determines integration order.
 
@@ -811,10 +817,68 @@ cycle. Remote GitHub/GitLab CI remains deferred.
 
 ## Stage E — Make the personal product dependable
 
-### M18 — Operator TUI
+### M18 — Outcome ledger and management briefings
 
-**Question answered:** Can one person understand the active crew and intervene
-without polling terminal panes or raw event records?
+**Question answered:** Can one person understand what a project achieved, why,
+how much to trust it, what remains, and what needs attention after more agent work
+than they can personally inspect?
+
+**Visible result**
+
+```sh
+crewfold outcome propose --task TASK_ID outcome.yaml
+crewfold outcome accept OUTCOME_REVISION
+crewfold checkpoint create --project demo
+crewfold briefing show --project demo --since CHECKPOINT_ID
+crewfold briefing explain BRIEFING_CLAIM_ID
+```
+
+**Deliverables**
+
+- Explicit deliverable commitments and revisioned outcome assessments with
+  proposed, accepted, rejected, and superseded review states plus achieved,
+  partial, not-achieved, and unknown conclusions.
+- Outcome links to decisions, evidence, verification strength and freshness,
+  compatibility/stability effects, risks, unknowns, and follow-up tasks.
+- Deterministic projections across task, objective, project, and workspace scope.
+- Owner checkpoints and bounded change briefings with stable structured output.
+- Claim-level explanation and drill-down to the durable records and event cursor.
+- Optional audience-specific narrative rendering that cannot alter projection facts
+  and is not required for core operation.
+
+**Automated acceptance**
+
+- A completed run and proposed handoff do not appear as accepted delivery until an
+  authorized outcome assessment is accepted.
+- A transcript-free fixture with at least ten agent/task histories answers what
+  changed, why, how much to trust it, what remains, and what needs the owner.
+- Self-reported, mechanically checked, independently reviewed, stale, missing,
+  disputed, and contradictory support remain distinguishable.
+- Accepted partial conclusions and superseded assessments preserve unmet
+  commitments and history.
+- Duplicate work, compatibility effects, unresolved risks, and unknowns appear in
+  the correct project briefing without flooding unrelated scopes.
+- “Since checkpoint” includes each relevant change once, stays within its size
+  budget, and every material claim has a stable provenance path.
+
+**Failure injection**
+
+- Stop the daemon after committing an outcome assessment but before the projector
+  acknowledges it; restart produces one correct briefing revision and no duplicate
+  checkpoint change. If an optional narrative renderer fails, the structured
+  briefing remains available with a degraded-rendering diagnosis.
+
+**Exit gate**
+
+The owner can make a defensible continue, review, redirect, consolidate, pause, or
+stop decision from the project briefing without opening provider transcripts.
+This proves evidence-backed management compression, not merely status display.
+
+### M19 — Operator TUI
+
+**Question answered:** Can one person navigate management briefings, active
+exceptions, and live crew state and intervene without polling terminal panes or
+raw event records?
 
 **Visible result**
 
@@ -824,8 +888,9 @@ crewfold ui
 
 **Deliverables**
 
-- Terminal dashboard for projects, ready/blocked tasks, active runs, inbox,
-  overlaps, meetings, checks, approvals, and recent explanations.
+- Terminal dashboard for project briefings, accepted outcomes, risks, unknowns,
+  required decisions, ready/blocked tasks, active runs, inbox, overlaps, meetings,
+  checks, approvals, and recent explanations.
 - Drill-down from summary to entity timeline and then Herdr attach.
 - Keyboard-only operation and safe resize behavior.
 - Read-only default; mutations reuse normal command/policy APIs.
@@ -836,6 +901,8 @@ crewfold ui
 - Non-interactive smoke test consumes a deterministic event fixture.
 - Reconnect resumes from an event cursor without duplicating notifications.
 - Every displayed urgent count links to the records that produced it.
+- Briefing sections retain the same claims, evidence classifications, and event
+  cursor as the CLI/API projection.
 
 **Failure injection**
 
@@ -847,7 +914,7 @@ crewfold ui
 The full personal scenario is operable through the TUI while every mutation remains
 equally available through the CLI/API.
 
-### M19 — Personal-scale hardening and recovery
+### M20 — Personal-scale hardening and recovery
 
 **Question answered:** Can Crewfold remain controllable, recoverable, and upgradable
 at the target local scale?
@@ -866,6 +933,8 @@ crewfold test load --profile personal-100
 
 - Load tests for 100 agent definitions, 1,000 tasks, and 100,000 events with a
   bounded active set.
+- Management-workload tests over project and workspace briefings with bounded size
+  and query latency.
 - Queue backpressure, retry/cooldown policy, and resource-budget reporting.
 - Online backup, restore-to-new-directory, integrity checks, and repair guidance.
 - Upgrade/rollback process and migration fixtures for supported releases.
@@ -875,6 +944,8 @@ crewfold test load --profile personal-100
 
 - Load target stays within documented latency/memory budgets established by the
   benchmark baseline.
+- Briefing latency and output size remain bounded at the personal-100 target; one
+  noisy project cannot crowd unrelated owner decisions out of workspace scope.
 - Saturated launch work does not starve status, messages, or lease renewal.
 - Backup/restore reproduces domain state and event cursor independently.
 - Fault suite covers daemon kill, runtime loss, stale leases, duplicate delivery,
@@ -891,7 +962,7 @@ crewfold test load --profile personal-100
 The personal acceptance suite and fault matrix pass repeatedly with no manual
 database edits, leaked processes, or hidden cleanup.
 
-### M20 — Public open-source release readiness
+### M21 — Public open-source release readiness
 
 **Question answered:** Can an unrelated developer install, understand, test, and
 extend Crewfold safely?
@@ -941,9 +1012,10 @@ an explicit owner decision.
 | Coordination preview | M12–M13 | Overlap detection and structured resolution |
 | Knowledge preview | M14–M15 | Canonical knowledge, context, curation, and retrieval |
 | Personal alpha | M16–M17 | Manager/supervisor flow and local CI evidence |
-| Operator alpha | M18 | One coherent terminal control surface |
-| Personal beta | M19 | Operable and recoverable at target local scale |
-| Public release candidate | M20 | Installable, documented, extensible OSS package |
+| Management alpha | M18 | Evidence-backed outcomes and bounded owner briefings |
+| Operator alpha | M19 | One coherent terminal control surface |
+| Personal beta | M20 | Operable and recoverable at target local scale |
+| Public release candidate | M21 | Installable, documented, extensible OSS package |
 
 These are capability labels, not promises of semantic-version numbers or dates.
 

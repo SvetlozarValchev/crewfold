@@ -2,8 +2,8 @@
 
 ## One sentence
 
-Crewfold lets one developer operate a coherent crew of heterogeneous coding agents
-without turning their terminal, repositories, or prompts into an unmanageable pile.
+Crewfold lets one developer govern more heterogeneous coding-agent work than they
+can personally inspect while retaining evidence-backed understanding and control.
 
 ## The immediate product
 
@@ -25,11 +25,39 @@ than independent terminals:
 
 Crewfold supplies that missing layer.
 
+## The control problem
+
+As agent autonomy increases, code review by personal comprehension stops scaling.
+Five or ten agents can produce tens or hundreds of thousands of lines while the
+owner is still deciding whether to continue, redirect, consolidate, or stop. A
+terminal grid and a collection of session summaries do not solve that problem;
+they replace code overload with prose overload.
+
+Crewfold is therefore a management-compression system as well as a coordination
+control plane. It converts a large volume of agent activity into a smaller set of
+governed facts:
+
+- intended and accepted deliverables;
+- material decisions, assumptions, and rationale;
+- verification evidence and its freshness and independence;
+- deviations, unresolved risks, and explicit unknowns;
+- cross-task effects, duplicated work, and contradictions;
+- decisions and interventions that require the owner.
+
+The owner should reason at task, objective, project, and portfolio level. Source,
+diffs, individual runs, and provider transcripts remain available for drill-down,
+but reconstructing them is never the normal path to understanding current state.
+
 ## North-star experience
 
 The owner opens one console and sees:
 
 - what every project is trying to achieve;
+- what was actually delivered since the last owner checkpoint;
+- why material implementation and architecture decisions were made;
+- which delivery claims are accepted, disputed, stale, or weakly evidenced;
+- the current reliability/stability assessment and the evidence behind it;
+- residual risks, unknowns, and incomplete promises;
 - which roles exist and which sessions are actually running;
 - what each agent owns, is waiting for, or needs from the human;
 - where work overlaps or contradicts a recorded decision;
@@ -40,6 +68,10 @@ The owner can ask a manager agent to decompose an objective. The manager propose
 tasks, roles, dependencies, and budgets. Once approved, Crewfold launches the
 needed sessions, supplies scoped context, and mediates their coordination. The
 owner can inspect or interrupt every step.
+
+The same information is queryable through stable CLI/API records. The console is
+one presentation of an outcome projection, not the only place where a model has
+summarized the crew.
 
 ## What “shared context” means
 
@@ -83,6 +115,19 @@ session. Stopping a terminal must not erase ownership, communication, or context
 
 Important outcomes become tasks, decisions, claims, messages, or knowledge items.
 Free-form dialogue can support those records but does not replace them.
+
+### Activity is not delivery
+
+Agent reports, Git changes, passing checks, reviewer findings, and accepted
+deliverables are distinct facts. Crewfold never equates tokens spent, files
+changed, commits produced, or an agent saying “done” with achieved outcome.
+
+### Understanding is progressively summarized
+
+Run facts roll into task outcomes, task outcomes into objectives, and objectives
+into project/portfolio briefings. Each level preserves provenance and exposes
+exceptions; it does not concatenate lower-level prose. A concise answer must be
+drillable to the decisions and evidence that justify it.
 
 ### The source of truth stays narrow
 

@@ -42,9 +42,10 @@ implementation commits are
 | M15 | Curator/retrieval | Find, reconcile, and refresh relevant knowledge deterministically | M14 |
 | M16 | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
 | M17 | Local checks/CI watcher | Route fresh check evidence without granting merge authority | M16 |
-| M18 | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M17 |
-| M19 | Personal beta | Back up, recover, upgrade, and load-test 100 registered roles | M18 |
-| M20 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M19 |
+| M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
+| M19 | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
+| M20 | Personal beta | Back up, recover, upgrade, and load-test 100 registered roles | M19 |
+| M21 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M20 |
 
 ## Capability ladder
 
@@ -67,6 +68,7 @@ buildable binary
   -> curation and retrieval
   -> manager and supervisor
   -> local checks and CI watching
+  -> outcome ledger and management briefings
   -> operator TUI
   -> personal-scale recovery
   -> public release readiness
@@ -112,17 +114,23 @@ relevant without making retrieval authoritative.
 Managers propose work, dependencies advance under policy, and local checks route
 fresh evidence to the right roles.
 
-### Operator alpha — M18
+### Management alpha — M18
+
+Structured outcome assessments and evidence-backed project briefings let the
+owner understand delivery, rationale, reliability, risk, unknowns, and required
+decisions without reconstructing individual sessions.
+
+### Operator alpha — M19
 
 One coherent terminal dashboard makes the active crew understandable and
 intervenable without polling panes.
 
-### Personal beta — M19
+### Personal beta — M20
 
 One developer can operate and recover the system at the target of roughly 100
 registered roles with bounded active concurrency.
 
-### Public release candidate — M20
+### Public release candidate — M21
 
 An unrelated developer can install, demo, test, and extend Crewfold without model
 credentials. Live provider tests remain explicit opt-in canaries.

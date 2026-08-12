@@ -23,6 +23,7 @@ flowchart TB
         Scheduler[Scheduler]
         Supervisor[Supervisor]
         Curator[Context curator]
+        Outcomes[Outcome and briefing projector]
         Watchers[Git and runtime watchers]
     end
 
@@ -47,6 +48,7 @@ flowchart TB
     Journal --> Scheduler
     Journal --> Supervisor
     Journal --> Curator
+    Journal --> Outcomes
     Watchers --> Commands
     Journal --> DB
     Projections --> DB
@@ -173,6 +175,21 @@ Maintains the difference between evidence and accepted shared knowledge. It can
 extract proposed decisions, findings, risks, and summaries from structured agent
 reports. Automatic acceptance is limited to low-risk scopes and explicit rules.
 
+### Outcome and briefing projector
+
+Builds the management view from structured commitments, outcome assessments,
+decisions, checks, evidence, risks, overlaps, and follow-up work. Its base
+aggregation is deterministic and available even when no manager model or curator
+is running. It supports both an “as of” event cursor and a change view since an
+owner checkpoint.
+
+The projector preserves provenance and source authority for every material claim.
+It explicitly marks weak, stale, missing, disputed, or contradictory support. A
+manager model may render or recommend from this projection, but model prose cannot
+alter its facts, silently reconcile conflicts, or become the only representation
+of project state. Session transcripts are optional evidence and are not required
+to build the projection.
+
 ### Watchers
 
 Watchers observe:
@@ -214,6 +231,9 @@ capabilities and events.
 | Provider-private conversation/session | Provider tool |
 | Tasks, assignments, claims, messages, meetings | Crewfold database |
 | Accepted project knowledge and decisions | Crewfold knowledge records |
+| Accepted deliverables and residual outcome risk | Crewfold outcome assessments |
+| Verification results | Check systems and evidence records, with source and freshness |
+| Management briefing | Derived Crewfold projection; never an independent authority |
 | Authorization and autonomy limits | Crewfold policy configuration |
 | External CI or issue status | External system, cached as observation |
 

@@ -7,6 +7,13 @@ and worktrees. It gives those sessions durable identities, scoped work, shared
 knowledge, mailboxes, meetings, and a supervisor without replacing the tools that
 already run them.
 
+Its central promise is management comprehension: when agents produce more code
+than one person can inspect, Crewfold must still let the owner understand what was
+delivered, why it was done that way, what evidence supports it, what remains risky
+or unknown, and which decision needs human attention. That understanding comes
+from structured, provenance-linked outcomes—not from reading every session or
+combining agent-written summaries.
+
 Crewfold is provider-neutral. Codex, Claude Code, OpenCode, Gemini CLI, shell
 workers, CI watchers, and future tools should participate through adapters rather
 than forcing the core to understand every terminal UI.
@@ -57,7 +64,9 @@ The first useful version is intentionally personal:
    restarts.
 6. A supervisor detects blocked work and overlaps, then recommends or performs a
    policy-approved coordination action.
-7. Herdr is the preferred interactive runtime, but it is not Crewfold's database
+7. Outcome assessments and project briefings explain accepted delivery, evidence,
+   risk, and required owner decisions without reconstructing sessions.
+8. Herdr is the preferred interactive runtime, but it is not Crewfold's database
    or domain model.
 
 Crewfold should support roughly one hundred registered agent roles on a developer

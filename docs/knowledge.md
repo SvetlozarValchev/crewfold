@@ -166,6 +166,31 @@ Crewfold should not ingest full transcripts by default because they:
 - mix tentative reasoning with accepted outcomes;
 - create provider lock-in and retention obligations.
 
+## Management briefings are not shared memory
+
+Canonical knowledge and management understanding serve different purposes.
+Knowledge items preserve reusable facts, constraints, decisions, findings, and
+runbooks. A management briefing is a current derived view across commitments,
+accepted outcome assessments, decisions, evidence, checks, risks, overlaps, and
+follow-up work. It must not be stored as a second, loosely governed version of
+project truth.
+
+The structured briefing projection answers:
+
+1. What was promised and what was accepted as delivered?
+2. What materially changed since the selected owner checkpoint?
+3. Which decisions shaped the result, and what constraints drove them?
+4. Which verification supports reliability and stability, how independent is it,
+   and is it still fresh?
+5. What failed, deviated, conflicts, remains unknown, or still carries risk?
+6. Which decisions or interventions now require the owner?
+
+The base projection is bounded, revisioned, and provenance-linked. Optional model
+rendering may compress it for a particular audience, but it receives the
+structured projection as input and may not invent acceptance, erase disagreement,
+or upgrade evidence strength. Raw transcripts are never required to answer these
+questions; they remain optional drill-down sources when retained.
+
 ## Contradictions and staleness
 
 Knowledge can be `current`, `stale`, `disputed`, `superseded`, or `withdrawn`.

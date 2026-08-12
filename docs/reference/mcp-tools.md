@@ -25,6 +25,8 @@ crewfold://meetings/{meeting_id}
 crewfold://knowledge/{knowledge_id}/revisions/{revision}
 crewfold://context-packets/{packet_id}
 crewfold://projects/{project_id}/status
+crewfold://outcomes/{outcome_id}/revisions/{revision}
+crewfold://projects/{project_id}/briefings/{event_cursor}
 ```
 
 Resource reads enforce the same scope as tools. A URI is not a capability by
@@ -89,17 +91,29 @@ Submits a handoff and evidence for acceptance/review.
 {
   "summary": "Implemented deterministic contact cache",
   "deliverables": [
-    {"name": "ordering tests", "status": "satisfied", "evidence_id": "artifact_id"}
+    {
+      "commitment_id": "deliverable_id",
+      "claimed_conclusion": "achieved",
+      "evidence_ids": ["artifact_id"]
+    }
   ],
   "changed_paths": ["src/physics/contact/cache.go"],
   "checks": [{"name": "contact tests", "status": "passed", "artifact_id": "artifact_id"}],
+  "decision_ids": ["decision_id"],
+  "deviations": [],
+  "compatibility_effects": [],
+  "stability_effects": [],
   "remaining_risks": [],
+  "unknowns": [],
+  "follow_up_task_proposals": [],
   "knowledge_proposal_ids": []
 }
 ```
 
 The response reports `accepted`, `review_required`, `changes_requested`, or
-`approval_required`. It never fabricates task completion from process exit.
+`approval_required`. Here, `accepted` means that the task completion and handoff
+passed their configured gate; it does not create an accepted outcome assessment.
+It never fabricates task completion from process exit.
 
 ### `crewfold_list_messages`
 
@@ -180,6 +194,23 @@ Available only to appropriately scoped manager runs:
 
 Manager tools normally create proposals. Execution remains subject to deterministic
 policy, capacity, dependency, and claim checks.
+
+## Outcome assessment tools
+
+Available when the outcome-ledger capability is installed and scoped by task,
+project, and review authority:
+
+- `crewfold_propose_outcome_assessment`
+- `crewfold_review_outcome_assessment`
+- `crewfold_get_management_briefing`
+- `crewfold_explain_briefing_claim`
+
+The proposing tool cites deliverable commitments, decisions, evidence, checks,
+risks, unknowns, and follow-up work. The review tool accepts or rejects an
+assessment revision; it records the assessment conclusion separately, so accepting
+a `partial` or `not_achieved` conclusion never means the deliverable succeeded.
+Briefing tools return the same deterministic projection exposed to human clients,
+subject to the caller's narrower visibility scope.
 
 ## Error shape
 

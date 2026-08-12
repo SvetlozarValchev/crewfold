@@ -208,6 +208,12 @@ The supervisor watches for conditions and chooses from policy-approved responses
 Model reasoning is useful for summarizing evidence and proposing responses. The
 supervisor's ability to execute a response still comes from deterministic policy.
 
+The supervisor also feeds exceptions into outcome projections. It records the
+condition, affected commitment, supporting observations, response, owner, and
+resolution state. A management briefing can therefore show the unresolved
+exceptions that threaten delivery without turning every heartbeat or progress
+message into owner-facing noise.
+
 ## Manager hierarchy
 
 Crewfold can represent manager and team-lead roles, but the personal MVP does not
@@ -225,6 +231,13 @@ owner
 Task-specific coordinators can be created temporarily. Hierarchies organize
 attention and escalation; they do not hide peer messages or confer unrestricted
 authority.
+
+Every layer rolls up accepted outcomes, material decisions, verification gaps,
+risks, unknowns, and requests for authority—not concatenated subordinate
+summaries. A higher-level manager may ask for a narrower briefing or drill into a
+claim, but it cannot silently reinterpret a lower-level outcome assessment. This
+same projection boundary permits deeper team structures later without requiring
+the owner to poll each agent.
 
 ## Working in one checkout
 

@@ -7,6 +7,11 @@ boundaries. Its tests must identify whether a failure belongs to the domain, sto
 daemon transport, scheduler, runtime, provider, or external tool. A large end-to-end
 test alone cannot provide that diagnosis.
 
+The end-state suite must also prove management comprehension: after more work than
+one person can reasonably inspect, the public product still explains accepted
+delivery, rationale, verification, risk, unknowns, and required decisions without
+requiring session-by-session reconstruction.
+
 ## Test layers
 
 ### 1. Domain unit tests
@@ -74,6 +79,30 @@ query latency, scheduler latency, memory, database growth, queue lag, and startu
 reconciliation. Short load tests run regularly; long soak tests run before beta
 releases.
 
+### 8. Management-comprehension acceptance
+
+Exercise a deterministic project with at least ten concurrent agent/task histories,
+mixed assessment states and conclusions, decisions, checks, reviews, risks,
+duplicated work, and a deliberate contradiction. Provider transcripts are absent
+from the fixture.
+
+The scenario asserts that Crewfold:
+
+- distinguishes agent activity and completed runs from accepted outcomes;
+- explains material rationale through decision and constraint records;
+- distinguishes self-report, mechanical checks, independent review, and accepted
+  verification, including freshness;
+- never turns missing, stale, or disputed evidence into a reliability claim;
+- reports duplicated and contradictory work with its resolution state;
+- produces a bounded, stable project briefing and a deterministic change view
+  since an owner checkpoint;
+- identifies the few remaining risks, unknowns, and owner decisions;
+- drills each material aggregate claim into its durable provenance.
+
+Narrative wording may receive tolerant rendering tests. The structured briefing
+contract, claim identifiers, evidence classifications, and checkpoint diff are
+strictly asserted.
+
 ## Required test fixtures
 
 ### Controlled clock and ID source
@@ -122,6 +151,16 @@ that observation does not mutate source or Git metadata.
 Implements the tested schema responses and event sequences, including incompatible
 versions, moved panes, stopped agents, and connection loss. Live Herdr tests verify
 that the fixtures still represent reality.
+
+### Management workload fixture
+
+A provider-free fixture represents enough parallel work that transcript review is
+not a valid acceptance technique. It contains achieved, partial, not-achieved,
+and unknown conclusions plus rejected and superseded assessment revisions;
+material decisions; compatible and breaking changes; fresh and stale checks;
+independent and self-reported evidence; unresolved risk; duplicate tasks; and
+contradictory findings. Stable IDs and event cursors allow briefing and “since
+checkpoint” assertions without model-dependent prose.
 
 ## Milestone scenario layout
 
@@ -248,7 +287,9 @@ Tests should assert not only final state but also diagnostic quality:
 - human-readable reason;
 - retryability and next action where meaningful;
 - absence of secrets and unrelated paths;
-- clear distinction between accepted intent and completed effect.
+- clear distinction between accepted intent and completed effect;
+- clear distinction between activity, proposed completion, and accepted outcome;
+- provenance, authority, strength, and freshness for management-level claims.
 
 This prevents a system that is technically correct but impossible to debug.
 
@@ -276,6 +317,11 @@ A milestone is done only when:
 - deferred items are named;
 - the repository is clean after the scenario;
 - the milestone review packet is recorded.
+
+Any milestone that changes outcome, decision, evidence, risk, or briefing behavior
+must also preserve the management-comprehension fixture. By the operator alpha,
+the project briefing must answer what changed, why, how much to trust it, what
+remains, and what needs the owner without reading transcripts.
 
 If any item is waived, the milestone remains incomplete unless the waiver is an
 explicit accepted decision with a follow-up gate.

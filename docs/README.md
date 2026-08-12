@@ -50,3 +50,4 @@ explicitly rather than silently treating either as authoritative.
 - [ADR-0003: SQLite event journal and projections](decisions/0003-sqlite-event-journal-and-projections.md)
 - [ADR-0004: MCP as the agent-facing coordination surface](decisions/0004-mcp-agent-surface.md)
 - [ADR-0005: Curated knowledge over transcript accumulation](decisions/0005-curated-knowledge.md)
+- [ADR-0006: Evidence-backed management projections over session summaries](decisions/0006-evidence-backed-management-projections.md)

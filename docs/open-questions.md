@@ -76,7 +76,8 @@ must never contain model credentials or machine-specific socket capabilities.
 ## Product questions to validate with use
 
 - Does the human primarily operate from Crewfold's TUI or from a manager-agent
-  conversation inside Herdr?
+  conversation inside Herdr? Both must consume the same structured outcome and
+  briefing projection rather than develop separate versions of project truth.
 - Which message kinds genuinely help, and which create bureaucracy?
 - When does a meeting produce better outcomes than a simple reviewer handoff?
 - Are path claims sufficient for most overlap, or is symbol/component indexing

@@ -169,6 +169,22 @@ contradiction.detected
 contradiction.resolved
 ```
 
+## Outcomes and owner checkpoints
+
+```text
+outcome.assessment_proposed
+outcome.assessment_accepted
+outcome.assessment_rejected
+outcome.assessment_superseded
+owner_checkpoint.created
+owner_checkpoint.archived
+```
+
+Management briefings are rebuildable projections at an event cursor, so querying
+or rendering one does not append a fact event. Optional rendering or projector
+failures are operational diagnostics unless they change durable coordination
+state.
+
 ## Policy, budgets, and approvals
 
 ```text
@@ -211,6 +227,7 @@ provider.session_bound
 provider.usage_observed
 check.started
 check.completed
+check.invalidated
 external_status.observed
 ```
 
