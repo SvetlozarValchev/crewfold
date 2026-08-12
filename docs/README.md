@@ -45,6 +45,7 @@ explicitly rather than silently treating either as authoritative.
 - [Durable two-agent messaging milestone review](reviews/agent-messaging.md)
 - [Herdr runtime milestone review](reviews/herdr-runtime.md)
 - [Codex canary implementation audit](reviews/codex-canary.md)
+- [Claude canary and provider-switch implementation audit](reviews/claude-canary.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 

@@ -36,6 +36,7 @@ shift
 
 bridge=''
 required='false'
+handoff_mode='false'
 while [ "$#" -gt 0 ]
 do
   case "$1" in
@@ -59,6 +60,9 @@ do
       shift 2
       ;;
     *)
+      case "$1" in
+        *provider_handoff*) handoff_mode='true' ;;
+      esac
       shift
       ;;
   esac
@@ -80,10 +84,21 @@ trap cleanup EXIT HUP INT TERM
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"codex-fixture","version":"1"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"crewfold_get_briefing","arguments":{}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crewfold_propose_completion","arguments":{"summary":"Recorded Codex endpoint completed the scoped work loop.","handoff":"Review the exact fixture task, accepted evidence, and run-scoped MCP audit.","evidence_ids":["implementation_complete","tests_passed"],"changed_paths":["answer.txt"],"checks":["./check.sh"],"remaining_risks":[],"unknowns":[],"idempotency_key":"recorded-codex-completion"}}}'
+  if [ "$handoff_mode" = 'true' ]
+  then
+    printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crewfold_send_message","arguments":{"recipient_agent":"claude-worker","kind":"handoff","subject":"Provider-neutral continuation","body":"Durable provider handoff: Codex completed the first bounded task; continue only from this Crewfold-owned message and the new task briefing.","artifact_ids":[],"idempotency_key":"codex-to-claude-handoff"}}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"crewfold_propose_completion","arguments":{"summary":"Recorded Codex endpoint completed the first provider-neutral task.","handoff":"The continuation is stored in Claude worker durable mail; no Codex transcript is required.","evidence_ids":["implementation_complete","tests_passed","provider_handoff"],"changed_paths":["answer.txt"],"checks":["./check.sh"],"remaining_risks":[],"unknowns":[],"idempotency_key":"recorded-codex-handoff-completion"}}}'
+  else
+    printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crewfold_propose_completion","arguments":{"summary":"Recorded Codex endpoint completed the scoped work loop.","handoff":"Review the exact fixture task, accepted evidence, and run-scoped MCP audit.","evidence_ids":["implementation_complete","tests_passed"],"changed_paths":["answer.txt"],"checks":["./check.sh"],"remaining_risks":[],"unknowns":[],"idempotency_key":"recorded-codex-completion"}}}'
+  fi
 } | "$bridge" __mcp-stdio-bridge >"$response_file"
 
-if [ "$(wc -l <"$response_file")" -ne 3 ] || grep -Fq '"error"' "$response_file" || grep -Fq '"isError":true' "$response_file"
+expected_responses=3
+if [ "$handoff_mode" = 'true' ]
+then
+  expected_responses=4
+fi
+if [ "$(wc -l <"$response_file")" -ne "$expected_responses" ] || grep -Fq '"error"' "$response_file" || grep -Fq '"isError":true' "$response_file"
 then
   printf '{"type":"error","message":"Crewfold MCP fixture call failed"}\n' >&2
   exit 1

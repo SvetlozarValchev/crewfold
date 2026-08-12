@@ -1,14 +1,12 @@
 package execution
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +19,6 @@ const (
 	CodexSandboxWorkspaceWrite   = "workspace-write"
 	CodexSandboxDangerFullAccess = "danger-full-access"
 	codexProviderHandlePrefix    = "codex-provider:v1:"
-	codexMaximumProbeOutput      = 1024 * 1024
 )
 
 var codexRequiredExecHelp = []string{
@@ -38,56 +35,9 @@ var codexCapabilities = []string{
 	"structured_events",
 }
 
-type CodexCommandResult struct {
-	Stdout   []byte
-	Stderr   []byte
-	ExitCode int
-}
-
-type CodexCommandRunner interface {
-	Run(context.Context, string, []string, map[string]string) (CodexCommandResult, error)
-}
-
-type CodexExecRunner struct{}
-
-func (CodexExecRunner) Run(ctx context.Context, executable string, arguments []string, environment map[string]string) (CodexCommandResult, error) {
-	command := exec.CommandContext(ctx, executable, arguments...)
-	command.Env = mergedCodexEnvironment(os.Environ(), environment)
-	stdout, stderr := &codexLimitedBuffer{limit: codexMaximumProbeOutput}, &codexLimitedBuffer{limit: codexMaximumProbeOutput}
-	command.Stdout, command.Stderr = stdout, stderr
-	err := command.Run()
-	result := CodexCommandResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
-	if err == nil {
-		return result, nil
-	}
-	var exitError *exec.ExitError
-	if errors.As(err, &exitError) {
-		result.ExitCode = exitError.ExitCode()
-		return result, nil
-	}
-	return result, err
-}
-
-type codexLimitedBuffer struct {
-	buffer bytes.Buffer
-	limit  int
-}
-
-func (buffer *codexLimitedBuffer) Write(value []byte) (int, error) {
-	written := len(value)
-	remaining := buffer.limit - buffer.buffer.Len()
-	if remaining > 0 {
-		if len(value) > remaining {
-			value = value[:remaining]
-		}
-		_, _ = buffer.buffer.Write(value)
-	}
-	return written, nil
-}
-
-func (buffer *codexLimitedBuffer) Bytes() []byte {
-	return append([]byte(nil), buffer.buffer.Bytes()...)
-}
+type CodexCommandResult = ProviderCommandResult
+type CodexCommandRunner = ProviderCommandRunner
+type CodexExecRunner = ProviderExecRunner
 
 type CodexProbeCheck struct {
 	Name   string `json:"name"`
@@ -217,45 +167,10 @@ func (report *CodexProbeReport) fail(name, detail string) {
 }
 
 func codexCommandDiagnostic(result CodexCommandResult, fallback string) string {
-	value := strings.TrimSpace(string(result.Stderr))
-	if value == "" {
-		value = strings.TrimSpace(string(result.Stdout))
-	}
-	if value == "" {
-		value = fallback
-	}
-	return boundedCodexDiagnostic(value)
+	return providerCommandDiagnostic(result, fallback)
 }
 
-func boundedCodexDiagnostic(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) > 4096 {
-		value = value[:4096]
-	}
-	return value
-}
-
-func mergedCodexEnvironment(base []string, overrides map[string]string) []string {
-	values := make(map[string]string, len(base)+len(overrides))
-	for _, entry := range base {
-		if name, value, ok := strings.Cut(entry, "="); ok {
-			values[name] = value
-		}
-	}
-	for name, value := range overrides {
-		values[name] = value
-	}
-	names := make([]string, 0, len(values))
-	for name := range values {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	result := make([]string, 0, len(names))
-	for _, name := range names {
-		result = append(result, name+"="+values[name])
-	}
-	return result
-}
+func boundedCodexDiagnostic(value string) string { return boundedProviderDiagnostic(value) }
 
 func defaultCodexHome() string {
 	if value := strings.TrimSpace(os.Getenv("CODEX_HOME")); value != "" {

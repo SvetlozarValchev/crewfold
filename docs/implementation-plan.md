@@ -539,6 +539,13 @@ is included in this milestone.
 
 ### M11 — Claude Code canary and provider-neutral proof
 
+**Status:** offline implementation complete on 2026-08-12; the installed
+real-model canary remains pending explicit owner authorization. The recorded
+Claude endpoint, compatibility/failure probes, strict scoped launch, and
+Codex-to-Claude durable handoff pass without credentials, network access, or
+inference. Continuing development does not authorize the gated model call. See
+the [implementation audit](reviews/claude-canary.md).
+
 **Question answered:** Does a second provider use the same Crewfold domain and MCP
 tools without core changes?
 

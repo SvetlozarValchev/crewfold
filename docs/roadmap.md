@@ -33,6 +33,9 @@ evidence](reviews/codex-canary.md) covers the Codex adapter, doctor, run-scoped
 STDIO MCP bridge, recorded endpoint, and owner-authorized disposable live canary.
 Its implementation commits are `d8f6aac5060eb31e380c95c9d01c8aa2dddadd49`
 and `676c0bc15a31ef9b2b8233961d2b6eed696bd1c1`.
+M11's offline implementation and provider-switch acceptance pass; its
+[implementation audit](reviews/claude-canary.md) remains open only for the
+separately authorized installed-Claude canary.
 
 ## Sequence
 
@@ -197,11 +200,10 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M11 is next: add the Claude Code adapter and prove that a second provider uses the
-same Crewfold domain, scoped MCP tools, handoff records, runtime contracts, and
-completion authority without provider-name branches in the core. It needs its own
-recorded offline endpoint and explicit live-consumption gate; M10's authorization
-does not authorize Claude calls.
+M11 is active. Its Claude Code adapter and recorded provider-switch proof are
+implemented; the exit gate still requires one explicitly authorized disposable
+Claude call. M10's authorization did not authorize Claude usage, so normal
+development stops at that boundary.
 
 Native Codex resume, active-turn steering, app-server ownership, claims, meetings,
 canonical knowledge, remote users, and automatic source integration remain outside

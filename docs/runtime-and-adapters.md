@@ -204,6 +204,42 @@ capabilities yet. Persistent Codex threads, active-turn steering, runtime-aware
 mailbox wake, structured usage, and app-server ownership are deliberate follow-up
 work.
 
+## Implemented Claude Code provider canary
+
+The second real provider adapter uses Claude Code's documented one-shot
+`-p --output-format stream-json` surface. Preparation runs a no-model probe over
+the installed 2.x version, required headless/MCP/permission options, and existing
+authentication. Untested major versions fail closed with upgrade guidance instead
+of being assumed compatible.
+
+Each run receives one inline `crewfold` STDIO MCP server under
+`--strict-mcp-config`; normal user, project, and local settings sources are not
+loaded. Browser integration, slash commands, and session persistence are disabled.
+The invocation uses `dontAsk`, exposes only `Read`, `Edit`, and `Bash`, and
+pre-approves a narrow command/MCP set. Inline deny rules protect provider and
+cloud credential locations. Native sandboxing is enabled with
+`failIfUnavailable` and no unsandboxed-command escape. Built-in Read/Edit allows
+are project-relative; sandboxed commands cannot read the host home except for the
+assigned checkout. The per-run provider ceiling defaults to `1.00` USD.
+
+As with Codex, the hidden bridge receives only the socket and capability-file
+paths. Provider stream events and exit status are bounded diagnostics. Only the
+existing Crewfold MCP reports can progress, block, or propose completion, and a
+clean Claude result without such a report is not task completion.
+
+The recorded acceptance proves the provider-neutral boundary rather than merely
+running Claude beside Codex: Codex sends a continuation to a stopped Claude agent
+through durable Crewfold mail, and a new Claude run receives it in the immutable
+briefing. Neither provider's private thread/session identifier appears in the
+other provider's logs or context. The adapter adds no provider branch to domain,
+scheduling, task, message, context, report, or acceptance policy.
+
+An explicit external-sandbox mode exists for hosts that cannot nest Claude's
+native Linux sandbox. It disables the inner sandbox only when the daemon operator
+asserts that an independent boundary already confines the whole process. The live
+test wrapper supplies such a boundary with a read-only, non-root container and
+disposable copied credentials; Crewfold does not select it automatically.
+
 ## Enhanced provider adapters
 
 Provider-specific integration is additive. An adapter advertises capabilities such
@@ -340,6 +376,12 @@ never selected automatically, and the provider refuses it unless the daemon was
 started with `--codex-external-sandbox true`. The live suite requires a separate
 `CREWFOLD_EXTERNAL_CODEX_SANDBOX=1` assertion before supplying that daemon
 acknowledgement.
+
+The Claude adapter has its own recorded endpoint and cross-provider handoff
+scenario in the default offline gate. Its installed canary independently requires
+`CREWFOLD_LIVE_CLAUDE=1` and `CREWFOLD_ALLOW_MODEL_CALLS=1`; the optional outer
+container additionally requires `CREWFOLD_EXTERNAL_CLAUDE_SANDBOX=1`. The
+authorization that permitted a Codex call does not permit a Claude call.
 
 ## Versioning
 

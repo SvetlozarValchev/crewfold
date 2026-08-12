@@ -15,16 +15,17 @@ func TestExecutionSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 	t.Parallel()
 
 	for path, expectedID := range map[string]string{
-		"schemas/fixture/v1/fake-run-scenario.schema.json":    execution.FakeScenarioSchema,
-		"schemas/local/v1/run-mutation.result.schema.json":    localapi.RunMutationSchema,
-		"schemas/local/v1/run-show.result.schema.json":        localapi.RunShowSchema,
-		"schemas/local/v1/run-list.result.schema.json":        localapi.RunListSchema,
-		"schemas/local/v1/run-logs.result.schema.json":        localapi.RunLogsSchema,
-		"schemas/local/v1/run-control.result.schema.json":     localapi.RunControlSchema,
-		"schemas/local/v1/run-attach.result.schema.json":      localapi.RunAttachSchema,
-		"schemas/cli/v1/doctor-runtime.response.schema.json":  herdr.ProbeSchema,
-		"schemas/cli/v1/doctor-provider.response.schema.json": execution.CodexProbeSchema,
-		"schemas/local/v1/task-timeline.result.schema.json":   localapi.TaskTimelineSchema,
+		"schemas/fixture/v1/fake-run-scenario.schema.json":           execution.FakeScenarioSchema,
+		"schemas/local/v1/run-mutation.result.schema.json":           localapi.RunMutationSchema,
+		"schemas/local/v1/run-show.result.schema.json":               localapi.RunShowSchema,
+		"schemas/local/v1/run-list.result.schema.json":               localapi.RunListSchema,
+		"schemas/local/v1/run-logs.result.schema.json":               localapi.RunLogsSchema,
+		"schemas/local/v1/run-control.result.schema.json":            localapi.RunControlSchema,
+		"schemas/local/v1/run-attach.result.schema.json":             localapi.RunAttachSchema,
+		"schemas/cli/v1/doctor-runtime.response.schema.json":         herdr.ProbeSchema,
+		"schemas/cli/v1/doctor-provider.response.schema.json":        execution.CodexProbeSchema,
+		"schemas/cli/v1/doctor-claude-provider.response.schema.json": execution.ClaudeProbeSchema,
+		"schemas/local/v1/task-timeline.result.schema.json":          localapi.TaskTimelineSchema,
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil {

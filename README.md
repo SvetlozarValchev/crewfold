@@ -49,8 +49,11 @@ output. A recorded Codex endpoint proves the full offline task-to-handoff path.
 The owner-authorized disposable real-model canary also passes end to end while
 remaining deliberately gated on explicit network/model-usage opt-in. On hosts
 that cannot nest Codex's Linux sandbox, its test-only container route supplies an
-independent outer boundary. Claude sessions, claims, canonical knowledge, and the
-operator TUI are still to come.
+independent outer boundary. The second provider edge is now offline-proven for
+Claude Code: its no-model doctor, strict run-scoped launch, failure boundaries,
+and a Codex-to-Claude handoff through curated Crewfold context and durable mail all
+pass. The separately gated installed-Claude canary is the remaining M11 exit gate;
+claims, canonical knowledge, and the operator TUI are still to come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.

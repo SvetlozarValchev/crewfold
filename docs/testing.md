@@ -50,6 +50,7 @@ Exercise one real boundary at a time:
 - MCP server plus fixture client;
 - Herdr driver plus recorded CLI/schema/session responses;
 - Codex adapter plus recorded version/help/auth and lifecycle responses;
+- Claude adapter plus recorded version/help/auth and lifecycle responses;
 - Git observer plus real temporary repositories.
 
 Each component suite labels its boundary in errors and exposes operation IDs.
@@ -210,6 +211,56 @@ stdin because the prompt is passed as an argument; otherwise Docker would expose
 Herdr's persistent PTY as a pipe and `codex exec` would wait for an impossible
 end-of-file before starting.
 
+### Recorded Claude endpoint and provider-switch proof
+
+The checked-in Claude Code endpoint implements the no-model version, help, and
+authentication commands used by the provider probe, validates the strict one-shot
+launch manifest, starts the real Crewfold STDIO bridge, reads the scoped briefing,
+and proposes completion through MCP. Recorded missing-authentication, unsupported-
+major, MCP-startup, and permission-boundary responses make failures attributable
+without credentials, network access, or inference.
+
+The black-box scenario is also the side-by-side portability proof. A recorded
+Codex run writes a durable handoff to the stopped Claude agent. A separate Claude
+run then receives the message through its immutable Crewfold briefing and
+completes the dependent task. The scenario asserts that provider-private session
+identifiers never cross logs or context and that raw transcripts remain excluded.
+
+The real Claude canary has an independent two-flag acknowledgement gate:
+
+```sh
+CREWFOLD_LIVE_CLAUDE=1 CREWFOLD_ALLOW_MODEL_CALLS=1 ./test/live/claude/run.sh
+```
+
+It uses a dedicated Herdr session and disposable one-file Git repository, caps the
+provider run at `1.00` USD by default, verifies the exact diff and checks, and has
+no remote. Without both flags it cannot call a model. Native Claude sandboxing is
+enabled and configured to fail closed.
+
+If the host cannot construct the nested Claude sandbox, the explicit outer
+container route is:
+
+```sh
+./test/live/claude/build-container.sh
+CREWFOLD_CLAUDE_BINARY="$PWD/test/live/claude/containerized-cli.sh" \
+CREWFOLD_EXTERNAL_CLAUDE_SANDBOX=1 \
+CREWFOLD_LIVE_CLAUDE=1 CREWFOLD_ALLOW_MODEL_CALLS=1 \
+  ./test/live/claude/run.sh
+```
+
+The digest-pinned image contains the installed native Claude executable plus only
+CA roots and Git. The build copies no authentication or configuration. At runtime
+the wrapper copies only `.credentials.json` into an owner-private disposable
+configuration directory, uses a read-only root, runs as the current non-root UID,
+drops every Linux capability, and mounts only that temporary provider state and
+the canary scope. The inner sandbox is disabled only after the separate external-
+sandbox assertion because the container is then the enforcement boundary. The
+wrapper refuses to pull an image and validates that the working directory and MCP
+capability both belong to the disposable canary scope.
+External-container mode places that scope under the user cache directory by
+default so confined Docker installations can bind-mount it; an operator may set
+`CREWFOLD_LIVE_CLAUDE_TEMP_ROOT` to another existing Docker-visible parent.
+
 ### Management workload fixture
 
 A provider-free fixture represents enough parallel work that transcript review is
@@ -322,7 +373,8 @@ The complete implemented offline gate is:
 ```
 
 It runs formatting, vet, all package tests, the race suite when supported, and
-ten built-binary scenarios through the Herdr fixture runtime. The direct messaging
+twelve built-binary scenarios across local API, direct, Herdr, recorded Codex, and
+recorded Claude boundaries. The direct messaging
 scenario uses only public CLI/MCP surfaces, stops and restarts the daemon after an
 offline send, compares inbox JSON byte-for-byte across restart, then has agents in
 adjacent standalone clones read, acknowledge, reply, and complete. It also proves

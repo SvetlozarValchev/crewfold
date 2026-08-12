@@ -8,7 +8,9 @@ queries, project/checkout registration and observation, durable
 agent/objective/task coordination, immutable context packets, deterministic fake
 execution, supervised direct and Herdr fixture subprocesses, run-scoped MCP
 reporting, durable one-recipient agent mail, and an offline-proven Codex provider
-adapter. It supports text and JSON output.
+adapter. The Claude Code adapter, provider doctor, and recorded Codex-to-Claude
+handoff are also implemented; only its separately gated live conformance call is
+pending. It supports text and JSON output.
 Teams, claims,
 meetings, canonical knowledge, policy, and approval
 commands in later sections are intended future contracts and are not yet available.
@@ -32,6 +34,7 @@ crewfold status --socket /path/to/crewfold.sock
 crewfold doctor --database --socket /path/to/crewfold.sock
 crewfold doctor --runtime herdr
 crewfold doctor --provider codex
+crewfold doctor --provider claude
 crewfold workspace init personal --socket /path/to/crewfold.sock \
   --idempotency-key initialize-personal
 crewfold workspace show personal --socket /path/to/crewfold.sock
@@ -62,6 +65,19 @@ operator who independently confines the entire Codex process, such as in a
 container that mounts only the assigned checkout, and Crewfold additionally
 requires `--codex-external-sandbox true`. It must never be used as a workaround
 on an otherwise unrestricted host.
+
+`doctor --provider claude` also makes no model call. It checks the installed
+Claude Code version, the headless streaming/MCP/permission flags Crewfold relies
+on, and authentication status without reporting account or organization identity.
+`--claude-binary` and `--claude-config-dir` select an installation and auth/config
+root. Daemon runs default to a `1.00` USD per-run ceiling, configurable with
+`--claude-max-budget-usd`. Claude runs use one-shot stream JSON, disable session
+persistence, ignore normal user/project/local settings sources, require only the
+inline Crewfold MCP server, and run in `dontAsk` mode with a bounded tool allowlist.
+The native sandbox is enabled and fails closed by default. Only an independently
+confined process may set `--claude-external-sandbox true`, which disables the
+nested native sandbox; this flag is an assertion about an existing boundary, not
+a way to create one.
 
 ## Projects and checkouts
 
@@ -207,8 +223,8 @@ reports captured and omitted byte counts. `run stop --graceful` requests
 termination and records whether forced kill was required. If Crewfold cannot trust
 the process identity or outcome, the run becomes `lost`, the task is blocked, and
 capacity stays reserved. Arbitrary executable/path selection, direct-runtime
-attach/interrupt, and dry-run remain deferred; the Codex adapter below is the one
-allowlisted real provider command.
+attach/interrupt, and dry-run remain deferred; the Codex and Claude adapters below
+are the allowlisted real provider commands.
 
 The implemented `fixture-mcp` provider uses that same direct runtime but reports
 only through authenticated MCP tools. Its stdout contains runtime metadata, not
@@ -245,6 +261,20 @@ an active turn. Runtime prompt delivery to a headless Codex process is therefore
 not a provider-level steering guarantee. Those controls require the later richer
 provider session contract; the current OpenAI app-server surface is intentionally
 not made a core dependency here.
+
+The implemented `claude` provider follows the same authority boundary with
+`claude -p --output-format stream-json`. Its run-scoped inline MCP configuration
+passes only socket and capability-file paths to the hidden bridge; the capability
+token is never launch data. `--strict-mcp-config`, an empty settings-source list,
+disabled slash commands and browser integration, and `--no-session-persistence`
+keep the invocation bounded. Terminal success is diagnostic only: without a
+Crewfold MCP report, the run cannot complete.
+
+The Claude adapter is deliberately one-shot like the Codex adapter. It does not
+yet own native session resume, active-turn steering, or provider usage records.
+A recorded acceptance starts work under Codex, stores the continuation in
+Crewfold durable mail, and starts a new Claude run from its immutable briefing;
+neither provider-private session identifier crosses that handoff.
 
 ## Claims and overlaps
 

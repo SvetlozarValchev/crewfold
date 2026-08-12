@@ -46,6 +46,7 @@ type App struct {
 	newClient      func(string) daemonClient
 	probeHerdr     func(context.Context, string, string) herdr.ProbeReport
 	probeCodex     func(context.Context, string, string) execution.CodexProbeReport
+	probeClaude    func(context.Context, string, string) execution.ClaudeProbeReport
 	runInteractive func(context.Context, localapi.RunAttachResult) error
 }
 
@@ -107,6 +108,9 @@ func New(stdout, stderr io.Writer, info buildinfo.Info) *App {
 		},
 		probeCodex: func(ctx context.Context, executable, codexHome string) execution.CodexProbeReport {
 			return execution.NewCodexProbe(executable, codexHome, nil).Run(ctx)
+		},
+		probeClaude: func(ctx context.Context, executable, configDir string) execution.ClaudeProbeReport {
+			return execution.NewClaudeProbe(executable, configDir, nil).Run(ctx)
 		},
 		runInteractive: runAttachedProcess,
 		newClient: func(socketPath string) daemonClient {
@@ -563,7 +567,7 @@ func (a *App) runDaemonForeground(ctx context.Context, mode outputMode, args []s
 		fmt.Fprint(a.stdout, daemonRunHelp)
 		return ExitOK
 	}
-	options, failure := parseOptions(args, "data-dir", "socket", "herdr-binary", "herdr-session", "codex-binary", "codex-home", "codex-sandbox", "codex-external-sandbox", "codex-tool-network-access")
+	options, failure := parseOptions(args, "data-dir", "socket", "herdr-binary", "herdr-session", "codex-binary", "codex-home", "codex-sandbox", "codex-external-sandbox", "codex-tool-network-access", "claude-binary", "claude-config-dir", "claude-max-budget-usd", "claude-external-sandbox")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -599,20 +603,35 @@ func (a *App) runDaemonForeground(ctx context.Context, mode outputMode, args []s
 	if codexSandboxMode == execution.CodexSandboxDangerFullAccess && !codexExternallySandboxed {
 		return a.writeFailure(mode, usageFailure("Codex danger-full-access requires --codex-external-sandbox true", "use only when an independent boundary confines the whole Codex process"))
 	}
+	claudeMaxBudgetUSD, err := execution.NormalizeClaudeBudgetUSD(options["claude-max-budget-usd"])
+	if err != nil {
+		return a.writeFailure(mode, usageFailure(err.Error(), "use a decimal USD limit such as 1.00"))
+	}
+	claudeExternallySandboxed := false
+	if _, present := options["claude-external-sandbox"]; present {
+		claudeExternallySandboxed, failure = boolOption(options, "claude-external-sandbox")
+		if failure != nil {
+			return a.writeFailure(mode, *failure)
+		}
+	}
 
 	logger := slog.New(slog.NewJSONHandler(a.stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	err := a.runDaemon(ctx, daemon.Config{
-		DataDir:                  dataDir,
-		SocketPath:               socketPath,
-		Version:                  a.info,
-		Logger:                   logger,
-		HerdrExecutable:          options["herdr-binary"],
-		HerdrSession:             options["herdr-session"],
-		CodexExecutable:          options["codex-binary"],
-		CodexHome:                options["codex-home"],
-		CodexSandboxMode:         codexSandboxMode,
-		CodexExternallySandboxed: codexExternallySandboxed,
-		CodexToolNetworkAccess:   codexToolNetworkAccess,
+	err = a.runDaemon(ctx, daemon.Config{
+		DataDir:                   dataDir,
+		SocketPath:                socketPath,
+		Version:                   a.info,
+		Logger:                    logger,
+		HerdrExecutable:           options["herdr-binary"],
+		HerdrSession:              options["herdr-session"],
+		CodexExecutable:           options["codex-binary"],
+		CodexHome:                 options["codex-home"],
+		CodexSandboxMode:          codexSandboxMode,
+		CodexExternallySandboxed:  codexExternallySandboxed,
+		CodexToolNetworkAccess:    codexToolNetworkAccess,
+		ClaudeExecutable:          options["claude-binary"],
+		ClaudeConfigDir:           options["claude-config-dir"],
+		ClaudeMaxBudgetUSD:        claudeMaxBudgetUSD,
+		ClaudeExternallySandboxed: claudeExternallySandboxed,
 	})
 	if err == nil {
 		return ExitOK
@@ -841,7 +860,7 @@ func (a *App) runDoctor(ctx context.Context, mode outputMode, args []string) int
 	}
 	if len(args) != 1 || args[0] != "--self" {
 		return a.writeFailure(mode, usageFailure(
-			"doctor requires --self, --database, --runtime herdr, or --provider codex",
+			"doctor requires --self, --database, --runtime herdr, or --provider codex|claude",
 			"run 'crewfold help doctor' for usage",
 		))
 	}
@@ -874,24 +893,23 @@ func (a *App) runProviderDoctor(ctx context.Context, mode outputMode, args []str
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	if providerName != "codex" {
-		return a.writeFailure(mode, usageFailure(fmt.Sprintf("unsupported provider doctor %q", providerName), "use --provider codex"))
+	switch providerName {
+	case "codex":
+		return a.runCodexDoctor(ctx, mode, optionArgs)
+	case "claude":
+		return a.runClaudeDoctor(ctx, mode, optionArgs)
+	default:
+		return a.writeFailure(mode, usageFailure(fmt.Sprintf("unsupported provider doctor %q", providerName), "use --provider codex or --provider claude"))
 	}
-	options, failure := parseOptions(optionArgs, "codex-binary", "codex-home")
+}
+
+func (a *App) runCodexDoctor(ctx context.Context, mode outputMode, args []string) int {
+	options, failure := parseOptions(args, "codex-binary", "codex-home")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	executable := strings.TrimSpace(options["codex-binary"])
-	if executable == "" {
-		executable = strings.TrimSpace(os.Getenv("CREWFOLD_CODEX_BINARY"))
-	}
-	if executable == "" {
-		executable = "codex"
-	}
-	codexHome := strings.TrimSpace(options["codex-home"])
-	if codexHome == "" {
-		codexHome = strings.TrimSpace(os.Getenv("CREWFOLD_CODEX_HOME"))
-	}
+	executable := firstConfigured(options["codex-binary"], os.Getenv("CREWFOLD_CODEX_BINARY"), "codex")
+	codexHome := firstConfigured(options["codex-home"], os.Getenv("CREWFOLD_CODEX_HOME"))
 	report := a.probeCodex(ctx, executable, codexHome)
 	if mode == outputJSON {
 		if err := writeJSON(a.stdout, report); err != nil {
@@ -900,11 +918,7 @@ func (a *App) runProviderDoctor(ctx context.Context, mode outputMode, args []str
 	} else {
 		fmt.Fprintln(a.stdout, "Crewfold Codex provider")
 		for _, check := range report.Checks {
-			fmt.Fprintf(a.stdout, "  %-16s %s", check.Name+":", check.Status)
-			if check.Detail != "" {
-				fmt.Fprintf(a.stdout, " — %s", check.Detail)
-			}
-			fmt.Fprintln(a.stdout)
+			writeProviderCheck(a.stdout, check.Name, check.Status, check.Detail)
 		}
 		fmt.Fprintf(a.stdout, "status: %s\n", report.Status)
 	}
@@ -912,6 +926,48 @@ func (a *App) runProviderDoctor(ctx context.Context, mode outputMode, args []str
 		return ExitFailure
 	}
 	return ExitOK
+}
+
+func (a *App) runClaudeDoctor(ctx context.Context, mode outputMode, args []string) int {
+	options, failure := parseOptions(args, "claude-binary", "claude-config-dir")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	executable := firstConfigured(options["claude-binary"], os.Getenv("CREWFOLD_CLAUDE_BINARY"), "claude")
+	configDir := firstConfigured(options["claude-config-dir"], os.Getenv("CREWFOLD_CLAUDE_CONFIG_DIR"), os.Getenv("CLAUDE_CONFIG_DIR"))
+	report := a.probeClaude(ctx, executable, configDir)
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, report); err != nil {
+			return a.writeFailure(outputText, internalFailure("write Claude doctor output", err))
+		}
+	} else {
+		fmt.Fprintln(a.stdout, "Crewfold Claude provider")
+		for _, check := range report.Checks {
+			writeProviderCheck(a.stdout, check.Name, check.Status, check.Detail)
+		}
+		fmt.Fprintf(a.stdout, "status: %s\n", report.Status)
+	}
+	if !report.Compatible() {
+		return ExitFailure
+	}
+	return ExitOK
+}
+
+func firstConfigured(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func writeProviderCheck(output io.Writer, name, status, detail string) {
+	fmt.Fprintf(output, "  %-16s %s", name+":", status)
+	if detail != "" {
+		fmt.Fprintf(output, " — %s", detail)
+	}
+	fmt.Fprintln(output)
 }
 
 func (a *App) runRuntimeDoctor(ctx context.Context, mode outputMode, args []string) int {
@@ -1341,6 +1397,7 @@ const doctorHelp = `Usage:
   crewfold doctor --database --socket <path> [--output text|json]
   crewfold doctor --runtime herdr [--herdr-binary <path>] [--herdr-session <name>] [--output text|json]
   crewfold doctor --provider codex [--codex-binary <path>] [--codex-home <path>] [--output text|json]
+  crewfold doctor --provider claude [--claude-binary <path>] [--claude-config-dir <path>] [--output text|json]
 
 Run checks for the current executable or query the daemon's SQLite schema,
 journal mode, foreign-key enforcement, and integrity status.
@@ -1376,12 +1433,13 @@ SQLite coordination database.
 `
 
 const daemonRunHelp = `Usage:
-  crewfold daemon run --data-dir <path> --socket <path> [--herdr-binary <path>] [--herdr-session <name>] [--codex-binary <path>] [--codex-home <path>] [--codex-sandbox workspace-write|danger-full-access] [--codex-external-sandbox true|false] [--codex-tool-network-access true|false] [--output text|json]
+  crewfold daemon run --data-dir <path> --socket <path> [provider/runtime options] [--output text|json]
 
 Run the local daemon in the foreground. Logs are newline-delimited JSON on stderr.
 The socket is owner-only and the data directory is locked for this process. Codex
 tool network access defaults to false and does not change workspace filesystem
-isolation.
+isolation. Claude defaults to a 1.00 USD per-run ceiling and a fail-closed native
+sandbox; use --claude-external-sandbox true only inside an independent boundary.
 `
 
 const daemonStopHelp = `Usage:

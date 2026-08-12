@@ -63,3 +63,6 @@ printf 'Herdr runtime black-box acceptance\n'
 
 printf 'Codex provider black-box acceptance\n'
 "$repo_root/test/scenarios/codex-provider/run.sh"
+
+printf 'Claude provider and cross-provider handoff black-box acceptance\n'
+"$repo_root/test/scenarios/claude-provider/run.sh"

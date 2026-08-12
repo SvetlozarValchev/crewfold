@@ -402,6 +402,25 @@ func TestCodexDoctorUsesExplicitBinaryAndHome(t *testing.T) {
 	}
 }
 
+func TestClaudeDoctorUsesExplicitBinaryAndConfigDirectory(t *testing.T) {
+	t.Parallel()
+
+	app, stdout, stderr := newTestApp()
+	app.probeClaude = func(_ context.Context, executable, configDir string) execution.ClaudeProbeReport {
+		if executable != "/opt/claude" || configDir != "/private/claude" {
+			t.Fatalf("probe args = %q, %q", executable, configDir)
+		}
+		return execution.ClaudeProbeReport{
+			Schema: execution.ClaudeProbeSchema, Provider: "claude", Status: "ok", Binary: executable,
+			Version: "2.1.220 (Claude Code)", Capabilities: []string{"headless_execution", "mcp_client", "structured_events"},
+			Checks: []execution.ClaudeProbeCheck{{Name: "authentication", Status: "ok"}},
+		}
+	}
+	if exit := app.Run([]string{"doctor", "--provider", "claude", "--claude-binary", "/opt/claude", "--claude-config-dir", "/private/claude", "--output", "json"}); exit != ExitOK || stderr.Len() != 0 || !strings.Contains(stdout.String(), execution.ClaudeProbeSchema) {
+		t.Fatalf("exit/output = %d, %q, %q", exit, stdout.String(), stderr.String())
+	}
+}
+
 func TestProjectAndCheckoutCommandsUseExplicitScopeAndStructuredResults(t *testing.T) {
 	t.Parallel()
 
@@ -756,6 +775,10 @@ func TestDaemonRunPassesRequiredConfiguration(t *testing.T) {
 		"--codex-sandbox", "danger-full-access",
 		"--codex-external-sandbox", "true",
 		"--codex-tool-network-access", "true",
+		"--claude-binary", "/opt/claude",
+		"--claude-config-dir", "/private/claude",
+		"--claude-max-budget-usd", "2.5",
+		"--claude-external-sandbox", "true",
 	})
 	if exitCode != ExitOK {
 		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", exitCode, ExitOK, stderr.String())
@@ -777,6 +800,9 @@ func TestDaemonRunPassesRequiredConfiguration(t *testing.T) {
 	}
 	if !received.CodexExternallySandboxed {
 		t.Fatal("received.CodexExternallySandboxed = false")
+	}
+	if received.ClaudeExecutable != "/opt/claude" || received.ClaudeConfigDir != "/private/claude" || received.ClaudeMaxBudgetUSD != "2.50" || !received.ClaudeExternallySandboxed {
+		t.Fatalf("received Claude config = %#v", received)
 	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatalf("stdout = %q, stderr = %q, want empty", stdout.String(), stderr.String())
@@ -818,6 +844,19 @@ func TestDaemonRunRefusesFullAccessWithoutExternalSandbox(t *testing.T) {
 		"--codex-sandbox", "danger-full-access",
 	})
 	if exitCode != ExitUsage || !strings.Contains(stderr.String(), "requires --codex-external-sandbox true") {
+		t.Fatalf("Run() exit=%d stderr=%q", exitCode, stderr.String())
+	}
+}
+
+func TestDaemonRunRejectsInvalidClaudeBudget(t *testing.T) {
+	t.Parallel()
+
+	app, _, stderr := newTestApp()
+	exitCode := app.Run([]string{
+		"daemon", "run", "--data-dir", "/tmp/data", "--socket", "/tmp/socket",
+		"--claude-max-budget-usd", "unbounded",
+	})
+	if exitCode != ExitUsage || !strings.Contains(stderr.String(), "Claude maximum budget") {
 		t.Fatalf("Run() exit=%d stderr=%q", exitCode, stderr.String())
 	}
 }

@@ -33,25 +33,29 @@ const (
 )
 
 type Config struct {
-	DataDir                  string
-	SocketPath               string
-	Version                  buildinfo.Info
-	Logger                   *slog.Logger
-	StoreOptions             store.Options
-	GitInspector             gitstate.Inspector
-	RuntimeDrivers           map[string]execution.RuntimeDriver
-	ProviderAdapters         map[string]execution.ProviderAdapter
-	RunWorkerHook            func(string, domain.Run) error
-	MessageWake              func(context.Context, domain.MessageWakeJob) error
-	HerdrExecutable          string
-	HerdrSession             string
-	CodexExecutable          string
-	CodexHome                string
-	CodexSandboxMode         string
-	CodexExternallySandboxed bool
-	CodexToolNetworkAccess   bool
-	DisableRunWorker         bool
-	defaultProviders         bool
+	DataDir                   string
+	SocketPath                string
+	Version                   buildinfo.Info
+	Logger                    *slog.Logger
+	StoreOptions              store.Options
+	GitInspector              gitstate.Inspector
+	RuntimeDrivers            map[string]execution.RuntimeDriver
+	ProviderAdapters          map[string]execution.ProviderAdapter
+	RunWorkerHook             func(string, domain.Run) error
+	MessageWake               func(context.Context, domain.MessageWakeJob) error
+	HerdrExecutable           string
+	HerdrSession              string
+	CodexExecutable           string
+	CodexHome                 string
+	CodexSandboxMode          string
+	CodexExternallySandboxed  bool
+	CodexToolNetworkAccess    bool
+	ClaudeExecutable          string
+	ClaudeConfigDir           string
+	ClaudeMaxBudgetUSD        string
+	ClaudeExternallySandboxed bool
+	DisableRunWorker          bool
+	defaultProviders          bool
 }
 
 type server struct {
@@ -102,7 +106,7 @@ func Run(ctx context.Context, config Config) error {
 		resolved.ProviderAdapters["fixture-terminal"] = execution.NewFixtureTerminalProvider(capabilities)
 		crewfoldExecutable, executableErr := os.Executable()
 		if executableErr != nil {
-			return &StartupError{Code: CodeInvalidConfiguration, Message: "resolve daemon executable for Codex MCP bridge", Cause: executableErr}
+			return &StartupError{Code: CodeInvalidConfiguration, Message: "resolve daemon executable for provider MCP bridge", Cause: executableErr}
 		}
 		codexExecutable := strings.TrimSpace(resolved.CodexExecutable)
 		if codexExecutable == "" {
@@ -119,6 +123,20 @@ func Run(ctx context.Context, config Config) error {
 			ToolNetworkAccess: resolved.CodexToolNetworkAccess,
 		})
 		resolved.ProviderAdapters[codexProvider.Name()] = codexProvider
+		claudeExecutable := strings.TrimSpace(resolved.ClaudeExecutable)
+		if claudeExecutable == "" {
+			claudeExecutable = strings.TrimSpace(os.Getenv("CREWFOLD_CLAUDE_BINARY"))
+		}
+		claudeConfigDir := strings.TrimSpace(resolved.ClaudeConfigDir)
+		if claudeConfigDir == "" {
+			claudeConfigDir = strings.TrimSpace(os.Getenv("CREWFOLD_CLAUDE_CONFIG_DIR"))
+		}
+		claudeProvider := execution.NewClaudeProvider(execution.ClaudeProviderOptions{
+			CapabilityPreparer: capabilities, ClaudeExecutable: claudeExecutable,
+			CrewfoldExecutable: crewfoldExecutable, ClaudeConfigDir: claudeConfigDir,
+			MaxBudgetUSD: resolved.ClaudeMaxBudgetUSD, ExternallySandboxed: resolved.ClaudeExternallySandboxed,
+		})
+		resolved.ProviderAdapters[claudeProvider.Name()] = claudeProvider
 	}
 
 	if err := prepareSocketPath(resolved.SocketPath); err != nil {
