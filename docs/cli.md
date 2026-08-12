@@ -6,8 +6,9 @@ The current binary implements `help`, `version`, self/database diagnostics,
 foreground daemon lifecycle, process and workspace status, workspace/event
 queries, project/checkout registration and observation, durable
 agent/objective/task coordination, immutable context packets, deterministic fake
-execution, supervised direct fixture subprocesses, run-scoped MCP reporting, and
-durable one-recipient agent mail. It supports text and JSON output. Teams, claims,
+execution, supervised direct and Herdr fixture subprocesses, run-scoped MCP
+reporting, and durable one-recipient agent mail. It supports text and JSON output.
+Teams, claims,
 meetings, canonical knowledge, policy, and approval
 commands in later sections are intended future contracts and are not yet available.
 
@@ -28,6 +29,7 @@ crewfold daemon run --data-dir /path/to/state --socket /path/to/crewfold.sock
 crewfold daemon stop --socket /path/to/crewfold.sock
 crewfold status --socket /path/to/crewfold.sock
 crewfold doctor --database --socket /path/to/crewfold.sock
+crewfold doctor --runtime herdr
 crewfold workspace init personal --socket /path/to/crewfold.sock \
   --idempotency-key initialize-personal
 crewfold workspace show personal --socket /path/to/crewfold.sock
@@ -42,9 +44,11 @@ start, default path discovery, and watching are later capabilities. If
 idempotency key, the client generates a unique one; callers that may retry should
 supply a stable key.
 
-`doctor` checks this binary or the daemon database. Later capabilities extend it
-to Git, runtime drivers, provider adapters, and permissions without launching an
-agent.
+`doctor` checks this binary, the daemon database, or Herdr's installed API schema
+and selected live session. `doctor --runtime herdr` does not launch an agent or
+create a workspace. It reports the binary version, schema/protocol compatibility,
+and session reachability; an unsupported schema is a hard launch gate with upgrade
+guidance.
 
 ## Projects and checkouts
 
@@ -162,6 +166,10 @@ crewfold run logs RUN_ID --workspace personal --tail 50 \
   --socket /path/to/crewfold.sock
 crewfold run stop RUN_ID --graceful --grace-millis 500 --workspace personal \
   --expected-revision 4 --socket /path/to/crewfold.sock
+crewfold run prompt RUN_ID --text "check your Crewfold inbox" \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold run interrupt RUN_ID --workspace personal --socket /path/to/crewfold.sock
+crewfold run attach RUN_ID --workspace personal --socket /path/to/crewfold.sock
 crewfold task timeline TASK_A --workspace personal --socket /path/to/crewfold.sock
 ```
 
@@ -194,6 +202,18 @@ authoritative progress records. The run capability is bound to one run, expires
 after one hour by default, becomes unusable when the run is terminal, and cannot
 select another run through tool arguments. This fixture is the provider-neutral
 seam for later Codex, Claude, and Herdr adapters; it is not a live model provider.
+
+The implemented `herdr` runtime uses `fixture-terminal`, which is the same
+provider-free scoped MCP fixture under an interactive terminal-provider identity.
+The runtime creates one isolated Herdr workspace and root pane per run, launches a
+small Crewfold pane supervisor, and keeps the child connected to Herdr's PTY. Its
+opaque handle records workspace/tab/pane IDs for diagnosis and a stable terminal
+ID for identity. Cross-tab or cross-workspace pane moves therefore do not change
+the Crewfold task/run, and a missing pane becomes `lost`/failed rather than
+completed. `prompt` and mailbox wake submit terminal input, `interrupt` sends
+`ctrl+c`, `attach` delegates to `herdr terminal attach`, and durable `run stop`
+closes only that run's pane after its grace policy. Provider completion still
+requires an MCP proposal, settled process state, and Crewfold acceptance.
 
 ## Claims and overlaps
 

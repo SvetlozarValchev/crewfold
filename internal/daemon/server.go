@@ -43,6 +43,8 @@ type Config struct {
 	ProviderAdapters map[string]execution.ProviderAdapter
 	RunWorkerHook    func(string, domain.Run) error
 	MessageWake      func(context.Context, domain.MessageWakeJob) error
+	HerdrExecutable  string
+	HerdrSession     string
 	DisableRunWorker bool
 	defaultProviders bool
 }
@@ -92,6 +94,7 @@ func Run(ctx context.Context, config Config) error {
 	}
 	if resolved.defaultProviders {
 		resolved.ProviderAdapters["fixture-mcp"] = execution.NewFixtureMCPProvider(capabilities)
+		resolved.ProviderAdapters["fixture-terminal"] = execution.NewFixtureTerminalProvider(capabilities)
 	}
 
 	if err := prepareSocketPath(resolved.SocketPath); err != nil {
@@ -180,11 +183,6 @@ func resolveConfig(config Config) (Config, error) {
 	if config.GitInspector == nil {
 		config.GitInspector = gitstate.NewInspector()
 	}
-	if config.MessageWake == nil {
-		config.MessageWake = func(context.Context, domain.MessageWakeJob) error {
-			return errors.New("runtime wake-up is unavailable for this runtime driver")
-		}
-	}
 	if config.RuntimeDrivers == nil {
 		fakeRuntime := execution.NewFakeRuntime()
 		executable, executableErr := os.Executable()
@@ -194,9 +192,28 @@ func resolveConfig(config Config) (Config, error) {
 		directRuntime := execution.NewDirectRuntime(execution.DirectRuntimeOptions{
 			StateRoot: filepath.Join(dataDir, "runtime"), SupervisorExecutable: executable,
 		})
+		herdrExecutable := strings.TrimSpace(config.HerdrExecutable)
+		if herdrExecutable == "" {
+			herdrExecutable = strings.TrimSpace(os.Getenv("CREWFOLD_HERDR_BINARY"))
+		}
+		if herdrExecutable == "" {
+			herdrExecutable = "herdr"
+		}
+		herdrSession := strings.TrimSpace(config.HerdrSession)
+		if herdrSession == "" {
+			herdrSession = strings.TrimSpace(os.Getenv("CREWFOLD_HERDR_SESSION"))
+		}
+		if herdrSession == "" {
+			herdrSession = strings.TrimSpace(os.Getenv("HERDR_SESSION"))
+		}
+		herdrRuntime := execution.NewHerdrRuntime(execution.HerdrRuntimeOptions{
+			StateRoot: filepath.Join(dataDir, "runtime", "herdr"), HerdrExecutable: herdrExecutable,
+			CrewfoldExecutable: executable, Session: herdrSession,
+		})
 		config.RuntimeDrivers = map[string]execution.RuntimeDriver{
 			fakeRuntime.Name():   fakeRuntime,
 			directRuntime.Name(): directRuntime,
+			herdrRuntime.Name():  herdrRuntime,
 		}
 	}
 	if config.ProviderAdapters == nil {
@@ -502,6 +519,12 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleRunStop(request), false
 	case localapi.MethodRunLogs:
 		return s.handleRunLogs(request), false
+	case localapi.MethodRunPrompt:
+		return s.handleRunPrompt(request), false
+	case localapi.MethodRunInterrupt:
+		return s.handleRunInterrupt(request), false
+	case localapi.MethodRunAttach:
+		return s.handleRunAttach(request), false
 	case localapi.MethodCoordinationStatus:
 		return s.handleCoordinationStatus(request), false
 	case localapi.MethodEventsList:

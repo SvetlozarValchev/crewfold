@@ -70,6 +70,19 @@ type StopResult struct {
 	Diagnostic string
 }
 
+// RuntimeUnavailableError identifies a temporary control-plane outage. The
+// durable worker may retry it; it must not reinterpret the outage as process
+// completion.
+type RuntimeUnavailableError struct{ Message string }
+
+func (e *RuntimeUnavailableError) Error() string { return e.Message }
+
+type AttachSpec struct {
+	Executable  string            `json:"executable"`
+	Arguments   []string          `json:"arguments"`
+	Environment map[string]string `json:"environment,omitempty"`
+}
+
 // RuntimeDriver controls where execution occurs. Launch must be idempotent for a
 // stable operation ID; reconciliation must never invent completion authority.
 type RuntimeDriver interface {
@@ -79,6 +92,20 @@ type RuntimeDriver interface {
 	Inspect(context.Context, string, string) (RuntimeSnapshot, error)
 	Stop(context.Context, string, string, StopSpec) (StopResult, error)
 	Logs(context.Context, string, string, int) (domain.RunLogs, error)
+}
+
+// Optional runtime capabilities keep the core lifecycle provider-neutral while
+// allowing interactive runtimes to expose richer controls.
+type RuntimePrompter interface {
+	Prompt(context.Context, string, string, string) error
+}
+
+type RuntimeInterrupter interface {
+	Interrupt(context.Context, string, string) error
+}
+
+type RuntimeAttacher interface {
+	Attach(context.Context, string, string, bool) (AttachSpec, error)
 }
 
 // ProviderAdapter prepares a provider for a runtime and normalizes its reports.

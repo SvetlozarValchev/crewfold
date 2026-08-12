@@ -48,7 +48,7 @@ Exercise one real boundary at a time:
 - real SQLite store with direct command handlers;
 - direct runtime plus fixture worker;
 - MCP server plus fixture client;
-- Herdr driver plus recorded/fake socket responses;
+- Herdr driver plus recorded CLI/schema/session responses;
 - Git observer plus real temporary repositories.
 
 Each component suite labels its boundary in errors and exposes operation IDs.
@@ -152,9 +152,12 @@ that observation does not mutate source or Git metadata.
 
 ### Fake/recorded Herdr endpoint
 
-Implements the tested schema responses and event sequences, including incompatible
-versions, moved panes, stopped agents, and connection loss. Live Herdr tests verify
-that the fixtures still represent reality.
+The implemented stateful endpoint exposes the documented CLI response shapes,
+hosts the real Crewfold pane supervisor/fixture children, and covers compatible
+and incompatible schemas, workspace creation, snapshots, process info, input,
+read, attach, and close. Component fixtures add moved-pane, missing-pane, and
+connection-loss responses. The opt-in dedicated-session test verifies those
+assumptions against an installed Herdr without a model provider.
 
 ### Management workload fixture
 
@@ -184,6 +187,7 @@ test/
 │  ├─ direct-runtime/
 │  ├─ scoped-mcp/
 │  ├─ agent-messaging/
+│  ├─ herdr-runtime/
 │  └─ ...
 └─ live/
    ├─ herdr/
@@ -266,12 +270,15 @@ The complete implemented offline gate is:
 ```
 
 It runs formatting, vet, all package tests, the race suite when supported, and
-nine built-binary scenarios through durable two-agent messaging. The messaging
+ten built-binary scenarios through the Herdr fixture runtime. The direct messaging
 scenario uses only public CLI/MCP surfaces, stops and restarts the daemon after an
 offline send, compares inbox JSON byte-for-byte across restart, then has agents in
 adjacent standalone clones read, acknowledge, reply, and complete. It also proves
 forbidden recipients, oversized bodies, idempotency, bounded packet summary, and
 visible wake failure without message loss.
+The Herdr variant repeats the same two-agent flow using isolated recorded Herdr
+surfaces, proves a successful prompt wake and native attach, and rejects an
+incompatible installed schema before launch.
 
 Preserve these conceptual future tiers as the suite expands:
 

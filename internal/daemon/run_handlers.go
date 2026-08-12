@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"crewfold/internal/domain"
 	"crewfold/internal/execution"
 	"crewfold/internal/localapi"
 	"crewfold/internal/store"
@@ -117,6 +118,83 @@ func (s *server) handleRunLogs(request localapi.Request) localapi.Response {
 		return storeErrorResponse(request, &store.Error{Code: store.CodeRuntimeFailed, Message: "read runtime logs", Cause: err})
 	}
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunLogsResult{Schema: localapi.RunLogsSchema, Type: "run_logs", Logs: logs})
+}
+
+func (s *server) handleRunPrompt(request localapi.Request) localapi.Response {
+	var params localapi.RunPromptParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Run) == "" || strings.TrimSpace(params.Text) == "" || len(params.Text) > 16*1024 || strings.ContainsRune(params.Text, '\x00') {
+		return invalidParamsResponse(request, "run.prompt requires workspace, run, and bounded non-empty text")
+	}
+	detail, driver, err := s.interactiveRun(params.Workspace, params.Run)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	prompter, supported := driver.(execution.RuntimePrompter)
+	if !supported {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeAdapterUnavailable, Message: "run runtime does not support prompting"})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := prompter.Prompt(ctx, detail.Run.ID, detail.Run.RuntimeHandle, params.Text); err != nil {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeRuntimeFailed, Message: "prompt runtime", Cause: err})
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunControlResult{Schema: localapi.RunControlSchema, Type: "run_control", RunID: detail.Run.ID, Runtime: detail.Run.Runtime, Action: "prompt", Status: "delivered"})
+}
+
+func (s *server) handleRunInterrupt(request localapi.Request) localapi.Response {
+	var params localapi.RunQueryParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Run) == "" {
+		return invalidParamsResponse(request, "run.interrupt requires workspace and run")
+	}
+	detail, driver, err := s.interactiveRun(params.Workspace, params.Run)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	interrupter, supported := driver.(execution.RuntimeInterrupter)
+	if !supported {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeAdapterUnavailable, Message: "run runtime does not support interrupts"})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := interrupter.Interrupt(ctx, detail.Run.ID, detail.Run.RuntimeHandle); err != nil {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeRuntimeFailed, Message: "interrupt runtime", Cause: err})
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunControlResult{Schema: localapi.RunControlSchema, Type: "run_control", RunID: detail.Run.ID, Runtime: detail.Run.Runtime, Action: "interrupt", Status: "delivered"})
+}
+
+func (s *server) handleRunAttach(request localapi.Request) localapi.Response {
+	var params localapi.RunAttachParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Run) == "" {
+		return invalidParamsResponse(request, "run.attach requires workspace and run")
+	}
+	detail, driver, err := s.interactiveRun(params.Workspace, params.Run)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	attacher, supported := driver.(execution.RuntimeAttacher)
+	if !supported {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeAdapterUnavailable, Message: "run runtime does not support interactive attach"})
+	}
+	spec, err := attacher.Attach(context.Background(), detail.Run.ID, detail.Run.RuntimeHandle, params.Takeover)
+	if err != nil {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeRuntimeFailed, Message: "prepare runtime attach", Cause: err})
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunAttachResult{Schema: localapi.RunAttachSchema, Type: "run_attach", RunID: detail.Run.ID, Runtime: detail.Run.Runtime, Executable: spec.Executable, Arguments: spec.Arguments, Environment: spec.Environment})
+}
+
+func (s *server) interactiveRun(workspace, runID string) (domain.RunDetail, execution.RuntimeDriver, error) {
+	detail, err := s.store.RunDetail(context.Background(), workspace, runID)
+	if err != nil {
+		return domain.RunDetail{}, nil, err
+	}
+	if detail.Run.RuntimeHandle == "" {
+		return domain.RunDetail{}, nil, &store.Error{Code: store.CodeRunConflict, Message: "run has no runtime handle yet"}
+	}
+	driver, exists := s.runtimes[detail.Run.Runtime]
+	if !exists {
+		return domain.RunDetail{}, nil, &store.Error{Code: store.CodeAdapterUnavailable, Message: "run runtime driver is unavailable"}
+	}
+	return detail, driver, nil
 }
 
 func (s *server) handleTaskTimeline(request localapi.Request) localapi.Response {

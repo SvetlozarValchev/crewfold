@@ -57,3 +57,6 @@ printf 'Scoped MCP capability black-box acceptance\n'
 
 printf 'Durable agent messaging black-box acceptance\n'
 "$repo_root/test/scenarios/agent-messaging/run.sh"
+
+printf 'Herdr runtime black-box acceptance\n'
+"$repo_root/test/scenarios/herdr-runtime/run.sh"

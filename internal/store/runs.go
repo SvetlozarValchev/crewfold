@@ -248,6 +248,20 @@ func (s *Store) RunDetail(ctx context.Context, workspaceIdentifier, runID string
 	return runDetail(ctx, s.db, run)
 }
 
+// RunByID is an internal control-plane lookup for already-authorized durable
+// jobs such as mailbox wake delivery. Run IDs are globally unique.
+func (s *Store) RunByID(ctx context.Context, runID string) (domain.Run, error) {
+	var run domain.Run
+	row := s.db.QueryRowContext(ctx, runSelect+" WHERE r.id = ?", strings.TrimSpace(runID))
+	if err := scanRun(row, &run); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Run{}, &Error{Code: CodeRunNotFound, Message: "run not found"}
+		}
+		return domain.Run{}, storageFailure("query run by ID", err)
+	}
+	return run, nil
+}
+
 func (s *Store) Runs(ctx context.Context, workspaceIdentifier, taskID, status string) ([]domain.RunDetail, error) {
 	status = strings.TrimSpace(status)
 	if status != "" && !validRunStatus(status) {

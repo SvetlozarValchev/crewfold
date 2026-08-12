@@ -36,7 +36,12 @@ offline; the recipient later receives, reads, acknowledges, and replies without
 using terminal output as coordination state. Delivery survives daemon restart,
 and best-effort runtime wake-up is recorded separately from the durable message.
 The direct `fixture-mcp` worker proves that loop across adjacent standalone clones.
-Real model sessions, live runtime wake-up, claims, canonical knowledge, and the
+The provider-neutral `fixture-terminal` worker now passes the same task and
+two-agent messaging loop inside isolated Herdr workspaces. Crewfold probes Herdr's
+installed API schema, follows stable terminals across pane moves, reconciles after
+daemon restart, delivers prompt-based mailbox wakes, and exposes attach,
+interrupt, stop, and pane logs without treating terminal lifecycle as completion
+authority. Real Codex/Claude sessions, claims, canonical knowledge, and the
 operator TUI are still to come.
 
 This repository is local only. No upstream GitHub repository or remote is

@@ -15,6 +15,7 @@ import (
 	"crewfold/internal/daemon"
 	"crewfold/internal/domain"
 	"crewfold/internal/execution"
+	"crewfold/internal/herdr"
 	"crewfold/internal/localapi"
 )
 
@@ -324,6 +325,61 @@ func TestRunStopAndLogsRejectUnsafeOptions(t *testing.T) {
 				t.Fatalf("Run() exit code = %d, stderr = %q", exitCode, stderr.String())
 			}
 		})
+	}
+}
+
+func TestRunInteractiveControlsUseProviderNeutralRuntimeAPI(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeDaemonClient{
+		runControl: localapi.RunControlResult{Schema: localapi.RunControlSchema, Type: "run_control", RunID: "run_00000000000000000000000000000001", Runtime: "herdr", Status: "delivered"},
+		runAttach:  localapi.RunAttachResult{Schema: localapi.RunAttachSchema, Type: "run_attach", RunID: "run_00000000000000000000000000000001", Runtime: "herdr", Executable: "/opt/herdr", Arguments: []string{"terminal", "attach", "term-1"}},
+	}
+	for _, test := range []struct {
+		arguments []string
+		action    string
+	}{
+		{[]string{"run", "prompt", client.runAttach.RunID, "--workspace", "personal", "--text", "inspect inbox", "--socket", "/tmp/crewfold.sock", "--output", "json"}, "prompt"},
+		{[]string{"run", "interrupt", client.runAttach.RunID, "--workspace", "personal", "--socket", "/tmp/crewfold.sock", "--output", "json"}, "interrupt"},
+	} {
+		client.runControl.Action = test.action
+		app, stdout, stderr := newTestApp()
+		app.newClient = func(string) daemonClient { return client }
+		if exit := app.Run(test.arguments); exit != ExitOK || stderr.Len() != 0 || !strings.Contains(stdout.String(), localapi.RunControlSchema) {
+			t.Fatalf("Run(%s) exit=%d stdout=%q stderr=%q", test.action, exit, stdout.String(), stderr.String())
+		}
+	}
+	if client.runPromptText != "inspect inbox" || client.runControlWorkspace != "personal" || client.runControlRun != client.runAttach.RunID {
+		t.Fatalf("interactive control args = workspace:%q run:%q prompt:%q", client.runControlWorkspace, client.runControlRun, client.runPromptText)
+	}
+
+	app, _, stderr := newTestApp()
+	app.newClient = func(string) daemonClient { return client }
+	var attached localapi.RunAttachResult
+	app.runInteractive = func(_ context.Context, value localapi.RunAttachResult) error {
+		attached = value
+		return nil
+	}
+	if exit := app.Run([]string{"run", "attach", client.runAttach.RunID, "--takeover", "--workspace", "personal", "--socket", "/tmp/crewfold.sock"}); exit != ExitOK || stderr.Len() != 0 {
+		t.Fatalf("Run(attach) exit=%d stderr=%q", exit, stderr.String())
+	}
+	if attached.Executable != "/opt/herdr" || !client.runAttachTakeover {
+		t.Fatalf("attach result=%#v takeover=%t", attached, client.runAttachTakeover)
+	}
+}
+
+func TestHerdrDoctorUsesExplicitBinaryAndSession(t *testing.T) {
+	t.Parallel()
+
+	app, stdout, stderr := newTestApp()
+	app.probeHerdr = func(_ context.Context, executable, session string) herdr.ProbeReport {
+		if executable != "/opt/herdr" || session != "crewfold-test" {
+			t.Fatalf("probe args = %q, %q", executable, session)
+		}
+		return herdr.ProbeReport{Schema: herdr.ProbeSchema, Runtime: "herdr", Status: "ok", Binary: executable, Session: session, SchemaVersion: 1, Protocol: 19, Checks: []herdr.ProbeCheck{{Name: "schema", Status: "ok"}}}
+	}
+	if exit := app.Run([]string{"doctor", "--runtime", "herdr", "--herdr-binary", "/opt/herdr", "--herdr-session", "crewfold-test", "--output", "json"}); exit != ExitOK || stderr.Len() != 0 || !strings.Contains(stdout.String(), herdr.ProbeSchema) {
+		t.Fatalf("Run(doctor runtime) exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
 	}
 }
 
@@ -845,12 +901,18 @@ type fakeDaemonClient struct {
 	runShow               localapi.RunShowResult
 	runList               localapi.RunListResult
 	runLogs               localapi.RunLogsResult
+	runControl            localapi.RunControlResult
+	runAttach             localapi.RunAttachResult
 	runStartParams        localapi.RunStartParams
 	runResumeParams       localapi.RunResumeParams
 	runStopParams         localapi.RunStopParams
 	runLogsWorkspace      string
 	runLogsRun            string
 	runLogsTail           int
+	runControlWorkspace   string
+	runControlRun         string
+	runPromptText         string
+	runAttachTakeover     bool
 	coordination          localapi.CoordinationStatusResult
 	messageSend           localapi.MessageSendResult
 	inboxList             localapi.InboxListResult
@@ -1034,6 +1096,21 @@ func (client *fakeDaemonClient) RunLogs(_ context.Context, workspace, run string
 	client.runLogsRun = run
 	client.runLogsTail = tail
 	return client.runLogs, nil
+}
+
+func (client *fakeDaemonClient) RunPrompt(_ context.Context, workspace, run, text string) (localapi.RunControlResult, error) {
+	client.runControlWorkspace, client.runControlRun, client.runPromptText = workspace, run, text
+	return client.runControl, nil
+}
+
+func (client *fakeDaemonClient) RunInterrupt(_ context.Context, workspace, run string) (localapi.RunControlResult, error) {
+	client.runControlWorkspace, client.runControlRun = workspace, run
+	return client.runControl, nil
+}
+
+func (client *fakeDaemonClient) RunAttach(_ context.Context, workspace, run string, takeover bool) (localapi.RunAttachResult, error) {
+	client.runControlWorkspace, client.runControlRun, client.runAttachTakeover = workspace, run, takeover
+	return client.runAttach, nil
 }
 
 func (client *fakeDaemonClient) CoordinationStatus(_ context.Context, workspace string) (localapi.CoordinationStatusResult, error) {

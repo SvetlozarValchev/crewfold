@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:run-attach-result:v1",
+  "title": "Crewfold local API run attach result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "run_id", "runtime", "executable", "arguments"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:run-attach-result:v1"},
+    "type": {"const": "run_attach"},
+    "run_id": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
+    "runtime": {"type": "string", "minLength": 1, "maxLength": 64},
+    "executable": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "arguments": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {"type": "string", "maxLength": 4096}
+    },
+    "environment": {
+      "type": "object",
+      "maxProperties": 8,
+      "propertyNames": {"pattern": "^[A-Z][A-Z0-9_]{0,63}$"},
+      "additionalProperties": {"type": "string", "maxLength": 4096}
+    }
+  }
+}

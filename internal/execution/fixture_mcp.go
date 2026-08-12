@@ -24,14 +24,28 @@ type FixtureMCPProvider struct {
 	preparer   RunCapabilityPreparer
 	executable string
 	arguments  []string
+	name       string
 }
 
 func NewFixtureMCPProvider(preparer RunCapabilityPreparer) FixtureMCPProvider {
 	executable, _ := os.Executable()
-	return FixtureMCPProvider{preparer: preparer, executable: executable, arguments: []string{"__fixture-mcp-provider"}}
+	return FixtureMCPProvider{preparer: preparer, executable: executable, arguments: []string{"__fixture-mcp-provider"}, name: "fixture-mcp"}
 }
 
-func (FixtureMCPProvider) Name() string { return "fixture-mcp" }
+// NewFixtureTerminalProvider exercises an interactive runtime through the same
+// scoped MCP fixture behavior used by the direct runtime.
+func NewFixtureTerminalProvider(preparer RunCapabilityPreparer) FixtureMCPProvider {
+	provider := NewFixtureMCPProvider(preparer)
+	provider.name = "fixture-terminal"
+	return provider
+}
+
+func (provider FixtureMCPProvider) Name() string {
+	if provider.name == "" {
+		return "fixture-mcp"
+	}
+	return provider.name
+}
 
 func (provider FixtureMCPProvider) Prepare(ctx context.Context, run domain.Run, scenario domain.FakeScenario) (LaunchSpec, error) {
 	if err := ValidateScenario(scenario); err != nil {
@@ -63,11 +77,11 @@ func (provider FixtureMCPProvider) Prepare(ctx context.Context, run domain.Run, 
 	return LaunchSpec{Scenario: scenario, Command: command}, nil
 }
 
-func (FixtureMCPProvider) Bind(_ context.Context, run domain.Run, binding RuntimeBinding) (ProviderBinding, error) {
+func (provider FixtureMCPProvider) Bind(_ context.Context, run domain.Run, binding RuntimeBinding) (ProviderBinding, error) {
 	if binding.RuntimeHandle == "" {
 		return ProviderBinding{}, errors.New("cannot bind scoped fixture provider without a runtime handle")
 	}
-	return ProviderBinding{ProviderHandle: "fixture-mcp-provider:" + run.ID}, nil
+	return ProviderBinding{ProviderHandle: provider.Name() + "-provider:" + run.ID}, nil
 }
 
 func (FixtureMCPProvider) Next(_ context.Context, _ domain.Run, scenario domain.FakeScenario, _ RuntimeSnapshot) (domain.RunObservation, bool, error) {

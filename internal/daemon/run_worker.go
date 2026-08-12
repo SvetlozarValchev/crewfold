@@ -100,6 +100,13 @@ func (s *server) processRunWork(work store.RunWork) error {
 		if run.RuntimeHandle != "" {
 			binding, reconcileErr := runtimeDriver.Reconcile(context.Background(), run.ID, run.RuntimeHandle)
 			if reconcileErr != nil {
+				var unavailable *execution.RuntimeUnavailableError
+				if errors.As(reconcileErr, &unavailable) {
+					if deferErr := s.store.DeferRunJob(context.Background(), run.ID, 250*time.Millisecond); deferErr != nil {
+						s.logRunWorkerStoreError(run.ID, "defer unavailable runtime reconciliation", deferErr)
+					}
+					return nil
+				}
 				_, recordErr := s.store.LoseRun(context.Background(), run.ID, "runtime launch outcome could not be reconciled safely: "+reconcileErr.Error(), correlationID)
 				s.logRunWorkerStoreError(run.ID, "record lost runtime start", recordErr)
 				return nil
@@ -154,6 +161,13 @@ func (s *server) processRunWork(work store.RunWork) error {
 	case domain.RunActive:
 		snapshot, err := runtimeDriver.Inspect(context.Background(), run.ID, run.RuntimeHandle)
 		if err != nil {
+			var unavailable *execution.RuntimeUnavailableError
+			if errors.As(err, &unavailable) {
+				if deferErr := s.store.DeferRunJob(context.Background(), run.ID, 250*time.Millisecond); deferErr != nil {
+					s.logRunWorkerStoreError(run.ID, "defer unavailable runtime inspection", deferErr)
+				}
+				return nil
+			}
 			_, recordErr := s.store.LoseRun(context.Background(), run.ID, "runtime inspection failed without a trustworthy process outcome: "+err.Error(), correlationID)
 			s.logRunWorkerStoreError(run.ID, "record lost runtime after inspection failure", recordErr)
 			return nil

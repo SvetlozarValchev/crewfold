@@ -52,6 +52,9 @@ const (
 	MethodRunResume          = "run.resume"
 	MethodRunStop            = "run.stop"
 	MethodRunLogs            = "run.logs"
+	MethodRunPrompt          = "run.prompt"
+	MethodRunInterrupt       = "run.interrupt"
+	MethodRunAttach          = "run.attach"
 	MethodCoordinationStatus = "coordination.status"
 	MethodEventsList         = "events.list"
 
@@ -84,6 +87,8 @@ const (
 	RunShowSchema            = "urn:crewfold:schema:local-api:run-show-result:v1"
 	RunListSchema            = "urn:crewfold:schema:local-api:run-list-result:v1"
 	RunLogsSchema            = "urn:crewfold:schema:local-api:run-logs-result:v1"
+	RunControlSchema         = "urn:crewfold:schema:local-api:run-control-result:v1"
+	RunAttachSchema          = "urn:crewfold:schema:local-api:run-attach-result:v1"
 	CoordinationStatusSchema = "urn:crewfold:schema:local-api:coordination-status-result:v1"
 	EventsListSchema         = "urn:crewfold:schema:local-api:events-list-result:v1"
 )
@@ -534,6 +539,18 @@ type RunLogsParams struct {
 	Tail      int    `json:"tail"`
 }
 
+type RunPromptParams struct {
+	Workspace string `json:"workspace"`
+	Run       string `json:"run"`
+	Text      string `json:"text"`
+}
+
+type RunAttachParams struct {
+	Workspace string `json:"workspace"`
+	Run       string `json:"run"`
+	Takeover  bool   `json:"takeover,omitempty"`
+}
+
 type RunMutationResult struct {
 	Schema        string           `json:"schema"`
 	Type          string           `json:"type"`
@@ -557,6 +574,25 @@ type RunLogsResult struct {
 	Schema string         `json:"schema"`
 	Type   string         `json:"type"`
 	Logs   domain.RunLogs `json:"logs"`
+}
+
+type RunControlResult struct {
+	Schema  string `json:"schema"`
+	Type    string `json:"type"`
+	RunID   string `json:"run_id"`
+	Runtime string `json:"runtime"`
+	Action  string `json:"action"`
+	Status  string `json:"status"`
+}
+
+type RunAttachResult struct {
+	Schema      string            `json:"schema"`
+	Type        string            `json:"type"`
+	RunID       string            `json:"run_id"`
+	Runtime     string            `json:"runtime"`
+	Executable  string            `json:"executable"`
+	Arguments   []string          `json:"arguments"`
+	Environment map[string]string `json:"environment,omitempty"`
 }
 
 type CoordinationStatusParams struct {

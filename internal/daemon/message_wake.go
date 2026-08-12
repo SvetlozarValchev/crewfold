@@ -2,7 +2,11 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"crewfold/internal/domain"
+	"crewfold/internal/execution"
 )
 
 const messageWakeTimeout = 5 * time.Second
@@ -18,7 +22,12 @@ func (s *server) processMessageWakeJobs() {
 			return
 		}
 		wakeContext, cancel := context.WithTimeout(context.Background(), messageWakeTimeout)
-		wakeErr := s.config.MessageWake(wakeContext, job)
+		var wakeErr error
+		if s.config.MessageWake != nil {
+			wakeErr = s.config.MessageWake(wakeContext, job)
+		} else {
+			wakeErr = s.wakeMessage(wakeContext, job)
+		}
 		cancel()
 		diagnostic := ""
 		if wakeErr != nil {
@@ -29,4 +38,23 @@ func (s *server) processMessageWakeJobs() {
 			return
 		}
 	}
+}
+
+func (s *server) wakeMessage(ctx context.Context, job domain.MessageWakeJob) error {
+	run, err := s.store.RunByID(ctx, job.TargetRunID)
+	if err != nil {
+		return err
+	}
+	if run.RuntimeHandle == "" {
+		return errors.New("runtime wake-up is unavailable before the target run has a runtime handle")
+	}
+	driver, exists := s.runtimes[run.Runtime]
+	if !exists {
+		return errors.New("runtime wake-up is unavailable because the target runtime driver is not registered")
+	}
+	prompter, supportsPrompt := driver.(execution.RuntimePrompter)
+	if !supportsPrompt {
+		return errors.New("runtime wake-up is unavailable for this runtime driver")
+	}
+	return prompter.Prompt(ctx, run.ID, run.RuntimeHandle, "Crewfold mailbox updated. Use crewfold_list_inbox to inspect durable messages.")
 }

@@ -50,6 +50,11 @@ RuntimeDriver:
   Stop(operation_id, stored_handle, grace_policy) -> stop_result
   Logs(operation_id, stored_handle, tail) -> bounded_logs
 
+Optional interactive capabilities:
+  Prompt(operation_id, stored_handle, text)
+  Interrupt(operation_id, stored_handle)
+  Attach(operation_id, stored_handle, takeover) -> native_attach_spec
+
 ProviderAdapter:
   Name
   Prepare(run, scenario) -> launch_spec
@@ -66,9 +71,8 @@ decision over evidence; neither adapter can directly complete a task.
 The daemon owns a durable SQLite work queue. It commits run intent and explainable
 placement before invoking an adapter, persists an observation cursor after every
 accepted report, and can resume a requested, starting, blocked, or checkpointed
-active run after restart. Runtime/provider registries are injected by name, so a
-future direct or Herdr runtime does not require provider-specific branches in the
-core.
+active run after restart. Runtime/provider registries are injected by name, so
+direct and Herdr runtime support requires no provider-specific branch in the core.
 
 ## Implemented direct subprocess runtime
 
@@ -107,22 +111,28 @@ trusted test code; allowing arbitrary project commands later requires explicit
 command policy and, where needed, a sandbox/container boundary. The implemented
 process identity and process-group behavior is currently Linux-first.
 
-## Herdr as the preferred interactive runtime
+## Implemented Herdr interactive runtime
 
 Herdr already provides the terminal concerns Crewfold should not rebuild:
 workspaces, tabs, split panes, persistent sessions, named agents, lifecycle
 observations, prompting, output reads, waits, and a local socket/JSON CLI.
 
-Crewfold's Herdr driver should:
+Crewfold's Herdr driver:
 
-1. discover the installed API schema rather than assuming an unversioned CLI;
-2. create or map Crewfold projects to Herdr workspaces;
-3. create topology separately from starting an agent;
-4. assign stable Crewfold metadata to runtime handles;
-5. use structured JSON responses and socket events where possible;
-6. reconcile named agents and panes after either daemon restarts;
-7. treat Herdr states as observations, not task-completion authority;
-8. keep all durable messages, meetings, tasks, and knowledge in Crewfold.
+1. discovers `herdr api schema --json` and currently accepts schema 1/protocol 19;
+2. verifies the selected live Herdr session before any launch;
+3. creates one isolated, non-focused workspace/root pane per fixture run;
+4. launches an argv-preserving Crewfold supervisor into the pane through the
+   documented CLI control surface;
+5. stores workspace, tab, pane, and stable terminal IDs in an opaque versioned
+   handle;
+6. resolves the current pane by stable terminal ID after layout moves and daemon
+   restart;
+7. observes pane presence, foreground process state, and a durable child exit
+   record without granting any of those completion authority;
+8. implements pane prompt, mailbox wake, `ctrl+c`, native terminal attach, bounded
+   read, grace/close stop, and unavailable-session retry classification; and
+9. keeps all durable messages, tasks, reports, and future knowledge in Crewfold.
 
 Illustrative mapping:
 
@@ -130,7 +140,8 @@ Illustrative mapping:
 | --- | --- |
 | Checkout/project view | Workspace |
 | Human grouping/layout | Tab |
-| Concrete interactive run | Named agent in a pane |
+| Concrete fixture run | Raw pane process with stable terminal identity |
+| Future provider-aware run | Named/detected agent in a pane |
 | Non-agent watcher/test | Raw pane process |
 | Runtime observation | Agent/pane status and events |
 | Attach action | Agent or terminal attach |
@@ -200,10 +211,11 @@ stop(process_handle, grace_policy)
 reconcile(stored_handle) -> current state
 ```
 
-The wider operations above are the target contract. The implemented interface now
-proves launch, binding, inspection, bounded logs, stop, normalization, acceptance,
-and reconciliation. Probe, delivery, attach, interrupt, checkpoint, and usage
-arrive with the capabilities that exercise them.
+The wider operations above remain the target contract. The implemented interface
+now proves launch, binding, inspection, bounded logs, stop, normalization,
+acceptance, reconciliation, prompt/delivery, interrupt, attach, and a versioned
+Herdr probe. Provider checkpoint, native resume, usage, and richer capability
+negotiation arrive with the concrete provider adapters that exercise them.
 
 ## Lifecycle authority
 
@@ -252,11 +264,12 @@ state.
 
 Mail delivery does not depend on a runtime driver. The database stores the message
 and recipient state first, then a separate durable wake job may ask the runtime to
-notify an already-live run. The injected wake hook is the future driver seam. The
-current direct fixture has no prompt operation, so the default hook records a
-bounded failure diagnostic and the agent discovers the still-queued message by
-polling its inbox. Herdr can later implement that hook without changing message
-identity, scope, or delivery semantics.
+notify an already-live run. The runtime prompt capability is the wake seam. The
+direct fixture has no prompt operation, so it records a bounded failure diagnostic
+and discovers the queued message by polling. Herdr submits a bounded
+inbox-reference prompt (never the message body), records `wake_succeeded`, and
+advances queued delivery to delivered; the agent still reads and acknowledges the
+durable database message through MCP.
 
 ## Adapter testing
 

@@ -20,6 +20,8 @@ func main() {
 			os.Exit(execution.RunFixtureProvider(os.Stdin, os.Stdout, os.Stderr))
 		case "__fixture-mcp-provider":
 			os.Exit(execution.RunFixtureMCPProvider(os.Stdin, os.Stdout, os.Stderr))
+		case "__herdr-pane-supervisor":
+			os.Exit(execution.RunHerdrPaneSupervisor(os.Args[2:]))
 		}
 	}
 

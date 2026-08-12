@@ -33,9 +33,108 @@ func (a *App) runRun(ctx context.Context, mode outputMode, args []string) int {
 		return a.runStop(ctx, mode, args[1:])
 	case "logs":
 		return a.runLogs(ctx, mode, args[1:])
+	case "prompt":
+		return a.runPrompt(ctx, mode, args[1:])
+	case "interrupt":
+		return a.runInterrupt(ctx, mode, args[1:])
+	case "attach":
+		return a.runAttach(ctx, mode, args[1:])
 	default:
 		return a.writeFailure(mode, commandFailure{exitCode: ExitUsage, code: "unknown_run_command", message: fmt.Sprintf("unknown run command %q", args[0]), hint: "run 'crewfold help run' for usage"})
 	}
+}
+
+func (a *App) runPrompt(ctx context.Context, mode outputMode, args []string) int {
+	runID, optionArgs, failure := requiredLeadingArgument(args, "run ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "text", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	value, failure := requiredOption(options, "text")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).RunPrompt(ctx, workspace, runID, value)
+	if err != nil {
+		return a.writeClientFailure(mode, "prompt run", err)
+	}
+	return a.writeRunControl(mode, result)
+}
+
+func (a *App) runInterrupt(ctx context.Context, mode outputMode, args []string) int {
+	runID, optionArgs, failure := requiredLeadingArgument(args, "run ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).RunInterrupt(ctx, workspace, runID)
+	if err != nil {
+		return a.writeClientFailure(mode, "interrupt run", err)
+	}
+	return a.writeRunControl(mode, result)
+}
+
+func (a *App) runAttach(ctx context.Context, mode outputMode, args []string) int {
+	if mode == outputJSON {
+		return a.writeFailure(mode, usageFailure("run attach is interactive and does not support JSON output", "remove --output json"))
+	}
+	runID, optionArgs, failure := requiredLeadingArgument(args, "run ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	takeover := false
+	normalized := make([]string, 0, len(optionArgs))
+	for _, argument := range optionArgs {
+		if argument == "--takeover" {
+			if takeover {
+				return a.writeFailure(mode, usageFailure("--takeover may be specified only once", "remove the duplicate option"))
+			}
+			takeover = true
+			continue
+		}
+		normalized = append(normalized, argument)
+	}
+	options, failure := parseOptions(normalized, "workspace", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	attachment, err := a.newClient(socket).RunAttach(ctx, workspace, runID, takeover)
+	if err != nil {
+		return a.writeClientFailure(mode, "prepare run attach", err)
+	}
+	if err := a.runInteractive(ctx, attachment); err != nil {
+		return a.writeFailure(mode, commandFailure{exitCode: ExitFailure, code: "attach_failed", message: fmt.Sprintf("attach run: %v", err), hint: "verify the Herdr session is running and retry"})
+	}
+	return ExitOK
+}
+
+func (a *App) writeRunControl(mode outputMode, result localapi.RunControlResult) int {
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write run control output", err))
+		}
+	} else {
+		fmt.Fprintf(a.stdout, "run: %s\nruntime: %s\naction: %s\nstatus: %s\n", result.RunID, result.Runtime, result.Action, result.Status)
+	}
+	return ExitOK
 }
 
 func (a *App) runStop(ctx context.Context, mode outputMode, args []string) int {
@@ -321,8 +420,12 @@ const runHelp = `Usage:
   crewfold run resume <id> --workspace <scope> --expected-revision <n> --socket <path>
   crewfold run stop <id> --graceful --workspace <scope> --expected-revision <n> --socket <path> [--grace-millis <n>]
   crewfold run logs <id> --workspace <scope> --socket <path> [--tail <lines>]
+  crewfold run prompt <id> --text <prompt> --workspace <scope> --socket <path>
+  crewfold run interrupt <id> --workspace <scope> --socket <path>
+  crewfold run attach <id> --workspace <scope> --socket <path> [--takeover]
 
 The fake runtime exercises durable domain behavior without a process. The direct
-runtime supervises a bounded local subprocess and exposes durable logs and stop
-diagnostics.
+runtime supervises a bounded local subprocess. The Herdr runtime hosts a fixture
+or interactive provider in an isolated persistent pane and supports prompt,
+interrupt, attach, logs, reconciliation, and stop.
 `

@@ -9,11 +9,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/daemon"
+	"crewfold/internal/herdr"
 	"crewfold/internal/localapi"
 )
 
@@ -41,6 +43,8 @@ type App struct {
 	executablePath func() (string, error)
 	runDaemon      func(context.Context, daemon.Config) error
 	newClient      func(string) daemonClient
+	probeHerdr     func(context.Context, string, string) herdr.ProbeReport
+	runInteractive func(context.Context, localapi.RunAttachResult) error
 }
 
 type daemonClient interface {
@@ -81,6 +85,9 @@ type daemonClient interface {
 	RunResume(context.Context, localapi.RunResumeParams) (localapi.RunMutationResult, error)
 	RunStop(context.Context, localapi.RunStopParams) (localapi.RunMutationResult, error)
 	RunLogs(context.Context, string, string, int) (localapi.RunLogsResult, error)
+	RunPrompt(context.Context, string, string, string) (localapi.RunControlResult, error)
+	RunInterrupt(context.Context, string, string) (localapi.RunControlResult, error)
+	RunAttach(context.Context, string, string, bool) (localapi.RunAttachResult, error)
 	CoordinationStatus(context.Context, string) (localapi.CoordinationStatusResult, error)
 	EventsList(context.Context, int64, int) (localapi.EventsListResult, error)
 }
@@ -93,6 +100,10 @@ func New(stdout, stderr io.Writer, info buildinfo.Info) *App {
 		info:           info,
 		executablePath: os.Executable,
 		runDaemon:      daemon.Run,
+		probeHerdr: func(ctx context.Context, executable, session string) herdr.ProbeReport {
+			return herdr.NewClient(executable, session, nil).Probe(ctx)
+		},
+		runInteractive: runAttachedProcess,
 		newClient: func(socketPath string) daemonClient {
 			return localapi.NewClient(socketPath)
 		},
@@ -547,7 +558,7 @@ func (a *App) runDaemonForeground(ctx context.Context, mode outputMode, args []s
 		fmt.Fprint(a.stdout, daemonRunHelp)
 		return ExitOK
 	}
-	options, failure := parseOptions(args, "data-dir", "socket")
+	options, failure := parseOptions(args, "data-dir", "socket", "herdr-binary", "herdr-session")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -562,10 +573,12 @@ func (a *App) runDaemonForeground(ctx context.Context, mode outputMode, args []s
 
 	logger := slog.New(slog.NewJSONHandler(a.stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	err := a.runDaemon(ctx, daemon.Config{
-		DataDir:    dataDir,
-		SocketPath: socketPath,
-		Version:    a.info,
-		Logger:     logger,
+		DataDir:         dataDir,
+		SocketPath:      socketPath,
+		Version:         a.info,
+		Logger:          logger,
+		HerdrExecutable: options["herdr-binary"],
+		HerdrSession:    options["herdr-session"],
 	})
 	if err == nil {
 		return ExitOK
@@ -786,9 +799,12 @@ func (a *App) runDoctor(ctx context.Context, mode outputMode, args []string) int
 	if len(args) > 0 && args[0] == "--database" {
 		return a.runDatabaseDoctor(ctx, mode, args[1:])
 	}
+	if len(args) > 0 && args[0] == "--runtime" {
+		return a.runRuntimeDoctor(ctx, mode, args[1:])
+	}
 	if len(args) != 1 || args[0] != "--self" {
 		return a.writeFailure(mode, usageFailure(
-			"doctor requires --self or --database in this milestone",
+			"doctor requires --self, --database, or --runtime herdr",
 			"run 'crewfold help doctor' for usage",
 		))
 	}
@@ -811,6 +827,54 @@ func (a *App) runDoctor(ctx context.Context, mode outputMode, args []string) int
 	}
 
 	if report.Status != "ok" {
+		return ExitFailure
+	}
+	return ExitOK
+}
+
+func (a *App) runRuntimeDoctor(ctx context.Context, mode outputMode, args []string) int {
+	runtimeName, optionArgs, failure := requiredLeadingArgument(args, "runtime name")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	if runtimeName != "herdr" {
+		return a.writeFailure(mode, usageFailure(fmt.Sprintf("unsupported runtime doctor %q", runtimeName), "use --runtime herdr"))
+	}
+	options, failure := parseOptions(optionArgs, "herdr-binary", "herdr-session")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	executable := options["herdr-binary"]
+	if executable == "" {
+		executable = strings.TrimSpace(os.Getenv("CREWFOLD_HERDR_BINARY"))
+	}
+	if executable == "" {
+		executable = "herdr"
+	}
+	session := options["herdr-session"]
+	if session == "" {
+		session = strings.TrimSpace(os.Getenv("CREWFOLD_HERDR_SESSION"))
+	}
+	if session == "" {
+		session = strings.TrimSpace(os.Getenv("HERDR_SESSION"))
+	}
+	report := a.probeHerdr(ctx, executable, session)
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, report); err != nil {
+			return a.writeFailure(outputText, internalFailure("write Herdr doctor output", err))
+		}
+	} else {
+		fmt.Fprintln(a.stdout, "Crewfold Herdr runtime")
+		for _, check := range report.Checks {
+			fmt.Fprintf(a.stdout, "  %-12s %s", check.Name+":", check.Status)
+			if check.Detail != "" {
+				fmt.Fprintf(a.stdout, " — %s", check.Detail)
+			}
+			fmt.Fprintln(a.stdout)
+		}
+		fmt.Fprintf(a.stdout, "status: %s\n", report.Status)
+	}
+	if !report.Compatible() {
 		return ExitFailure
 	}
 	return ExitOK
@@ -1193,10 +1257,31 @@ does not invoke Git or access the network.
 const doctorHelp = `Usage:
   crewfold doctor --self [--output text|json]
   crewfold doctor --database --socket <path> [--output text|json]
+  crewfold doctor --runtime herdr [--herdr-binary <path>] [--herdr-session <name>] [--output text|json]
 
 Run checks for the current executable or query the daemon's SQLite schema,
 journal mode, foreign-key enforcement, and integrity status.
 `
+
+func runAttachedProcess(ctx context.Context, attachment localapi.RunAttachResult) error {
+	if strings.TrimSpace(attachment.Executable) == "" {
+		return errors.New("runtime returned an empty attach executable")
+	}
+	command := exec.CommandContext(ctx, attachment.Executable, attachment.Arguments...)
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	command.Env = os.Environ()
+	for name, value := range attachment.Environment {
+		prefix := name + "="
+		filtered := command.Env[:0]
+		for _, entry := range command.Env {
+			if !strings.HasPrefix(entry, prefix) {
+				filtered = append(filtered, entry)
+			}
+		}
+		command.Env = append(filtered, prefix+value)
+	}
+	return command.Run()
+}
 
 const daemonHelp = `Usage:
   crewfold daemon run --data-dir <path> --socket <path>
@@ -1208,7 +1293,7 @@ SQLite coordination database.
 `
 
 const daemonRunHelp = `Usage:
-  crewfold daemon run --data-dir <path> --socket <path> [--output text|json]
+  crewfold daemon run --data-dir <path> --socket <path> [--herdr-binary <path>] [--herdr-session <name>] [--output text|json]
 
 Run the local daemon in the foreground. Logs are newline-delimited JSON on stderr.
 The socket is owner-only and the data directory is locked for this process.

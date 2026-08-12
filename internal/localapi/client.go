@@ -412,6 +412,30 @@ func (c *Client) RunLogs(ctx context.Context, workspace, run string, tail int) (
 	return result, nil
 }
 
+func (c *Client) RunPrompt(ctx context.Context, workspace, run, text string) (RunControlResult, error) {
+	var result RunControlResult
+	if err := c.callParams(ctx, MethodRunPrompt, RunPromptParams{Workspace: workspace, Run: run, Text: text}, &result); err != nil {
+		return RunControlResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) RunInterrupt(ctx context.Context, workspace, run string) (RunControlResult, error) {
+	var result RunControlResult
+	if err := c.callParams(ctx, MethodRunInterrupt, RunQueryParams{Workspace: workspace, Run: run}, &result); err != nil {
+		return RunControlResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) RunAttach(ctx context.Context, workspace, run string, takeover bool) (RunAttachResult, error) {
+	var result RunAttachResult
+	if err := c.callParams(ctx, MethodRunAttach, RunAttachParams{Workspace: workspace, Run: run, Takeover: takeover}, &result); err != nil {
+		return RunAttachResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) CoordinationStatus(ctx context.Context, workspace string) (CoordinationStatusResult, error) {
 	var result CoordinationStatusResult
 	if err := c.callParams(ctx, MethodCoordinationStatus, CoordinationStatusParams{Workspace: workspace}, &result); err != nil {
