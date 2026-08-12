@@ -8,6 +8,9 @@ cd "$repo_root"
 export GOTOOLCHAIN=local
 export GOPROXY=off
 
+printf 'Generated database query consistency\n'
+"$repo_root/scripts/check-generated-db.sh"
+
 go_root=$($go_runner env GOROOT)
 gofmt="$go_root/bin/gofmt"
 unformatted=$(find cmd internal protocol -type f -name '*.go' -print0 | xargs -0 "$gofmt" -l)
@@ -60,6 +63,9 @@ printf 'Durable agent messaging black-box acceptance\n'
 
 printf 'Claims, overlap, and drift black-box acceptance\n'
 "$repo_root/test/scenarios/claims-overlap/run.sh"
+
+printf 'Structured meeting black-box acceptance\n'
+"$repo_root/test/scenarios/structured-meetings/run.sh"
 
 printf 'Herdr runtime black-box acceptance\n'
 "$repo_root/test/scenarios/herdr-runtime/run.sh"

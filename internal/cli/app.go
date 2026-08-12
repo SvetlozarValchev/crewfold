@@ -99,6 +99,11 @@ type daemonClient interface {
 	OverlapInspect(context.Context, string, string) (localapi.OverlapInspectResult, error)
 	OverlapScan(context.Context, string, string) (localapi.OverlapScanResult, error)
 	DriftList(context.Context, string, string) (localapi.DriftListResult, error)
+	MeetingCreate(context.Context, localapi.MeetingCreateParams) (localapi.MeetingMutationResult, error)
+	MeetingRun(context.Context, localapi.MeetingRunParams) (localapi.MeetingMutationResult, error)
+	MeetingInspect(context.Context, string, string) (localapi.MeetingInspectResult, error)
+	MeetingAccept(context.Context, localapi.MeetingAcceptParams) (localapi.MeetingMutationResult, error)
+	MeetingTakeover(context.Context, localapi.MeetingTakeoverParams) (localapi.MeetingMutationResult, error)
 	EventsList(context.Context, int64, int) (localapi.EventsListResult, error)
 }
 
@@ -182,6 +187,8 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runOverlap(ctx, mode, args[1:])
 	case "drift":
 		return a.runDrift(ctx, mode, args[1:])
+	case "meeting":
+		return a.runMeeting(ctx, mode, args[1:])
 	case "events":
 		return a.runEvents(ctx, mode, args[1:])
 	default:
@@ -786,6 +793,8 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, overlapHelp)
 	case "drift":
 		fmt.Fprint(a.stdout, driftHelp)
+	case "meeting":
+		fmt.Fprint(a.stdout, meetingHelp)
 	case "events":
 		fmt.Fprint(a.stdout, eventsHelp)
 	case "help":
@@ -1395,6 +1404,7 @@ Commands:
   claim          Declare leased work scopes for tasks
   overlap        Inspect deterministic claim conflicts and rescan Git
   drift          Inspect writes observed outside declared task scopes
+  meeting        Resolve overlaps through durable structured decisions
   events         Inspect the durable event journal
   help [command] Show command help
 

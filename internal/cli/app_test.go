@@ -1255,6 +1255,26 @@ func (client *fakeDaemonClient) DriftList(context.Context, string, string) (loca
 	return localapi.DriftListResult{}, nil
 }
 
+func (client *fakeDaemonClient) MeetingCreate(context.Context, localapi.MeetingCreateParams) (localapi.MeetingMutationResult, error) {
+	return localapi.MeetingMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) MeetingRun(context.Context, localapi.MeetingRunParams) (localapi.MeetingMutationResult, error) {
+	return localapi.MeetingMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) MeetingInspect(context.Context, string, string) (localapi.MeetingInspectResult, error) {
+	return localapi.MeetingInspectResult{}, nil
+}
+
+func (client *fakeDaemonClient) MeetingAccept(context.Context, localapi.MeetingAcceptParams) (localapi.MeetingMutationResult, error) {
+	return localapi.MeetingMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) MeetingTakeover(context.Context, localapi.MeetingTakeoverParams) (localapi.MeetingMutationResult, error) {
+	return localapi.MeetingMutationResult{}, nil
+}
+
 func (client *fakeDaemonClient) EventsList(_ context.Context, after int64, limit int) (localapi.EventsListResult, error) {
 	client.eventsAfter = after
 	client.eventsLimit = limit

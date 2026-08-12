@@ -63,6 +63,11 @@ const (
 	MethodOverlapInspect     = "overlap.inspect"
 	MethodOverlapScan        = "overlap.scan"
 	MethodDriftList          = "drift.list"
+	MethodMeetingCreate      = "meeting.create"
+	MethodMeetingRun         = "meeting.run"
+	MethodMeetingInspect     = "meeting.inspect"
+	MethodMeetingAccept      = "meeting.accept"
+	MethodMeetingTakeover    = "meeting.takeover"
 	MethodEventsList         = "events.list"
 
 	StatusSchema             = "urn:crewfold:schema:local-api:status-result:v1"
@@ -103,6 +108,8 @@ const (
 	OverlapInspectSchema     = "urn:crewfold:schema:local-api:overlap-inspect-result:v1"
 	OverlapScanSchema        = "urn:crewfold:schema:local-api:overlap-scan-result:v1"
 	DriftListSchema          = "urn:crewfold:schema:local-api:drift-list-result:v1"
+	MeetingMutationSchema    = "urn:crewfold:schema:local-api:meeting-mutation-result:v1"
+	MeetingInspectSchema     = "urn:crewfold:schema:local-api:meeting-inspect-result:v1"
 	EventsListSchema         = "urn:crewfold:schema:local-api:events-list-result:v1"
 )
 
@@ -510,6 +517,61 @@ type DriftListResult struct {
 	Schema string              `json:"schema"`
 	Type   string              `json:"type"`
 	Drifts []domain.ClaimDrift `json:"drifts"`
+}
+
+type MeetingCreateParams struct {
+	Workspace      string   `json:"workspace"`
+	Overlap        string   `json:"overlap"`
+	Participants   []string `json:"participants"`
+	Facilitator    string   `json:"facilitator"`
+	Policy         string   `json:"policy,omitempty"`
+	Reviewer       string   `json:"reviewer,omitempty"`
+	AllowedActions []string `json:"allowed_actions,omitempty"`
+	TimeoutSeconds int64    `json:"timeout_seconds"`
+	IdempotencyKey string   `json:"idempotency_key"`
+}
+
+type MeetingRunParams struct {
+	Workspace        string                   `json:"workspace"`
+	Meeting          string                   `json:"meeting"`
+	ExpectedRevision int64                    `json:"expected_revision"`
+	Fixture          domain.MeetingRunFixture `json:"fixture"`
+	IdempotencyKey   string                   `json:"idempotency_key"`
+}
+
+type MeetingQueryParams struct {
+	Workspace string `json:"workspace"`
+	Meeting   string `json:"meeting"`
+}
+
+type MeetingAcceptParams struct {
+	Workspace        string `json:"workspace"`
+	Meeting          string `json:"meeting"`
+	ExpectedRevision int64  `json:"expected_revision"`
+	DecisionNote     string `json:"decision_note,omitempty"`
+	IdempotencyKey   string `json:"idempotency_key"`
+}
+
+type MeetingTakeoverParams struct {
+	Workspace        string                      `json:"workspace"`
+	Meeting          string                      `json:"meeting"`
+	ExpectedRevision int64                       `json:"expected_revision"`
+	Proposal         domain.MeetingProposalInput `json:"proposal"`
+	DecisionNote     string                      `json:"decision_note,omitempty"`
+	IdempotencyKey   string                      `json:"idempotency_key"`
+}
+
+type MeetingMutationResult struct {
+	Schema        string               `json:"schema"`
+	Type          string               `json:"type"`
+	Detail        domain.MeetingDetail `json:"detail"`
+	EventSequence int64                `json:"event_sequence"`
+}
+
+type MeetingInspectResult struct {
+	Schema string               `json:"schema"`
+	Type   string               `json:"type"`
+	Detail domain.MeetingDetail `json:"detail"`
 }
 
 type ContextBuildParams struct {

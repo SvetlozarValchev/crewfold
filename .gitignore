@@ -3,6 +3,7 @@
 /dist/
 /coverage/
 /web/dist/
+/.tools/
 
 # Go
 *.test

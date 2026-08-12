@@ -48,6 +48,10 @@ const (
 	CodeOverlapNotFound      = "overlap_not_found"
 	CodeSchedulingPaused     = "scheduling_paused"
 	CodeInvalidClaimScan     = "invalid_claim_scan"
+	CodeInvalidMeeting       = "invalid_meeting"
+	CodeMeetingNotFound      = "meeting_not_found"
+	CodeMeetingConflict      = "meeting_conflict"
+	CodeMeetingStale         = "meeting_input_stale"
 	CodeIdempotencyConflict  = "idempotency_conflict"
 	CodeStorageFailed        = "storage_failed"
 )

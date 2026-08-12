@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:meeting-create-params:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "overlap", "participants", "facilitator", "timeout_seconds", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1},
+    "overlap": {"type": "string", "pattern": "^overlap_[0-9a-f]{32}$"},
+    "participants": {"type": "array", "minItems": 2, "maxItems": 3, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "facilitator": {"type": "string", "minLength": 1},
+    "policy": {"enum": ["owner_decision", "named_reviewer", "manager_bounded"]},
+    "reviewer": {"type": "string", "minLength": 1},
+    "allowed_actions": {"type": "array", "uniqueItems": true, "items": {"enum": ["sequence", "split", "reassign", "designate_role", "cancel"]}},
+    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 604800},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

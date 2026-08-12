@@ -500,6 +500,50 @@ func (c *Client) DriftList(ctx context.Context, workspace, status string) (Drift
 	return result, nil
 }
 
+func (c *Client) MeetingCreate(ctx context.Context, params MeetingCreateParams) (MeetingMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result MeetingMutationResult
+	if err := c.callParams(ctx, MethodMeetingCreate, params, &result); err != nil {
+		return MeetingMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) MeetingRun(ctx context.Context, params MeetingRunParams) (MeetingMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result MeetingMutationResult
+	if err := c.callParams(ctx, MethodMeetingRun, params, &result); err != nil {
+		return MeetingMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) MeetingInspect(ctx context.Context, workspace, meeting string) (MeetingInspectResult, error) {
+	var result MeetingInspectResult
+	if err := c.callParams(ctx, MethodMeetingInspect, MeetingQueryParams{Workspace: workspace, Meeting: meeting}, &result); err != nil {
+		return MeetingInspectResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) MeetingAccept(ctx context.Context, params MeetingAcceptParams) (MeetingMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result MeetingMutationResult
+	if err := c.callParams(ctx, MethodMeetingAccept, params, &result); err != nil {
+		return MeetingMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) MeetingTakeover(ctx context.Context, params MeetingTakeoverParams) (MeetingMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result MeetingMutationResult
+	if err := c.callParams(ctx, MethodMeetingTakeover, params, &result); err != nil {
+		return MeetingMutationResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) EventsList(ctx context.Context, after int64, limit int) (EventsListResult, error) {
 	paramsValue := EventsListParams{After: &after}
 	if limit != 0 {

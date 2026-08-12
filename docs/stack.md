@@ -18,7 +18,7 @@ until their capability is implemented.
 | --- | --- | --- |
 | Daemon and CLI | Go, current supported stable release | Single binary, strong process/concurrency support, low idle cost |
 | Local database | SQLite in WAL mode through `github.com/ncruces/go-sqlite3` | Transactional, CGO-free, portable, and operationally trivial at personal scale |
-| SQL access | Explicit SQL plus generated typed queries | Keeps schema and hot queries visible |
+| SQL access | Pinned `sqlc` generated Go over explicit SQL | Compile-time query types while schema and transaction behavior stay visible |
 | Migrations | Ordered embedded SQL migrations | Reproducible upgrades and simple backups |
 | Local transport | JSON messages over a Unix domain socket | Inspectable, stream-capable, user-local by default |
 | Schema | JSON Schema with generated language types | Versioned contracts for CLI, adapters, SDKs, and fixtures |
@@ -30,9 +30,9 @@ until their capability is implemented.
 | Logging | Structured logs with redaction | Debuggable local operation and future telemetry bridge |
 | Metrics/tracing | Optional OpenTelemetry hooks | Standard observability without requiring a collector |
 
-The SQLite driver is vendored for reproducible offline builds. Other specific Go
-libraries remain open until their implementation spike. The architecture depends
-on interfaces and behavior, not library branding.
+The SQLite driver and generated query code are checked in for reproducible offline
+builds. `sqlc` is a development-time generator, not a runtime dependency. Its
+version is pinned and source/output drift is checked without network access.
 
 ## Why Go for the core
 

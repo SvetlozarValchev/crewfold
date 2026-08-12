@@ -156,6 +156,11 @@ tables are updated in the same SQLite transaction for efficient queries. This is
 not a commitment to a large event-sourcing framework; it is a compact audit journal
 plus rebuildable projections.
 
+Named SQLite queries are compiled into typed Go accessors with pinned `sqlc`.
+Generated access owns parameters, nullability, results, and scanning; handwritten
+domain services continue to own short transaction boundaries, policy checks, and
+event/projection ordering. Ordered SQL migrations remain the schema authority.
+
 ### Scheduler
 
 Matches ready tasks with eligible agent definitions, available checkouts, runtime

@@ -7,8 +7,8 @@ resume, completion proposal, handoff, completion/failure, stop, lost-runtime,
 scoped tool audit, report receipt, artifact publication, and context-packet facts.
 Thread creation, durable message send/delivery/read/acknowledgement, and wake
 success/failure facts are also implemented. Claim add/release/expiry, overlap
-open/resolution, and drift open/resolution facts are implemented. Names for later meetings, canonical
-knowledge, policy, checks, and external integrations remain proposals; the
+open/resolution, drift open/resolution, and structured meeting facts are
+implemented. Names for canonical knowledge, policy, checks, and external integrations remain proposals; the
 catalogue defines intended coverage, not a frozen schema.
 
 ## Envelope
@@ -153,8 +153,9 @@ overlap.dismissed
 ## Communication and meetings
 
 Thread creation and the six message/wake facts through `message.wake_failed` are
-implemented. Thread closing, delivery failure distinct from wake failure, and all
-meeting names remain proposals.
+implemented. Structured-meeting creation, checkpoints, proposals, stalls,
+conclusion, and takeover are also implemented. Thread closing and delivery failure
+distinct from wake failure remain proposals.
 
 ```text
 thread.created
@@ -166,15 +167,12 @@ message.wake_succeeded
 message.wake_failed
 message.delivery_failed
 thread.closed
-meeting.proposed
 meeting.created
-meeting.context_frozen
-meeting.started
-meeting.contribution_recorded
+meeting.positions_collected
 meeting.resolution_proposed
 meeting.concluded
 meeting.stalled
-meeting.cancelled
+meeting.human_takeover
 ```
 
 ## Knowledge and context

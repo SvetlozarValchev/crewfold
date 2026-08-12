@@ -2,9 +2,9 @@
 
 Status: implemented for daemon health, durable workspaces/events, read-only Git
 inspection, provider-neutral agent/objective/task/run coordination, immutable
-context packets, owner-facing durable agent mail, and leased claims with
-deterministic overlap/drift inspection. Subscriptions, structured meetings, and
-canonical knowledge arrive later.
+context packets, owner-facing durable agent mail, leased claims with deterministic
+overlap/drift inspection, and structured overlap-resolution meetings.
+Subscriptions and canonical knowledge arrive later.
 
 ## Transport
 
@@ -411,6 +411,36 @@ after daemon restart sets `observation_gap`; separate adjacent clones and linked
 worktrees retain distinct checkout IDs even if repository identity is shared.
 `drift.list` filters durable records by `open|resolved` status. Claims do not
 provide filesystem isolation, and a shared checkout produces an explicit warning.
+
+### Structured meetings
+
+`meeting.create` freezes one open overlap, both claims and tasks, the selected
+agent definitions, and the current event cursor. It takes two or three distinct
+participants, an independent facilitator, a deadline, and one authority policy:
+`owner_decision`, `named_reviewer`, or `manager_bounded`. Named-reviewer policy
+requires a reviewer. Bounded-manager policy requires an explicit action allowlist.
+
+`meeting.run` consumes a deterministic fixture containing independently authored
+positions followed by an optional facilitator proposal. Contributions are unique
+per meeting, agent, and round. A retry reuses an identical durable contribution;
+a different replacement is rejected. Missing positions and deadlines produce a
+durable `stalled` state without discarding received positions. A facilitator can
+resume after daemon restart from `facilitator_pending` without asking submitted
+participants again.
+
+Proposal actions are typed as `sequence`, `split`, `reassign`, `designate_role`,
+or `cancel`. They can reference only the meeting's frozen tasks and agents. Owner
+policy records the proposal as `awaiting_approval` and changes no work until
+`meeting.accept`. Named-reviewer and bounded-manager policies apply only within
+their configured authority. Before applying any action, Crewfold verifies that
+the frozen overlap, claims, and task revisions are still current; the complete
+action set commits atomically or not at all.
+
+A sequence action adds a real task dependency, releases the downstream task's
+overlapping claim, and resolves its coordination hold. `meeting.inspect` returns
+the frozen input, participant state, contributions, proposal, and action results.
+`meeting.takeover` lets the local owner supply and authorize a typed proposal for
+a stalled meeting; it is explicit authority, not silent autonomous recovery.
 
 ### `coordination.status`
 

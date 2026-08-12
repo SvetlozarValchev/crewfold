@@ -1,0 +1,9 @@
+{
+  "positions": [],
+  "proposal": {
+    "summary": "sequence the overlapping work",
+    "actions": [
+      {"type": "sequence", "payload": {"before_task_id": "__BEFORE_TASK__", "after_task_id": "__AFTER_TASK__"}}
+    ]
+  }
+}

@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 8
+	LatestSchemaVersion = 9
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -289,6 +289,52 @@ type ClaimMutationResult struct {
 	Warnings      []string             `json:"warnings"`
 	EventSequence int64                `json:"event_sequence"`
 	Replayed      bool                 `json:"-"`
+}
+
+type CreateMeetingCommand struct {
+	WorkspaceIdentifier string
+	OverlapID           string
+	ParticipantAgents   []string
+	FacilitatorAgent    string
+	Policy              string
+	ReviewerAgent       string
+	AllowedActions      []string
+	Timeout             time.Duration
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type RunMeetingCommand struct {
+	WorkspaceIdentifier string
+	MeetingID           string
+	ExpectedRevision    int64
+	Fixture             domain.MeetingRunFixture
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type AcceptMeetingCommand struct {
+	WorkspaceIdentifier string
+	MeetingID           string
+	ExpectedRevision    int64
+	DecisionNote        string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type TakeoverMeetingCommand struct {
+	WorkspaceIdentifier string
+	MeetingID           string
+	ExpectedRevision    int64
+	Proposal            domain.MeetingProposalInput
+	DecisionNote        string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type MeetingMutationResult struct {
+	Detail        domain.MeetingDetail `json:"detail"`
+	EventSequence int64                `json:"event_sequence"`
 }
 
 type ClaimWatchTarget struct {

@@ -643,8 +643,10 @@ bounded procedure that changes downstream work?
 ```sh
 crewfold meeting create --from-overlap OVERLAP_ID \
   --participant agent-a --participant agent-b --facilitator manager
-crewfold meeting run MEETING_ID
+crewfold meeting run MEETING_ID --fixture positions-and-proposal.json \
+  --expected-revision 1
 crewfold meeting inspect MEETING_ID
+crewfold meeting accept MEETING_ID --expected-revision 2
 ```
 
 **Deliverables**
@@ -654,7 +656,8 @@ crewfold meeting inspect MEETING_ID
 - Independent first-round contributions and facilitator round.
 - Resolution policies: owner decision, named reviewer, or constrained manager
   proposal.
-- Resolution actions that can sequence, split, reassign, review, or cancel tasks.
+- Resolution actions that can sequence, split, reassign, designate explicit
+  implementer/reviewer roles, or cancel tasks.
 - Stalled/timeout handling and human takeover.
 
 **Automated acceptance**

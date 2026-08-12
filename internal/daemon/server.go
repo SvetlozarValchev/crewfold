@@ -594,6 +594,16 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleOverlapScan(request), false
 	case localapi.MethodDriftList:
 		return s.handleDriftList(request), false
+	case localapi.MethodMeetingCreate:
+		return s.handleMeetingCreate(request), false
+	case localapi.MethodMeetingRun:
+		return s.handleMeetingRun(request), false
+	case localapi.MethodMeetingInspect:
+		return s.handleMeetingInspect(request), false
+	case localapi.MethodMeetingAccept:
+		return s.handleMeetingAccept(request), false
+	case localapi.MethodMeetingTakeover:
+		return s.handleMeetingTakeover(request), false
 	case localapi.MethodEventsList:
 		return s.handleEventsList(request), false
 	default:

@@ -1,0 +1,7 @@
+{
+  "positions": [
+    {"agent_id": "__AGENT_A__", "summary": "complete the shared contract first", "evidence": ["owns the contract"]},
+    {"agent_id": "__AGENT_B__", "summary": "consume the shared contract second", "evidence": ["depends on the contract"]}
+  ],
+  "pause_after_positions": true
+}
