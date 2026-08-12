@@ -5,9 +5,10 @@ scope reduces the attack surface but does not make it harmless.
 
 ## Security status
 
-The repository is pre-release. The local API, durable coordination core, and a
-fixed provider-free direct-process fixture have executable enforcement and tests,
-but arbitrary agent commands, provider credentials, network policy, and an
+The repository is pre-release. The local API, durable coordination core, immutable
+run briefings, run-scoped MCP surface, and fixed provider-free direct-process
+fixtures have executable enforcement and tests, but arbitrary agent commands,
+provider credentials, network policy, and an
 operating-system sandbox are not implemented. There is no supported production
 version or private vulnerability channel yet. Do not rely on Crewfold to protect
 sensitive environments.
@@ -56,6 +57,24 @@ stop, and unknown process identity across daemon restarts.
 This boundary is process supervision, not containment. Running arbitrary project
 or model-provider commands remains disabled until command policy and an explicit
 sandbox decision are implemented.
+
+## Implemented MCP boundary
+
+Each new run has an immutable context packet, durable capability expiry, and an
+HMAC bearer token delivered by owner-only file path rather than command arguments,
+environment value, database field, or launch specification. MCP tools contain no
+caller-selected run identity. Cross-run resources, expired capabilities, and
+terminal-run capabilities are denied; allowed and denied calls are audited without
+request bodies or tokens.
+
+This is least authority inside the MCP protocol, not isolation from the owner's
+machine. Direct children currently run under the same operating-system user as the
+daemon. A malicious process can potentially discover the owner local-API socket,
+read same-user daemon files, or print its own token. File mode `0600` protects
+against other users, not another process with the same UID. Therefore only the
+fixed trusted fixture is supported today. Before arbitrary or model-provider code
+is enabled, Crewfold needs an explicit containment boundary or owner-API
+authentication that remains unavailable to run processes.
 
 ## Initial autonomy classes
 

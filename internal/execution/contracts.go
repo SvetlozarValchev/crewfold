@@ -32,6 +32,15 @@ type ProviderBinding struct {
 	ProviderHandle string
 }
 
+type RunCapabilityAccess struct {
+	SocketPath     string
+	CapabilityFile string
+}
+
+type RunCapabilityPreparer interface {
+	PrepareRunCapability(context.Context, string) (RunCapabilityAccess, error)
+}
+
 const (
 	RuntimeStateStarting = "starting"
 	RuntimeStateRunning  = "running"

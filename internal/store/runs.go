@@ -33,6 +33,8 @@ const (
 	taskFailedEvent            = "task.failed"
 	taskHandoffRecorded        = "task.handoff_recorded"
 	taskRunStoppedEvent        = "task.run_stopped"
+	defaultRunCapabilityTTL    = time.Hour
+	maximumRunCapabilityTTL    = 24 * time.Hour
 )
 
 func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMutationResult, error) {
@@ -43,12 +45,29 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	providerName := strings.TrimSpace(command.Provider)
 	key := strings.TrimSpace(command.IdempotencyKey)
 	correlationID := strings.TrimSpace(command.CorrelationID)
+	contextPacketID := strings.TrimSpace(command.ContextPacketID)
+	capabilityTTL := command.CapabilityTTL
+	if capabilityTTL == 0 {
+		capabilityTTL = defaultRunCapabilityTTL
+	}
 	if workspaceIdentifier == "" || taskID == "" || runtimeName == "" || providerName == "" || command.ExpectedTaskRevision < 1 || !validStoredScenario(command.Scenario) {
 		return RunMutationResult{}, &Error{Code: CodeInvalidRun, Message: "run start requires workspace, task, runtime, provider, a valid scenario, and expected task revision"}
+	}
+	if capabilityTTL < time.Second || capabilityTTL > maximumRunCapabilityTTL {
+		return RunMutationResult{}, &Error{Code: CodeInvalidRun, Message: "run capability lifetime must be between one second and 24 hours"}
 	}
 	if err := validateMutationMetadata(key, correlationID, CodeInvalidRun); err != nil {
 		return RunMutationResult{}, err
 	}
+	command.WorkspaceIdentifier = workspaceIdentifier
+	command.TaskID = taskID
+	command.CheckoutIdentifier = checkoutIdentifier
+	command.ContextPacketID = contextPacketID
+	command.Runtime = runtimeName
+	command.Provider = providerName
+	command.CapabilityTTL = capabilityTTL
+	command.IdempotencyKey = key
+	command.CorrelationID = correlationID
 	requestHash, err := hashCommand("run.start", command)
 	if err != nil {
 		return RunMutationResult{}, storageFailure("hash run start", err)
@@ -107,15 +126,49 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	if activeForAgent >= agent.MaxConcurrency {
 		return RunMutationResult{}, &Error{Code: CodePlacementUnavailable, Message: fmt.Sprintf("agent %s has reached concurrency %d", agent.ID, agent.MaxConcurrency)}
 	}
+	var packet domain.ContextPacket
+	if contextPacketID != "" {
+		packet, err = queryContextPacket(ctx, tx, workspace.ID, contextPacketID)
+		if err != nil {
+			return RunMutationResult{}, err
+		}
+		if packet.ProjectID != task.ProjectID || packet.TaskID != task.ID || packet.AgentID != agent.ID || packet.Task.Revision != task.Revision || packet.Role.Revision != agent.Revision {
+			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "context packet no longer matches the task assignment or its revisions"}
+		}
+		if checkoutIdentifier != "" && checkoutIdentifier != packet.CheckoutID {
+			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "requested checkout differs from the context packet checkout"}
+		}
+		checkoutIdentifier = packet.CheckoutID
+	}
 	checkout, err := selectRunCheckout(ctx, tx, task.ProjectID, checkoutIdentifier)
 	if err != nil {
 		return RunMutationResult{}, err
+	}
+	if contextPacketID != "" {
+		if packet.CheckoutID != checkout.ID || packet.Checkout.Revision != checkout.Revision {
+			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "context packet checkout is stale or differs from placement"}
+		}
+		var boundRunID string
+		err = tx.QueryRowContext(ctx, "SELECT run_id FROM run_context_bindings WHERE context_packet_id = ?", packet.ID).Scan(&boundRunID)
+		if err == nil {
+			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: fmt.Sprintf("context packet is already bound to run %s", boundRunID)}
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return RunMutationResult{}, storageFailure("check context packet binding", err)
+		}
+	} else {
+		packet, _, err = s.buildContextPacketInTransaction(ctx, tx, workspace.ID, task, agent, checkout, correlationID+"-context", s.nowText())
+		if err != nil {
+			return RunMutationResult{}, err
+		}
+		contextPacketID = packet.ID
 	}
 	reasons := []string{
 		fmt.Sprintf("task %s is assigned to enabled agent %s", task.ID, agent.ID),
 		fmt.Sprintf("agent runtime/provider match %s/%s", runtimeName, providerName),
 		fmt.Sprintf("checkout %s is available with %s write policy", checkout.ID, checkout.WriteMode),
 		fmt.Sprintf("agent concurrency %d/%d before placement", activeForAgent, agent.MaxConcurrency),
+		fmt.Sprintf("context packet %s fixes task, role, checkout, and reporting policy", contextPacketID),
 	}
 	scenarioJSON, err := json.Marshal(command.Scenario)
 	if err != nil {
@@ -132,7 +185,7 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	}
 	run := domain.Run{
 		ID: runID, WorkspaceID: workspace.ID, ProjectID: task.ProjectID, TaskID: task.ID,
-		AgentID: agent.ID, CheckoutID: checkout.ID, Runtime: runtimeName, Provider: providerName,
+		AgentID: agent.ID, CheckoutID: checkout.ID, ContextPacketID: contextPacketID, Runtime: runtimeName, Provider: providerName,
 		ScenarioName: command.Scenario.Name, Status: domain.RunRequested, Revision: 1,
 		CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID,
 		Placement: domain.RunPlacement{TaskID: task.ID, AgentID: agent.ID, CheckoutID: checkout.ID, CheckoutPath: checkout.Path, WriteMode: checkout.WriteMode, Runtime: runtimeName, Provider: providerName, Reasons: reasons},
@@ -146,6 +199,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?)`,
 		run.Runtime, run.Provider, run.ScenarioName, string(scenarioJSON), string(reasonsJSON),
 		run.Status, now, now, run.CreatedBy, run.UpdatedBy); err != nil {
 		return RunMutationResult{}, storageFailure("insert run projection", err)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO run_context_bindings(run_id, context_packet_id, bound_at) VALUES (?, ?, ?)", run.ID, contextPacketID, now); err != nil {
+		return RunMutationResult{}, storageFailure("bind run context packet", err)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO run_capabilities(run_id, expires_at, created_at) VALUES (?, ?, ?)", run.ID, s.clock().UTC().Add(capabilityTTL).Format(time.RFC3339Nano), now); err != nil {
+		return RunMutationResult{}, storageFailure("create run capability", err)
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO run_jobs(run_id, status, available_at, attempts, created_at, updated_at) VALUES (?, 'pending', ?, 0, ?, ?)", run.ID, now, now, now); err != nil {
 		return RunMutationResult{}, storageFailure("enqueue run", err)
@@ -475,10 +534,61 @@ func (s *Store) ApplyRunObservation(ctx context.Context, runID string, observati
 	if err != nil {
 		return domain.RunDetail{}, err
 	}
+	detail, err := s.applyRunObservationInTransaction(ctx, tx, &run, observation, accepted, missing, correlationID, s.nowText())
+	if err != nil {
+		return domain.RunDetail{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.RunDetail{}, storageFailure("commit run observation", err)
+	}
+	return detail, nil
+}
+
+// ApplyQueuedRunReport applies a capability-submitted report and marks that exact
+// report consumed in the same transaction as the run/task state transition.
+func (s *Store) ApplyQueuedRunReport(ctx context.Context, runID, reportID string, accepted bool, missing []string, correlationID string) (domain.RunDetail, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.RunDetail{}, storageFailure("begin queued run report", err)
+	}
+	defer tx.Rollback()
+	report, err := queryRunReportByID(ctx, tx, strings.TrimSpace(reportID))
+	if err != nil {
+		return domain.RunDetail{}, err
+	}
+	if report.RunID != strings.TrimSpace(runID) {
+		return domain.RunDetail{}, &Error{Code: CodeInvalidReport, Message: "run report belongs to a different run"}
+	}
+	if report.Status != "pending" {
+		return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "run report was already applied"}
+	}
+	run, err := queryRun(ctx, tx, "", report.RunID)
+	if err != nil {
+		return domain.RunDetail{}, err
+	}
+	observation := domain.RunObservation{Kind: report.Kind, Message: report.Message, Evidence: append([]string(nil), report.Evidence...), Handoff: report.Handoff}
+	now := s.nowText()
+	detail, err := s.applyRunObservationInTransaction(ctx, tx, &run, observation, accepted, missing, correlationID, now)
+	if err != nil {
+		return domain.RunDetail{}, err
+	}
+	result, err := tx.ExecContext(ctx, "UPDATE run_reports SET status = 'applied', applied_at = ? WHERE id = ? AND status = 'pending'", now, report.ID)
+	if err != nil {
+		return domain.RunDetail{}, storageFailure("mark run report applied", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		return domain.RunDetail{}, storageFailure("verify run report application", errors.New("report application lost its pending state"))
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.RunDetail{}, storageFailure("commit queued run report", err)
+	}
+	return detail, nil
+}
+
+func (s *Store) applyRunObservationInTransaction(ctx context.Context, tx *sql.Tx, run *domain.Run, observation domain.RunObservation, accepted bool, missing []string, correlationID, now string) (domain.RunDetail, error) {
 	if run.Status != domain.RunActive {
 		return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "observations require an active run"}
 	}
-	now := s.nowText()
 	run.StepCursor++
 	run.Revision++
 	var jobStatus = "pending"
@@ -520,25 +630,22 @@ func (s *Store) ApplyRunObservation(ctx context.Context, runID string, observati
 			return domain.RunDetail{}, err
 		}
 	case domain.ObservationCompletion:
-		if err := applyCompletionObservation(ctx, tx, &run, observation, accepted, missing, correlationID, now); err != nil {
+		if err := applyCompletionObservation(ctx, tx, run, observation, accepted, missing, correlationID, now); err != nil {
 			return domain.RunDetail{}, err
 		}
 		jobStatus = "complete"
 	default:
 		return domain.RunDetail{}, &Error{Code: CodeInvalidRun, Message: fmt.Sprintf("unsupported observation kind %q", observation.Kind)}
 	}
-	if err := updateRunProjection(ctx, tx, run, now); err != nil {
+	if err := updateRunProjection(ctx, tx, *run, now); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if err := setRunJob(ctx, tx, run.ID, jobStatus, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	detail, err := runDetailInTransaction(ctx, tx, run)
+	detail, err := runDetailInTransaction(ctx, tx, *run)
 	if err != nil {
 		return domain.RunDetail{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return domain.RunDetail{}, storageFailure("commit run observation", err)
 	}
 	return detail, nil
 }
@@ -1013,13 +1120,15 @@ WHERE c.project_id = ? AND c.availability = 'available' AND c.write_mode <> 'rea
 
 const runSelect = `
 SELECT r.id, r.workspace_id, r.project_id, r.task_id, r.agent_id, r.checkout_id,
+       COALESCE(b.context_packet_id, ''),
        r.runtime, r.provider, r.scenario_name, r.status, r.step_cursor,
        COALESCE(r.runtime_handle, ''), COALESCE(r.provider_handle, ''),
        COALESCE(r.blocked_question, ''), COALESCE(r.result_summary, ''),
        COALESCE(r.failure_code, ''), COALESCE(r.failure_message, ''), r.stop_grace_millis, r.stop_forced, r.revision,
        r.created_at, r.updated_at, COALESCE(r.started_at, ''), COALESCE(r.finished_at, ''),
        r.created_by, r.updated_by, c.path, c.write_mode, r.placement_reasons_json
-FROM runs r JOIN checkouts c ON c.id = r.checkout_id`
+FROM runs r JOIN checkouts c ON c.id = r.checkout_id
+LEFT JOIN run_context_bindings b ON b.run_id = r.id`
 
 func queryRun(ctx context.Context, database queryRower, workspaceID, runID string) (domain.Run, error) {
 	query := runSelect + " WHERE r.id = ?"
@@ -1042,6 +1151,7 @@ func queryRun(ctx context.Context, database queryRower, workspaceID, runID strin
 func scanRun(row rowScanner, run *domain.Run) error {
 	var reasonsJSON string
 	err := row.Scan(&run.ID, &run.WorkspaceID, &run.ProjectID, &run.TaskID, &run.AgentID, &run.CheckoutID,
+		&run.ContextPacketID,
 		&run.Runtime, &run.Provider, &run.ScenarioName, &run.Status, &run.StepCursor,
 		&run.RuntimeHandle, &run.ProviderHandle, &run.BlockedQuestion, &run.ResultSummary,
 		&run.FailureCode, &run.FailureMessage, &run.StopGraceMillis, &run.StopForced, &run.Revision, &run.CreatedAt, &run.UpdatedAt,

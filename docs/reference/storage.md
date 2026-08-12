@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 4.
+Status: implemented through schema version 6.
 
 ## Location and ownership
 
@@ -143,6 +143,27 @@ coordination meaning. Each supervisor state file is atomically replaced and
 contains process identity, exit/timeout/stop result, output byte counts, and an
 explicit unknown state when identity cannot be verified.
 
+## Schema version 6
+
+`context_packets` stores an immutable bounded JSON packet, semantic SHA-256 hash,
+byte size, task/agent/checkout scope, and creation provenance. The packet includes
+its own exact entity revisions and selection/exclusion explanation. Each
+`run_context_bindings` row binds one packet to one run; both sides are unique.
+
+`run_capabilities` stores only expiry—not the credential. A private node key under
+daemon state derives per-run HMAC tokens, and private token files give direct
+children capability access without putting secrets in SQLite or launch specs.
+
+`run_reports` durably sequences idempotent progress, blocked, and completion
+proposals in submission order. Applying a report and advancing run/task state is
+one transaction. `run_artifacts` stores at most 32 KiB of UTF-8 text with a content
+hash and run-local idempotency key. `run_tool_calls` records allowed, denied, and
+errored MCP operations without request bodies or credentials.
+
+Old runs migrate without invented packet bindings or capabilities; only runs
+created under schema version 6 receive them. Capability expiry and terminal run
+state are both checked on each MCP request.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -167,7 +188,10 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 5 contains agent/task/run coordination, opaque
-fake/direct bindings, and direct supervisor references but no message, knowledge,
+without its WAL. Schema version 6 contains agent/task/run coordination, immutable
+context packets, scoped report/artifact/audit records, opaque fake/direct
+bindings, and direct supervisor references but no message, canonical knowledge,
 or real model-provider session state. Backup of a live installation must include a
-coordinated snapshot of the database and direct-runtime state directory.
+coordinated snapshot of the database, direct-runtime state, node key, and
+capability files; restored capabilities still obey their stored expiry and run
+state.

@@ -69,6 +69,9 @@ type daemonClient interface {
 	TaskAssign(context.Context, localapi.TaskAssignParams) (localapi.TaskMutationResult, error)
 	TaskTransition(context.Context, localapi.TaskTransitionParams) (localapi.TaskMutationResult, error)
 	TaskTimeline(context.Context, string, string) (localapi.TaskTimelineResult, error)
+	ContextBuild(context.Context, localapi.ContextBuildParams) (localapi.ContextBuildResult, error)
+	ContextShow(context.Context, string, string) (localapi.ContextShowResult, error)
+	ContextExplain(context.Context, string, string) (localapi.ContextExplainResult, error)
 	RunStart(context.Context, localapi.RunStartParams) (localapi.RunMutationResult, error)
 	RunShow(context.Context, string, string) (localapi.RunShowResult, error)
 	RunList(context.Context, string, string, string) (localapi.RunListResult, error)
@@ -133,6 +136,8 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runObjective(ctx, mode, args[1:])
 	case "task":
 		return a.runTask(ctx, mode, args[1:])
+	case "context":
+		return a.runContext(ctx, mode, args[1:])
 	case "run":
 		return a.runRun(ctx, mode, args[1:])
 	case "events":
@@ -677,6 +682,8 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, objectiveHelp)
 	case "task":
 		fmt.Fprint(a.stdout, taskHelp)
+	case "context":
+		fmt.Fprint(a.stdout, contextHelp)
 	case "run":
 		fmt.Fprint(a.stdout, runHelp)
 	case "events":
@@ -1144,6 +1151,7 @@ Commands:
   agent          Define provider-neutral agents and roles
   objective      Define project objectives and budgets
   task           Coordinate dependency-aware, leased work
+  context        Build and inspect immutable run briefings
   run            Launch and inspect provider-neutral execution
   events         Inspect the durable event journal
   help [command] Show command help

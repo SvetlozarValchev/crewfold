@@ -25,6 +25,7 @@ func (s *server) handleRunStart(request localapi.Request) localapi.Response {
 		WorkspaceIdentifier:  params.Workspace,
 		TaskID:               params.Task,
 		CheckoutIdentifier:   params.Checkout,
+		ContextPacketID:      params.Context,
 		Runtime:              params.Runtime,
 		Provider:             params.Provider,
 		Scenario:             params.Scenario,

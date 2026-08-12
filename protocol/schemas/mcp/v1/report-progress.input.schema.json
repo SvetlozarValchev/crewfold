@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:mcp:report-progress-input:v1",
+  "title": "crewfold_report_progress input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "completed", "next", "risks", "evidence_ids", "idempotency_key"],
+  "properties": {
+    "summary": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "completed": {"$ref": "#/$defs/items"},
+    "next": {"$ref": "#/$defs/items"},
+    "risks": {"$ref": "#/$defs/items"},
+    "evidence_ids": {"$ref": "#/$defs/items"},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  },
+  "$defs": {"items": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 128}}}
+}

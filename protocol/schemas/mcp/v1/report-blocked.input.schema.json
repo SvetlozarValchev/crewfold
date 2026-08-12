@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:mcp:report-blocked-input:v1",
+  "title": "crewfold_report_blocked input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reason", "needs", "severity", "related_ids", "idempotency_key"],
+  "properties": {
+    "reason": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "needs": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+    "severity": {"enum": ["blocking", "high", "medium", "low"]},
+    "related_ids": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

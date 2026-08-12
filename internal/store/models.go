@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 5
+	LatestSchemaVersion = 6
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -177,10 +177,12 @@ type CreateRunCommand struct {
 	WorkspaceIdentifier  string
 	TaskID               string
 	CheckoutIdentifier   string
+	ContextPacketID      string
 	Runtime              string
 	Provider             string
 	Scenario             domain.FakeScenario
 	ExpectedTaskRevision int64
+	CapabilityTTL        time.Duration
 	IdempotencyKey       string
 	CorrelationID        string
 }
@@ -205,6 +207,34 @@ type StopRunCommand struct {
 type RunMutationResult struct {
 	Detail        domain.RunDetail `json:"detail"`
 	EventSequence int64            `json:"event_sequence"`
+}
+
+type BuildContextCommand struct {
+	WorkspaceIdentifier  string
+	TaskID               string
+	AgentIdentifier      string
+	CheckoutIdentifier   string
+	ExpectedTaskRevision int64
+	IdempotencyKey       string
+	CorrelationID        string
+}
+
+type CreateRunReportCommand struct {
+	RunID          string
+	Kind           string
+	Message        string
+	Evidence       []string
+	Handoff        string
+	Payload        any
+	IdempotencyKey string
+}
+
+type PublishRunArtifactCommand struct {
+	RunID          string
+	Name           string
+	MediaType      string
+	Content        string
+	IdempotencyKey string
 }
 
 type RunWork struct {

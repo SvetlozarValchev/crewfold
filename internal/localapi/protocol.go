@@ -40,6 +40,9 @@ const (
 	MethodTaskAssign         = "task.assign"
 	MethodTaskTransition     = "task.transition"
 	MethodTaskTimeline       = "task.timeline"
+	MethodContextBuild       = "context.build"
+	MethodContextShow        = "context.show"
+	MethodContextExplain     = "context.explain"
 	MethodRunStart           = "run.start"
 	MethodRunShow            = "run.show"
 	MethodRunList            = "run.list"
@@ -68,6 +71,9 @@ const (
 	TaskShowSchema           = "urn:crewfold:schema:local-api:task-show-result:v1"
 	TaskListSchema           = "urn:crewfold:schema:local-api:task-list-result:v1"
 	TaskTimelineSchema       = "urn:crewfold:schema:local-api:task-timeline-result:v1"
+	ContextBuildSchema       = "urn:crewfold:schema:local-api:context-build-result:v1"
+	ContextShowSchema        = "urn:crewfold:schema:local-api:context-show-result:v1"
+	ContextExplainSchema     = "urn:crewfold:schema:local-api:context-explain-result:v1"
 	RunMutationSchema        = "urn:crewfold:schema:local-api:run-mutation-result:v1"
 	RunShowSchema            = "urn:crewfold:schema:local-api:run-show-result:v1"
 	RunListSchema            = "urn:crewfold:schema:local-api:run-list-result:v1"
@@ -404,10 +410,44 @@ type TaskTimelineResult struct {
 	Timeline domain.TaskTimeline `json:"timeline"`
 }
 
+type ContextBuildParams struct {
+	Workspace            string `json:"workspace"`
+	Task                 string `json:"task"`
+	Agent                string `json:"agent"`
+	Checkout             string `json:"checkout,omitempty"`
+	ExpectedTaskRevision int64  `json:"expected_task_revision"`
+	IdempotencyKey       string `json:"idempotency_key"`
+}
+
+type ContextQueryParams struct {
+	Workspace string `json:"workspace"`
+	Context   string `json:"context"`
+}
+
+type ContextBuildResult struct {
+	Schema        string               `json:"schema"`
+	Type          string               `json:"type"`
+	Packet        domain.ContextPacket `json:"packet"`
+	EventSequence int64                `json:"event_sequence"`
+}
+
+type ContextShowResult struct {
+	Schema string               `json:"schema"`
+	Type   string               `json:"type"`
+	Packet domain.ContextPacket `json:"packet"`
+}
+
+type ContextExplainResult struct {
+	Schema      string                    `json:"schema"`
+	Type        string                    `json:"type"`
+	Explanation domain.ContextExplanation `json:"explanation"`
+}
+
 type RunStartParams struct {
 	Workspace            string              `json:"workspace"`
 	Task                 string              `json:"task"`
 	Checkout             string              `json:"checkout,omitempty"`
+	Context              string              `json:"context,omitempty"`
 	Runtime              string              `json:"runtime"`
 	Provider             string              `json:"provider"`
 	Scenario             domain.FakeScenario `json:"scenario"`

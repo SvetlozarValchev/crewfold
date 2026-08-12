@@ -305,8 +305,14 @@ func TestDirectRuntimeSchemaUpgradePreservesActiveRunAndQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunDetail(upgraded direct-runtime schema) error = %v", err)
 	}
-	if detail.Run.Status != "active" || detail.Run.RuntimeHandle != "runtime-handle" || detail.Run.StopForced || detail.Run.StopGraceMillis != 0 || len(detail.Timeline) != 1 {
+	if detail.Run.Status != "active" || detail.Run.RuntimeHandle != "runtime-handle" || detail.Run.ContextPacketID != "" || detail.Run.StopForced || detail.Run.StopGraceMillis != 0 || len(detail.Timeline) != 1 {
 		t.Fatalf("upgraded run detail = %#v", detail)
+	}
+	for _, table := range []string{"context_packets", "run_context_bindings", "run_capabilities", "run_reports", "run_artifacts", "run_tool_calls"} {
+		var count int
+		if err := storage.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("migrated scoped table %s count = %d, %v, want 0 without invented authority", table, count, err)
+		}
 	}
 	work, found, err := storage.ClaimRunJob(context.Background(), time.Second)
 	if err != nil || !found || work.Run.ID != runID || work.Scenario.Name != "upgrade-active-run" {

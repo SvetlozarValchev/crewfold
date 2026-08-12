@@ -137,10 +137,11 @@ operation and supports controlled failure before/after acknowledgement.
 ### Fixture worker
 
 A hidden provider-free mode of the built Crewfold binary for direct-runtime tests,
-and later a generic terminal/MCP-client mode for Herdr tests. It emits structured
-reports, exposes its assigned working directory and environment names for safety
-assertions, supports deterministic exit/timeout/signal behavior, and never calls a
-model provider.
+plus a generic MCP-client mode reusable by later Herdr tests. The legacy worker
+emits structured reports for compatibility; `fixture-mcp` instead reads its scoped
+briefing and sends normalized reports/artifacts through MCP. Both expose assigned
+working directory and environment names for safety assertions, support
+deterministic exit/timeout/signal behavior, and never call a model provider.
 
 ### Fixture Git repository
 
@@ -181,6 +182,7 @@ test/
 │  ├─ persistent-workspace/
 │  ├─ deterministic-execution/
 │  ├─ direct-runtime/
+│  ├─ scoped-mcp/
 │  └─ ...
 └─ live/
    ├─ herdr/

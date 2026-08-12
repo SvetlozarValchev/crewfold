@@ -60,6 +60,9 @@ type FixtureProcess struct {
 	StderrNoiseBytes  int  `json:"stderr_noise_bytes,omitempty"`
 	HangAfterSteps    bool `json:"hang_after_steps,omitempty"`
 	IgnoreTermination bool `json:"ignore_termination,omitempty"`
+	CrossRunProbe     bool `json:"cross_run_probe,omitempty"`
+	DuplicateReport   bool `json:"duplicate_report,omitempty"`
+	PublishArtifact   bool `json:"publish_artifact,omitempty"`
 }
 
 type Run struct {
@@ -69,6 +72,7 @@ type Run struct {
 	TaskID          string       `json:"task_id"`
 	AgentID         string       `json:"agent_id"`
 	CheckoutID      string       `json:"checkout_id"`
+	ContextPacketID string       `json:"context_packet_id,omitempty"`
 	Runtime         string       `json:"runtime"`
 	Provider        string       `json:"provider"`
 	ScenarioName    string       `json:"scenario_name"`

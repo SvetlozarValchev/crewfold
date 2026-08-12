@@ -158,11 +158,25 @@ func (s *server) processRunWork(work store.RunWork) error {
 			s.logRunWorkerStoreError(run.ID, "record lost runtime after inspection failure", recordErr)
 			return nil
 		}
-		observation, found, err := providerAdapter.Next(context.Background(), run, work.Scenario, snapshot)
+		report, queued, err := s.store.NextPendingRunReport(context.Background(), run.ID)
 		if err != nil {
-			_, recordErr := s.store.FailRun(context.Background(), run.ID, "provider_observation_failed", err.Error(), correlationID)
-			s.logRunWorkerStoreError(run.ID, "record provider observation failure", recordErr)
+			s.config.Logger.Error("run worker could not read scoped reports", "component", "run_worker", "run_id", run.ID, "error", err)
+			if deferErr := s.store.DeferRunJob(context.Background(), run.ID, 25*time.Millisecond); deferErr != nil {
+				s.logRunWorkerStoreError(run.ID, "defer scoped report read", deferErr)
+			}
 			return nil
+		}
+		var observation domain.RunObservation
+		found := queued
+		if queued {
+			observation = domain.RunObservation{Kind: report.Kind, Message: report.Message, Evidence: append([]string(nil), report.Evidence...), Handoff: report.Handoff}
+		} else {
+			observation, found, err = providerAdapter.Next(context.Background(), run, work.Scenario, snapshot)
+			if err != nil {
+				_, recordErr := s.store.FailRun(context.Background(), run.ID, "provider_observation_failed", err.Error(), correlationID)
+				s.logRunWorkerStoreError(run.ID, "record provider observation failure", recordErr)
+				return nil
+			}
 		}
 		if !found {
 			s.handleRunWithoutObservation(run, snapshot, correlationID)
@@ -178,7 +192,11 @@ func (s *server) processRunWork(work store.RunWork) error {
 			}
 			accepted, missing = execution.AcceptancePasses(work.Scenario.Acceptance, observation.Evidence)
 		}
-		_, err = s.store.ApplyRunObservation(context.Background(), run.ID, observation, accepted, missing, correlationID)
+		if queued {
+			_, err = s.store.ApplyQueuedRunReport(context.Background(), run.ID, report.ID, accepted, missing, correlationID)
+		} else {
+			_, err = s.store.ApplyRunObservation(context.Background(), run.ID, observation, accepted, missing, correlationID)
+		}
 		s.logRunWorkerStoreError(run.ID, "apply run observation", err)
 		return nil
 	case domain.RunStopping:

@@ -1,8 +1,9 @@
 # Local API v1
 
 Status: implemented for daemon health, durable workspaces/events, read-only Git
-inspection, and provider-neutral agent/objective/task coordination. Subscriptions,
-runs, messages, claims, and knowledge arrive later.
+inspection, provider-neutral agent/objective/task/run coordination, and immutable
+context packets. Subscriptions, messages, claims, and canonical knowledge arrive
+later.
 
 ## Transport
 
@@ -261,8 +262,16 @@ two writers using the same revision yield exactly one success and one
 
 ### Runs, placement, and timelines
 
-`run.start` takes `workspace`, task ID, optional checkout ID, runtime, provider,
-one validated deterministic scenario, `expected_task_revision`, and
+`context.build` takes workspace, assigned task, its assigned agent, optional
+checkout, expected task revision, and idempotency key. It creates a bounded
+immutable packet that fixes role/task/checkout revisions, direct dependencies,
+policy, reporting instructions, and explicit included/excluded explanations.
+`context.show` returns that exact packet; `context.explain` returns its stable
+selection reasons, semantic hash, and byte size.
+
+`run.start` takes `workspace`, task ID, optional checkout ID, optional context
+packet ID, runtime, provider, one validated deterministic scenario,
+`expected_task_revision`, and
 `idempotency_key`. It
 requires the task to be `assigned` with a current lease. The assigned agent must
 be enabled, below `max_concurrency`, and configured for the exact opaque
@@ -274,7 +283,10 @@ runs; `exclusive` and `claimed` reject another live run. With no explicit
 checkout, selection is deterministic by write-policy preference, normalized path,
 and stable ID. The committed run contains the chosen task, agent, checkout path,
 write mode, adapter pair, and human-readable reasons. Creating a run and its
-pending worker job is one transaction; no adapter call occurs in that transaction.
+pending worker job, context binding, and expiring capability is one transaction;
+no adapter call occurs in that transaction. Without an explicit packet, the same
+transaction creates one. An explicit packet must match current task, agent, and
+checkout revisions and cannot be reused by another run.
 
 The daemon worker leases pending jobs and applies this durable lifecycle:
 
@@ -328,6 +340,10 @@ returns/reconciles the same runtime binding rather than inventing a second effec
 The current implementation ships deterministic in-memory fake adapters plus the
 real direct/fixture subprocess boundary. Real model-provider adapters follow
 separately.
+
+The same socket also recognizes JSON-RPC 2.0 MCP envelopes; these do not use local
+API protocol negotiation. The MCP contract and authentication boundary are
+documented separately in [MCP tools](mcp-tools.md).
 
 ### `coordination.status`
 

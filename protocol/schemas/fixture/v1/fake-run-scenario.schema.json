@@ -43,7 +43,10 @@
         "stdout_noise_bytes": {"type": "integer", "minimum": 0, "maximum": 2097152},
         "stderr_noise_bytes": {"type": "integer", "minimum": 0, "maximum": 2097152},
         "hang_after_steps": {"type": "boolean"},
-        "ignore_termination": {"type": "boolean"}
+        "ignore_termination": {"type": "boolean"},
+        "cross_run_probe": {"type": "boolean"},
+        "duplicate_report": {"type": "boolean"},
+        "publish_artifact": {"type": "boolean"}
       }
     }
   },

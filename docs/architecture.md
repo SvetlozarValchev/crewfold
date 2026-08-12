@@ -66,8 +66,7 @@ The first deployment contains one binary and one database:
 
 ```text
 crewfold daemon
-  ├─ local Unix socket: commands, queries, subscriptions
-  ├─ MCP endpoint: tools and resources for running agents
+  ├─ owner-only Unix socket: local API plus run-scoped JSON-RPC/MCP
   ├─ SQLite database in WAL mode
   ├─ runtime-driver processes or CLI calls
   └─ bounded background loops: scheduler, watchers, curator queue
@@ -136,6 +135,12 @@ Exposes a safe subset of Crewfold capabilities to coding agents. It translates M
 tool calls into the same internal commands used by the CLI. MCP is not the daemon's
 storage model and does not receive privileged actions by default.
 
+The implemented server recognizes MCP envelopes on the existing Unix socket. A
+node-secret HMAC token authenticates one run through request metadata; ordinary
+tool arguments cannot select a different identity. The database stores capability
+expiry and immutable context binding, never the credential. Resource and tool
+scope violations are denied and audited.
+
 ### Command handlers
 
 Enforce domain invariants, create stable IDs, evaluate expected revisions, and
@@ -174,6 +179,13 @@ useful. Recommendations do not gain more authority because a model generated the
 Maintains the difference between evidence and accepted shared knowledge. It can
 extract proposed decisions, findings, risks, and summaries from structured agent
 reports. Automatic acceptance is limited to low-risk scopes and explicit rules.
+
+Before canonical knowledge exists, the implemented packet builder is deliberately
+deterministic: it snapshots only current role, task, checkout, dependency, policy,
+and reporting facts and records explicit exclusions for knowledge, messages,
+claims, and transcripts. Equivalent inputs have one semantic hash; packets remain
+immutable and single-run-bound. This is a bounded context authority, not RAG or a
+transcript accumulator.
 
 ### Outcome and briefing projector
 

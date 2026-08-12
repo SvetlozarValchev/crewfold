@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:context-show-result:v1",
+  "title": "Crewfold local API context show result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "packet"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:context-show-result:v1"},
+    "type": {"const": "context_packet"},
+    "packet": {"$ref": "../../domain/v1/context-packet.schema.json"}
+  }
+}

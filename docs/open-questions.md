@@ -50,10 +50,12 @@ installed without surprising process persistence?
 
 ### Agent authentication to local MCP
 
-Likely approach: one run-scoped, short-lived bearer capability delivered through a
-protected environment/file descriptor and bound to actor/task scope. Validate how
-supported agents configure MCP without exposing credentials in process listings or
-committed config.
+Implemented for the trusted fixture: one run-scoped, short-lived HMAC bearer
+capability is delivered through an owner-only file path and bound to one immutable
+context packet. It is absent from process arguments, environment values, SQLite,
+and committed config. The remaining decision is the containment/owner-API
+authentication boundary required before untrusted same-UID provider processes are
+supported.
 
 ### Runtime event ingestion
 

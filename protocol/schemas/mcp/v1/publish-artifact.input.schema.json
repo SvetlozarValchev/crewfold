@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:mcp:publish-artifact-input:v1",
+  "title": "crewfold_publish_artifact input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "media_type", "content", "idempotency_key"],
+  "properties": {
+    "name": {"type": "string", "minLength": 1, "maxLength": 128},
+    "media_type": {"type": "string", "minLength": 1, "maxLength": 128},
+    "content": {"type": "string", "maxLength": 32768},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

@@ -12,6 +12,7 @@
     "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
     "agent_id": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
     "checkout_id": {"type": "string", "pattern": "^co_[0-9a-f]{32}$"},
+    "context_packet_id": {"type": "string", "pattern": "^ctx_[0-9a-f]{32}$"},
     "runtime": {"type": "string", "minLength": 1, "maxLength": 128},
     "provider": {"type": "string", "minLength": 1, "maxLength": 128},
     "scenario_name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},

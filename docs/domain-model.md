@@ -107,6 +107,7 @@ run binds:
 - a runtime driver and runtime handle;
 - one primary assigned task;
 - one eligible checkout, whether it is a standalone clone or linked worktree;
+- one immutable context packet fixing role/task/checkout revisions and policy;
 - opaque runtime/provider names and handles;
 - an explainable placement decision;
 - a persisted fake-scenario cursor, timestamps, result, and failure diagnosis;
@@ -133,8 +134,23 @@ provider proposed completion but required acceptance evidence was missing; the
 task becomes `changes_requested` and retains its assignment. Runtime-observed
 state and Crewfold run state are related but not identical. The direct fixture
 runtime now persists bindings, bounded output, timeout, stop, and restart
-reconciliation. Real provider resume handles, heartbeats, usage, budgets, and
-context packets remain planned.
+reconciliation. A run-scoped capability exposes its packet and normalized
+reporting tools without granting task-completion authority. Real provider resume
+handles, heartbeats, usage accounting, and enforced budgets remain planned.
+
+### Context packet
+
+An immutable, bounded base briefing bound to exactly one run. It snapshots the
+assigned agent role, exact task revision, selected checkout and repository
+observation, direct dependency revisions, allowed tools, denied/approval-required
+operations, and reporting instructions. It also records why each section was
+included and which unavailable capabilities—canonical knowledge, messages,
+claims, and transcripts—were deliberately excluded.
+
+The packet's semantic content hash excludes packet identity and creation metadata,
+so equivalent controlled inputs have the same hash while retaining distinct
+packet IDs. Runs never silently refresh a packet; later context changes become
+explicit deltas or a new run.
 
 ### Objective
 

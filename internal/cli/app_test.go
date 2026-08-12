@@ -954,6 +954,18 @@ func (client *fakeDaemonClient) TaskTimeline(context.Context, string, string) (l
 	return client.taskTimeline, nil
 }
 
+func (client *fakeDaemonClient) ContextBuild(context.Context, localapi.ContextBuildParams) (localapi.ContextBuildResult, error) {
+	return localapi.ContextBuildResult{}, nil
+}
+
+func (client *fakeDaemonClient) ContextShow(context.Context, string, string) (localapi.ContextShowResult, error) {
+	return localapi.ContextShowResult{}, nil
+}
+
+func (client *fakeDaemonClient) ContextExplain(context.Context, string, string) (localapi.ContextExplainResult, error) {
+	return localapi.ContextExplainResult{}, nil
+}
+
 func (client *fakeDaemonClient) RunStart(_ context.Context, params localapi.RunStartParams) (localapi.RunMutationResult, error) {
 	client.runStartParams = params
 	return client.runMutation, nil

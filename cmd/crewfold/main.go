@@ -18,6 +18,8 @@ func main() {
 			os.Exit(execution.RunDirectSupervisor(os.Args[2:]))
 		case "__fixture-provider":
 			os.Exit(execution.RunFixtureProvider(os.Stdin, os.Stdout, os.Stderr))
+		case "__fixture-mcp-provider":
+			os.Exit(execution.RunFixtureMCPProvider(os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
 

@@ -118,7 +118,7 @@ func (a *App) runStart(ctx context.Context, mode outputMode, args []string) int 
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	options, failure := parseOptions(optionArgs, "workspace", "checkout", "runtime", "provider", "scenario", "expected-task-revision", "socket", "idempotency-key")
+	options, failure := parseOptions(optionArgs, "workspace", "checkout", "context", "runtime", "provider", "scenario", "expected-task-revision", "socket", "idempotency-key")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -146,7 +146,7 @@ func (a *App) runStart(ctx context.Context, mode outputMode, args []string) int 
 	if err != nil {
 		return a.writeFailure(mode, commandFailure{exitCode: ExitUsage, code: "invalid_scenario", message: err.Error(), hint: "use a valid bounded fake-run scenario document"})
 	}
-	result, err := a.newClient(socket).RunStart(ctx, localapi.RunStartParams{Workspace: workspace, Task: task, Checkout: options["checkout"], Runtime: runtimeName, Provider: providerName, Scenario: scenario, ExpectedTaskRevision: revision, IdempotencyKey: options["idempotency-key"]})
+	result, err := a.newClient(socket).RunStart(ctx, localapi.RunStartParams{Workspace: workspace, Task: task, Checkout: options["checkout"], Context: options["context"], Runtime: runtimeName, Provider: providerName, Scenario: scenario, ExpectedTaskRevision: revision, IdempotencyKey: options["idempotency-key"]})
 	if err != nil {
 		return a.writeClientFailure(mode, "start run", err)
 	}
@@ -314,7 +314,7 @@ func writeRunText(a *App, detail domain.RunDetail) {
 }
 
 const runHelp = `Usage:
-  crewfold run start <task-id> --workspace <scope> --runtime <runtime> --provider <provider> --scenario <file> --expected-task-revision <n> --socket <path> [--checkout <id>]
+  crewfold run start <task-id> --workspace <scope> --runtime <runtime> --provider <provider> --scenario <file> --expected-task-revision <n> --socket <path> [--checkout <id>] [--context <id>]
   crewfold run show <id> --workspace <scope> --socket <path>
   crewfold run list --workspace <scope> [--task <id>] [--status <status>] --socket <path>
   crewfold run watch <id> --workspace <scope> --socket <path> [--wait-seconds <n>]

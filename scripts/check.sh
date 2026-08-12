@@ -51,3 +51,6 @@ printf 'Deterministic execution black-box acceptance\n'
 
 printf 'Direct subprocess black-box acceptance\n'
 "$repo_root/test/scenarios/direct-runtime/run.sh"
+
+printf 'Scoped MCP capability black-box acceptance\n'
+"$repo_root/test/scenarios/scoped-mcp/run.sh"

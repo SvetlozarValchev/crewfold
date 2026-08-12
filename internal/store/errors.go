@@ -34,6 +34,11 @@ const (
 	CodePlacementUnavailable = "placement_unavailable"
 	CodeAdapterUnavailable   = "adapter_unavailable"
 	CodeRuntimeFailed        = "runtime_failed"
+	CodeInvalidContext       = "invalid_context"
+	CodeContextNotFound      = "context_not_found"
+	CodeCapabilityExpired    = "capability_expired"
+	CodeCapabilityInactive   = "capability_inactive"
+	CodeInvalidReport        = "invalid_report"
 	CodeIdempotencyConflict  = "idempotency_conflict"
 	CodeStorageFailed        = "storage_failed"
 )

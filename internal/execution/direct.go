@@ -39,7 +39,7 @@ var (
 	secretAssignment       = regexp.MustCompile(`(?i)(authorization\s*:\s*bearer\s+|(?:token|secret|password|api[_-]?key)\s*[:=]\s*)([^\s]+)`)
 )
 
-var directEnvironmentAllowlist = []string{"LANG", "LC_ALL", "LC_CTYPE", "PATH", "TMPDIR", "TZ"}
+var directEnvironmentAllowlist = []string{"CREWFOLD_MCP_CAPABILITY_FILE", "CREWFOLD_MCP_SOCKET", "LANG", "LC_ALL", "LC_CTYPE", "PATH", "TMPDIR", "TZ"}
 
 type DirectRuntimeOptions struct {
 	StateRoot            string

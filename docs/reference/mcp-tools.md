@@ -1,66 +1,58 @@
 # MCP tool contract
 
-Status: proposed interface for the first implementation.
+Status: implemented run-scoped subset; messaging, claims, knowledge, meetings, and
+manager/outcome tools remain planned.
 
-## Principles
+## Transport and authentication
 
-- The server authenticates the run outside normal tool arguments.
-- Every response includes stable entity IDs and revisions where relevant.
-- Mutations are idempotent or accept an idempotency key.
-- Tool results remain concise and link to resources for larger records.
-- A tool cannot exceed the run's task, project, or action scope.
-- Human approval is represented as a pending result, never bypassed.
+The daemon accepts newline-delimited JSON-RPC 2.0 MCP requests on the same
+owner-only Unix socket as the local API. MCP clients negotiate protocol version
+`2025-06-18`. There is no TCP listener.
 
-## Resources
+Every request includes an unguessable run capability in
+`params._meta["crewfold/capability"]`. The capability identifies the run outside
+ordinary tool arguments; tools therefore accept no caller-selected run, task,
+agent, project, or checkout ID. The server verifies the HMAC signature, durable
+expiry, and live run state before dispatch. A stopped, completed, failed, expired,
+or malformed capability is denied.
 
-Proposed resource identifiers:
+The direct provider receives the socket and a private capability-file path through
+an allowlisted environment. The token itself is absent from SQLite, the immutable
+runtime launch specification, and Crewfold-generated log metadata/API results.
+Node key, capability directory, and token files use owner-only permissions. A
+malicious same-user provider could still read and print its token; process
+containment is a separate boundary.
+
+## Implemented resources
 
 ```text
-crewfold://runs/{run_id}/briefing
-crewfold://tasks/{task_id}
-crewfold://tasks/{task_id}/evidence
-crewfold://agents/{agent_id}/inbox
-crewfold://threads/{thread_id}
-crewfold://meetings/{meeting_id}
-crewfold://knowledge/{knowledge_id}/revisions/{revision}
-crewfold://context-packets/{packet_id}
-crewfold://projects/{project_id}/status
-crewfold://outcomes/{outcome_id}/revisions/{revision}
-crewfold://projects/{project_id}/briefings/{event_cursor}
+crewfold://runs/{authenticated_run_id}/briefing
+crewfold://context-packets/{bound_packet_id}
 ```
 
-Resource reads enforce the same scope as tools. A URI is not a capability by
-itself.
+The briefing combines the immutable packet with current run/task state and the
+capability expiry. The context-packet resource never changes. Any other URI,
+including a valid-looking URI for another run, returns `out_of_scope` and appends
+an audited denial. A URI is never a capability by itself.
 
-## Required tools
+## Implemented tools
 
 ### `crewfold_get_briefing`
 
-Returns the immutable base context packet and any acknowledged deltas for the
-authenticated run.
-
-Input:
-
-```json
-{}
-```
-
-Output includes run, role, task contract, project/checkout snapshot, applicable
-knowledge, dependencies, claims, inbox summary, policy, and reporting instructions.
+Input is `{}`. It returns the authenticated run, current task, immutable packet,
+expiry, and briefing resource URI.
 
 ### `crewfold_get_status`
 
-Returns the current task/run status, budgets, dependencies, claims, and pending
-requests relevant to this run.
+Input is `{}`. It returns run/task IDs, states, revisions, current budget, and any
+blocked question. It does not mutate coordination state.
 
 ### `crewfold_report_progress`
-
-Records a concise checkpoint.
 
 ```json
 {
   "summary": "Contact cache implemented; determinism test still failing",
-  "completed": ["cache structure", "unit tests for insertion"],
+  "completed": ["cache structure", "insertion tests"],
   "next": ["diagnose iteration ordering"],
   "risks": [],
   "evidence_ids": ["artifact_id"],
@@ -68,167 +60,92 @@ Records a concise checkpoint.
 }
 ```
 
-Progress does not complete the task and is not automatically durable knowledge.
+The report is normalized into a durable pending run report. The run worker applies
+it through the same run/task transition used by other providers. Progress cannot
+complete a task or become accepted shared knowledge.
 
 ### `crewfold_report_blocked`
 
-Records why work cannot safely continue and what resolution is requested.
-
 ```json
 {
-  "reason": "Dependency task has not defined the serialized key format",
-  "needs": "Answer from schema-owner or accepted interface decision",
-  "severity": "normal",
-  "related_ids": ["task_id"]
+  "reason": "The serialized key format is undefined",
+  "needs": ["owner or schema-owner decision"],
+  "severity": "blocking",
+  "related_ids": ["task_id"],
+  "idempotency_key": "provider-turn-or-generated-key"
 }
 ```
 
-### `crewfold_propose_completion`
+Severity is `blocking`, `high`, `medium`, or `low`. A newly submitted blocked
+report becomes authoritative only when the worker applies the normalized
+observation.
 
-Submits a handoff and evidence for acceptance/review.
+### `crewfold_publish_artifact`
+
+```json
+{
+  "name": "test evidence",
+  "media_type": "text/plain",
+  "content": "all deterministic contact tests passed",
+  "idempotency_key": "artifact-key"
+}
+```
+
+This first form accepts only bounded UTF-8 text up to 32 KiB. It returns an
+artifact ID, content hash, and byte size; it does not grant arbitrary filesystem
+reads.
+
+### `crewfold_propose_completion`
 
 ```json
 {
   "summary": "Implemented deterministic contact cache",
-  "deliverables": [
-    {
-      "commitment_id": "deliverable_id",
-      "claimed_conclusion": "achieved",
-      "evidence_ids": ["artifact_id"]
-    }
-  ],
+  "handoff": "Review the ordering contract and attached evidence.",
+  "evidence_ids": ["tests_passed"],
   "changed_paths": ["src/physics/contact/cache.go"],
-  "checks": [{"name": "contact tests", "status": "passed", "artifact_id": "artifact_id"}],
-  "decision_ids": ["decision_id"],
-  "deviations": [],
-  "compatibility_effects": [],
-  "stability_effects": [],
+  "checks": ["contact tests passed"],
   "remaining_risks": [],
   "unknowns": [],
-  "follow_up_task_proposals": [],
-  "knowledge_proposal_ids": []
+  "idempotency_key": "completion-key"
 }
 ```
 
-The response reports `accepted`, `review_required`, `changes_requested`, or
-`approval_required`. Here, `accepted` means that the task completion and handoff
-passed their configured gate; it does not create an accepted outcome assessment.
-It never fabricates task completion from process exit.
+The tool submits a proposal; it cannot set the task or run state directly. The run
+worker waits for the process to settle, evaluates the scenario's evidence gate,
+then either creates the accepted handoff or leaves the task in
+`changes_requested`. Process exit alone is not completion authority.
 
-### `crewfold_list_messages`
+## Idempotency and audit
 
-Lists unread or filtered mailbox messages visible to the run. Bodies may be
-summarized in the list; the full message is a resource.
+Report and artifact idempotency is local to the authenticated run. Repeating the
+same key and content returns the same durable record while the capability remains
+active, including after the worker has applied a progress report. Reusing a key
+with different content returns
+`invalid_input` without another mutation.
 
-### `crewfold_send_message`
+Allowed tools/resources append `run.tool_called`; denied scope probes append
+`run.tool_denied`. Reports and artifacts append `run.report_received` and
+`run.artifact_published`. Audits contain request/method/target/outcome/error code,
+not capability tokens or arbitrary request bodies.
 
-```json
-{
-  "to": ["agent_or_team_id"],
-  "kind": "question",
-  "subject": "Serialized contact key format",
-  "body": "Which byte ordering is authoritative for the cache key?",
-  "related_ids": ["task_id", "decision_id"],
-  "acknowledgement_required": true,
-  "idempotency_key": "generated-key"
-}
-```
+## Error vocabulary
 
-Recipients must be within communication policy. Broadcast and messages to humans
-may require stronger authority.
-
-### `crewfold_acknowledge_message`
-
-Records that the run received a message and optionally whether it can act on it.
-
-### `crewfold_claim_scope`
-
-Requests a leased read/write/advisory claim.
-
-```json
-{
-  "mode": "exclusive_write",
-  "subjects": [
-    {"kind": "path", "value": "src/physics/contact/**"}
-  ],
-  "lease_seconds": 3600,
-  "reason": "Implement task deliverables"
-}
-```
-
-The server may grant, deny, shorten, or mark the claim advisory. A conflict response
-links the existing claim and available resolution action.
-
-### `crewfold_release_claim`
-
-Releases a claim explicitly. Task completion also requests release through domain
-logic; it does not delete the claim history.
-
-### `crewfold_publish_artifact`
-
-Registers evidence already present in an allowed location or provides a bounded
-text artifact. The server validates paths and applies retention/redaction policy.
-
-### `crewfold_propose_knowledge`
-
-Submits a candidate finding, risk, glossary item, summary, or decision for curation.
-It must cite evidence or explain that it is unverified. The tool response clearly
-states that proposal is not acceptance.
-
-### `crewfold_request_meeting`
-
-Proposes a meeting with one agenda and relevant participants/evidence. The
-supervisor may create a thread instead, request more information, or require owner
-approval.
-
-## Optional manager tools
-
-Available only to appropriately scoped manager runs:
-
-- `crewfold_propose_tasks`
-- `crewfold_propose_assignment`
-- `crewfold_request_review`
-- `crewfold_resolve_overlap`
-- `crewfold_propose_context_revision`
-- `crewfold_escalate_to_owner`
-
-Manager tools normally create proposals. Execution remains subject to deterministic
-policy, capacity, dependency, and claim checks.
-
-## Outcome assessment tools
-
-Available when the outcome-ledger capability is installed and scoped by task,
-project, and review authority:
-
-- `crewfold_propose_outcome_assessment`
-- `crewfold_review_outcome_assessment`
-- `crewfold_get_management_briefing`
-- `crewfold_explain_briefing_claim`
-
-The proposing tool cites deliverable commitments, decisions, evidence, checks,
-risks, unknowns, and follow-up work. The review tool accepts or rejects an
-assessment revision; it records the assessment conclusion separately, so accepting
-a `partial` or `not_achieved` conclusion never means the deliverable succeeded.
-Briefing tools return the same deterministic projection exposed to human clients,
-subject to the caller's narrower visibility scope.
-
-## Error shape
-
-Tool errors should distinguish:
+The implemented scoped surface uses exactly:
 
 ```text
 invalid_input
-not_found
-revision_conflict
 out_of_scope
 denied_by_policy
-approval_required
-claim_conflict
-budget_exhausted
-dependency_blocked
 temporarily_unavailable
-internal_error
 ```
 
-An error includes a safe explanation, a retryability flag, and related entity IDs.
-Internal filesystem paths or secrets are omitted when outside the caller's scope.
+Errors include a safe message, retryability flag, and optional related IDs. MCP
+authorization/resource failures are JSON-RPC errors; tool-domain failures are MCP
+tool results with `isError: true` and the same structured body.
+
+## Deferred tools and resources
+
+Mailbox, send/acknowledge, claims, knowledge proposals, meetings, manager actions,
+outcome assessments, and project briefings are deliberately absent. Their future
+URIs and tools will use the same scope, idempotency, audit, and domain-authority
+rules; M7 does not reserve unchecked behavior merely by documenting a name.

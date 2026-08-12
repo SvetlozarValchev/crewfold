@@ -78,17 +78,20 @@ fallback, and an atomically replaced state record under the daemon data director
 The daemon stores an opaque `direct:<run-id>` binding and can construct a fresh
 driver after restart to inspect the same supervisor state.
 
-The first direct provider is `fixture`, a hidden provider-free worker mode of the
-Crewfold binary. It converts checked-in scenarios into structured process reports,
-so the existing run/task acceptance authority is exercised through an actual OS
-boundary without model credentials.
+The first direct providers are hidden provider-free worker modes of the Crewfold
+binary. `fixture` converts checked-in scenarios into structured process output for
+the direct-runtime compatibility gate. `fixture-mcp` reads its immutable briefing
+and submits reports/artifacts through authenticated MCP; stdout is no longer
+completion authority. Both exercise the same run/task acceptance decision without
+model credentials.
 
 Safety boundaries:
 
 - the working directory always comes from the selected checkout; the run command
   accepts no arbitrary executable or working-directory argument;
-- only `PATH`, locale, temporary-directory, timezone, and the Crewfold run ID are
-  inherited; provider command/environment policy becomes a later adapter feature;
+- only `PATH`, locale, temporary-directory, timezone, the Crewfold run ID, and the
+  MCP socket/capability-file paths are inherited; the token itself is not an
+  environment value or launch-spec field;
 - each output stream has an independent byte cap and omitted-byte counter;
 - API log reads heuristically redact secret-like assignments; raw owner-only
   capture files remain local diagnostic evidence and are not shared context;
@@ -236,6 +239,14 @@ capability. An agent cannot claim to be another run by changing a tool argument.
 
 The MCP server is independent of the runtime driver. A Codex run in Herdr and a
 Claude Code headless run see the same coordination semantics.
+
+The implemented subset shares the owner-only local API socket and accepts
+JSON-RPC/MCP protocol `2025-06-18`. A node-secret HMAC capability authenticates one
+run through MCP `_meta`; SQLite stores only its expiry and context binding. The
+server exposes only briefing/context resources and tools for briefing, status,
+progress, blockage, bounded text artifacts, and completion proposals. Every scope
+probe is audited. The run worker consumes normalized queued reports and retains
+authority over evidence acceptance and final state.
 
 ## Adapter testing
 

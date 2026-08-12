@@ -10,10 +10,10 @@ buildinfo/    implemented embedded build metadata
 domain/       implemented storage/transport-neutral coordination and run records
 store/        implemented SQLite migrations, projections, event journal, and run queue
 execution/    implemented runtime/provider contracts, fake adapters, and direct supervision
-api/          future domain API and MCP translation
+mcp/          implemented run-scoped JSON-RPC/MCP protocol and fixture client
 scheduler/    future expanded placement and dependency policy
 supervisor/   conditions, recommendations, and policy responses
-knowledge/    curation, retrieval, and context packets
+knowledge/    future canonical-knowledge curation and retrieval
 runtime/      future interactive/remote runtime drivers and wider reconciliation
 provider/     future concrete provider adapters
 gitstate/     repository identity and checkout observations

@@ -308,6 +308,31 @@ func (c *Client) TaskTimeline(ctx context.Context, workspace, task string) (Task
 	return result, nil
 }
 
+func (c *Client) ContextBuild(ctx context.Context, paramsValue ContextBuildParams) (ContextBuildResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result ContextBuildResult
+	if err := c.callParams(ctx, MethodContextBuild, paramsValue, &result); err != nil {
+		return ContextBuildResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ContextShow(ctx context.Context, workspace, contextID string) (ContextShowResult, error) {
+	var result ContextShowResult
+	if err := c.callParams(ctx, MethodContextShow, ContextQueryParams{Workspace: workspace, Context: contextID}, &result); err != nil {
+		return ContextShowResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ContextExplain(ctx context.Context, workspace, contextID string) (ContextExplainResult, error) {
+	var result ContextExplainResult
+	if err := c.callParams(ctx, MethodContextExplain, ContextQueryParams{Workspace: workspace, Context: contextID}, &result); err != nil {
+		return ContextExplainResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) RunStart(ctx context.Context, paramsValue RunStartParams) (RunMutationResult, error) {
 	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
 	var result RunMutationResult

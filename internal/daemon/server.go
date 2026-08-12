@@ -23,6 +23,7 @@ import (
 	"crewfold/internal/execution"
 	"crewfold/internal/gitstate"
 	"crewfold/internal/localapi"
+	"crewfold/internal/mcp"
 	"crewfold/internal/store"
 )
 
@@ -42,6 +43,7 @@ type Config struct {
 	ProviderAdapters map[string]execution.ProviderAdapter
 	RunWorkerHook    func(string, domain.Run) error
 	DisableRunWorker bool
+	defaultProviders bool
 }
 
 type server struct {
@@ -61,6 +63,7 @@ type server struct {
 	gitInspector   gitstate.Inspector
 	runtimes       map[string]execution.RuntimeDriver
 	providers      map[string]execution.ProviderAdapter
+	capabilities   *runCapabilityManager
 }
 
 // Run owns the daemon lifecycle until the context is cancelled or system.stop is
@@ -82,6 +85,13 @@ func Run(ctx context.Context, config Config) error {
 		return &StartupError{Code: CodeDatabaseUnavailable, Message: "initialize Crewfold database", Cause: err}
 	}
 	defer storage.Close()
+	capabilities, err := newRunCapabilityManager(resolved.DataDir, resolved.SocketPath)
+	if err != nil {
+		return &StartupError{Code: CodeInvalidConfiguration, Message: "initialize scoped run capabilities", Cause: err}
+	}
+	if resolved.defaultProviders {
+		resolved.ProviderAdapters["fixture-mcp"] = execution.NewFixtureMCPProvider(capabilities)
+	}
 
 	if err := prepareSocketPath(resolved.SocketPath); err != nil {
 		return err
@@ -117,6 +127,7 @@ func Run(ctx context.Context, config Config) error {
 		gitInspector: resolved.GitInspector,
 		runtimes:     resolved.RuntimeDrivers,
 		providers:    resolved.ProviderAdapters,
+		capabilities: capabilities,
 	}
 	defer instance.cleanupSocket()
 	instance.startRunWorker()
@@ -182,6 +193,7 @@ func resolveConfig(config Config) (Config, error) {
 		}
 	}
 	if config.ProviderAdapters == nil {
+		config.defaultProviders = true
 		fakeProvider := execution.FakeProvider{}
 		fixtureProvider := execution.NewFixtureProvider()
 		config.ProviderAdapters = map[string]execution.ProviderAdapter{
@@ -304,6 +316,24 @@ func (s *server) handleConnection(connection net.Conn) {
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		var envelope struct {
+			JSONRPC string `json:"jsonrpc"`
+		}
+		if json.Unmarshal(line, &envelope) == nil && envelope.JSONRPC == mcp.JSONRPCVersion {
+			var request mcp.Request
+			if err := json.Unmarshal(line, &request); err != nil {
+				_ = encoder.Encode(mcp.Failure(nil, -32600, "invalid JSON-RPC request", nil))
+				continue
+			}
+			s.activeRequests.Add(1)
+			response := s.handleMCPRequest(request)
+			encodeErr := encoder.Encode(response)
+			s.activeRequests.Add(-1)
+			if encodeErr != nil {
+				return
+			}
+			continue
+		}
 		var request localapi.Request
 		if err := json.Unmarshal(line, &request); err != nil {
 			response := localapi.ErrorResponse("", 0, &localapi.APIError{
@@ -441,6 +471,12 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleTaskTransition(request), false
 	case localapi.MethodTaskTimeline:
 		return s.handleTaskTimeline(request), false
+	case localapi.MethodContextBuild:
+		return s.handleContextBuild(request), false
+	case localapi.MethodContextShow:
+		return s.handleContextShow(request), false
+	case localapi.MethodContextExplain:
+		return s.handleContextExplain(request), false
 	case localapi.MethodRunStart:
 		return s.handleRunStart(request), false
 	case localapi.MethodRunShow:

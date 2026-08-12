@@ -28,8 +28,12 @@ can execute the complete task-to-run-to-handoff lifecycle with deterministic fak
 adapters or a supervised, bounded local fixture subprocess across adjacent
 standalone clones and linked worktrees. It persists process bindings, reconciles
 children across daemon restart, exposes capped logs with API redaction, and
-supports timeout and graceful-stop fallback. Model sessions, messaging, claims,
-knowledge, and the operator TUI are still to come.
+supports timeout and graceful-stop fallback. Runs now bind immutable, bounded
+context packets and can use an authenticated, run-scoped MCP surface for briefing,
+status, structured progress/blockage/completion reports, and text artifacts. The
+direct `fixture-mcp` worker proves that loop without reading reports from terminal
+output. Model sessions, inter-agent messaging, claims, canonical knowledge, and
+the operator TUI are still to come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.

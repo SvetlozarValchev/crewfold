@@ -5,9 +5,10 @@
 The current binary implements `help`, `version`, self/database diagnostics,
 foreground daemon lifecycle, process and workspace status, workspace/event
 queries, project/checkout registration and observation, durable
-agent/objective/task coordination, deterministic fake execution, and supervised
-direct fixture subprocesses with bounded logs and stop control. It supports text
-and JSON output. Teams, claims, messages, meetings, knowledge, policy, and approval
+agent/objective/task coordination, immutable context packets, deterministic fake
+execution, supervised direct fixture subprocesses, and run-scoped MCP reporting.
+It supports text and JSON output. Teams, claims, messages, meetings, canonical
+knowledge, policy, and approval
 commands in later sections are intended future contracts and are not yet available.
 
 ## Goals
@@ -130,9 +131,28 @@ advance the task as normalized run observations arrive.
 
 ## Runs
 
+Before starting a run, an operator may build and inspect the exact immutable base
+briefing:
+
+```sh
+crewfold context build TASK_A --workspace personal --agent engine-impl \
+  --expected-task-revision 2 --socket /path/to/crewfold.sock
+crewfold context show CONTEXT_PACKET_ID --workspace personal \
+  --socket /path/to/crewfold.sock
+crewfold context explain CONTEXT_PACKET_ID --workspace personal \
+  --socket /path/to/crewfold.sock
+```
+
+The packet fixes the assigned role, task revision, selected checkout revision,
+direct dependencies, scoped tools, policy limits, and reporting instructions. Its
+explanation lists both included facts and deliberate exclusions. A packet is
+single-use: one run can bind it. If `run start` omits `--context`, the daemon builds
+and binds the same packet atomically.
+
 ```sh
 crewfold run start TASK_A --workspace personal --runtime fake --provider fake \
-  --scenario ./scenario.json --expected-task-revision 2 --socket /path/to/crewfold.sock
+  --scenario ./scenario.json --expected-task-revision 2 \
+  --context CONTEXT_PACKET_ID --socket /path/to/crewfold.sock
 crewfold run show RUN_ID --workspace personal --socket /path/to/crewfold.sock
 crewfold run list --workspace personal --task TASK_A --socket /path/to/crewfold.sock
 crewfold run watch RUN_ID --workspace personal --wait-seconds 30 --socket /path/to/crewfold.sock
@@ -167,6 +187,13 @@ termination and records whether forced kill was required. If Crewfold cannot tru
 the process identity or outcome, the run becomes `lost`, the task is blocked, and
 capacity stays reserved. Arbitrary executable/path selection, attach, interrupt,
 dry-run, and real model providers remain deferred.
+
+The implemented `fixture-mcp` provider uses that same direct runtime but reports
+only through authenticated MCP tools. Its stdout contains runtime metadata, not
+authoritative progress records. The run capability is bound to one run, expires
+after one hour by default, becomes unusable when the run is terminal, and cannot
+select another run through tool arguments. This fixture is the provider-neutral
+seam for later Codex, Claude, and Herdr adapters; it is not a live model provider.
 
 ## Claims and overlaps
 
@@ -213,8 +240,10 @@ remain distinct so a human can inspect the input snapshot.
 crewfold knowledge list --project world-engine --type decision
 crewfold knowledge propose --type finding --from-task TASK_A finding.md
 crewfold knowledge accept KNOWLEDGE_REVISION
-crewfold context build --task TASK_A --agent engine-impl
-crewfold context explain CONTEXT_PACKET_ID
+crewfold context build TASK_A --workspace personal --agent engine-impl \
+  --expected-task-revision 2 --socket /path/to/crewfold.sock
+crewfold context explain CONTEXT_PACKET_ID --workspace personal \
+  --socket /path/to/crewfold.sock
 ```
 
 `context explain` shows why each item was included or excluded and the applied size

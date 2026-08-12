@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:context-build-params:v1",
+  "title": "Crewfold local API context build parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "task", "agent", "expected_task_revision", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "task": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "agent": {"type": "string", "minLength": 1, "maxLength": 128},
+    "checkout": {"type": "string", "pattern": "^co_[0-9a-f]{32}$"},
+    "expected_task_revision": {"type": "integer", "minimum": 1},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}
