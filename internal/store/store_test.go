@@ -142,6 +142,43 @@ func TestMigrationUpgradesCheckedInVersionOneFixture(t *testing.T) {
 	}
 }
 
+func TestMigrationUpgradesCheckedInVersionTwoFixture(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	fixture, err := os.ReadFile("testdata/schema-v002.sql")
+	if err != nil {
+		t.Fatalf("os.ReadFile(fixture) error = %v", err)
+	}
+	database, err := sql.Open("sqlite3", filepath.Join(dataDir, databaseFilename))
+	if err != nil {
+		t.Fatalf("sql.Open(fixture) error = %v", err)
+	}
+	if _, err := database.Exec(string(fixture)); err != nil {
+		_ = database.Close()
+		t.Fatalf("apply fixture: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("close fixture database: %v", err)
+	}
+
+	storage := openTestStore(t, dataDir, Options{})
+	health, err := storage.Health(context.Background())
+	if err != nil || health.SchemaVersion != LatestSchemaVersion {
+		t.Fatalf("Health() after v2 migration = %#v, %v", health, err)
+	}
+	inspection, err := storage.InspectProject(context.Background(), "upgrade-fixture", "fixture-project")
+	if err != nil || len(inspection.Checkouts) != 1 || inspection.Checkouts[0].ID != "co_00000000000000000000000000000002" {
+		t.Fatalf("InspectProject(fixture after migration) = %#v, %v", inspection, err)
+	}
+	for _, table := range []string{"agents", "objectives", "tasks", "task_dependencies", "task_assignments"} {
+		var count int
+		if err := storage.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("migrated table %s count = %d, %v, want 0", table, count, err)
+		}
+	}
+}
+
 func TestWorkspaceInitIsAtomicIdempotentAndPersistent(t *testing.T) {
 	t.Parallel()
 

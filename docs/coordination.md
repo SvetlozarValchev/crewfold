@@ -6,6 +6,22 @@ Crewfold makes coordination explicit enough to automate and concise enough for a
 human to understand. It avoids both extremes: isolated agents that know nothing of
 one another and an unrestricted shared chat that becomes the de facto database.
 
+## Implemented foundation
+
+Crewfold currently implements the non-executing foundation of this model:
+
+- durable provider-neutral agent definitions;
+- project-scoped objectives and tasks with explicit budgets;
+- acyclic task dependencies and deterministic readiness explanations;
+- optimistic task revisions;
+- one active primary assignment per task with a durable lease/history record;
+- ready, assigned, active, blocked, and cancelled coordination transitions;
+- a workspace status projection and immutable event history.
+
+No command in this layer starts Codex, Claude Code, Herdr, a shell process, or any
+other runtime. Messaging, claims, meetings, managers, and the scheduler described
+below remain layers built on these records.
+
 ## Delegation
 
 A manager does not send only a prose prompt. Delegation creates a task contract:

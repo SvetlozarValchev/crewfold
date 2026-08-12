@@ -52,7 +52,7 @@ A stable identity for one Git history. Multiple local checkouts or worktrees may
 point to it. Remote URLs are attributes and cannot serve as the only identity
 because remotes can change or be absent.
 
-M3 derives a local history fingerprint from the repository object format and its
+Crewfold derives a local history fingerprint from the repository object format and its
 sorted reachable root commits. This lets independently cloned adjacent directories
 share a repository record without depending on a remote URL or common Git
 directory. The fingerprint is an observation-based identity, not a Git-provided
@@ -93,6 +93,11 @@ A durable role identity. It contains:
 
 An agent definition never means a process is currently running.
 
+The implemented subset stores name, role, provider/runtime preference, enabled
+state, maximum concurrency, revision, and audit metadata. Instructions,
+capabilities, team membership, project eligibility, and action policy arrive with
+the capabilities that consume them. Provider/runtime values remain opaque data.
+
 ### Run
 
 One concrete attempt to execute work using an agent definition. It binds:
@@ -123,6 +128,9 @@ A human-level desired outcome that can contain many tasks. An objective records
 success criteria, priority, budget, policy, and status. Managers may propose a task
 decomposition, but the objective remains the owner's statement of intent.
 
+The implemented subset stores project scope, title, `active|completed|cancelled`
+status, and token/cost/time budget. Success criteria and policy are planned.
+
 ### Task
 
 A schedulable unit of work with:
@@ -148,6 +156,12 @@ draft -> ready -> assigned -> active -> review -> completed
 
 A run ending does not automatically complete its task. Completion is a domain
 decision backed by evidence and any required review.
+
+The implemented coordination subset starts tasks at `ready` and supports
+`ready -> assigned -> active`, blocking from ready/assigned/active, unblocking to
+assigned or ready, and cancellation. Dependency completion and review/completion
+are introduced with the run loop. Assignments are separate durable records with
+`active|expired|released` status; expiry never deletes history.
 
 ### Claim
 

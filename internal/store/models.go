@@ -1,9 +1,13 @@
 package store
 
-import "crewfold/internal/domain"
+import (
+	"time"
+
+	"crewfold/internal/domain"
+)
 
 const (
-	LatestSchemaVersion = 2
+	LatestSchemaVersion = 3
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -72,8 +76,118 @@ type ProjectInspection struct {
 	Checkouts    []domain.Checkout   `json:"checkouts"`
 }
 
+type CreateAgentCommand struct {
+	WorkspaceIdentifier string
+	Name                string
+	Role                string
+	Provider            string
+	Runtime             string
+	MaxConcurrency      int
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type UpdateAgentCommand struct {
+	WorkspaceIdentifier string
+	AgentIdentifier     string
+	Role                *string
+	Provider            *string
+	Runtime             *string
+	Enabled             *bool
+	MaxConcurrency      *int
+	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type CreateObjectiveCommand struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	Title               string
+	Budget              domain.Budget
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type UpdateObjectiveCommand struct {
+	WorkspaceIdentifier string
+	ObjectiveID         string
+	Title               *string
+	Status              *string
+	Budget              *domain.Budget
+	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type CreateTaskCommand struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	ObjectiveID         string
+	Title               string
+	Description         string
+	Priority            int
+	Budget              domain.Budget
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type AddTaskDependencyCommand struct {
+	WorkspaceIdentifier string
+	TaskID              string
+	DependsOnTaskID     string
+	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type UpdateTaskCommand struct {
+	WorkspaceIdentifier string
+	TaskID              string
+	Title               *string
+	Description         *string
+	Priority            *int
+	Budget              *domain.Budget
+	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type AssignTaskCommand struct {
+	WorkspaceIdentifier string
+	TaskID              string
+	AgentIdentifier     string
+	LeaseSeconds        int64
+	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type TransitionTaskCommand struct {
+	WorkspaceIdentifier string
+	TaskID              string
+	Action              string
+	Reason              string
+	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type MutationResult[T any] struct {
+	Value         T     `json:"value"`
+	EventSequence int64 `json:"event_sequence"`
+}
+
+type TaskMutationResult struct {
+	Detail        domain.TaskDetail `json:"detail"`
+	EventSequence int64             `json:"event_sequence"`
+}
+
 type Options struct {
 	// MutationHook is a deterministic fault barrier used by component tests. The
 	// production daemon leaves it nil.
 	MutationHook func(stage string) error
+	// Clock controls lease/timestamp observation in deterministic tests. Production
+	// defaults to time.Now.
+	Clock func() time.Time
 }

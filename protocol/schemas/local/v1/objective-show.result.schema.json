@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:objective-show-result:v1",
+  "title": "Crewfold local API objective show result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "objective"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:objective-show-result:v1"},
+    "type": {"const": "objective"},
+    "objective": {"$ref": "../../domain/v1/objective.schema.json"}
+  }
+}

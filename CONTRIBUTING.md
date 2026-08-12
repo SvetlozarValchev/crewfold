@@ -25,7 +25,7 @@ personal control-plane scope while keeping provider and runtime boundaries clean
 
 ## Development workflow
 
-Crewfold is bootstrapped with Go 1.26.5. M2 vendors its CGO-free SQLite dependency
+Crewfold is bootstrapped with Go 1.26.5 and vendors its CGO-free SQLite dependency
 so the complete gate remains local and offline. Run it before committing:
 
 ```sh
@@ -33,7 +33,7 @@ so the complete gate remains local and offline. Run it before committing:
 ```
 
 The command checks formatting, runs `go vet`, unit/schema tests, race tests when
-supported, and every completed milestone's black-box scenario. It never invokes a
+supported, and every completed capability's black-box scenario. It never invokes a
 model provider or uses credentials. See [docs/testing.md](docs/testing.md) for the
 long-term test strategy and [docs/stack.md](docs/stack.md) for the proposed later
 stack.

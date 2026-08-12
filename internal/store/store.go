@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
@@ -23,6 +24,7 @@ type Store struct {
 	db           *sql.DB
 	path         string
 	mutationHook func(string) error
+	clock        func() time.Time
 }
 
 func Open(ctx context.Context, dataDir string, options Options) (*Store, error) {
@@ -39,7 +41,11 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 	database.SetMaxOpenConns(1)
 	database.SetMaxIdleConns(1)
 
-	storage := &Store{db: database, path: path, mutationHook: options.MutationHook}
+	clock := options.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+	storage := &Store{db: database, path: path, mutationHook: options.MutationHook, clock: clock}
 	if err := database.PingContext(ctx); err != nil {
 		_ = database.Close()
 		return nil, &Error{Code: CodeStorageFailed, Message: "connect to SQLite database", Cause: err}

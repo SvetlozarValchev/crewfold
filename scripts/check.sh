@@ -31,14 +31,17 @@ else
   printf 'go test -race ./... skipped: race detector prerequisites unavailable\n'
 fi
 
-printf 'M0 black-box acceptance\n'
-"$repo_root/test/scenarios/m00-buildable-repository/run.sh"
+printf 'Buildable repository black-box acceptance\n'
+"$repo_root/test/scenarios/buildable-repository/run.sh"
 
-printf 'M1 black-box acceptance\n'
-"$repo_root/test/scenarios/m01-daemon-api-spine/run.sh"
+printf 'Daemon API spine black-box acceptance\n'
+"$repo_root/test/scenarios/daemon-api-spine/run.sh"
 
-printf 'M2 black-box acceptance\n'
-"$repo_root/test/scenarios/m02-persistent-workspace/run.sh"
+printf 'Persistent workspace black-box acceptance\n'
+"$repo_root/test/scenarios/persistent-workspace/run.sh"
 
-printf 'M3 black-box acceptance\n'
-"$repo_root/test/scenarios/m03-projects-checkouts/run.sh"
+printf 'Projects and checkouts black-box acceptance\n'
+"$repo_root/test/scenarios/projects-checkouts/run.sh"
+
+printf 'Durable coordination black-box acceptance\n'
+"$repo_root/test/scenarios/durable-coordination/run.sh"

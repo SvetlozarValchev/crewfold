@@ -53,6 +53,22 @@ type daemonClient interface {
 	ProjectInspect(context.Context, string, string) (localapi.ProjectInspectResult, error)
 	CheckoutAdd(context.Context, string, string, string, string, string) (localapi.CheckoutAddResult, error)
 	CheckoutList(context.Context, string, string) (localapi.CheckoutListResult, error)
+	AgentCreate(context.Context, localapi.AgentCreateParams) (localapi.AgentMutationResult, error)
+	AgentUpdate(context.Context, localapi.AgentUpdateParams) (localapi.AgentMutationResult, error)
+	AgentShow(context.Context, string, string) (localapi.AgentShowResult, error)
+	AgentList(context.Context, string) (localapi.AgentListResult, error)
+	ObjectiveCreate(context.Context, localapi.ObjectiveCreateParams) (localapi.ObjectiveMutationResult, error)
+	ObjectiveUpdate(context.Context, localapi.ObjectiveUpdateParams) (localapi.ObjectiveMutationResult, error)
+	ObjectiveShow(context.Context, string, string) (localapi.ObjectiveShowResult, error)
+	ObjectiveList(context.Context, string, string) (localapi.ObjectiveListResult, error)
+	TaskCreate(context.Context, localapi.TaskCreateParams) (localapi.TaskMutationResult, error)
+	TaskUpdate(context.Context, localapi.TaskUpdateParams) (localapi.TaskMutationResult, error)
+	TaskShow(context.Context, string, string) (localapi.TaskShowResult, error)
+	TaskList(context.Context, string, string, bool) (localapi.TaskListResult, error)
+	TaskDepend(context.Context, localapi.TaskDependencyParams) (localapi.TaskMutationResult, error)
+	TaskAssign(context.Context, localapi.TaskAssignParams) (localapi.TaskMutationResult, error)
+	TaskTransition(context.Context, localapi.TaskTransitionParams) (localapi.TaskMutationResult, error)
+	CoordinationStatus(context.Context, string) (localapi.CoordinationStatusResult, error)
 	EventsList(context.Context, int64, int) (localapi.EventsListResult, error)
 }
 
@@ -104,6 +120,12 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runProject(ctx, mode, args[1:])
 	case "checkout":
 		return a.runCheckout(ctx, mode, args[1:])
+	case "agent":
+		return a.runAgent(ctx, mode, args[1:])
+	case "objective":
+		return a.runObjective(ctx, mode, args[1:])
+	case "task":
+		return a.runTask(ctx, mode, args[1:])
 	case "events":
 		return a.runEvents(ctx, mode, args[1:])
 	default:
@@ -566,7 +588,7 @@ func (a *App) runStatus(ctx context.Context, mode outputMode, args []string) int
 		fmt.Fprint(a.stdout, statusHelp)
 		return ExitOK
 	}
-	options, failure := parseOptions(args, "socket")
+	options, failure := parseOptions(args, "socket", "workspace")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -575,7 +597,25 @@ func (a *App) runStatus(ctx context.Context, mode outputMode, args []string) int
 		return a.writeFailure(mode, *failure)
 	}
 
-	result, err := a.newClient(socketPath).Status(ctx)
+	client := a.newClient(socketPath)
+	if workspace := options["workspace"]; workspace != "" {
+		result, err := client.CoordinationStatus(ctx, workspace)
+		if err != nil {
+			return a.writeClientFailure(mode, "query coordination status", err)
+		}
+		if mode == outputJSON {
+			if err := writeJSON(a.stdout, result); err != nil {
+				return a.writeFailure(outputText, internalFailure("write coordination status output", err))
+			}
+		} else {
+			fmt.Fprintf(a.stdout, "Crewfold workspace: %s\n", result.Workspace)
+			fmt.Fprintf(a.stdout, "agents: %d registered, %d enabled\n", result.Status.AgentsRegistered, result.Status.AgentsEnabled)
+			fmt.Fprintf(a.stdout, "tasks: %d registered, %d ready, %d assigned, %d active, %d blocked, %d completed, %d cancelled\n", result.Status.TasksRegistered, result.Status.TasksReady, result.Status.TasksAssigned, result.Status.TasksActive, result.Status.TasksBlocked, result.Status.TasksCompleted, result.Status.TasksCancelled)
+		}
+		return ExitOK
+	}
+
+	result, err := client.Status(ctx)
 	if err != nil {
 		return a.writeClientFailure(mode, "query daemon status", err)
 	}
@@ -622,6 +662,12 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, projectHelp)
 	case "checkout":
 		fmt.Fprint(a.stdout, checkoutHelp)
+	case "agent":
+		fmt.Fprint(a.stdout, agentHelp)
+	case "objective":
+		fmt.Fprint(a.stdout, objectiveHelp)
+	case "task":
+		fmt.Fprint(a.stdout, taskHelp)
 	case "events":
 		fmt.Fprint(a.stdout, eventsHelp)
 	case "help":
@@ -1084,6 +1130,9 @@ Commands:
   workspace      Initialize or inspect a durable workspace
   project        Register or inspect a project and its source locations
   checkout       Register or list concrete repository directories
+  agent          Define provider-neutral agents and roles
+  objective      Define project objectives and budgets
+  task           Coordinate dependency-aware, leased work
   events         Inspect the durable event journal
   help [command] Show command help
 
@@ -1091,8 +1140,8 @@ Global options:
   --output text|json  Select human or machine-readable output
   -h, --help          Show help
 
-This M3 build registers and observes projects, repositories, and checkouts. It
-does not launch agents or mutate source repositories.
+This build coordinates provider-neutral agents, objectives, tasks,
+dependencies, and leases. It does not launch agents or mutate source repositories.
 `
 
 const versionHelp = `Usage:
@@ -1115,7 +1164,7 @@ const daemonHelp = `Usage:
   crewfold daemon stop --socket <path>
 
 Run the local daemon in the foreground or ask it to stop through the local API.
-M3 has no background-service installer. The selected data directory contains the
+There is no background-service installer. The selected data directory contains the
 SQLite coordination database.
 `
 
@@ -1135,8 +1184,10 @@ acknowledgement.
 
 const statusHelp = `Usage:
   crewfold status --socket <path> [--output text|json]
+  crewfold status --workspace <scope> --socket <path> [--output text|json]
 
-Negotiate a protocol and query daemon process health and build metadata.
+Without --workspace, query daemon process health and build metadata. With a
+workspace, show the durable coordination projection for agents and tasks.
 `
 
 const workspaceHelp = `Usage:

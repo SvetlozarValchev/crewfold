@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:objective-create-params:v1",
+  "title": "Crewfold local API objective create parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "project", "title", "budget", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "project": {"type": "string", "minLength": 1, "maxLength": 128},
+    "title": {"type": "string", "minLength": 1, "maxLength": 256},
+    "budget": {"$ref": "../../domain/v1/budget.schema.json"},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

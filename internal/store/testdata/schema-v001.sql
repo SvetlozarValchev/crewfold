@@ -1,4 +1,4 @@
--- M3 migration fixture: an empty database at the exact M2 schema.
+-- Migration fixture: an empty database at schema version 1.
 PRAGMA application_id = 0x43524644;
 
 CREATE TABLE schema_migrations (

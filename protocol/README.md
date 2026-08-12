@@ -11,11 +11,10 @@ conformance fixtures, and compatibility tests for:
 MCP tool schemas are generated or validated against the same domain payloads but
 remain a separate agent-facing surface.
 
-M0 publishes version, self-doctor, and error response schemas under
-`schemas/cli/v1/`. M1 publishes the newline-delimited local request/response,
-hello, status, and stop schemas under `schemas/local/v1/`. M2 adds durable
-workspace/event records plus database status, workspace mutation/query, and
-cursor-based event-list schemas. M3 adds project, repository, checkout, and their
-local command/result schemas. Later schemas remain proposals. See the
+Published schemas currently cover version/self-doctor/error responses; the
+newline-delimited local request/response envelope; daemon and database status;
+durable workspace/event records; project, repository, and checkout observation;
+and provider-neutral agent, objective, task, dependency, assignment, readiness,
+budget, and coordination-status records. Later schemas remain proposals. See the
 [event catalogue](../docs/reference/events.md) and [MCP tool
 contract](../docs/reference/mcp-tools.md).

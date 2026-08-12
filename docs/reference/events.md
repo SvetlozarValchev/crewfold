@@ -1,9 +1,13 @@
 # Event catalogue
 
-Status: the v1 envelope plus `workspace.created`, `project.registered`,
-`repository.registered`, `checkout.registered`, and `checkout.git_observed` are
-implemented through M3. Remaining names and payload details are proposed; the
-catalogue defines their coverage, not a frozen schema.
+Status: the v1 envelope is implemented. Durable facts currently emitted are
+`workspace.created`, `project.registered`, `repository.registered`,
+`checkout.registered`, `checkout.git_observed`, `agent.created`, `agent.updated`,
+`objective.created`, `objective.updated`, `task.created`, `task.updated`,
+`task.dependency_added`, `task.assigned`, `task.started`, `task.blocked`,
+`task.readied`, `task.cancelled`, and `task.assignment_expired`. Remaining names
+and payload details are proposed; the catalogue defines their intended coverage,
+not a frozen schema.
 
 ## Envelope
 
@@ -49,6 +53,9 @@ checkout.write_policy_changed
 
 ## Agents, teams, and runs
 
+Implemented today: `agent.created` and `agent.updated`. The other names below are
+reserved proposals.
+
 ```text
 team.created
 team.membership_changed
@@ -73,6 +80,11 @@ run.resume_handle_recorded
 ```
 
 ## Objectives and tasks
+
+Implemented today: `objective.created`, `objective.updated`, `task.created`,
+`task.updated`, `task.dependency_added`, `task.assigned`, `task.started`,
+`task.blocked`, `task.readied`, `task.cancelled`, and
+`task.assignment_expired`. The other names below are reserved proposals.
 
 ```text
 objective.created

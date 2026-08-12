@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:task-list-result:v1",
+  "title": "Crewfold local API task list result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "tasks"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:task-list-result:v1"},
+    "type": {"const": "task_list"},
+    "tasks": {"type": "array", "items": {"$ref": "../../domain/v1/task-detail.schema.json"}}
+  }
+}

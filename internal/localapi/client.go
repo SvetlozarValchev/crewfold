@@ -171,6 +171,143 @@ func (c *Client) CheckoutList(ctx context.Context, workspace, project string) (C
 	return result, nil
 }
 
+func (c *Client) AgentCreate(ctx context.Context, paramsValue AgentCreateParams) (AgentMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result AgentMutationResult
+	if err := c.callParams(ctx, MethodAgentCreate, paramsValue, &result); err != nil {
+		return AgentMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) AgentUpdate(ctx context.Context, paramsValue AgentUpdateParams) (AgentMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result AgentMutationResult
+	if err := c.callParams(ctx, MethodAgentUpdate, paramsValue, &result); err != nil {
+		return AgentMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) AgentShow(ctx context.Context, workspace, agent string) (AgentShowResult, error) {
+	var result AgentShowResult
+	if err := c.callParams(ctx, MethodAgentShow, AgentQueryParams{Workspace: workspace, Agent: agent}, &result); err != nil {
+		return AgentShowResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) AgentList(ctx context.Context, workspace string) (AgentListResult, error) {
+	var result AgentListResult
+	if err := c.callParams(ctx, MethodAgentList, AgentQueryParams{Workspace: workspace}, &result); err != nil {
+		return AgentListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ObjectiveCreate(ctx context.Context, paramsValue ObjectiveCreateParams) (ObjectiveMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result ObjectiveMutationResult
+	if err := c.callParams(ctx, MethodObjectiveCreate, paramsValue, &result); err != nil {
+		return ObjectiveMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ObjectiveUpdate(ctx context.Context, paramsValue ObjectiveUpdateParams) (ObjectiveMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result ObjectiveMutationResult
+	if err := c.callParams(ctx, MethodObjectiveUpdate, paramsValue, &result); err != nil {
+		return ObjectiveMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ObjectiveShow(ctx context.Context, workspace, objective string) (ObjectiveShowResult, error) {
+	var result ObjectiveShowResult
+	if err := c.callParams(ctx, MethodObjectiveShow, ObjectiveQueryParams{Workspace: workspace, Objective: objective}, &result); err != nil {
+		return ObjectiveShowResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ObjectiveList(ctx context.Context, workspace, project string) (ObjectiveListResult, error) {
+	var result ObjectiveListResult
+	if err := c.callParams(ctx, MethodObjectiveList, ObjectiveQueryParams{Workspace: workspace, Project: project}, &result); err != nil {
+		return ObjectiveListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) TaskCreate(ctx context.Context, paramsValue TaskCreateParams) (TaskMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result TaskMutationResult
+	if err := c.callParams(ctx, MethodTaskCreate, paramsValue, &result); err != nil {
+		return TaskMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) TaskUpdate(ctx context.Context, paramsValue TaskUpdateParams) (TaskMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result TaskMutationResult
+	if err := c.callParams(ctx, MethodTaskUpdate, paramsValue, &result); err != nil {
+		return TaskMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) TaskShow(ctx context.Context, workspace, task string) (TaskShowResult, error) {
+	var result TaskShowResult
+	if err := c.callParams(ctx, MethodTaskShow, TaskQueryParams{Workspace: workspace, Task: task}, &result); err != nil {
+		return TaskShowResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) TaskList(ctx context.Context, workspace, project string, readyOnly bool) (TaskListResult, error) {
+	var result TaskListResult
+	if err := c.callParams(ctx, MethodTaskList, TaskQueryParams{Workspace: workspace, Project: project, ReadyOnly: readyOnly}, &result); err != nil {
+		return TaskListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) TaskDepend(ctx context.Context, paramsValue TaskDependencyParams) (TaskMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result TaskMutationResult
+	if err := c.callParams(ctx, MethodTaskDepend, paramsValue, &result); err != nil {
+		return TaskMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) TaskAssign(ctx context.Context, paramsValue TaskAssignParams) (TaskMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result TaskMutationResult
+	if err := c.callParams(ctx, MethodTaskAssign, paramsValue, &result); err != nil {
+		return TaskMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) TaskTransition(ctx context.Context, paramsValue TaskTransitionParams) (TaskMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result TaskMutationResult
+	if err := c.callParams(ctx, MethodTaskTransition, paramsValue, &result); err != nil {
+		return TaskMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) CoordinationStatus(ctx context.Context, workspace string) (CoordinationStatusResult, error) {
+	var result CoordinationStatusResult
+	if err := c.callParams(ctx, MethodCoordinationStatus, CoordinationStatusParams{Workspace: workspace}, &result); err != nil {
+		return CoordinationStatusResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) EventsList(ctx context.Context, after int64, limit int) (EventsListResult, error) {
 	paramsValue := EventsListParams{After: &after}
 	if limit != 0 {
@@ -205,6 +342,21 @@ func (c *Client) call(ctx context.Context, method string, params json.RawMessage
 		Method:   method,
 		Params:   params,
 	}, result)
+}
+
+func (c *Client) callParams(ctx context.Context, method string, paramsValue, result any) error {
+	params, err := json.Marshal(paramsValue)
+	if err != nil {
+		return fmt.Errorf("marshal %s parameters: %w", method, err)
+	}
+	return c.call(ctx, method, params, result)
+}
+
+func defaultIdempotencyKey(value string) string {
+	if value == "" {
+		return "idem-" + requestID()
+	}
+	return value
 }
 
 func (c *Client) dial(ctx context.Context) (net.Conn, context.CancelFunc, error) {

@@ -135,8 +135,8 @@ test/
 │  ├─ protocol/
 │  └─ databases/
 ├─ scenarios/
-│  ├─ m01-daemon-health/
-│  ├─ m02-persistence/
+│  ├─ daemon-api-spine/
+│  ├─ persistent-workspace/
 │  ├─ m05-fake-agent-loop/
 │  └─ ...
 └─ live/

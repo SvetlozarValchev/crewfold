@@ -1,6 +1,6 @@
-# Storage contract through M3
+# Storage contract
 
-Status: implemented through M3.
+Status: implemented through schema version 3.
 
 ## Location and ownership
 
@@ -47,8 +47,8 @@ tracks the current binary schema.
 
 The daemon refuses a database whose version is newer than the binary. Every
 supported starting version has a checked-in fixture under
-`internal/store/testdata/`; M2 introduced the version-zero fixture and migration
-to schema version 1. M3 adds a version-one fixture and migration to version 2.
+`internal/store/testdata/`. Fixtures for versions zero, one, and two prove every
+forward migration while preserving representative records.
 
 ## Schema version 1
 
@@ -86,6 +86,28 @@ Project and checkout registration update all projections, append their events,
 and record idempotency responses in one transaction. Git probing happens before
 that transaction and uses only bounded read commands.
 
+## Schema version 3
+
+`agents` stores provider-neutral durable definitions: scoped name, role, provider,
+runtime preference, enabled state, concurrency configuration, revision, and audit
+metadata. It contains no process or provider session handle.
+
+`objectives` scopes a title, lifecycle status, and token/cost/time budget to one
+project. `tasks` stores project/objective scope, title/description, coordination
+state, blocked reason, priority, budget, revision, and audit metadata.
+
+`task_dependencies` is a same-project directed graph. The store checks cycles with
+a recursive CTE before inserting an edge. `task_assignments` retains assignment
+history and lease timestamps. A partial unique index permits only one row in
+`active` state for a task; expiry and cancellation change the row state rather
+than deleting it.
+
+Agent/objective/task mutations append events and store idempotent results in the
+same immediate transaction as projection changes. Expected revisions are checked
+inside that write transaction, so concurrent stale writers cannot both succeed.
+Readiness is a deterministic query over task state and incomplete dependencies;
+it is not stored as an independently drifting boolean.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -98,7 +120,7 @@ that transaction and uses only bounded read commands.
 6. store the successful response under the idempotency key;
 7. commit all three writes together.
 
-Failures before commit leave no workspace, event, or idempotency record. M2 tests
+Failures before commit leave no workspace, event, or idempotency record. Tests
 this both by injected rollback errors and by killing a helper daemon process after
 the projection write and after the event append. Restart recovers the WAL, proves
 all three tables unchanged, and permits the same idempotency key to succeed.
@@ -108,7 +130,7 @@ all three tables unchanged, and permits the same idempotency key to succeed.
 Normal restart reopens and validates the same database before serving requests.
 SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
-M3 does not yet expose backup/restore commands. A later milestone must use
+Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 2 contains no agent, task, message, knowledge,
-runtime, or provider state.
+without its WAL. Schema version 3 contains agent and task coordination state but
+no message, knowledge, run, provider-session, or runtime-process state.

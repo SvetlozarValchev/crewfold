@@ -40,7 +40,7 @@ func Current() Info {
 	}
 }
 
-// Validate checks the internal consistency needed by the M0 self-diagnostic.
+// Validate checks the internal consistency needed by the self-diagnostic.
 func (i Info) Validate() error {
 	if i.Schema != VersionSchema {
 		return fmt.Errorf("unexpected version schema %q", i.Schema)

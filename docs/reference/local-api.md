@@ -1,8 +1,8 @@
 # Local API v1
 
-Status: implemented through M3. M3 adds read-only Git inspection and durable
-project, repository, and checkout commands to the M1/M2 transport, workspace, and
-event surfaces. Subscriptions and agent/task commands arrive later.
+Status: implemented for daemon health, durable workspaces/events, read-only Git
+inspection, and provider-neutral agent/objective/task coordination. Subscriptions,
+runs, messages, claims, and knowledge arrive later.
 
 ## Transport
 
@@ -15,7 +15,7 @@ with mode `0600` on `<data-dir>/daemon.lock` so another daemon cannot use the sa
 data directory, even with a different socket. A newly created data directory uses
 mode `0700`; Crewfold does not silently change the mode of an existing directory.
 
-M3 has no network listener and no remote transport.
+There is no network listener or remote transport.
 
 ## Negotiation
 
@@ -195,6 +195,77 @@ append `checkout.git_observed`. A missing/moved path becomes `unavailable` with 
 diagnostic while retaining its checkout ID, repository ID, registered path, and
 last-known branch/HEAD state.
 
+### Agent definitions
+
+`agent.create` takes `workspace`, `name`, `role`, `provider`, optional `runtime`,
+optional `max_concurrency`, and `idempotency_key`. Runtime defaults to
+`unconfigured`, concurrency to one, and the definition starts enabled. Provider
+and runtime are opaque capability/configuration strings; neither selects a core
+code branch or launches a process.
+
+`agent.update` takes `workspace`, an agent ID or name, one or more mutable fields,
+`expected_revision`, and `idempotency_key`. `agent.show` accepts an ID or name;
+`agent.list` returns definitions ordered by name and ID.
+
+### Objectives
+
+`objective.create` takes `workspace`, `project`, `title`, an explicit `budget`
+object, and `idempotency_key`. A budget has non-negative `token_limit`,
+`cost_cents`, and `time_seconds`; zero means unlimited/not enforced for that
+dimension. `objective.update` atomically replaces supplied title, status, or
+budget fields and requires `expected_revision`. `objective.show` queries by ID;
+`objective.list` scopes results to a project.
+
+Objective status is `active`, `completed`, or `cancelled`. This layer records the
+owner's coordination intent; it does not launch work or automatically cascade a
+status change to tasks.
+
+### Tasks, dependencies, and assignments
+
+`task.create` takes `workspace`, `project`, optional objective ID, title, optional
+description, priority from 0 through 1000, budget, and `idempotency_key`. The
+objective, when present, must be active and belong to the selected project. New
+tasks begin at revision 1 in `ready` state.
+
+`task.update` changes title, description, priority, or the complete budget and
+requires `expected_revision`. `task.dependency.add` adds a same-project edge,
+rejects duplicate/self/circular edges, and increments the dependent task's
+revision. Dependencies can be added only while that task is ready and unassigned.
+
+`task.assign` takes a task, agent ID or name, lease length from one second through
+30 days, and `expected_revision`. It requires an enabled agent and derived-ready
+task. A partial unique index and transaction invariant allow only one active
+primary assignment per task. It creates a durable assignment record and changes
+the task to `assigned`; it does not start a runtime.
+
+`task.transition` currently accepts `start`, `block`, `unblock`, or `cancel`:
+
+- `start` changes `assigned` to `active` as coordination state only;
+- `block` requires a reason and accepts ready, assigned, or active tasks;
+- `unblock` returns to assigned while a lease remains active, otherwise ready;
+- `cancel` releases an active assignment but retains its history.
+
+`task.show` and `task.list` return task details, dependency edges, any active
+assignment, and derived readiness. `ready_only` filters deterministically by
+priority descending, then creation time and ID. Readiness is false unless status
+is `ready`; an incomplete dependency names its ID and state in the explanation.
+
+Before task/status queries, expired leases are reconciled transactionally.
+Assigned or active tasks return to ready, blocked tasks remain blocked, the
+assignment changes to `expired`, the task revision advances, and
+`task.assignment_expired` is appended. No assignment history is deleted.
+
+All mutations are idempotent. Updates and transitions use optimistic revisions;
+two writers using the same revision yield exactly one success and one
+`revision_conflict` after serialization.
+
+### `coordination.status`
+
+Takes `workspace` and returns counts for registered/enabled agents plus
+registered, derived-ready, assigned, active, blocked, completed, and cancelled
+tasks. The CLI exposes it as `crewfold status --workspace <scope>`; omitting the
+workspace retains the process-health form of `status`.
+
 ### `events.list`
 
 Returns events in ascending local sequence order strictly after a supplied cursor:
@@ -205,8 +276,8 @@ Returns events in ascending local sequence order strictly after a supplied curso
 
 The default limit is 100 and the maximum is 1000. `next_after` is the final event
 sequence in the page, or the input cursor for an empty page. `has_more` tells the
-caller to issue another query from `next_after`. M3 is query-only; a resumable live
-subscription arrives later.
+caller to issue another query from `next_after`. A resumable live subscription
+arrives later.
 
 ## Socket startup safety
 
@@ -230,10 +301,10 @@ code when applicable. Logs do not include arbitrary request bodies.
 ## Limits and deferrals
 
 - Maximum request line: 64 KiB.
-- Local operating-system user is the only identity through M3; events use
+- Local operating-system user is the only identity; events use
   the explicit placeholder actor `local-owner` of type `human`.
-- Workspace, project, and checkout registration plus Git observation are the only
-  domain mutations. Event cursors and command idempotency are durable;
-  subscriptions and streaming are not implemented.
+- Workspace/source registration and durable work coordination are implemented.
+  Event cursors, optimistic revisions, leases, and command idempotency are
+  durable; subscriptions and streaming are not implemented.
 - Unix sockets are the only supported transport; Windows named pipes are later.
 - Socket permission is a transport boundary, not future agent authorization.

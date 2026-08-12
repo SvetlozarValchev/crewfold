@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:coordination-status:v1",
+  "title": "Crewfold coordination status v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agents_registered", "agents_enabled", "tasks_registered", "tasks_ready", "tasks_assigned", "tasks_active", "tasks_blocked", "tasks_completed", "tasks_cancelled"],
+  "properties": {
+    "agents_registered": {"type": "integer", "minimum": 0},
+    "agents_enabled": {"type": "integer", "minimum": 0},
+    "tasks_registered": {"type": "integer", "minimum": 0},
+    "tasks_ready": {"type": "integer", "minimum": 0},
+    "tasks_assigned": {"type": "integer", "minimum": 0},
+    "tasks_active": {"type": "integer", "minimum": 0},
+    "tasks_blocked": {"type": "integer", "minimum": 0},
+    "tasks_completed": {"type": "integer", "minimum": 0},
+    "tasks_cancelled": {"type": "integer", "minimum": 0}
+  }
+}

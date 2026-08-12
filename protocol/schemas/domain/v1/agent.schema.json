@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:agent:v1",
+  "title": "Crewfold agent definition v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "workspace_id", "name", "role", "provider", "runtime", "enabled", "max_concurrency", "revision", "created_at", "updated_at", "created_by", "updated_by"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "role": {"type": "string", "minLength": 1, "maxLength": 128},
+    "provider": {"type": "string", "minLength": 1, "maxLength": 128},
+    "runtime": {"type": "string", "minLength": 1, "maxLength": 128},
+    "enabled": {"type": "boolean"},
+    "max_concurrency": {"type": "integer", "minimum": 1, "maximum": 100},
+    "revision": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "created_by": {"type": "string", "minLength": 1},
+    "updated_by": {"type": "string", "minLength": 1}
+  }
+}

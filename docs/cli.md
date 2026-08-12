@@ -2,18 +2,18 @@
 
 ## Implementation status
 
-M3 implements `crewfold help`, `crewfold version`, `crewfold doctor --self`,
-`crewfold doctor --database`, `crewfold daemon run`, `crewfold daemon stop`,
-`crewfold status`, `crewfold workspace init/show`, and `crewfold events list`,
-plus `crewfold project add/inspect` and `crewfold checkout add/list`, including
-text and JSON output. Every other command in this document is an intended future
-contract and is not yet available.
+The current binary implements `help`, `version`, self/database diagnostics,
+foreground daemon lifecycle, process and workspace status, workspace/event
+queries, project/checkout registration and observation, and durable
+agent/objective/task coordination. It supports text and JSON output. Runs, teams,
+claims, messages, meetings, knowledge, policy, and approval commands in later
+sections are intended future contracts and are not yet available.
 
 ## Goals
 
 The CLI is both a human interface and a scriptable client. Commands should provide
-readable tables by default when interactive and stable structured output with
-`--json`. Mutations should return the durable entity and event cursor they created.
+readable output by default and stable structured output with `--output json`.
+Mutations return the durable entity and event cursor they created.
 
 The daemon/workspace examples below are implemented. Later sections define
 intended behavior, not an implemented interface.
@@ -29,16 +29,17 @@ crewfold workspace init personal --socket /path/to/crewfold.sock \
   --idempotency-key initialize-personal
 crewfold workspace show personal --socket /path/to/crewfold.sock
 crewfold events list --socket /path/to/crewfold.sock --after 0
-# Planned after M2:
+# Planned:
 crewfold watch
 ```
 
-M2 retains explicit `--data-dir`/`--socket` paths. Background start, default path
-discovery, and watching are later milestones. If `workspace init` omits an
+The current interface retains explicit `--data-dir`/`--socket` paths. Background
+start, default path discovery, and watching are later capabilities. If
+`workspace init` omits an
 idempotency key, the client generates a unique one; callers that may retry should
 supply a stable key.
 
-M2 `doctor` checks this binary or the daemon database. Later milestones extend it
+`doctor` checks this binary or the daemon database. Later capabilities extend it
 to Git, runtime drivers, provider adapters, and permissions without launching an
 agent.
 
@@ -63,36 +64,66 @@ metadata. A future separate command would create a Git worktree:
 crewfold checkout create world-engine feature-a --branch crewfold/feature-a
 ```
 
-## Agents and teams
+## Agent definitions
 
 ```sh
-crewfold team create engine
 crewfold agent create engine-impl \
+  --workspace personal \
   --role implementer \
   --provider codex \
   --runtime herdr \
-  --team engine
-crewfold agent create engine-review --role reviewer --provider claude
-crewfold agent list
-crewfold agent inspect engine-impl
+  --max-concurrency 1 \
+  --socket /path/to/crewfold.sock
+crewfold agent update engine-impl --workspace personal \
+  --expected-revision 1 --enabled false --socket /path/to/crewfold.sock
+crewfold agent show engine-impl --workspace personal --socket /path/to/crewfold.sock
+crewfold agent list --workspace personal --socket /path/to/crewfold.sock
 ```
 
-Creating an agent definition does not launch it.
+Agent definitions are provider-neutral configuration and role records. Creating,
+updating, or enabling one never launches a provider or runtime process. Team
+grouping is planned but not implemented.
 
 ## Objectives and tasks
 
 ```sh
-crewfold objective create "Ship deterministic vehicle contacts"
-crewfold task create \
+crewfold objective create "Ship deterministic vehicle contacts" \
+  --workspace personal --project world-engine \
+  --budget-tokens 100000 --budget-cents 2000 --budget-seconds 14400 \
+  --socket /path/to/crewfold.sock
+crewfold task create --workspace personal \
   --project world-engine \
   --title "Implement contact cache" \
-  --deliverable "tests pass for repeated contact ordering" \
-  --touches 'src/physics/contact/**'
-crewfold task depend TASK_B --on TASK_A
-crewfold task assign TASK_A engine-impl
-crewfold task list --ready
-crewfold task inspect TASK_A
+  --description "tests pass for repeated contact ordering" \
+  --priority 200 --socket /path/to/crewfold.sock
+crewfold task depend TASK_B --on TASK_A --workspace personal \
+  --expected-revision 1 --socket /path/to/crewfold.sock
+crewfold task assign TASK_A engine-impl --lease-seconds 3600 \
+  --workspace personal --expected-revision 1 --socket /path/to/crewfold.sock
+crewfold task start TASK_A --workspace personal \
+  --expected-revision 2 --socket /path/to/crewfold.sock
+crewfold task block TASK_A --reason "waiting for an API decision" \
+  --workspace personal --expected-revision 3 --socket /path/to/crewfold.sock
+crewfold task unblock TASK_A --workspace personal \
+  --expected-revision 4 --socket /path/to/crewfold.sock
+crewfold task list --workspace personal --project world-engine \
+  --ready true --socket /path/to/crewfold.sock
+crewfold task show TASK_A --workspace personal --socket /path/to/crewfold.sock
+crewfold status --workspace personal --socket /path/to/crewfold.sock
 ```
+
+Every update, dependency, assignment, or state transition requires the revision
+the caller observed. A stale writer receives `revision_conflict`. Budget updates
+replace the budget atomically, so the CLI requires token, cost, and time values
+together. Zero means no limit for that dimension.
+
+Readiness is derived: a task is ready only when its state is `ready`, it has no
+active assignment, and every dependency is completed. The list/show result
+includes a stable human-readable reason. Assignment leases expire during task or
+status queries; the assignment record and expiry event remain durable.
+
+`task start` changes coordination state only. Runtime launch begins in the next
+capability and will use a separate `run` command.
 
 ## Runs
 
@@ -172,8 +203,9 @@ crewfold policy explain --actor engine-impl --action git.push --project world-en
 
 ## Output and scripting rules
 
-- `--json` emits one JSON result on stdout; diagnostics go to stderr.
-- Watch commands use newline-delimited JSON with resumable cursors under `--json`.
+- `--output json` emits one JSON result on stdout; diagnostics go to stderr.
+- Watch commands will use newline-delimited JSON with resumable cursors under
+  `--output json`.
 - IDs are accepted wherever names are ambiguous.
 - Mutations accept `--idempotency-key`.
 - `--yes` only suppresses confirmation for actions already authorized by policy.
@@ -183,7 +215,7 @@ crewfold policy explain --actor engine-impl --action git.push --project world-en
 
 ### Exit codes
 
-M0 establishes these process exit classes:
+The CLI uses these process exit classes:
 
 | Code | Meaning |
 | --- | --- |

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:task-create-params:v1",
+  "title": "Crewfold local API task create parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "project", "title", "priority", "budget", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "project": {"type": "string", "minLength": 1, "maxLength": 128},
+    "objective": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 256},
+    "description": {"type": "string", "maxLength": 4096},
+    "priority": {"type": "integer", "minimum": 0, "maximum": 1000},
+    "budget": {"$ref": "../../domain/v1/budget.schema.json"},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

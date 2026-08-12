@@ -548,7 +548,7 @@ func TestEventPaginationUsesResumableExclusiveCursor(t *testing.T) {
 }
 
 func TestWorkspaceMutationCrashIsAtomic(t *testing.T) {
-	if os.Getenv("CREWFOLD_M2_CRASH_HELPER") != "" {
+	if os.Getenv("CREWFOLD_WORKSPACE_CRASH_HELPER") != "" {
 		t.Fatal("parent crash test unexpectedly running as helper")
 	}
 
@@ -558,13 +558,13 @@ func TestWorkspaceMutationCrashIsAtomic(t *testing.T) {
 			dataDir := filepath.Join(root, "data")
 			socketPath := filepath.Join(root, "crewfold.sock")
 			markerPath := filepath.Join(root, "mutation-reached")
-			command := exec.Command(os.Args[0], "-test.run=^TestM2CrashHelperProcess$")
+			command := exec.Command(os.Args[0], "-test.run=^TestWorkspaceCrashHelperProcess$")
 			command.Env = append(os.Environ(),
-				"CREWFOLD_M2_CRASH_HELPER=1",
-				"CREWFOLD_M2_DATA_DIR="+dataDir,
-				"CREWFOLD_M2_SOCKET="+socketPath,
-				"CREWFOLD_M2_MARKER="+markerPath,
-				"CREWFOLD_M2_STAGE="+stage,
+				"CREWFOLD_WORKSPACE_CRASH_HELPER=1",
+				"CREWFOLD_WORKSPACE_CRASH_DATA_DIR="+dataDir,
+				"CREWFOLD_WORKSPACE_CRASH_SOCKET="+socketPath,
+				"CREWFOLD_WORKSPACE_CRASH_MARKER="+markerPath,
+				"CREWFOLD_WORKSPACE_CRASH_STAGE="+stage,
 			)
 			var childOutput lockedBuffer
 			command.Stdout = &childOutput
@@ -637,15 +637,15 @@ func TestWorkspaceMutationCrashIsAtomic(t *testing.T) {
 	}
 }
 
-func TestM2CrashHelperProcess(t *testing.T) {
-	if os.Getenv("CREWFOLD_M2_CRASH_HELPER") == "" {
+func TestWorkspaceCrashHelperProcess(t *testing.T) {
+	if os.Getenv("CREWFOLD_WORKSPACE_CRASH_HELPER") == "" {
 		t.Skip("helper process")
 	}
-	stage := os.Getenv("CREWFOLD_M2_STAGE")
-	marker := os.Getenv("CREWFOLD_M2_MARKER")
+	stage := os.Getenv("CREWFOLD_WORKSPACE_CRASH_STAGE")
+	marker := os.Getenv("CREWFOLD_WORKSPACE_CRASH_MARKER")
 	config := Config{
-		DataDir:    os.Getenv("CREWFOLD_M2_DATA_DIR"),
-		SocketPath: os.Getenv("CREWFOLD_M2_SOCKET"),
+		DataDir:    os.Getenv("CREWFOLD_WORKSPACE_CRASH_DATA_DIR"),
+		SocketPath: os.Getenv("CREWFOLD_WORKSPACE_CRASH_SOCKET"),
 		Version:    buildinfo.Current(),
 		Logger:     slog.New(slog.NewJSONHandler(io.Discard, nil)),
 		StoreOptions: store.Options{MutationHook: func(current string) error {

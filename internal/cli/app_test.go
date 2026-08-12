@@ -206,7 +206,7 @@ func TestInvalidOutputAndCommandArgumentsAreUsageErrors(t *testing.T) {
 func TestHelpTopics(t *testing.T) {
 	t.Parallel()
 
-	for _, topic := range []string{"version", "doctor", "daemon", "status", "workspace", "project", "checkout", "events", "help"} {
+	for _, topic := range []string{"version", "doctor", "daemon", "status", "workspace", "project", "checkout", "agent", "objective", "task", "events", "help"} {
 		t.Run(topic, func(t *testing.T) {
 			t.Parallel()
 
@@ -224,7 +224,7 @@ func TestHelpTopics(t *testing.T) {
 	}
 }
 
-func TestM3ProjectAndCheckoutCommandsUseExplicitScopeAndStructuredResults(t *testing.T) {
+func TestProjectAndCheckoutCommandsUseExplicitScopeAndStructuredResults(t *testing.T) {
 	t.Parallel()
 
 	project := domain.Project{ID: "prj_1234", WorkspaceID: "ws_1234", Name: "world-engine", Revision: 1}
@@ -237,7 +237,7 @@ func TestM3ProjectAndCheckoutCommandsUseExplicitScopeAndStructuredResults(t *tes
 		assert     func(*testing.T, *fakeDaemonClient)
 	}{
 		"project add": {
-			args:       []string{"project", "add", "world-engine", "--workspace", "personal", "--repo", "/work/world-engine", "--mode", "claimed", "--socket", "/tmp/m3.sock", "--idempotency-key", "project-key", "--output=json"},
+			args:       []string{"project", "add", "world-engine", "--workspace", "personal", "--repo", "/work/world-engine", "--mode", "claimed", "--socket", "/tmp/sources.sock", "--idempotency-key", "project-key", "--output=json"},
 			wantSchema: localapi.ProjectAddSchema,
 			configure: func(client *fakeDaemonClient) {
 				client.projectAdd = localapi.ProjectAddResult{Schema: localapi.ProjectAddSchema, Type: "project_registered", Project: project, Repository: repository, Checkout: checkout}
@@ -250,7 +250,7 @@ func TestM3ProjectAndCheckoutCommandsUseExplicitScopeAndStructuredResults(t *tes
 			},
 		},
 		"project inspect": {
-			args:       []string{"project", "inspect", "world-engine", "--workspace", "personal", "--socket", "/tmp/m3.sock", "--output=json"},
+			args:       []string{"project", "inspect", "world-engine", "--workspace", "personal", "--socket", "/tmp/sources.sock", "--output=json"},
 			wantSchema: localapi.ProjectInspectSchema,
 			configure: func(client *fakeDaemonClient) {
 				client.projectInspect = localapi.ProjectInspectResult{Schema: localapi.ProjectInspectSchema, Type: "project_inspection", Project: project, Repositories: []domain.Repository{repository}, Checkouts: []domain.Checkout{checkout}}
@@ -262,7 +262,7 @@ func TestM3ProjectAndCheckoutCommandsUseExplicitScopeAndStructuredResults(t *tes
 			},
 		},
 		"checkout add adjacent clone": {
-			args:       []string{"checkout", "add", "world-engine", "/work/world-engine-2", "--workspace", "personal", "--mode", "exclusive", "--socket", "/tmp/m3.sock", "--idempotency-key", "checkout-key", "--output=json"},
+			args:       []string{"checkout", "add", "world-engine", "/work/world-engine-2", "--workspace", "personal", "--mode", "exclusive", "--socket", "/tmp/sources.sock", "--idempotency-key", "checkout-key", "--output=json"},
 			wantSchema: localapi.CheckoutAddSchema,
 			configure: func(client *fakeDaemonClient) {
 				client.checkoutAdd = localapi.CheckoutAddResult{Schema: localapi.CheckoutAddSchema, Type: "checkout_registered", Repository: repository, Checkout: checkout}
@@ -275,7 +275,7 @@ func TestM3ProjectAndCheckoutCommandsUseExplicitScopeAndStructuredResults(t *tes
 			},
 		},
 		"checkout list": {
-			args:       []string{"checkout", "list", "world-engine", "--workspace", "personal", "--socket", "/tmp/m3.sock", "--output=json"},
+			args:       []string{"checkout", "list", "world-engine", "--workspace", "personal", "--socket", "/tmp/sources.sock", "--output=json"},
 			wantSchema: localapi.CheckoutListSchema,
 			configure: func(client *fakeDaemonClient) {
 				client.checkoutList = localapi.CheckoutListResult{Schema: localapi.CheckoutListSchema, Type: "checkout_list", Project: project, Checkouts: []domain.Checkout{checkout}}
@@ -292,8 +292,8 @@ func TestM3ProjectAndCheckoutCommandsUseExplicitScopeAndStructuredResults(t *tes
 			test.configure(client)
 			app, stdout, stderr := newTestApp()
 			app.newClient = func(socketPath string) daemonClient {
-				if socketPath != "/tmp/m3.sock" {
-					t.Fatalf("socketPath = %q, want /tmp/m3.sock", socketPath)
+				if socketPath != "/tmp/sources.sock" {
+					t.Fatalf("socketPath = %q, want /tmp/sources.sock", socketPath)
 				}
 				return client
 			}
@@ -314,7 +314,7 @@ func TestM3ProjectAndCheckoutCommandsUseExplicitScopeAndStructuredResults(t *tes
 	}
 }
 
-func TestM3CommandsRejectMissingScopeAndPaths(t *testing.T) {
+func TestProjectAndCheckoutCommandsRejectMissingScopeAndPaths(t *testing.T) {
 	t.Parallel()
 
 	for name, args := range map[string][]string{
@@ -337,7 +337,85 @@ func TestM3CommandsRejectMissingScopeAndPaths(t *testing.T) {
 	}
 }
 
-func TestM2CommandsUseExplicitSocketAndStructuredResults(t *testing.T) {
+func TestCoordinationCommandsPreserveScopeBudgetsLeasesAndRevisions(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeDaemonClient{
+		agentMutation:     localapi.AgentMutationResult{Schema: localapi.AgentMutationSchema, Type: "agent_mutation"},
+		objectiveMutation: localapi.ObjectiveMutationResult{Schema: localapi.ObjectiveMutationSchema, Type: "objective_mutation"},
+		taskMutation:      localapi.TaskMutationResult{Schema: localapi.TaskMutationSchema, Type: "task_mutation"},
+		coordination:      localapi.CoordinationStatusResult{Schema: localapi.CoordinationStatusSchema, Type: "coordination_status", Workspace: "personal"},
+	}
+	run := func(args []string, wantSchema string) {
+		t.Helper()
+		app, stdout, stderr := newTestApp()
+		app.newClient = func(socketPath string) daemonClient {
+			if socketPath != "/tmp/coordination.sock" {
+				t.Fatalf("socketPath = %q, want /tmp/coordination.sock", socketPath)
+			}
+			return client
+		}
+		if exitCode := app.Run(args); exitCode != ExitOK {
+			t.Fatalf("Run(%q) exit code = %d; stderr = %q", args, exitCode, stderr.String())
+		}
+		var envelope struct {
+			Schema string `json:"schema"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+			t.Fatalf("json.Unmarshal(%q) error = %v; stdout = %q", args, err, stdout.String())
+		}
+		if envelope.Schema != wantSchema {
+			t.Fatalf("Run(%q) schema = %q, want %q", args, envelope.Schema, wantSchema)
+		}
+	}
+
+	run([]string{"agent", "create", "implementer", "--workspace", "personal", "--role", "implementer", "--provider", "codex", "--runtime", "herdr", "--max-concurrency", "2", "--socket", "/tmp/coordination.sock", "--idempotency-key", "agent-key", "--output=json"}, localapi.AgentMutationSchema)
+	if params := client.agentCreateParams; params.Workspace != "personal" || params.Name != "implementer" || params.Provider != "codex" || params.Runtime != "herdr" || params.MaxConcurrency != 2 || params.IdempotencyKey != "agent-key" {
+		t.Fatalf("AgentCreate params = %#v", params)
+	}
+
+	run([]string{"objective", "create", "Ship greeting", "--workspace", "personal", "--project", "demo", "--budget-tokens", "20000", "--budget-cents", "500", "--budget-seconds", "3600", "--socket", "/tmp/coordination.sock", "--idempotency-key", "objective-key", "--output=json"}, localapi.ObjectiveMutationSchema)
+	if params := client.objectiveCreateParams; params.Workspace != "personal" || params.Project != "demo" || params.Budget != (domain.Budget{TokenLimit: 20000, CostCents: 500, TimeSeconds: 3600}) {
+		t.Fatalf("ObjectiveCreate params = %#v", params)
+	}
+
+	run([]string{"task", "create", "--workspace", "personal", "--project", "demo", "--objective", "obj_1234", "--title", "Implement greeting", "--description", "deterministic", "--priority", "200", "--budget-tokens", "5000", "--socket", "/tmp/coordination.sock", "--idempotency-key", "task-key", "--output=json"}, localapi.TaskMutationSchema)
+	if params := client.taskCreateParams; params.Workspace != "personal" || params.Project != "demo" || params.Objective != "obj_1234" || params.Priority != 200 || params.Budget.TokenLimit != 5000 {
+		t.Fatalf("TaskCreate params = %#v", params)
+	}
+
+	run([]string{"task", "assign", "task_1234", "implementer", "--workspace", "personal", "--lease-seconds", "300", "--expected-revision", "7", "--socket", "/tmp/coordination.sock", "--idempotency-key", "assign-key", "--output=json"}, localapi.TaskMutationSchema)
+	if params := client.taskAssignParams; params.Task != "task_1234" || params.Agent != "implementer" || params.LeaseSeconds != 300 || params.ExpectedRevision != 7 {
+		t.Fatalf("TaskAssign params = %#v", params)
+	}
+
+	run([]string{"status", "--workspace", "personal", "--socket", "/tmp/coordination.sock", "--output=json"}, localapi.CoordinationStatusSchema)
+	if client.coordinationWorkspace != "personal" {
+		t.Fatalf("CoordinationStatus workspace = %q, want personal", client.coordinationWorkspace)
+	}
+}
+
+func TestCoordinationCommandsRejectAmbiguousBudgetReplacementAndInvalidConcurrency(t *testing.T) {
+	t.Parallel()
+
+	for name, args := range map[string][]string{
+		"zero concurrency":         {"agent", "create", "implementer", "--workspace", "personal", "--role", "implementer", "--provider", "fake", "--max-concurrency", "0", "--socket", "/tmp/socket"},
+		"partial objective budget": {"objective", "update", "obj_1234", "--workspace", "personal", "--budget-tokens", "10", "--expected-revision", "1", "--socket", "/tmp/socket"},
+		"partial task budget":      {"task", "update", "task_1234", "--workspace", "personal", "--budget-cents", "10", "--expected-revision", "1", "--socket", "/tmp/socket"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			app, _, stderr := newTestApp()
+			if exitCode := app.Run(args); exitCode != ExitUsage {
+				t.Fatalf("Run() exit code = %d, want %d", exitCode, ExitUsage)
+			}
+			if stderr.Len() == 0 {
+				t.Fatal("stderr is empty, want usage diagnosis")
+			}
+		})
+	}
+}
+
+func TestWorkspaceCommandsUseExplicitSocketAndStructuredResults(t *testing.T) {
 	t.Parallel()
 
 	workspace := domain.Workspace{
@@ -356,7 +434,7 @@ func TestM2CommandsUseExplicitSocketAndStructuredResults(t *testing.T) {
 		assert     func(*testing.T, *fakeDaemonClient)
 	}{
 		"database doctor": {
-			args:       []string{"doctor", "--database", "--socket", "/tmp/m2.sock", "--output=json"},
+			args:       []string{"doctor", "--database", "--socket", "/tmp/workspace.sock", "--output=json"},
 			wantSchema: localapi.DatabaseStatusSchema,
 			configure: func(client *fakeDaemonClient) {
 				client.databaseStatus = localapi.DatabaseStatusResult{
@@ -372,7 +450,7 @@ func TestM2CommandsUseExplicitSocketAndStructuredResults(t *testing.T) {
 			},
 		},
 		"workspace init": {
-			args:       []string{"workspace", "init", "personal", "--socket", "/tmp/m2.sock", "--idempotency-key", "init-personal", "--output=json"},
+			args:       []string{"workspace", "init", "personal", "--socket", "/tmp/workspace.sock", "--idempotency-key", "init-personal", "--output=json"},
 			wantSchema: localapi.WorkspaceInitSchema,
 			configure: func(client *fakeDaemonClient) {
 				client.workspaceInit = localapi.WorkspaceInitResult{
@@ -390,7 +468,7 @@ func TestM2CommandsUseExplicitSocketAndStructuredResults(t *testing.T) {
 			},
 		},
 		"workspace show": {
-			args:       []string{"workspace", "show", "personal", "--socket=/tmp/m2.sock", "--output=json"},
+			args:       []string{"workspace", "show", "personal", "--socket=/tmp/workspace.sock", "--output=json"},
 			wantSchema: localapi.WorkspaceShowSchema,
 			configure: func(client *fakeDaemonClient) {
 				client.workspaceShow = localapi.WorkspaceShowResult{
@@ -406,7 +484,7 @@ func TestM2CommandsUseExplicitSocketAndStructuredResults(t *testing.T) {
 			},
 		},
 		"events list": {
-			args:       []string{"events", "list", "--socket", "/tmp/m2.sock", "--after", "7", "--limit", "25", "--output=json"},
+			args:       []string{"events", "list", "--socket", "/tmp/workspace.sock", "--after", "7", "--limit", "25", "--output=json"},
 			wantSchema: localapi.EventsListSchema,
 			configure: func(client *fakeDaemonClient) {
 				client.eventsList = localapi.EventsListResult{
@@ -431,8 +509,8 @@ func TestM2CommandsUseExplicitSocketAndStructuredResults(t *testing.T) {
 			}
 			app, stdout, stderr := newTestApp()
 			app.newClient = func(socketPath string) daemonClient {
-				if socketPath != "/tmp/m2.sock" {
-					t.Fatalf("socketPath = %q, want /tmp/m2.sock", socketPath)
+				if socketPath != "/tmp/workspace.sock" {
+					t.Fatalf("socketPath = %q, want /tmp/workspace.sock", socketPath)
 				}
 				return client
 			}
@@ -458,7 +536,7 @@ func TestM2CommandsUseExplicitSocketAndStructuredResults(t *testing.T) {
 	}
 }
 
-func TestM2CommandsRejectInvalidArguments(t *testing.T) {
+func TestWorkspaceCommandsRejectInvalidArguments(t *testing.T) {
 	t.Parallel()
 
 	for name, args := range map[string][]string{
@@ -601,7 +679,7 @@ func TestStatusAndStopUseExplicitSocket(t *testing.T) {
 	}
 }
 
-func TestM1CommandsRejectMissingAndUnknownOptions(t *testing.T) {
+func TestDaemonCommandsRejectMissingAndUnknownOptions(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string][]string{
@@ -630,33 +708,48 @@ func TestM1CommandsRejectMissingAndUnknownOptions(t *testing.T) {
 }
 
 type fakeDaemonClient struct {
-	status            localapi.StatusResult
-	statusErr         error
-	stop              localapi.StopResult
-	stopErr           error
-	databaseStatus    localapi.DatabaseStatusResult
-	databaseStatusErr error
-	workspaceInit     localapi.WorkspaceInitResult
-	workspaceInitErr  error
-	workspaceShow     localapi.WorkspaceShowResult
-	workspaceShowErr  error
-	projectAdd        localapi.ProjectAddResult
-	projectAddErr     error
-	projectInspect    localapi.ProjectInspectResult
-	projectInspectErr error
-	checkoutAdd       localapi.CheckoutAddResult
-	checkoutAddErr    error
-	checkoutList      localapi.CheckoutListResult
-	checkoutListErr   error
-	eventsList        localapi.EventsListResult
-	eventsListErr     error
-	initName          string
-	initKey           string
-	showIdentifier    string
-	projectArgs       []string
-	checkoutArgs      []string
-	eventsAfter       int64
-	eventsLimit       int
+	status                localapi.StatusResult
+	statusErr             error
+	stop                  localapi.StopResult
+	stopErr               error
+	databaseStatus        localapi.DatabaseStatusResult
+	databaseStatusErr     error
+	workspaceInit         localapi.WorkspaceInitResult
+	workspaceInitErr      error
+	workspaceShow         localapi.WorkspaceShowResult
+	workspaceShowErr      error
+	projectAdd            localapi.ProjectAddResult
+	projectAddErr         error
+	projectInspect        localapi.ProjectInspectResult
+	projectInspectErr     error
+	checkoutAdd           localapi.CheckoutAddResult
+	checkoutAddErr        error
+	checkoutList          localapi.CheckoutListResult
+	checkoutListErr       error
+	eventsList            localapi.EventsListResult
+	eventsListErr         error
+	agentMutation         localapi.AgentMutationResult
+	agentShow             localapi.AgentShowResult
+	agentList             localapi.AgentListResult
+	objectiveMutation     localapi.ObjectiveMutationResult
+	objectiveShow         localapi.ObjectiveShowResult
+	objectiveList         localapi.ObjectiveListResult
+	taskMutation          localapi.TaskMutationResult
+	taskShow              localapi.TaskShowResult
+	taskList              localapi.TaskListResult
+	coordination          localapi.CoordinationStatusResult
+	agentCreateParams     localapi.AgentCreateParams
+	objectiveCreateParams localapi.ObjectiveCreateParams
+	taskCreateParams      localapi.TaskCreateParams
+	taskAssignParams      localapi.TaskAssignParams
+	coordinationWorkspace string
+	initName              string
+	initKey               string
+	showIdentifier        string
+	projectArgs           []string
+	checkoutArgs          []string
+	eventsAfter           int64
+	eventsLimit           int
 }
 
 func (client *fakeDaemonClient) Status(context.Context) (localapi.StatusResult, error) {
@@ -700,6 +793,75 @@ func (client *fakeDaemonClient) CheckoutAdd(_ context.Context, workspace, projec
 func (client *fakeDaemonClient) CheckoutList(_ context.Context, workspace, project string) (localapi.CheckoutListResult, error) {
 	client.checkoutArgs = []string{workspace, project}
 	return client.checkoutList, client.checkoutListErr
+}
+
+func (client *fakeDaemonClient) AgentCreate(_ context.Context, params localapi.AgentCreateParams) (localapi.AgentMutationResult, error) {
+	client.agentCreateParams = params
+	return client.agentMutation, nil
+}
+
+func (client *fakeDaemonClient) AgentUpdate(context.Context, localapi.AgentUpdateParams) (localapi.AgentMutationResult, error) {
+	return client.agentMutation, nil
+}
+
+func (client *fakeDaemonClient) AgentShow(context.Context, string, string) (localapi.AgentShowResult, error) {
+	return client.agentShow, nil
+}
+
+func (client *fakeDaemonClient) AgentList(context.Context, string) (localapi.AgentListResult, error) {
+	return client.agentList, nil
+}
+
+func (client *fakeDaemonClient) ObjectiveCreate(_ context.Context, params localapi.ObjectiveCreateParams) (localapi.ObjectiveMutationResult, error) {
+	client.objectiveCreateParams = params
+	return client.objectiveMutation, nil
+}
+
+func (client *fakeDaemonClient) ObjectiveUpdate(context.Context, localapi.ObjectiveUpdateParams) (localapi.ObjectiveMutationResult, error) {
+	return client.objectiveMutation, nil
+}
+
+func (client *fakeDaemonClient) ObjectiveShow(context.Context, string, string) (localapi.ObjectiveShowResult, error) {
+	return client.objectiveShow, nil
+}
+
+func (client *fakeDaemonClient) ObjectiveList(context.Context, string, string) (localapi.ObjectiveListResult, error) {
+	return client.objectiveList, nil
+}
+
+func (client *fakeDaemonClient) TaskCreate(_ context.Context, params localapi.TaskCreateParams) (localapi.TaskMutationResult, error) {
+	client.taskCreateParams = params
+	return client.taskMutation, nil
+}
+
+func (client *fakeDaemonClient) TaskUpdate(context.Context, localapi.TaskUpdateParams) (localapi.TaskMutationResult, error) {
+	return client.taskMutation, nil
+}
+
+func (client *fakeDaemonClient) TaskShow(context.Context, string, string) (localapi.TaskShowResult, error) {
+	return client.taskShow, nil
+}
+
+func (client *fakeDaemonClient) TaskList(context.Context, string, string, bool) (localapi.TaskListResult, error) {
+	return client.taskList, nil
+}
+
+func (client *fakeDaemonClient) TaskDepend(context.Context, localapi.TaskDependencyParams) (localapi.TaskMutationResult, error) {
+	return client.taskMutation, nil
+}
+
+func (client *fakeDaemonClient) TaskAssign(_ context.Context, params localapi.TaskAssignParams) (localapi.TaskMutationResult, error) {
+	client.taskAssignParams = params
+	return client.taskMutation, nil
+}
+
+func (client *fakeDaemonClient) TaskTransition(context.Context, localapi.TaskTransitionParams) (localapi.TaskMutationResult, error) {
+	return client.taskMutation, nil
+}
+
+func (client *fakeDaemonClient) CoordinationStatus(_ context.Context, workspace string) (localapi.CoordinationStatusResult, error) {
+	client.coordinationWorkspace = workspace
+	return client.coordination, nil
 }
 
 func (client *fakeDaemonClient) EventsList(_ context.Context, after int64, limit int) (localapi.EventsListResult, error) {

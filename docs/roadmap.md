@@ -8,10 +8,10 @@ commands, failure cases, and exit gates are in the
 rules are in the [testing strategy](testing.md).
 
 Current status: **M0 through M3 are complete**. Evidence is recorded in the [M0
-review](reviews/m00-buildable-repository.md), [M1
-review](reviews/m01-daemon-api-spine.md), and [M2
-review](reviews/m02-persistent-workspace.md), and [M3
-review](reviews/m03-projects-checkouts.md). M3's implementation commits are
+review](reviews/buildable-repository.md), [M1
+review](reviews/daemon-api-spine.md), and [M2
+review](reviews/persistent-workspace.md), and [M3
+review](reviews/projects-checkouts.md). M3's implementation commits are
 `2be19905ccd003b045b3af20a452177ac2d5f127` and
 `76f7dcef6464917eacec5921cc4d0368a2e66cf1`. M4 is next and has not started.
 

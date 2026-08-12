@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:objective-query-params:v1",
+  "title": "Crewfold local API objective query parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "project": {"type": "string", "minLength": 1, "maxLength": 128},
+    "objective": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"}
+  }
+}

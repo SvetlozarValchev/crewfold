@@ -364,6 +364,38 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleCheckoutAdd(request), false
 	case localapi.MethodCheckoutList:
 		return s.handleCheckoutList(request), false
+	case localapi.MethodAgentCreate:
+		return s.handleAgentCreate(request), false
+	case localapi.MethodAgentUpdate:
+		return s.handleAgentUpdate(request), false
+	case localapi.MethodAgentShow:
+		return s.handleAgentShow(request), false
+	case localapi.MethodAgentList:
+		return s.handleAgentList(request), false
+	case localapi.MethodObjectiveCreate:
+		return s.handleObjectiveCreate(request), false
+	case localapi.MethodObjectiveUpdate:
+		return s.handleObjectiveUpdate(request), false
+	case localapi.MethodObjectiveShow:
+		return s.handleObjectiveShow(request), false
+	case localapi.MethodObjectiveList:
+		return s.handleObjectiveList(request), false
+	case localapi.MethodTaskCreate:
+		return s.handleTaskCreate(request), false
+	case localapi.MethodTaskUpdate:
+		return s.handleTaskUpdate(request), false
+	case localapi.MethodTaskShow:
+		return s.handleTaskShow(request), false
+	case localapi.MethodTaskList:
+		return s.handleTaskList(request), false
+	case localapi.MethodTaskDepend:
+		return s.handleTaskDepend(request), false
+	case localapi.MethodTaskAssign:
+		return s.handleTaskAssign(request), false
+	case localapi.MethodTaskTransition:
+		return s.handleTaskTransition(request), false
+	case localapi.MethodCoordinationStatus:
+		return s.handleCoordinationStatus(request), false
 	case localapi.MethodEventsList:
 		return s.handleEventsList(request), false
 	default:

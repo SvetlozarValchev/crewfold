@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:objective:v1",
+  "title": "Crewfold objective v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "workspace_id", "project_id", "title", "status", "budget", "revision", "created_at", "updated_at", "created_by", "updated_by"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 256},
+    "status": {"enum": ["active", "completed", "cancelled"]},
+    "budget": {"$ref": "budget.schema.json"},
+    "revision": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "created_by": {"type": "string", "minLength": 1},
+    "updated_by": {"type": "string", "minLength": 1}
+  }
+}

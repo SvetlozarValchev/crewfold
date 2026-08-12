@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:agent-show-result:v1",
+  "title": "Crewfold local API agent show result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "agent"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:agent-show-result:v1"},
+    "type": {"const": "agent"},
+    "agent": {"$ref": "../../domain/v1/agent.schema.json"}
+  }
+}

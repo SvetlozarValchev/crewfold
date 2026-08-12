@@ -1,10 +1,9 @@
 # `crewfold` command
 
-This directory contains the single Go entry point. M0 implemented `version`,
-`help`, and `doctor --self`; M1 added the foreground daemon, status client,
-graceful stop, and signal cancellation. M2 added database diagnostics, durable
-workspace commands, and event inspection. M3 adds project/checkout commands and
-read-only Git observation without creating a second binary.
+This directory contains the single Go entry point for self-diagnostics, the
+foreground daemon, database/workspace/event operations, read-only project and
+checkout observation, and durable agent/objective/task coordination. It does not
+contain a runtime launcher or create a second provider-specific binary.
 
 See [the CLI contract](../../docs/cli.md) and
 [technology stack](../../docs/stack.md).
