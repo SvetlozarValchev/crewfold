@@ -42,6 +42,7 @@ explicitly rather than silently treating either as authoritative.
 - [Deterministic execution milestone review](reviews/deterministic-execution.md)
 - [Direct subprocess milestone review](reviews/direct-runtime.md)
 - [Run-scoped MCP milestone review](reviews/scoped-mcp.md)
+- [Durable two-agent messaging milestone review](reviews/agent-messaging.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 

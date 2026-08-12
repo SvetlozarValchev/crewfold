@@ -7,7 +7,7 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M7 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M8 are complete**. Evidence is recorded in the [M0
 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -15,7 +15,9 @@ review](reviews/projects-checkouts.md). [M4 evidence](reviews/durable-coordinati
 covers durable coordination. [M5 evidence](reviews/deterministic-execution.md)
 captures deterministic run execution, and [M6 evidence](reviews/direct-runtime.md)
 captures supervised direct execution. [M7 evidence](reviews/scoped-mcp.md)
-captures run-scoped MCP and immutable briefing. The M7 implementation commit is
+captures run-scoped MCP and immutable briefing. [M8 evidence](reviews/agent-messaging.md)
+captures offline-safe durable agent mail and request/reply coordination. The M8
+implementation commit is `bc6235d76ee45d98a94c8e01b024c69b9eb2299f`. The M7 implementation commit is
 `99e9791d39e2c0b3e36333f366a4fd84bcbaf6ef`. The M6 implementation commits are
 `2c4043dd86bc1c22938184b3a65835b9754f7db0` and
 `951485b894273130941ae1b3a39a76a7267e2c15`. The M5 implementation commit is
@@ -23,7 +25,7 @@ captures run-scoped MCP and immutable briefing. The M7 implementation commit is
 implementation commits are
 `7973bded9f99e965bc01a662b6b4d532e679d2c3` and
 `dbce60007de652d09862a8f673886702ba9860bc`, with assignment-policy coverage in
-`c821ab12cc649d7807a504ee615e61796591178e`. M8 is next and has not started.
+`c821ab12cc649d7807a504ee615e61796591178e`. M9 is next and has not started.
 
 ## Sequence
 
@@ -37,7 +39,7 @@ implementation commits are
 | M5 ✓ | Fake-agent loop | Assign, launch, progress, block, complete, and hand off one task | M4 |
 | M6 ✓ | Direct runtime | Run and recover a real fixture subprocess with bounded output | M5 |
 | M7 ✓ | MCP/briefing | Let a run read scoped context and report through authenticated MCP | M6 |
-| M8 | Agent messaging | Exchange and acknowledge durable mail while one agent is offline | M7 |
+| M8 ✓ | Agent messaging | Exchange and acknowledge durable mail while one agent is offline | M7 |
 | M9 | Herdr runtime | Run the fixture agent in Herdr and reconcile terminal lifecycle | M8 |
 | M10 | Codex canary | Complete the proven task/MCP loop with one real Codex session | M9 |
 | M11 | Claude canary | Complete the same loop with Claude and switch providers via handoff | M10 |
@@ -157,7 +159,7 @@ done because later code happens to depend on it.
 
 ## Parallel work policy
 
-The critical path remains sequential through M8. Small supporting work may happen
+The critical path remains sequential through M9. Small supporting work may happen
 in parallel only when its contract is already fixed and independently testable—for
 example protocol fixtures, documentation, or a fake adapter.
 
@@ -188,22 +190,25 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M8 is the next approved implementation target:
+M9 is the next approved implementation target:
 
-1. add durable threads, recipient-scoped messages, delivery, read, and
-   acknowledgement state;
-2. expose bounded MCP inbox, read, send, and acknowledge tools without permitting
-   unauthorized broadcast or messages to real people;
-3. keep durable message storage separate from best-effort runtime wake-up;
-4. prove stopped agent B can later read and acknowledge agent A's message, and
-   that restart between send and delivery creates no duplicate;
-5. add only a bounded inbox summary to newly built context packets and complete a
-   fixture request/reply/handoff entirely through MCP.
+1. probe the installed Herdr endpoint and report exact API/schema compatibility
+   before Crewfold creates a surface or launches a run;
+2. implement a runtime driver that maps registered placement to Herdr
+   workspace/tab/pane state while keeping Crewfold run identity authoritative;
+3. launch the provider-free fixture terminal through Herdr and use the existing
+   MCP briefing, reporting, and mailbox contracts unchanged;
+4. implement structured observe, attach, prompt/wake, interrupt, stop, and restart
+   reconciliation with stable opaque runtime handles;
+5. keep recorded/fake Herdr protocol fixtures in the normal offline gate and add
+   a strictly opt-in live conformance scenario when Herdr is installed.
 
-M8 must preserve run-scoped capabilities and distinguish `queued/unseen` from a
-failed wake-up. Large payloads must remain artifacts rather than hidden message
-bodies. It must not introduce claims, meetings, canonical knowledge, retrieval,
-real model providers, Herdr, remote users, or automatic source mutation. Every
-completed capability scenario remains a required gate.
+M9 must run the deterministic task loop and durable two-agent communication
+through Herdr without adding provider-specific branches to the core. A moved pane
+must not change task identity, and a closed/missing pane must produce an explicit
+failed or lost observation rather than completion. Codex, Claude, claims,
+meetings, canonical knowledge, remote users, and automatic source mutation remain
+outside this milestone. Every completed capability scenario remains a required
+gate.
 
 No upstream repository should be created until the owner explicitly requests it.
