@@ -7,7 +7,7 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M13 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M14 are complete**. Evidence is recorded in the [M0
 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -47,10 +47,11 @@ authority, typed consolidation actions, human takeover, and the pinned `sqlc`
 persistence boundary. Its implementation commit is
 `432e6e02a85c4793ec26f08bfcfc7783a587d04d`.
 
-M14's canonical decision/finding store, owner-governed lifecycle, agent proposal
-tool, and exact-link context packet v3 are implemented. M14 is not marked complete
-below until its replacement-agent scenario, persistence and failure evidence,
-milestone review, and implementation commit satisfy the normal gate.
+M14's [canonical knowledge review](reviews/canonical-knowledge.md) covers immutable
+decision/finding revisions, structured provenance, owner governance, authenticated
+agent proposals, exact-link context packet v3, restart and rollback evidence, and
+recorded Codex-to-Claude replacement without transcript ingestion. Its
+implementation commit is `e37fdcf32b2e5f69766405d6585ff24277a1ab3c`.
 
 ## Sequence
 
@@ -70,7 +71,7 @@ milestone review, and implementation commit satisfy the normal gate.
 | M11 ✓ | Claude portability | Complete the same recorded loop with Claude and switch providers via handoff | M10 |
 | M12 ✓ | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
 | M13 ✓ | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
-| M14 | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
+| M14 ✓ | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
 | M15 | Curator/retrieval | Find, reconcile, and refresh relevant knowledge deterministically | M14 |
 | M16 | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
 | M17 | Local checks/CI watcher | Route fresh check evidence without granting merge authority | M16 |
@@ -216,16 +217,15 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-The M14 acceptance gate is next. Its implementation preserves explicitly proposed
-and owner-accepted decisions/findings with task, concluded-meeting, or accepted
-meeting-proposal provenance. A replacement agent receives only exact requested,
-accepted/current/applicable revisions in packet v3; old superseded pins are
-explained rather than silently followed. Fixed total and knowledge byte budgets
-exclude whole revisions with reasons instead of truncating them.
+M15 is next: add deterministic retrieval and curation on top of canonical records
+without allowing retrieval to grant authority. The first slice must make scoped
+search independently testable: hard workspace/project/authority/freshness filters,
+deterministic ranking and explanations, and a rebuildable index whose removal
+cannot affect exact canonical reads.
 
-Native provider resume, active-turn steering, app-server ownership, remote users,
-search, automatic curation, contradiction handling, broader knowledge types, and
-context deltas remain outside M14. Provider transcripts are not ingested. Every
-completed capability scenario remains required.
+Later M15 slices add curator proposals, contradiction handling, explicit context
+deltas, and portable export. Native provider resume, active-turn steering,
+app-server ownership, remote users, and broader organizational authority remain
+outside this milestone. Every completed capability scenario remains required.
 
 No upstream repository should be created until the owner explicitly requests it.

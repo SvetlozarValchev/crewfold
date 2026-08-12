@@ -5,9 +5,8 @@
 Crewfold's knowledge system supplies the smallest trustworthy context needed for a
 task. It is not a transcript archive disguised as memory.
 
-The canonical knowledge core and context-packet v3 contract are implemented. The
-milestone is not marked complete until its acceptance scenario and review gate are
-recorded. The current implementation supports:
+The canonical knowledge core and context-packet v3 contract are implemented and
+their acceptance/review gate has passed. The current implementation supports:
 
 - canonical `decision` and `finding` items with immutable content revisions;
 - task, concluded-meeting, and accepted meeting-proposal provenance;

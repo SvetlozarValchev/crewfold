@@ -684,10 +684,9 @@ from records without reading terminal transcripts.
 **Question answered:** Can Crewfold preserve an accepted decision or finding and
 deliver it explicitly to a replacement agent without copying a transcript?
 
-**Implementation status:** The storage, command, protocol, and packet-v3 contract
-described here is present. M14 remains open until its checked-in replacement-agent
-scenario, failure proof, persistence proof, and milestone review pass the normal
-exit gate.
+**Implementation status:** Complete. The checked-in replacement-agent scenario,
+failure and rollback proof, persistence/restart proof, full repository gate, and
+[milestone review](reviews/canonical-knowledge.md) pass the normal exit gate.
 
 **Visible result**
 

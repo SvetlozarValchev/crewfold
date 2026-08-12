@@ -61,9 +61,9 @@ decisions and findings as immutable revisions: authenticated runs may propose,
 while the local owner accepts, rejects, marks stale, or accepts an explicit
 successor. Context packet v3 can deliver exact accepted/current revision snapshots
 to a replacement run under fixed byte budgets without reading provider
-transcripts. The M14 acceptance gate is still pending; automatic curation,
-search, context deltas, broader knowledge types, and the operator TUI remain to
-come.
+transcripts. The canonical-knowledge acceptance gate now passes; automatic
+curation, search, context deltas, broader knowledge types, and the operator TUI
+remain to come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.
