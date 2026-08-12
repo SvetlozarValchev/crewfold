@@ -78,6 +78,10 @@ func TestDefinitionUpdatesUseExpectedRevisions(t *testing.T) {
 	if _, err := storage.UpdateAgent(context.Background(), UpdateAgentCommand{WorkspaceIdentifier: workspace.ID, AgentIdentifier: agent.Value.ID, Role: &newRole, ExpectedRevision: 1, IdempotencyKey: "stale-agent", CorrelationID: "request-stale-agent"}); ErrorCode(err) != CodeRevisionConflict {
 		t.Fatalf("UpdateAgent(stale) error = %v, code = %q", err, ErrorCode(err))
 	}
+	disabledTask := createWorkTestTask(t, storage, workspace.ID, project.ID, "disabled agent assignment", "disabled-agent-task")
+	if _, err := storage.AssignTask(context.Background(), AssignTaskCommand{WorkspaceIdentifier: workspace.ID, TaskID: disabledTask.Task.ID, AgentIdentifier: agent.Value.ID, LeaseSeconds: 60, ExpectedRevision: 1, IdempotencyKey: "assign-disabled-agent", CorrelationID: "request-assign-disabled-agent"}); ErrorCode(err) != CodeAssignmentConflict {
+		t.Fatalf("AssignTask(disabled agent) error = %v, code = %q", err, ErrorCode(err))
+	}
 
 	objective, _ := storage.CreateObjective(context.Background(), CreateObjectiveCommand{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, Title: "Initial objective", IdempotencyKey: "objective", CorrelationID: "request-objective"})
 	newTitle := "Updated objective"
