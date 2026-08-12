@@ -3,10 +3,11 @@
 Status: the v1 envelope is implemented. Workspace/source/agent/objective/task
 coordination events and the run events used by deterministic and direct execution
 are implemented, including request, start, runtime binding, progress, blockage,
-resume, completion proposal, handoff, completion/failure, stop, and lost-runtime
-facts. Names for later messaging, meetings, knowledge, policy, checks, and external
-integrations remain proposals; the catalogue defines intended coverage, not a
-frozen schema.
+resume, completion proposal, handoff, completion/failure, stop, lost-runtime,
+scoped tool audit, report receipt, artifact publication, and context-packet facts.
+Names for later messaging, meetings, canonical knowledge, policy, checks, and
+external integrations remain proposals; the catalogue defines intended coverage,
+not a frozen schema.
 
 ## Envelope
 
@@ -79,6 +80,10 @@ run.stop_requested
 run.stopped
 run.lost
 run.resume_handle_recorded
+run.report_received
+run.artifact_published
+run.tool_called
+run.tool_denied
 ```
 
 ## Objectives and tasks
@@ -162,8 +167,8 @@ knowledge.rejected
 knowledge.marked_stale
 knowledge.disputed
 knowledge.superseded
-context_packet.built
-context_packet.dispatched
+context.packet_built
+context.packet_dispatched
 context_delta.built
 context_delta.acknowledged
 contradiction.detected

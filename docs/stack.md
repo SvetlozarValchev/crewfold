@@ -8,8 +8,9 @@ console until the control plane works end to end.
 
 The current implementation includes the Go binary, local Unix transport, SQLite
 storage, read-only installed-Git observation, and provider-neutral durable work
-coordination. Later rows remain the proposed baseline until their capability is
-implemented.
+coordination. It also includes a run-scoped MCP facade and immutable base context
+packets for the trusted fixture provider. Later rows remain the proposed baseline
+until their capability is implemented.
 
 ## Core
 

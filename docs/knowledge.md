@@ -5,6 +5,12 @@
 Crewfold's knowledge system supplies the smallest trustworthy context needed for a
 task. It is not a transcript archive disguised as memory.
 
+Status: immutable base packets containing role, task, checkout, dependency,
+policy, and reporting context are implemented. Canonical knowledge records,
+curation, retrieval, packet refresh/deltas, claims, and mailbox selection below
+remain the planned knowledge system; unimplemented sections are explicitly named
+as exclusions in current packets.
+
 The system separates four layers:
 
 ```text
