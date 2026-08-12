@@ -7,9 +7,11 @@ task. It is not a transcript archive disguised as memory.
 
 Status: immutable base packets containing role, task, checkout, dependency,
 policy, reporting context, and a bounded project-scoped inbox summary are
-implemented. Canonical knowledge records, curation, retrieval, packet
-refresh/deltas, and claims below remain planned; unimplemented sections are
-explicitly named as exclusions in current packets.
+implemented. Durable claims and overlaps now exist as coordination records, but
+including their live snapshot in context packets remains planned. Canonical
+knowledge records, curation, retrieval, and packet refresh/deltas also remain
+planned; unimplemented sections are explicitly named as exclusions in current
+packets.
 
 The system separates four layers:
 

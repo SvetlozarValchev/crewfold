@@ -284,16 +284,20 @@ func (s *Store) ApplyCheckoutObservations(ctx context.Context, workspaceIdentifi
 		if !changed {
 			continue
 		}
+		_, dirtyPathsJSON, err := encodeDirtyPaths(updated.DirtyPaths)
+		if err != nil {
+			return ProjectInspection{}, &Error{Code: CodeInvalidCheckout, Message: err.Error()}
+		}
 		if _, err := transaction.ExecContext(ctx, `
 UPDATE checkouts
 SET revision = ?, availability = ?, checkout_kind = ?, branch = NULLIF(?, ''),
-    head_commit = NULLIF(?, ''), dirty = ?, git_dir = NULLIF(?, ''),
+	    head_commit = NULLIF(?, ''), dirty = ?, dirty_paths_json = ?, git_dir = NULLIF(?, ''),
     git_common_dir = NULLIF(?, ''), observed_at = ?,
     diagnostic_code = NULLIF(?, ''), diagnostic = NULLIF(?, ''),
     updated_at = ?, updated_by = ?
 WHERE id = ? AND project_id = ?`,
 			updated.Revision, updated.Availability, updated.CheckoutKind, updated.Branch,
-			updated.HeadCommit, updated.Dirty, updated.GitDir, updated.GitCommonDir,
+			updated.HeadCommit, updated.Dirty, dirtyPathsJSON, updated.GitDir, updated.GitCommonDir,
 			updated.ObservedAt, updated.DiagnosticCode, updated.Diagnostic,
 			updated.UpdatedAt, updated.UpdatedBy, updated.ID, inspection.Project.ID,
 		); err != nil {
@@ -321,6 +325,7 @@ func mergeCheckoutObservation(current domain.Checkout, observation domain.Checko
 		updated.Branch = observation.Branch
 		updated.HeadCommit = observation.HeadCommit
 		updated.Dirty = observation.Dirty
+		updated.DirtyPaths = append([]string(nil), observation.DirtyPaths...)
 		updated.GitDir = observation.GitDir
 		updated.GitCommonDir = observation.GitCommonDir
 		updated.DiagnosticCode = ""
@@ -330,7 +335,7 @@ func mergeCheckoutObservation(current domain.Checkout, observation domain.Checko
 		updated.DiagnosticCode = observation.DiagnosticCode
 		updated.Diagnostic = observation.Diagnostic
 	}
-	changed := updated.Availability != current.Availability || updated.CheckoutKind != current.CheckoutKind || updated.Branch != current.Branch || updated.HeadCommit != current.HeadCommit || updated.Dirty != current.Dirty || updated.GitDir != current.GitDir || updated.GitCommonDir != current.GitCommonDir || updated.DiagnosticCode != current.DiagnosticCode || updated.Diagnostic != current.Diagnostic
+	changed := updated.Availability != current.Availability || updated.CheckoutKind != current.CheckoutKind || updated.Branch != current.Branch || updated.HeadCommit != current.HeadCommit || updated.Dirty != current.Dirty || !equalStrings(updated.DirtyPaths, current.DirtyPaths) || updated.GitDir != current.GitDir || updated.GitCommonDir != current.GitCommonDir || updated.DiagnosticCode != current.DiagnosticCode || updated.Diagnostic != current.Diagnostic
 	if changed {
 		updated.Revision++
 		updated.ObservedAt = now
@@ -352,6 +357,9 @@ func validateObservation(observation domain.CheckoutObservation) error {
 	}
 	if !repositoryFingerprintPattern.MatchString(observation.Repository.Fingerprint) || (observation.Repository.ObjectFormat != "sha1" && observation.Repository.ObjectFormat != "sha256") || len(observation.Repository.RootCommits) == 0 || observation.HeadCommit == "" {
 		return &Error{Code: CodeInvalidCheckout, Message: "Git repository observation is incomplete or malformed"}
+	}
+	if _, _, err := encodeDirtyPaths(observation.DirtyPaths); err != nil {
+		return &Error{Code: CodeInvalidCheckout, Message: err.Error()}
 	}
 	return nil
 }
@@ -495,21 +503,25 @@ func insertCheckout(ctx context.Context, transaction *sql.Tx, projectID, reposit
 	if err != nil {
 		return domain.Checkout{}, storageFailure("generate checkout id", err)
 	}
+	dirtyPaths, dirtyPathsJSON, err := encodeDirtyPaths(observation.DirtyPaths)
+	if err != nil {
+		return domain.Checkout{}, &Error{Code: CodeInvalidCheckout, Message: err.Error()}
+	}
 	checkout := domain.Checkout{
 		ID: checkoutID, ProjectID: projectID, RepositoryID: repositoryID, Path: observation.Path,
 		WriteMode: writeMode, Revision: 1, Availability: observation.Availability, CheckoutKind: observation.CheckoutKind,
-		Branch: observation.Branch, HeadCommit: observation.HeadCommit, Dirty: observation.Dirty,
+		Branch: observation.Branch, HeadCommit: observation.HeadCommit, Dirty: observation.Dirty, DirtyPaths: dirtyPaths,
 		GitDir: observation.GitDir, GitCommonDir: observation.GitCommonDir, ObservedAt: now,
 		CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID,
 	}
 	if _, err := transaction.ExecContext(ctx, `
 INSERT INTO checkouts(
     id, project_id, repository_id, path, write_mode, revision, availability,
-    checkout_kind, branch, head_commit, dirty, git_dir, git_common_dir,
-    observed_at, diagnostic_code, diagnostic, created_at, updated_at, created_by, updated_by
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, NULL, NULL, ?, ?, ?, ?)`,
+	    checkout_kind, branch, head_commit, dirty, dirty_paths_json, git_dir, git_common_dir,
+	    observed_at, diagnostic_code, diagnostic, created_at, updated_at, created_by, updated_by
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, NULL, NULL, ?, ?, ?, ?)`,
 		checkout.ID, checkout.ProjectID, checkout.RepositoryID, checkout.Path, checkout.WriteMode, checkout.Revision,
-		checkout.Availability, checkout.CheckoutKind, checkout.Branch, checkout.HeadCommit, checkout.Dirty,
+		checkout.Availability, checkout.CheckoutKind, checkout.Branch, checkout.HeadCommit, checkout.Dirty, dirtyPathsJSON,
 		checkout.GitDir, checkout.GitCommonDir, checkout.ObservedAt, checkout.CreatedAt, checkout.UpdatedAt,
 		checkout.CreatedBy, checkout.UpdatedBy,
 	); err != nil {
@@ -550,7 +562,7 @@ WHERE pr.project_id = ? ORDER BY r.id`, projectID)
 func queryProjectCheckouts(ctx context.Context, database *sql.DB, projectID string) ([]domain.Checkout, error) {
 	rows, err := database.QueryContext(ctx, `
 SELECT id, project_id, repository_id, path, write_mode, revision, availability,
-       checkout_kind, COALESCE(branch, ''), COALESCE(head_commit, ''), dirty,
+	       checkout_kind, COALESCE(branch, ''), COALESCE(head_commit, ''), dirty, dirty_paths_json,
        COALESCE(git_dir, ''), COALESCE(git_common_dir, ''), observed_at,
        COALESCE(diagnostic_code, ''), COALESCE(diagnostic, ''),
        created_at, updated_at, created_by, updated_by
@@ -562,8 +574,12 @@ FROM checkouts WHERE project_id = ? ORDER BY path`, projectID)
 	result := make([]domain.Checkout, 0)
 	for rows.Next() {
 		var checkout domain.Checkout
-		if err := rows.Scan(&checkout.ID, &checkout.ProjectID, &checkout.RepositoryID, &checkout.Path, &checkout.WriteMode, &checkout.Revision, &checkout.Availability, &checkout.CheckoutKind, &checkout.Branch, &checkout.HeadCommit, &checkout.Dirty, &checkout.GitDir, &checkout.GitCommonDir, &checkout.ObservedAt, &checkout.DiagnosticCode, &checkout.Diagnostic, &checkout.CreatedAt, &checkout.UpdatedAt, &checkout.CreatedBy, &checkout.UpdatedBy); err != nil {
+		var dirtyPathsJSON string
+		if err := rows.Scan(&checkout.ID, &checkout.ProjectID, &checkout.RepositoryID, &checkout.Path, &checkout.WriteMode, &checkout.Revision, &checkout.Availability, &checkout.CheckoutKind, &checkout.Branch, &checkout.HeadCommit, &checkout.Dirty, &dirtyPathsJSON, &checkout.GitDir, &checkout.GitCommonDir, &checkout.ObservedAt, &checkout.DiagnosticCode, &checkout.Diagnostic, &checkout.CreatedAt, &checkout.UpdatedAt, &checkout.CreatedBy, &checkout.UpdatedBy); err != nil {
 			return nil, storageFailure("scan project checkout", err)
+		}
+		if err := json.Unmarshal([]byte(dirtyPathsJSON), &checkout.DirtyPaths); err != nil {
+			return nil, storageFailure("decode checkout dirty paths", err)
 		}
 		result = append(result, checkout)
 	}
@@ -606,7 +622,40 @@ INSERT INTO events(
 }
 
 func checkoutEventData(checkout domain.Checkout) map[string]any {
-	return map[string]any{"project_id": checkout.ProjectID, "path": checkout.Path, "repository_id": checkout.RepositoryID, "write_mode": checkout.WriteMode, "availability": checkout.Availability, "checkout_kind": checkout.CheckoutKind, "branch": checkout.Branch, "head_commit": checkout.HeadCommit, "dirty": checkout.Dirty, "diagnostic_code": checkout.DiagnosticCode}
+	return map[string]any{"project_id": checkout.ProjectID, "path": checkout.Path, "repository_id": checkout.RepositoryID, "write_mode": checkout.WriteMode, "availability": checkout.Availability, "checkout_kind": checkout.CheckoutKind, "branch": checkout.Branch, "head_commit": checkout.HeadCommit, "dirty": checkout.Dirty, "dirty_paths": checkout.DirtyPaths, "diagnostic_code": checkout.DiagnosticCode}
+}
+
+func encodeDirtyPaths(values []string) ([]string, string, error) {
+	normalized := append([]string(nil), values...)
+	if normalized == nil {
+		normalized = make([]string, 0)
+	}
+	for index, value := range normalized {
+		if value == "" || filepath.IsAbs(value) {
+			return nil, "", errors.New("dirty paths must be non-empty repository-relative paths")
+		}
+		cleaned := filepath.ToSlash(filepath.Clean(value))
+		if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+			return nil, "", errors.New("dirty paths cannot escape or name only the repository root")
+		}
+		normalized[index] = cleaned
+	}
+	sort.Strings(normalized)
+	if len(normalized) != 0 {
+		write := 1
+		for read := 1; read < len(normalized); read++ {
+			if normalized[read] != normalized[write-1] {
+				normalized[write] = normalized[read]
+				write++
+			}
+		}
+		normalized = normalized[:write]
+	}
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, "", err
+	}
+	return normalized, string(encoded), nil
 }
 
 func recordIdempotency(ctx context.Context, transaction *sql.Tx, key, command, requestHash string, result any, now string) error {

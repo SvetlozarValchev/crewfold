@@ -210,9 +210,18 @@ Claim subjects include:
 - test suites, migrations, schemas, or release operations;
 - conceptual behaviors described by labels.
 
-Claims can be shared-read, exclusive-write, or advisory. A claim has a lease,
-rationale, expected duration, and task. Observed Git changes are compared with
-claims; they do not retroactively become authorization.
+The implemented claim kinds are `path`, `component`, and `operation`; modes are
+`exclusive`, `shared`, and `advisory`. Every claim belongs to one task/project,
+has an expiry lease and conflict policy, and retains revision/audit history. Path
+claims are also bound to one concrete checkout for drift attribution. Their
+bounded repository-relative glob language supports literals, `*`, `?`, and
+whole-segment `**`.
+
+Observed Git changes are compared with the union of one task's active path claims
+for that checkout. A dirty path that existed in the baseline snapshot is not
+attributed to the new claim. A later out-of-scope path creates durable drift
+evidence; it never retroactively expands authorization or rewrites the declaration.
+Renewal and rationale fields remain future additions.
 
 ### Message
 
@@ -336,7 +345,9 @@ launched it.
 2. A task has at most one primary assignment lease, though it can have reviewers
    and collaborators.
 3. A completed task cannot have an active primary assignment.
-4. An exclusive claim conflicts with every overlapping write claim.
+4. Intersecting claims from different tasks produce one deterministic overlap;
+   configured policy decides whether to notify, deny the new claim, pause new run
+   scheduling, or require resolution.
 5. Knowledge revisions are immutable; correction creates a new revision.
 6. A context packet is immutable after dispatch.
 7. A message is never modified after send; delivery metadata changes separately.

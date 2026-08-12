@@ -2,7 +2,8 @@
 
 Status: implemented for daemon health, durable workspaces/events, read-only Git
 inspection, provider-neutral agent/objective/task/run coordination, immutable
-context packets, and owner-facing durable agent mail. Subscriptions, claims, and
+context packets, owner-facing durable agent mail, and leased claims with
+deterministic overlap/drift inspection. Subscriptions, structured meetings, and
 canonical knowledge arrive later.
 
 ## Transport
@@ -367,6 +368,49 @@ including acknowledgement and separate wake status/diagnostic.
 The owner surface deliberately has no read/acknowledge mutation on behalf of an
 agent. Those transitions require an authenticated live run through MCP. The local
 socket remains owner-only and is not itself the run authorization boundary.
+
+### Claims, overlaps, and drift
+
+`claim.add` takes `workspace`, `project`, task ID, one `kind`/`target`, optional
+checkout, optional mode/policy, lease seconds, and an idempotency key. Kinds are
+`path`, `component`, and `operation`; modes are `exclusive`, `shared`, and
+`advisory`; conflict policies are `notify`, `deny_new`, `pause_scheduling`, and
+`request_resolution`. Mode defaults to exclusive and policy to notify. Leases are
+one second through 30 days.
+
+Path targets are normalized repository-relative globs containing literals, `*`,
+`?`, and whole-segment `**`. They require one available writable checkout; the
+caller must choose it when a project has multiple candidates. The daemon first
+refreshes that checkout using bounded read-only Git inspection so the claim stores
+an actual dirty-path baseline. Semantic component/operation claims compare exact
+case-sensitive labels and need no checkout.
+
+All active same-kind claims in the project are compared across tasks. A path
+intersection algorithm returns a concrete path that matches both declarations;
+it does not use embeddings. Severity is low when either mode is advisory,
+critical for exclusive/exclusive, high for exclusive/shared, and medium for
+shared/shared. Effective policy precedence is deny, pause, request resolution,
+then notify. `deny_new` returns `claim_conflict` with no partial projection/event.
+Pause creates durable holds checked by `run.start`; release or lease expiry
+resolves affected overlaps and removes their holds.
+
+`claim.list` filters by optional project and `active|expired|released` status.
+`claim.release` requires an expected revision and idempotency key. Claim queries,
+claim creation, and run scheduling reconcile expired leases first.
+
+`overlap.list` filters by project and `open|resolved`; `overlap.inspect` returns
+the two claim/task IDs, witness, severity, effective response, scheduling flags,
+and deterministic explanation. `overlap.scan` asks the daemon watcher to inspect
+active claimed checkouts immediately and returns per-checkout scan facts plus
+bounded issues.
+
+The watcher records HEAD and sorted dirty paths per concrete checkout. It compares
+new paths with each task's active path-claim union and baseline. Out-of-scope
+paths create drift records without changing claim targets. A watcher ID change
+after daemon restart sets `observation_gap`; separate adjacent clones and linked
+worktrees retain distinct checkout IDs even if repository identity is shared.
+`drift.list` filters durable records by `open|resolved` status. Claims do not
+provide filesystem isolation, and a shared checkout produces an explicit warning.
 
 ### `coordination.status`
 

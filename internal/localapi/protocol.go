@@ -56,6 +56,13 @@ const (
 	MethodRunInterrupt       = "run.interrupt"
 	MethodRunAttach          = "run.attach"
 	MethodCoordinationStatus = "coordination.status"
+	MethodClaimAdd           = "claim.add"
+	MethodClaimList          = "claim.list"
+	MethodClaimRelease       = "claim.release"
+	MethodOverlapList        = "overlap.list"
+	MethodOverlapInspect     = "overlap.inspect"
+	MethodOverlapScan        = "overlap.scan"
+	MethodDriftList          = "drift.list"
 	MethodEventsList         = "events.list"
 
 	StatusSchema             = "urn:crewfold:schema:local-api:status-result:v1"
@@ -90,6 +97,12 @@ const (
 	RunControlSchema         = "urn:crewfold:schema:local-api:run-control-result:v1"
 	RunAttachSchema          = "urn:crewfold:schema:local-api:run-attach-result:v1"
 	CoordinationStatusSchema = "urn:crewfold:schema:local-api:coordination-status-result:v1"
+	ClaimMutationSchema      = "urn:crewfold:schema:local-api:claim-mutation-result:v1"
+	ClaimListSchema          = "urn:crewfold:schema:local-api:claim-list-result:v1"
+	OverlapListSchema        = "urn:crewfold:schema:local-api:overlap-list-result:v1"
+	OverlapInspectSchema     = "urn:crewfold:schema:local-api:overlap-inspect-result:v1"
+	OverlapScanSchema        = "urn:crewfold:schema:local-api:overlap-scan-result:v1"
+	DriftListSchema          = "urn:crewfold:schema:local-api:drift-list-result:v1"
 	EventsListSchema         = "urn:crewfold:schema:local-api:events-list-result:v1"
 )
 
@@ -419,6 +432,84 @@ type TaskTimelineResult struct {
 	Schema   string              `json:"schema"`
 	Type     string              `json:"type"`
 	Timeline domain.TaskTimeline `json:"timeline"`
+}
+
+type ClaimAddParams struct {
+	Workspace      string `json:"workspace"`
+	Project        string `json:"project"`
+	Task           string `json:"task"`
+	Checkout       string `json:"checkout,omitempty"`
+	Kind           string `json:"kind"`
+	Target         string `json:"target"`
+	Mode           string `json:"mode,omitempty"`
+	ConflictPolicy string `json:"conflict_policy,omitempty"`
+	LeaseSeconds   int64  `json:"lease_seconds"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type ClaimQueryParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project,omitempty"`
+	Status    string `json:"status,omitempty"`
+}
+
+type ClaimReleaseParams struct {
+	Workspace        string `json:"workspace"`
+	Claim            string `json:"claim"`
+	ExpectedRevision int64  `json:"expected_revision"`
+	IdempotencyKey   string `json:"idempotency_key"`
+}
+
+type ClaimMutationResult struct {
+	Schema        string               `json:"schema"`
+	Type          string               `json:"type"`
+	Claim         domain.WorkClaim     `json:"claim"`
+	Overlaps      []domain.WorkOverlap `json:"overlaps"`
+	Warnings      []string             `json:"warnings"`
+	EventSequence int64                `json:"event_sequence"`
+}
+
+type ClaimListResult struct {
+	Schema string             `json:"schema"`
+	Type   string             `json:"type"`
+	Claims []domain.WorkClaim `json:"claims"`
+}
+
+type OverlapQueryParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project,omitempty"`
+	Overlap   string `json:"overlap,omitempty"`
+	Status    string `json:"status,omitempty"`
+}
+
+type OverlapListResult struct {
+	Schema   string               `json:"schema"`
+	Type     string               `json:"type"`
+	Overlaps []domain.WorkOverlap `json:"overlaps"`
+}
+
+type OverlapInspectResult struct {
+	Schema  string             `json:"schema"`
+	Type    string             `json:"type"`
+	Overlap domain.WorkOverlap `json:"overlap"`
+}
+
+type OverlapScanResult struct {
+	Schema string                     `json:"schema"`
+	Type   string                     `json:"type"`
+	Scans  []domain.CheckoutClaimScan `json:"scans"`
+	Issues []string                   `json:"issues"`
+}
+
+type DriftQueryParams struct {
+	Workspace string `json:"workspace"`
+	Status    string `json:"status,omitempty"`
+}
+
+type DriftListResult struct {
+	Schema string              `json:"schema"`
+	Type   string              `json:"type"`
+	Drifts []domain.ClaimDrift `json:"drifts"`
 }
 
 type ContextBuildParams struct {

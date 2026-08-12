@@ -1227,6 +1227,34 @@ func (client *fakeDaemonClient) CoordinationStatus(_ context.Context, workspace 
 	return client.coordination, nil
 }
 
+func (client *fakeDaemonClient) ClaimAdd(context.Context, localapi.ClaimAddParams) (localapi.ClaimMutationResult, error) {
+	return localapi.ClaimMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) ClaimList(context.Context, string, string, string) (localapi.ClaimListResult, error) {
+	return localapi.ClaimListResult{}, nil
+}
+
+func (client *fakeDaemonClient) ClaimRelease(context.Context, localapi.ClaimReleaseParams) (localapi.ClaimMutationResult, error) {
+	return localapi.ClaimMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) OverlapList(context.Context, string, string, string) (localapi.OverlapListResult, error) {
+	return localapi.OverlapListResult{}, nil
+}
+
+func (client *fakeDaemonClient) OverlapInspect(context.Context, string, string) (localapi.OverlapInspectResult, error) {
+	return localapi.OverlapInspectResult{}, nil
+}
+
+func (client *fakeDaemonClient) OverlapScan(context.Context, string, string) (localapi.OverlapScanResult, error) {
+	return localapi.OverlapScanResult{}, nil
+}
+
+func (client *fakeDaemonClient) DriftList(context.Context, string, string) (localapi.DriftListResult, error) {
+	return localapi.DriftListResult{}, nil
+}
+
 func (client *fakeDaemonClient) EventsList(_ context.Context, after int64, limit int) (localapi.EventsListResult, error) {
 	client.eventsAfter = after
 	client.eventsLimit = limit

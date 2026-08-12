@@ -6,7 +6,8 @@ are implemented, including request, start, runtime binding, progress, blockage,
 resume, completion proposal, handoff, completion/failure, stop, lost-runtime,
 scoped tool audit, report receipt, artifact publication, and context-packet facts.
 Thread creation, durable message send/delivery/read/acknowledgement, and wake
-success/failure facts are also implemented. Names for later meetings, canonical
+success/failure facts are also implemented. Claim add/release/expiry, overlap
+open/resolution, and drift open/resolution facts are implemented. Names for later meetings, canonical
 knowledge, policy, checks, and external integrations remain proposals; the
 catalogue defines intended coverage, not a frozen schema.
 
@@ -121,18 +122,31 @@ task.run_stopped
 
 ## Claims and overlaps
 
+The implemented facts are:
+
+```text
+claim.added
+claim.released
+claim.expired
+claim.drift_opened
+claim.drift_resolved
+overlap.opened
+overlap.resolved
+```
+
+Denial is returned as an atomic command error and deliberately appends no fact
+event. Renewal, proposal, dismissal, and severity-change names below remain future
+proposals:
+
 ```text
 claim.requested
 claim.granted
 claim.denied
 claim.renewed
-claim.released
-claim.expired
 claim.drift_observed
 overlap.detected
 overlap.severity_changed
 overlap.resolution_proposed
-overlap.resolved
 overlap.dismissed
 ```
 

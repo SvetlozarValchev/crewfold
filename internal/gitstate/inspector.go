@@ -122,9 +122,13 @@ func (i *GitInspector) Inspect(ctx context.Context, requestedPath string) (domai
 		branch = ""
 	}
 
-	status, err := i.gitBytes(ctx, topLevel, "status", "--porcelain=v2", "-z", "--untracked-files=normal")
+	status, err := i.gitBytes(ctx, topLevel, "status", "--porcelain=v2", "-z", "--untracked-files=all")
 	if err != nil {
 		return domain.CheckoutObservation{}, classifyGitFailure(err, topLevel, "read checkout status")
+	}
+	dirtyPaths, err := parsePorcelainV2Paths(status)
+	if err != nil {
+		return domain.CheckoutObservation{}, &Error{Code: CodeGitOutputInvalid, Operation: "parse checkout status", Path: topLevel, Cause: err}
 	}
 
 	checkoutKind := "standalone"
@@ -137,7 +141,8 @@ func (i *GitInspector) Inspect(ctx context.Context, requestedPath string) (domai
 		CheckoutKind: checkoutKind,
 		Branch:       branch,
 		HeadCommit:   headCommit,
-		Dirty:        len(status) != 0,
+		Dirty:        len(dirtyPaths) != 0,
+		DirtyPaths:   dirtyPaths,
 		GitDir:       gitDir,
 		GitCommonDir: commonDir,
 		Repository: domain.RepositoryObservation{
@@ -146,6 +151,71 @@ func (i *GitInspector) Inspect(ctx context.Context, requestedPath string) (domai
 			RootCommits:  append([]string(nil), rootCommits...),
 		},
 	}, nil
+}
+
+func parsePorcelainV2Paths(status []byte) ([]string, error) {
+	if len(status) == 0 {
+		return []string{}, nil
+	}
+	records := bytes.Split(status, []byte{0})
+	paths := make([]string, 0, len(records))
+	for index := 0; index < len(records); index++ {
+		record := records[index]
+		if len(record) == 0 {
+			continue
+		}
+		var rawPath string
+		switch record[0] {
+		case '1':
+			fields := bytes.SplitN(record, []byte{' '}, 9)
+			if len(fields) != 9 {
+				return nil, fmt.Errorf("malformed ordinary status record")
+			}
+			rawPath = string(fields[8])
+		case '2':
+			fields := bytes.SplitN(record, []byte{' '}, 10)
+			if len(fields) != 10 || index+1 >= len(records) || len(records[index+1]) == 0 {
+				return nil, fmt.Errorf("malformed rename or copy status record")
+			}
+			rawPath = string(fields[9])
+			index++ // The following NUL record is the original path.
+		case 'u':
+			fields := bytes.SplitN(record, []byte{' '}, 11)
+			if len(fields) != 11 {
+				return nil, fmt.Errorf("malformed unmerged status record")
+			}
+			rawPath = string(fields[10])
+		case '?':
+			if len(record) < 3 || record[1] != ' ' {
+				return nil, fmt.Errorf("malformed untracked status record")
+			}
+			rawPath = string(record[2:])
+		case '!':
+			continue
+		case '#':
+			continue
+		default:
+			return nil, fmt.Errorf("unknown status record %q", record[0])
+		}
+		normalized, err := normalizeGitRelativePath(rawPath)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, normalized)
+	}
+	sort.Strings(paths)
+	return compactStrings(paths), nil
+}
+
+func normalizeGitRelativePath(value string) (string, error) {
+	if value == "" || strings.ContainsRune(value, '\x00') || filepath.IsAbs(value) {
+		return "", fmt.Errorf("Git returned an invalid status path")
+	}
+	normalized := filepath.ToSlash(filepath.Clean(value))
+	if normalized == "." || normalized == ".." || strings.HasPrefix(normalized, "../") {
+		return "", fmt.Errorf("Git returned a status path outside the checkout")
+	}
+	return normalized, nil
 }
 
 func (i *GitInspector) gitText(ctx context.Context, path, operation string, arguments ...string) (string, error) {

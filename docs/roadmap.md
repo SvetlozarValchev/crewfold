@@ -7,7 +7,7 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M11 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M12 are complete**. Evidence is recorded in the [M0
 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -37,6 +37,9 @@ M11's [passed implementation audit](reviews/claude-canary.md) covers the Claude
 adapter and deterministic Codex-to-Claude provider switch. The implementation
 commit is `31c8fad1790b738e86516b119c6594293b9c99ba`; the installed-Claude canary is
 retained as optional release/upgrade conformance.
+M12's [claims and overlap review](reviews/claims-overlap.md) covers leased declared
+scope, exact path-glob intersection witnesses, deterministic policy response,
+restart-aware Git drift, and separate checkout attribution.
 
 ## Sequence
 
@@ -54,7 +57,7 @@ retained as optional release/upgrade conformance.
 | M9 ✓ | Herdr runtime | Run the fixture agent in Herdr and reconcile terminal lifecycle | M8 |
 | M10 ✓ | Codex canary | Complete the scoped MCP loop with a real disposable Codex session | M9 |
 | M11 ✓ | Claude portability | Complete the same recorded loop with Claude and switch providers via handoff | M10 |
-| M12 | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
+| M12 ✓ | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
 | M13 | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
 | M14 | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
 | M15 | Curator/retrieval | Find, reconcile, and refresh relevant knowledge deterministically | M14 |
@@ -201,14 +204,13 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M12 is next: add durable path/semantic claims and deterministic overlap detection
-so Crewfold can identify conflicting intent before agents discover each other
-through source collisions. Detection must work across linked worktrees and
-adjacent standalone clones, persist across restart, explain exact evidence, and
-must not silently reassign or serialize work.
+M13 is next: turn an open overlap into a bounded two- or three-agent meeting with
+frozen inputs, durable contributions, an explainable proposal, and an authorized
+task/claim mutation. A missing participant or facilitator restart must remain
+visible and resumable without recollecting completed rounds.
 
-Native Codex resume, active-turn steering, app-server ownership, meetings,
-canonical knowledge, remote users, and automatic source integration remain outside
-M12. Every completed capability scenario remains required.
+Native provider resume, active-turn steering, app-server ownership, canonical
+knowledge, remote users, and automatic source integration remain outside M13.
+Every completed capability scenario remains required.
 
 No upstream repository should be created until the owner explicitly requests it.

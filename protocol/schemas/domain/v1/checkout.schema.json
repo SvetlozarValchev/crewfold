@@ -4,7 +4,7 @@
   "title": "Crewfold checkout v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "project_id", "repository_id", "path", "write_mode", "revision", "availability", "checkout_kind", "dirty", "observed_at", "created_at", "updated_at", "created_by", "updated_by"],
+  "required": ["id", "project_id", "repository_id", "path", "write_mode", "revision", "availability", "checkout_kind", "dirty", "dirty_paths", "observed_at", "created_at", "updated_at", "created_by", "updated_by"],
   "properties": {
     "id": {"type": "string", "pattern": "^co_[0-9a-f]{32}$"},
     "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
@@ -17,6 +17,7 @@
     "branch": {"type": "string"},
     "head_commit": {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"},
     "dirty": {"type": "boolean"},
+    "dirty_paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "git_dir": {"type": "string"},
     "git_common_dir": {"type": "string"},
     "observed_at": {"type": "string", "format": "date-time"},

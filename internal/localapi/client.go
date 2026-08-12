@@ -444,6 +444,62 @@ func (c *Client) CoordinationStatus(ctx context.Context, workspace string) (Coor
 	return result, nil
 }
 
+func (c *Client) ClaimAdd(ctx context.Context, params ClaimAddParams) (ClaimMutationResult, error) {
+	var result ClaimMutationResult
+	if err := c.callParams(ctx, MethodClaimAdd, params, &result); err != nil {
+		return ClaimMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ClaimList(ctx context.Context, workspace, project, status string) (ClaimListResult, error) {
+	var result ClaimListResult
+	if err := c.callParams(ctx, MethodClaimList, ClaimQueryParams{Workspace: workspace, Project: project, Status: status}, &result); err != nil {
+		return ClaimListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ClaimRelease(ctx context.Context, params ClaimReleaseParams) (ClaimMutationResult, error) {
+	var result ClaimMutationResult
+	if err := c.callParams(ctx, MethodClaimRelease, params, &result); err != nil {
+		return ClaimMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) OverlapList(ctx context.Context, workspace, project, status string) (OverlapListResult, error) {
+	var result OverlapListResult
+	if err := c.callParams(ctx, MethodOverlapList, OverlapQueryParams{Workspace: workspace, Project: project, Status: status}, &result); err != nil {
+		return OverlapListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) OverlapInspect(ctx context.Context, workspace, overlap string) (OverlapInspectResult, error) {
+	var result OverlapInspectResult
+	if err := c.callParams(ctx, MethodOverlapInspect, OverlapQueryParams{Workspace: workspace, Overlap: overlap}, &result); err != nil {
+		return OverlapInspectResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) OverlapScan(ctx context.Context, workspace, project string) (OverlapScanResult, error) {
+	var result OverlapScanResult
+	if err := c.callParams(ctx, MethodOverlapScan, OverlapQueryParams{Workspace: workspace, Project: project}, &result); err != nil {
+		return OverlapScanResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) DriftList(ctx context.Context, workspace, status string) (DriftListResult, error) {
+	var result DriftListResult
+	if err := c.callParams(ctx, MethodDriftList, DriftQueryParams{Workspace: workspace, Status: status}, &result); err != nil {
+		return DriftListResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) EventsList(ctx context.Context, after int64, limit int) (EventsListResult, error) {
 	paramsValue := EventsListParams{After: &after}
 	if limit != 0 {

@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 7.
+Status: implemented through schema version 8.
 
 ## Location and ownership
 
@@ -192,6 +192,35 @@ incompatible wire change. Stored v1 packets remain readable, retain their origin
 byte size and semantic hash, omit the v2 inbox, and do not acquire the new mailbox
 tools. Local `context.show` accepts either version; `context.build` emits v2.
 
+## Schema version 8
+
+`checkouts.dirty_paths_json` stores the sorted repository-relative paths from the
+most recent bounded Git observation in addition to the coarse dirty boolean.
+
+`work_claims` stores one task's leased path/component/operation declaration,
+optional concrete checkout, mode, conflict policy, immutable baseline dirty paths,
+lifecycle status, revision, and actor provenance. A partial unique index prevents
+duplicate active declarations for the same task/scope/checkout while retaining
+expired and released history.
+
+`work_overlaps` stores canonical claim/task pairs, a concrete intersection witness,
+deterministic severity and effective policy, scheduling/resolution flags, an
+explanation, lifecycle state, and resolution reason. `task_coordination_holds`
+maps pause-policy overlaps to the affected tasks; `run.start` refuses a held task
+without mutating existing runs.
+
+`claim_drifts` stores per-task/checkout/path observations outside the task's active
+claim union. It retains first/last/resolved times, HEAD, restart-gap evidence, and
+revision. `checkout_claim_scans` stores the last watcher identity, HEAD, dirty-path
+set, and observation time so a new daemon can distinguish a continuous scan from
+an observation gap. Repository identity is not used as checkout identity.
+
+Claim creation, overlap projection, policy holds, journal events, and idempotent
+response commit atomically. Denied claims commit none of those records. Release
+or expiry resolves related overlaps and removes their scheduling holds in the
+same transaction. Git scans are external read-only observations followed by a
+separate atomic checkout/drift update.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -216,9 +245,10 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 7 contains agent/task/run coordination, immutable
+without its WAL. Schema version 8 contains agent/task/run/claim coordination, immutable
 context packets, scoped report/artifact/audit records, durable
-message/thread/delivery/wake state, opaque fake/direct bindings, and direct
+message/thread/delivery/wake state, overlap/drift/watcher state, opaque
+fake/direct bindings, and direct
 supervisor references but no canonical knowledge or real model-provider session
 state. Backup of a live installation must include a
 coordinated snapshot of the database, direct-runtime state, node key, and

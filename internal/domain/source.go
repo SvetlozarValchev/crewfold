@@ -39,26 +39,27 @@ type Repository struct {
 }
 
 type Checkout struct {
-	ID             string `json:"id"`
-	ProjectID      string `json:"project_id"`
-	RepositoryID   string `json:"repository_id"`
-	Path           string `json:"path"`
-	WriteMode      string `json:"write_mode"`
-	Revision       int64  `json:"revision"`
-	Availability   string `json:"availability"`
-	CheckoutKind   string `json:"checkout_kind"`
-	Branch         string `json:"branch,omitempty"`
-	HeadCommit     string `json:"head_commit,omitempty"`
-	Dirty          bool   `json:"dirty"`
-	GitDir         string `json:"git_dir,omitempty"`
-	GitCommonDir   string `json:"git_common_dir,omitempty"`
-	ObservedAt     string `json:"observed_at"`
-	DiagnosticCode string `json:"diagnostic_code,omitempty"`
-	Diagnostic     string `json:"diagnostic,omitempty"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
-	CreatedBy      string `json:"created_by"`
-	UpdatedBy      string `json:"updated_by"`
+	ID             string   `json:"id"`
+	ProjectID      string   `json:"project_id"`
+	RepositoryID   string   `json:"repository_id"`
+	Path           string   `json:"path"`
+	WriteMode      string   `json:"write_mode"`
+	Revision       int64    `json:"revision"`
+	Availability   string   `json:"availability"`
+	CheckoutKind   string   `json:"checkout_kind"`
+	Branch         string   `json:"branch,omitempty"`
+	HeadCommit     string   `json:"head_commit,omitempty"`
+	Dirty          bool     `json:"dirty"`
+	DirtyPaths     []string `json:"dirty_paths"`
+	GitDir         string   `json:"git_dir,omitempty"`
+	GitCommonDir   string   `json:"git_common_dir,omitempty"`
+	ObservedAt     string   `json:"observed_at"`
+	DiagnosticCode string   `json:"diagnostic_code,omitempty"`
+	Diagnostic     string   `json:"diagnostic,omitempty"`
+	CreatedAt      string   `json:"created_at"`
+	UpdatedAt      string   `json:"updated_at"`
+	CreatedBy      string   `json:"created_by"`
+	UpdatedBy      string   `json:"updated_by"`
 }
 
 type RepositoryObservation struct {
@@ -74,6 +75,7 @@ type CheckoutObservation struct {
 	Branch         string                `json:"branch,omitempty"`
 	HeadCommit     string                `json:"head_commit,omitempty"`
 	Dirty          bool                  `json:"dirty"`
+	DirtyPaths     []string              `json:"dirty_paths"`
 	GitDir         string                `json:"git_dir,omitempty"`
 	GitCommonDir   string                `json:"git_common_dir,omitempty"`
 	DiagnosticCode string                `json:"diagnostic_code,omitempty"`

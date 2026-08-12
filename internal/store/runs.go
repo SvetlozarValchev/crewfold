@@ -75,6 +75,9 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	if _, err := s.ReconcileExpiredAssignments(ctx, workspaceIdentifier, correlationID+"-lease"); err != nil {
 		return RunMutationResult{}, err
 	}
+	if _, err := s.ReconcileExpiredClaims(ctx, workspaceIdentifier, derivedCorrelationID(correlationID, "claims")); err != nil {
+		return RunMutationResult{}, err
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -97,6 +100,14 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	}
 	if task.Revision != command.ExpectedTaskRevision {
 		return RunMutationResult{}, revisionConflict("task", task.ID, command.ExpectedTaskRevision, task.Revision)
+	}
+	var coordinationOverlapID string
+	err = tx.QueryRowContext(ctx, "SELECT overlap_id FROM task_coordination_holds WHERE task_id = ? ORDER BY overlap_id LIMIT 1", task.ID).Scan(&coordinationOverlapID)
+	if err == nil {
+		return RunMutationResult{}, &Error{Code: CodeSchedulingPaused, Message: fmt.Sprintf("task %s scheduling is paused by open overlap %s", task.ID, coordinationOverlapID)}
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return RunMutationResult{}, storageFailure("check task coordination hold", err)
 	}
 	if task.Status != domain.TaskAssigned || task.AssignmentID == "" {
 		return RunMutationResult{}, &Error{Code: CodeRunConflict, Message: "run start requires a task with an active assignment"}
@@ -1103,7 +1114,7 @@ func (s *Store) mutateWorkerRun(ctx context.Context, runID, correlationID string
 func selectRunCheckout(ctx context.Context, tx *sql.Tx, projectID, identifier string) (domain.Checkout, error) {
 	query := `
 SELECT c.id, c.project_id, c.repository_id, c.path, c.write_mode, c.revision, c.availability,
-       c.checkout_kind, COALESCE(c.branch, ''), COALESCE(c.head_commit, ''), c.dirty,
+       c.checkout_kind, COALESCE(c.branch, ''), COALESCE(c.head_commit, ''), c.dirty, c.dirty_paths_json,
        COALESCE(c.git_dir, ''), COALESCE(c.git_common_dir, ''), c.observed_at,
        COALESCE(c.diagnostic_code, ''), COALESCE(c.diagnostic, ''),
        c.created_at, c.updated_at, c.created_by, c.updated_by
@@ -1119,7 +1130,8 @@ WHERE c.project_id = ? AND c.availability = 'available' AND c.write_mode <> 'rea
 	}
 	query += " ORDER BY CASE c.write_mode WHEN 'exclusive' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END, c.path, c.id LIMIT 1"
 	var checkout domain.Checkout
-	err := tx.QueryRowContext(ctx, query, arguments...).Scan(&checkout.ID, &checkout.ProjectID, &checkout.RepositoryID, &checkout.Path, &checkout.WriteMode, &checkout.Revision, &checkout.Availability, &checkout.CheckoutKind, &checkout.Branch, &checkout.HeadCommit, &checkout.Dirty, &checkout.GitDir, &checkout.GitCommonDir, &checkout.ObservedAt, &checkout.DiagnosticCode, &checkout.Diagnostic, &checkout.CreatedAt, &checkout.UpdatedAt, &checkout.CreatedBy, &checkout.UpdatedBy)
+	var dirtyPathsJSON string
+	err := tx.QueryRowContext(ctx, query, arguments...).Scan(&checkout.ID, &checkout.ProjectID, &checkout.RepositoryID, &checkout.Path, &checkout.WriteMode, &checkout.Revision, &checkout.Availability, &checkout.CheckoutKind, &checkout.Branch, &checkout.HeadCommit, &checkout.Dirty, &dirtyPathsJSON, &checkout.GitDir, &checkout.GitCommonDir, &checkout.ObservedAt, &checkout.DiagnosticCode, &checkout.Diagnostic, &checkout.CreatedAt, &checkout.UpdatedAt, &checkout.CreatedBy, &checkout.UpdatedBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		if identifier == "" {
 			return domain.Checkout{}, &Error{Code: CodePlacementUnavailable, Message: "project has no available writable checkout with capacity"}
@@ -1128,6 +1140,9 @@ WHERE c.project_id = ? AND c.availability = 'available' AND c.write_mode <> 'rea
 	}
 	if err != nil {
 		return domain.Checkout{}, storageFailure("select run checkout", err)
+	}
+	if err := json.Unmarshal([]byte(dirtyPathsJSON), &checkout.DirtyPaths); err != nil {
+		return domain.Checkout{}, storageFailure("decode run checkout dirty paths", err)
 	}
 	return checkout, nil
 }
@@ -1218,15 +1233,19 @@ func runDetailInTransaction(ctx context.Context, tx *sql.Tx, run domain.Run) (do
 
 func queryCheckoutByID(ctx context.Context, database queryRower, checkoutID string) (domain.Checkout, error) {
 	var checkout domain.Checkout
+	var dirtyPathsJSON string
 	err := database.QueryRowContext(ctx, `
 SELECT id, project_id, repository_id, path, write_mode, revision, availability,
-       checkout_kind, COALESCE(branch, ''), COALESCE(head_commit, ''), dirty,
+       checkout_kind, COALESCE(branch, ''), COALESCE(head_commit, ''), dirty, dirty_paths_json,
        COALESCE(git_dir, ''), COALESCE(git_common_dir, ''), observed_at,
        COALESCE(diagnostic_code, ''), COALESCE(diagnostic, ''),
        created_at, updated_at, created_by, updated_by
-FROM checkouts WHERE id = ?`, checkoutID).Scan(&checkout.ID, &checkout.ProjectID, &checkout.RepositoryID, &checkout.Path, &checkout.WriteMode, &checkout.Revision, &checkout.Availability, &checkout.CheckoutKind, &checkout.Branch, &checkout.HeadCommit, &checkout.Dirty, &checkout.GitDir, &checkout.GitCommonDir, &checkout.ObservedAt, &checkout.DiagnosticCode, &checkout.Diagnostic, &checkout.CreatedAt, &checkout.UpdatedAt, &checkout.CreatedBy, &checkout.UpdatedBy)
+FROM checkouts WHERE id = ?`, checkoutID).Scan(&checkout.ID, &checkout.ProjectID, &checkout.RepositoryID, &checkout.Path, &checkout.WriteMode, &checkout.Revision, &checkout.Availability, &checkout.CheckoutKind, &checkout.Branch, &checkout.HeadCommit, &checkout.Dirty, &dirtyPathsJSON, &checkout.GitDir, &checkout.GitCommonDir, &checkout.ObservedAt, &checkout.DiagnosticCode, &checkout.Diagnostic, &checkout.CreatedAt, &checkout.UpdatedAt, &checkout.CreatedBy, &checkout.UpdatedBy)
 	if err != nil {
 		return domain.Checkout{}, storageFailure("query run checkout", err)
+	}
+	if err := json.Unmarshal([]byte(dirtyPathsJSON), &checkout.DirtyPaths); err != nil {
+		return domain.Checkout{}, storageFailure("decode run checkout dirty paths", err)
 	}
 	return checkout, nil
 }

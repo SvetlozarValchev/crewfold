@@ -92,6 +92,13 @@ type daemonClient interface {
 	RunInterrupt(context.Context, string, string) (localapi.RunControlResult, error)
 	RunAttach(context.Context, string, string, bool) (localapi.RunAttachResult, error)
 	CoordinationStatus(context.Context, string) (localapi.CoordinationStatusResult, error)
+	ClaimAdd(context.Context, localapi.ClaimAddParams) (localapi.ClaimMutationResult, error)
+	ClaimList(context.Context, string, string, string) (localapi.ClaimListResult, error)
+	ClaimRelease(context.Context, localapi.ClaimReleaseParams) (localapi.ClaimMutationResult, error)
+	OverlapList(context.Context, string, string, string) (localapi.OverlapListResult, error)
+	OverlapInspect(context.Context, string, string) (localapi.OverlapInspectResult, error)
+	OverlapScan(context.Context, string, string) (localapi.OverlapScanResult, error)
+	DriftList(context.Context, string, string) (localapi.DriftListResult, error)
 	EventsList(context.Context, int64, int) (localapi.EventsListResult, error)
 }
 
@@ -169,6 +176,12 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runThread(ctx, mode, args[1:])
 	case "run":
 		return a.runRun(ctx, mode, args[1:])
+	case "claim":
+		return a.runClaim(ctx, mode, args[1:])
+	case "overlap":
+		return a.runOverlap(ctx, mode, args[1:])
+	case "drift":
+		return a.runDrift(ctx, mode, args[1:])
 	case "events":
 		return a.runEvents(ctx, mode, args[1:])
 	default:
@@ -767,6 +780,12 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, threadHelp)
 	case "run":
 		fmt.Fprint(a.stdout, runHelp)
+	case "claim":
+		fmt.Fprint(a.stdout, claimHelp)
+	case "overlap":
+		fmt.Fprint(a.stdout, overlapHelp)
+	case "drift":
+		fmt.Fprint(a.stdout, driftHelp)
 	case "events":
 		fmt.Fprint(a.stdout, eventsHelp)
 	case "help":
@@ -1373,6 +1392,9 @@ Commands:
   inbox          Inspect an agent's durable mailbox
   thread         Inspect a durable agent conversation
   run            Launch and inspect provider-neutral execution
+  claim          Declare leased work scopes for tasks
+  overlap        Inspect deterministic claim conflicts and rescan Git
+  drift          Inspect writes observed outside declared task scopes
   events         Inspect the durable event journal
   help [command] Show command help
 

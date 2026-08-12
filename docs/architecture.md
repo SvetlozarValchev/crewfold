@@ -225,6 +225,13 @@ writes, automatic maintenance, and terminal prompting disabled. Repository
 identity comes from history observations; checkout identity comes from the
 normalized local path and a durable opaque ID.
 
+M12 adds a daemon-owned periodic watcher over only the concrete checkouts bound to
+active path claims. It records sorted dirty paths and HEAD, opens/resolves drift
+observations, and gives each daemon lifetime a watcher ID so restart scans expose
+an observation gap. Manual `overlap scan` uses the same code path. The watcher
+never edits Git, turns an adjacent clone into a worktree, or treats repository
+identity as checkout identity.
+
 ### Runtime drivers
 
 Runtime drivers create, attach, prompt, observe, and stop execution environments.

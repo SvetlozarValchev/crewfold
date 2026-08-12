@@ -587,16 +587,24 @@ provider behavior remains optional external conformance evidence.
 
 ### M12 — Claims and deterministic overlap detection
 
+**Status:** complete on 2026-08-12. Crewfold now stores leased path, component,
+and operation claims; derives exact overlap witnesses and policy responses without
+embeddings; watches dirty paths; and records restart-aware drift without changing
+declared scope. The deterministic local acceptance uses adjacent clones and a
+shared checkout. See [the milestone review](reviews/claims-overlap.md).
+
 **Question answered:** Can Crewfold warn about conflicting intent before agents
 discover each other through broken Git state?
 
 **Visible result**
 
 ```sh
-crewfold claim add TASK_A --write 'src/contact/**' --lease 1h
-crewfold claim add TASK_B --write 'src/contact/cache.go' --lease 1h
-crewfold overlap list
-crewfold overlap inspect OVERLAP_ID
+crewfold claim add TASK_A --workspace personal --project demo \
+  --checkout CHECKOUT_A --write 'src/contact/**' --lease 1h --socket ./crewfold.sock
+crewfold claim add TASK_B --workspace personal --project demo \
+  --checkout CHECKOUT_B --write 'src/contact/cache.go' --lease 1h --socket ./crewfold.sock
+crewfold overlap list --workspace personal --project demo --socket ./crewfold.sock
+crewfold overlap inspect OVERLAP_ID --workspace personal --socket ./crewfold.sock
 ```
 
 **Deliverables**

@@ -42,6 +42,12 @@ const (
 	CodeInvalidMessage       = "invalid_message"
 	CodeMessageNotFound      = "message_not_found"
 	CodeMessageDenied        = "message_denied"
+	CodeInvalidClaim         = "invalid_claim"
+	CodeClaimNotFound        = "claim_not_found"
+	CodeClaimConflict        = "claim_conflict"
+	CodeOverlapNotFound      = "overlap_not_found"
+	CodeSchedulingPaused     = "scheduling_paused"
+	CodeInvalidClaimScan     = "invalid_claim_scan"
 	CodeIdempotencyConflict  = "idempotency_conflict"
 	CodeStorageFailed        = "storage_failed"
 )

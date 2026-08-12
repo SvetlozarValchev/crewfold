@@ -279,12 +279,42 @@ neither provider-private session identifier crosses that handoff.
 ## Claims and overlaps
 
 ```sh
-crewfold claim add TASK_A --write 'src/physics/contact/**' --lease 2h
-crewfold claim list --active
-crewfold overlap list
-crewfold overlap inspect OVERLAP_ID
-crewfold overlap resolve OVERLAP_ID --strategy sequence --first TASK_A
+crewfold claim add TASK_A --workspace personal --project world-engine \
+  --checkout CHECKOUT_A --write 'src/physics/contact/**' --lease 2h \
+  --mode exclusive --policy notify --socket /path/to/crewfold.sock
+crewfold claim add TASK_B --workspace personal --project world-engine \
+  --component contact-solver --lease 1h --policy pause_scheduling \
+  --socket /path/to/crewfold.sock
+crewfold claim list --workspace personal --project world-engine --status active \
+  --socket /path/to/crewfold.sock
+crewfold overlap list --workspace personal --status open \
+  --socket /path/to/crewfold.sock
+crewfold overlap inspect OVERLAP_ID --workspace personal \
+  --socket /path/to/crewfold.sock
+crewfold overlap scan --workspace personal --project world-engine \
+  --socket /path/to/crewfold.sock
+crewfold drift list --workspace personal --status open \
+  --socket /path/to/crewfold.sock
 ```
+
+These owner-facing commands are implemented. A claim uses exactly one of
+`--write`, `--component`, or `--operation`; leases accept Go-style durations such
+as `30m` and `2h`. Path claims require `--checkout` when a project has more than
+one writable checkout. The supported path grammar is deliberately bounded to
+repository-relative literals, `*`, `?`, and whole-segment `**`.
+
+Modes are `exclusive`, `shared`, and `advisory`. Conflict policies are `notify`,
+`deny_new`, `pause_scheduling`, and `request_resolution`. Policy is deterministic:
+`deny_new` commits no new claim, while `pause_scheduling` prevents a new run for
+either affected task until the overlap is resolved by claim release or expiry. It
+does not terminate a run already in progress.
+
+`overlap scan` performs read-only Git inspection. Drift is an observation that a
+task's checkout contains a dirty path outside that task's active path-claim union;
+it does not change the claim. A watcher identity change marks an observation gap.
+Shared checkout warnings are explicit because claims coordinate intent but do not
+provide operating-system or filesystem isolation. Structured meetings and owner-
+authorized consolidation arrive in M13; there is no `overlap resolve` command yet.
 
 ## Messages
 

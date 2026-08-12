@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:drift-list-result:v1",
+  "title": "Crewfold local API drift list result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "drifts"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:drift-list-result:v1"},
+    "type": {"const": "drift_list"},
+    "drifts": {"type": "array", "items": {"$ref": "../../domain/v1/claim-drift.schema.json"}}
+  }
+}

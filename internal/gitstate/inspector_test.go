@@ -124,6 +124,29 @@ func TestInspectorNormalizesSubdirectoryAndDetectsDirtyState(t *testing.T) {
 	if observation.Path != checkout || !observation.Dirty {
 		t.Fatalf("observation = %#v, want normalized dirty checkout %s", observation, checkout)
 	}
+	if len(observation.DirtyPaths) != 1 || observation.DirtyPaths[0] != "nested/source/untracked.txt" {
+		t.Fatalf("observation.DirtyPaths = %#v", observation.DirtyPaths)
+	}
+}
+
+func TestParsePorcelainV2PathsPreservesNamesAndRenameDestination(t *testing.T) {
+	t.Parallel()
+	status := []byte("1 .M N... 100644 100644 100644 aaaaaaa bbbbbbb file with spaces.go\x00" +
+		"2 R. N... 100644 100644 100644 aaaaaaa bbbbbbb R100 renamed.go\x00old.go\x00" +
+		"? new file.txt\x00")
+	got, err := parsePorcelainV2Paths(status)
+	if err != nil {
+		t.Fatalf("parsePorcelainV2Paths() error = %v", err)
+	}
+	want := []string{"file with spaces.go", "new file.txt", "renamed.go"}
+	if len(got) != len(want) {
+		t.Fatalf("paths = %#v, want %#v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("paths = %#v, want %#v", got, want)
+		}
+	}
 }
 
 func TestInspectorClassifiesUnavailableNonRepositoryAndMalformedOutput(t *testing.T) {

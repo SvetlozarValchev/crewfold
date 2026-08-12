@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:claim-list-result:v1",
+  "title": "Crewfold local API claim list result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "claims"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:claim-list-result:v1"},
+    "type": {"const": "claim_list"},
+    "claims": {"type": "array", "items": {"$ref": "../../domain/v1/work-claim.schema.json"}}
+  }
+}

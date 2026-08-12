@@ -146,25 +146,38 @@ human or policy authority must accept it.
 
 ## Overlap detection
 
-Overlap is a scored signal, not a binary guess based only on file paths.
+The implemented overlap decision is deterministic and inspectable. Optional
+future indexing can add weak signals, but those signals cannot silently change a
+claim conflict or block work by themselves.
 
 ### Inputs
 
-- task-declared paths, symbols, APIs, components, and behaviors;
-- active claims and their modes;
-- observed Git changes and untracked files;
-- imports, dependency graph, schemas, and migrations when indexes exist;
-- shared acceptance tests or release operations;
-- natural-language task similarity as an optional weak signal.
+- active path, component, and operation claims from different tasks in one project;
+- exact label equality for component/operation claims;
+- exact intersection of the bounded path-glob language, including a concrete
+  matching witness;
+- the pair's mode combination and configured conflict policies.
+
+Git HEAD/dirty-path observations are implemented as claim drift evidence scoped
+to a concrete checkout. They do not create or expand claims. Symbols, import
+graphs, schema indexes, contradictory contracts, and natural-language similarity
+remain optional future inputs.
 
 ### Severity
 
 | Severity | Example | Default response |
 | --- | --- | --- |
-| Informational | Same component, disjoint files | Notify in status |
-| Advisory | Same API surface, compatible goals | Open a thread |
-| Conflict | Overlapping write claims or contradictory contracts | Pause new scheduling; request resolution |
-| Critical | Concurrent migration/release/destructive operation | Gate action and alert owner |
+| Low | Either claim is advisory | Configured policy; default notify |
+| Medium | Shared/shared intersection | Configured policy; default notify |
+| High | Exclusive/shared intersection | Configured policy; default notify |
+| Critical | Exclusive/exclusive intersection | Configured policy; default notify |
+
+Policy response is a separate deterministic dimension. Precedence is `deny_new`,
+`pause_scheduling`, `request_resolution`, then `notify`. Denial rejects only the
+new claim atomically. Pause blocks new run scheduling for both tasks without
+terminating active work. Release or expiry resolves the overlap and removes its
+hold. M13 adds a structured procedure for actively resolving request-resolution
+cases.
 
 Semantic similarity never independently blocks work. Deterministic claims,
 observed writes, and declared constraints carry more weight.

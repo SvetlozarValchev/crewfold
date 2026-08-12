@@ -55,6 +55,8 @@ type Config struct {
 	ClaudeMaxBudgetUSD        string
 	ClaudeExternallySandboxed bool
 	DisableRunWorker          bool
+	DisableClaimWatcher       bool
+	ClaimScanInterval         time.Duration
 	defaultProviders          bool
 }
 
@@ -76,6 +78,7 @@ type server struct {
 	runtimes       map[string]execution.RuntimeDriver
 	providers      map[string]execution.ProviderAdapter
 	capabilities   *runCapabilityManager
+	claimWatcherID string
 }
 
 // Run owns the daemon lifecycle until the context is cancelled or system.stop is
@@ -163,21 +166,23 @@ func Run(ctx context.Context, config Config) error {
 	}
 
 	instance := &server{
-		config:       resolved,
-		listener:     listener,
-		socketInfo:   socketInfo,
-		startedAt:    time.Now().UTC(),
-		stopCh:       make(chan struct{}),
-		connections:  make(map[net.Conn]struct{}),
-		store:        storage,
-		gitInspector: resolved.GitInspector,
-		runtimes:     resolved.RuntimeDrivers,
-		providers:    resolved.ProviderAdapters,
-		capabilities: capabilities,
+		config:         resolved,
+		listener:       listener,
+		socketInfo:     socketInfo,
+		startedAt:      time.Now().UTC(),
+		stopCh:         make(chan struct{}),
+		connections:    make(map[net.Conn]struct{}),
+		store:          storage,
+		gitInspector:   resolved.GitInspector,
+		runtimes:       resolved.RuntimeDrivers,
+		providers:      resolved.ProviderAdapters,
+		capabilities:   capabilities,
+		claimWatcherID: fmt.Sprintf("watcher-%d-%d", os.Getpid(), time.Now().UTC().UnixNano()),
 	}
 	defer instance.cleanupSocket()
 	instance.startRunWorker()
 	instance.processMessageWakeJobs()
+	instance.startClaimWatcher()
 
 	resolved.Logger.Info("daemon started",
 		"component", "daemon",
@@ -224,6 +229,12 @@ func resolveConfig(config Config) (Config, error) {
 	}
 	if config.GitInspector == nil {
 		config.GitInspector = gitstate.NewInspector()
+	}
+	if config.ClaimScanInterval == 0 {
+		config.ClaimScanInterval = 2 * time.Second
+	}
+	if config.ClaimScanInterval < 100*time.Millisecond && !config.DisableClaimWatcher {
+		return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "claim scan interval must be at least 100ms"}
 	}
 	if config.RuntimeDrivers == nil {
 		fakeRuntime := execution.NewFakeRuntime()
@@ -569,6 +580,20 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleRunAttach(request), false
 	case localapi.MethodCoordinationStatus:
 		return s.handleCoordinationStatus(request), false
+	case localapi.MethodClaimAdd:
+		return s.handleClaimAdd(request), false
+	case localapi.MethodClaimList:
+		return s.handleClaimList(request), false
+	case localapi.MethodClaimRelease:
+		return s.handleClaimRelease(request), false
+	case localapi.MethodOverlapList:
+		return s.handleOverlapList(request), false
+	case localapi.MethodOverlapInspect:
+		return s.handleOverlapInspect(request), false
+	case localapi.MethodOverlapScan:
+		return s.handleOverlapScan(request), false
+	case localapi.MethodDriftList:
+		return s.handleDriftList(request), false
 	case localapi.MethodEventsList:
 		return s.handleEventsList(request), false
 	default:

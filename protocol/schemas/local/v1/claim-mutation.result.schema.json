@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:claim-mutation-result:v1",
+  "title": "Crewfold local API claim mutation result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "claim", "overlaps", "warnings", "event_sequence"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:claim-mutation-result:v1"},
+    "type": {"const": "claim_mutation"},
+    "claim": {"$ref": "../../domain/v1/work-claim.schema.json"},
+    "overlaps": {"type": "array", "items": {"$ref": "../../domain/v1/work-overlap.schema.json"}},
+    "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "event_sequence": {"type": "integer", "minimum": 1}
+  }
+}

@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 7
+	LatestSchemaVersion = 8
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -251,6 +251,51 @@ type SendMessageCommand struct {
 	ReplyToMessageID    string
 	IdempotencyKey      string
 	CorrelationID       string
+}
+
+type AddClaimCommand struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	TaskID              string
+	CheckoutIdentifier  string
+	Kind                string
+	Target              string
+	Mode                string
+	ConflictPolicy      string
+	LeaseDuration       time.Duration
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ReleaseClaimCommand struct {
+	WorkspaceIdentifier string
+	ClaimID             string
+	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type RecordCheckoutClaimScanCommand struct {
+	CheckoutID    string
+	WatcherID     string
+	HeadCommit    string
+	DirtyPaths    []string
+	CorrelationID string
+}
+
+type ClaimMutationResult struct {
+	Claim         domain.WorkClaim     `json:"claim"`
+	Overlaps      []domain.WorkOverlap `json:"overlaps"`
+	Warnings      []string             `json:"warnings"`
+	EventSequence int64                `json:"event_sequence"`
+	Replayed      bool                 `json:"-"`
+}
+
+type ClaimWatchTarget struct {
+	WorkspaceID string `json:"workspace_id"`
+	ProjectID   string `json:"project_id"`
+	CheckoutID  string `json:"checkout_id"`
+	Path        string `json:"path"`
 }
 
 type RunWork struct {
