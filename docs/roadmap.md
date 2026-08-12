@@ -7,18 +7,21 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M5 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M6 are complete**. Evidence is recorded in the [M0
 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
 review](reviews/projects-checkouts.md). [M4 evidence](reviews/durable-coordination.md)
 covers durable coordination. [M5 evidence](reviews/deterministic-execution.md)
-covers deterministic run execution. The M5 implementation commit is
+captures deterministic run execution, and [M6 evidence](reviews/direct-runtime.md)
+captures supervised direct execution. The M6 implementation commits are
+`2c4043dd86bc1c22938184b3a65835b9754f7db0` and
+`951485b894273130941ae1b3a39a76a7267e2c15`. The M5 implementation commit is
 `ba57abefc94743ea9dbf0a4c1e1bb6addffaf242`. The durable-coordination
 implementation commits are
 `7973bded9f99e965bc01a662b6b4d532e679d2c3` and
 `dbce60007de652d09862a8f673886702ba9860bc`, with assignment-policy coverage in
-`c821ab12cc649d7807a504ee615e61796591178e`. M6 is next and has not started.
+`c821ab12cc649d7807a504ee615e61796591178e`. M7 is next and has not started.
 
 ## Sequence
 
@@ -30,7 +33,7 @@ implementation commits are
 | M3 ✓ | Projects/checkouts | Register and observe a disposable Git repository without mutating it | M2 |
 | M4 ✓ | Agents/tasks | Define durable roles, tasks, dependencies, leases, and readiness | M3 |
 | M5 ✓ | Fake-agent loop | Assign, launch, progress, block, complete, and hand off one task | M4 |
-| M6 | Direct runtime | Run and recover a real fixture subprocess with bounded output | M5 |
+| M6 ✓ | Direct runtime | Run and recover a real fixture subprocess with bounded output | M5 |
 | M7 | MCP/briefing | Let a run read scoped context and report through authenticated MCP | M6 |
 | M8 | Agent messaging | Exchange and acknowledge durable mail while one agent is offline | M7 |
 | M9 | Herdr runtime | Run the fixture agent in Herdr and reconcile terminal lifecycle | M8 |
@@ -183,22 +186,21 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M6 is the next approved implementation target:
+M7 is the next approved implementation target:
 
-1. implement the existing runtime-driver contract with one bounded direct child
-   process rather than changing run/task semantics;
-2. add a tiny fixture worker that produces normalized progress, blockage, and
-   completion without contacting a model provider;
-3. capture bounded stdout/stderr and durable exit diagnostics without treating
-   terminal text as completion authority;
-4. support graceful stop, forced termination, timeout, and startup failure with
-   no orphaned process;
-5. prove restart reconciliation with a stable operation identity and fixture
-   process, then rerun every fake-execution scenario unchanged where applicable.
+1. expose a run-scoped MCP endpoint authenticated by a least-authority capability;
+2. build an immutable base context packet from role, task, checkout, policy, and
+   reporting instructions, with stable explanations for included/excluded facts;
+3. implement MCP tools for briefing, status, progress, blockage, artifacts, and
+   completion without granting direct task-completion authority;
+4. prove cross-run denial, capability expiry, idempotent mutations, and audited
+   wrong-scope attempts through deterministic fixtures;
+5. make the direct fixture worker use MCP for the established task/run/handoff
+   loop, then rerun every completed capability scenario.
 
-M6 must preserve the independent runtime/provider axes and the source-layout-
-neutral checkout placement completed in M5. Codex, Claude Code, Herdr, MCP,
-messaging, claims, supervision, and automatic source mutation remain out of
-scope. Every completed capability scenario remains a required gate.
+M7 must keep context packets bounded and provenance-linked. It must not introduce
+transcript accumulation, inter-agent messaging, canonical knowledge search, real
+model providers, Herdr, claims, supervision, or automatic source mutation. Every
+completed capability scenario remains a required gate.
 
 No upstream repository should be created until the owner explicitly requests it.

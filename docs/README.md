@@ -40,6 +40,7 @@ explicitly rather than silently treating either as authoritative.
 - [Projects/checkouts milestone review](reviews/projects-checkouts.md)
 - [Durable coordination milestone review](reviews/durable-coordination.md)
 - [Deterministic execution milestone review](reviews/deterministic-execution.md)
+- [Direct subprocess milestone review](reviews/direct-runtime.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 
