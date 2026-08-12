@@ -3,9 +3,10 @@
 ## Identity
 
 - Milestone: `M10 — Codex canary`
-- Review status: `pending`
-- Commit: `d8f6aac5060eb31e380c95c9d01c8aa2dddadd49`
-- Reviewer: `automated offline acceptance; owner consent required for live provider acceptance`
+- Review status: `passed`
+- Implementation commits: `d8f6aac5060eb31e380c95c9d01c8aa2dddadd49`,
+  `676c0bc15a31ef9b2b8233961d2b6eed696bd1c1`
+- Reviewer: `automated offline acceptance plus owner-authorized live conformance`
 - Date: `2026-08-12`
 
 ## Demonstrable outcome
@@ -35,7 +36,7 @@
 | Black-box acceptance | `test/scenarios/codex-provider/run.sh` | passed | recorded Codex probe → launch → briefing → completion → handoff |
 | Full offline/race gate | `./scripts/check.sh` | passed | vet, all tests, race tests, and eleven black-box scenarios |
 | Installed probe | built binary `doctor --provider codex --output json` | passed | local `codex-cli 0.0.0`, required flags present, `Logged in using ChatGPT` |
-| Live conformance | `CREWFOLD_LIVE_CODEX=1 CREWFOLD_ALLOW_MODEL_CALLS=1 ./test/live/codex/run.sh` | pending explicit owner opt-in | not run; command can consume provider/network usage |
+| Live conformance | containerized command documented in `docs/testing.md` with both model/network and external-sandbox acknowledgements | passed | `Installed Codex canary: PASS`; exact one-file diff, local check, `git diff --check`, MCP evidence, no commit, no token in logs |
 
 ## Failure proof
 
@@ -49,7 +50,10 @@
   startup becomes `provider_observation_failed`; explicit approval/permission
   output becomes blocked and never completion.
 - Observed diagnosis and recovery: component and black-box assertions passed. No
-  generic timeout was used for the injected auth/MCP cases.
+  generic timeout was used for the injected auth/MCP cases. The first native live
+  attempt also identified the host bubblewrap/AppArmor namespace boundary, and an
+  early container attempt precisely identified the omitted
+  `codex-code-mode-host`; both failed before being mistaken for task completion.
 - Operation/event IDs: temporary deterministic run IDs and durable
   `run.tool_called`/`run.report_received` events created by the acceptance script.
 
@@ -75,10 +79,21 @@
   cross the runtime environment. The token is read by the bridge, injected only on
   the owner-only socket, and asserted absent from launch arguments and logs.
 - External side effects: default tests use a recorded CLI and no network/model.
-  The live script owns a disposable Git repository and dedicated Herdr session,
-  permits one file change, configures no remote, and checks that no commit exists.
+  The authorized live run downloaded checksum-verified Herdr 0.8.0 into temporary
+  state, used the existing Codex login, and built a local Docker canary image from
+  the digest-pinned Ubuntu base. Herdr, copied authentication, repository, socket,
+  and run state were removed; the explicitly built local container image remains.
+- External containment: this host cannot start Codex's nested bubblewrap network
+  namespace. The passing route runs Codex as the current non-root UID in a
+  read-only container with all Linux capabilities dropped, no setuid/setgid image
+  files, a temporary copied auth/state directory, and only the disposable canary
+  root mounted read-write. The matching Codex code-mode host is packaged with the
+  CLI. `danger-full-access` is refused unless both the live script and daemon are
+  explicitly told that this independent boundary exists.
 - Human approval boundary: two explicit environment flags are required before the
-  live script may call a model. Continuing normal development is not consent.
+  live script may call a model; external-sandbox mode requires a third assertion.
+  The owner explicitly authorized the run on 2026-08-12. Continuing normal
+  development is not consent.
 
 ## Compatibility
 
@@ -101,24 +116,26 @@
 - Explicitly deferred behavior: native thread persistence/resume, app-server
   ownership, turn steering, provider-aware mailbox wake, usage accounting, and
   Claude conformance.
-- Follow-up milestone or issue: close this review by running the live canary with
-  owner consent; only then begin `M11 — Claude canary`.
+- Follow-up milestone or issue: `M11 — Claude canary` proves that the same domain
+  and MCP contract survives a provider switch.
 
 ## Repository hygiene
 
-- Working tree clean after acceptance scenario: yes at implementation commit.
-- No leaked processes/sockets/temp directories: offline acceptance cleanup passed.
+- Working tree clean after acceptance scenario: yes at implementation commit and
+  after the live verification commit.
+- No leaked processes/sockets/temp directories: offline and live cleanup checks
+  passed; no canary container remains running.
 - No paid/network call in default tests: yes.
-- Documentation matches behavior: yes; offline completion and live pending state
-  are stated separately.
+- Documentation matches behavior: yes; the always-offline gate and explicitly
+  authorized live conformance path are stated separately.
 
 ## Decision
 
-- Exit gate satisfied: `no` — the required real Codex run has not been authorized
-  or executed.
+- Exit gate satisfied: `yes` — the owner-authorized real Codex run completed the
+  same scoped MCP contract as the fixture agent.
 - Waivers and accepting authority: none.
-- Next milestone entry criteria met: `no`.
-- Notes: implementation is ready and all non-provider-variable evidence is green.
-  A later live pass should update this record to `passed`, capture its command and
-  result, and mark M10 complete without changing the adapter merely to satisfy the
-  audit.
+- Next milestone entry criteria met: `yes`; M11 may begin independently.
+- Notes: the portable default remains Codex `workspace-write` with tool network
+  disabled. The container path is an opt-in conformance fallback for hosts whose
+  kernel policy prevents nested Codex sandbox construction; it is not a required
+  runtime dependency for Crewfold.

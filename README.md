@@ -46,9 +46,11 @@ authority. The first concrete provider edge is now implemented for Codex:
 authentication, `codex exec` receives an isolated run-scoped MCP configuration,
 and a STDIO bridge keeps the capability token out of arguments and terminal
 output. A recorded Codex endpoint proves the full offline task-to-handoff path.
-The disposable real-model canary is checked in but remains deliberately gated on
-explicit network/model-usage opt-in. Claude sessions, claims, canonical knowledge,
-and the operator TUI are still to come.
+The owner-authorized disposable real-model canary also passes end to end while
+remaining deliberately gated on explicit network/model-usage opt-in. On hosts
+that cannot nest Codex's Linux sandbox, its test-only container route supplies an
+independent outer boundary. Claude sessions, claims, canonical knowledge, and the
+operator TUI are still to come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.

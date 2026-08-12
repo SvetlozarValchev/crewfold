@@ -7,7 +7,7 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M9 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M10 are complete**. Evidence is recorded in the [M0
 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -28,13 +28,11 @@ implementation commit is `bc6235d76ee45d98a94c8e01b024c69b9eb2299f`. The M7 impl
 implementation commits are
 `7973bded9f99e965bc01a662b6b4d532e679d2c3` and
 `dbce60007de652d09862a8f673886702ba9860bc`, with assignment-policy coverage in
-`c821ab12cc649d7807a504ee615e61796591178e`. The M10 Codex adapter, doctor,
-run-scoped STDIO MCP bridge, recorded endpoint, and disposable live canary are
-implemented and pass the complete offline gate. M10 remains open only because the
-real-model canary requires explicit network/provider-usage consent and has not
-been run in this implementation turn. The implementation commit is
-`d8f6aac5060eb31e380c95c9d01c8aa2dddadd49`; the
-[audit](reviews/codex-canary.md) remains pending on that one live result.
+`c821ab12cc649d7807a504ee615e61796591178e`. [M10
+evidence](reviews/codex-canary.md) covers the Codex adapter, doctor, run-scoped
+STDIO MCP bridge, recorded endpoint, and owner-authorized disposable live canary.
+Its implementation commits are `d8f6aac5060eb31e380c95c9d01c8aa2dddadd49`
+and `676c0bc15a31ef9b2b8233961d2b6eed696bd1c1`.
 
 ## Sequence
 
@@ -50,7 +48,7 @@ been run in this implementation turn. The implementation commit is
 | M7 ✓ | MCP/briefing | Let a run read scoped context and report through authenticated MCP | M6 |
 | M8 ✓ | Agent messaging | Exchange and acknowledge durable mail while one agent is offline | M7 |
 | M9 ✓ | Herdr runtime | Run the fixture agent in Herdr and reconcile terminal lifecycle | M8 |
-| M10 ◐ | Codex canary | Offline adapter path passes; real disposable session awaits explicit opt-in | M9 |
+| M10 ✓ | Codex canary | Complete the scoped MCP loop with a real disposable Codex session | M9 |
 | M11 | Claude canary | Complete the same loop with Claude and switch providers via handoff | M10 |
 | M12 | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
 | M13 | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
@@ -199,22 +197,14 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M10's implementation is complete; its remaining approved action is the explicit
-live gate:
+M11 is next: add the Claude Code adapter and prove that a second provider uses the
+same Crewfold domain, scoped MCP tools, handoff records, runtime contracts, and
+completion authority without provider-name branches in the core. It needs its own
+recorded offline endpoint and explicit live-consumption gate; M10's authorization
+does not authorize Claude calls.
 
-```sh
-CREWFOLD_LIVE_CODEX=1 CREWFOLD_ALLOW_MODEL_CALLS=1 ./test/live/codex/run.sh
-```
-
-The gate creates a disposable Git repository and dedicated Herdr session, allows
-one exact file change and two local checks, requires the scoped MCP handoff, and
-verifies that no commit, push, unrelated path, or capability token appears. It is
-not part of `scripts/check.sh` because merely continuing ordinary development is
-not consent to network/model usage. M11 does not start until this gate passes or
-the owner records an explicit waiver.
-
-Native Codex resume, active-turn steering, app-server ownership, Claude, claims,
-meetings, canonical knowledge, remote users, and automatic source integration
-remain outside this gate. Every completed capability scenario remains required.
+Native Codex resume, active-turn steering, app-server ownership, claims, meetings,
+canonical knowledge, remote users, and automatic source integration remain outside
+M11. Every completed capability scenario remains required.
 
 No upstream repository should be created until the owner explicitly requests it.
