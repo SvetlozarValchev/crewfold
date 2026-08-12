@@ -4,7 +4,7 @@
 
 - Milestone: `M11 — Claude Code canary and provider-neutral proof`
 - Review status: `offline passed; installed-model conformance pending`
-- Implementation commit: pending
+- Implementation commit: `31c8fad1790b738e86516b119c6594293b9c99ba`
 - Reviewer: `automated offline acceptance; live review requires owner authorization`
 - Date: `2026-08-12`
 

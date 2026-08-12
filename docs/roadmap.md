@@ -35,7 +35,8 @@ Its implementation commits are `d8f6aac5060eb31e380c95c9d01c8aa2dddadd49`
 and `676c0bc15a31ef9b2b8233961d2b6eed696bd1c1`.
 M11's offline implementation and provider-switch acceptance pass; its
 [implementation audit](reviews/claude-canary.md) remains open only for the
-separately authorized installed-Claude canary.
+separately authorized installed-Claude canary. The offline implementation commit
+is `31c8fad1790b738e86516b119c6594293b9c99ba`.
 
 ## Sequence
 
