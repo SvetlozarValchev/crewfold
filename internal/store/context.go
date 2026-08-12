@@ -28,10 +28,14 @@ const (
 var runScopedTools = []string{
 	"crewfold_get_briefing",
 	"crewfold_get_status",
+	"crewfold_acknowledge_message",
+	"crewfold_list_inbox",
 	"crewfold_propose_completion",
 	"crewfold_publish_artifact",
+	"crewfold_read_message",
 	"crewfold_report_blocked",
 	"crewfold_report_progress",
+	"crewfold_send_message",
 }
 
 func (s *Store) BuildContextPacket(ctx context.Context, command BuildContextCommand) (MutationResult[domain.ContextPacket], error) {
@@ -114,6 +118,10 @@ func (s *Store) buildContextPacketInTransaction(ctx context.Context, tx *sql.Tx,
 	if err != nil {
 		return domain.ContextPacket{}, 0, err
 	}
+	inbox, err := inboxSummaryInTransaction(ctx, tx, agent.ID, task.ProjectID)
+	if err != nil {
+		return domain.ContextPacket{}, 0, err
+	}
 	packetID, err := randomID("ctx_")
 	if err != nil {
 		return domain.ContextPacket{}, 0, storageFailure("generate context packet id", err)
@@ -129,10 +137,10 @@ func (s *Store) buildContextPacketInTransaction(ctx context.Context, tx *sql.Tx,
 			Path: checkout.Path, WriteMode: checkout.WriteMode, CheckoutKind: checkout.CheckoutKind,
 			Branch: checkout.Branch, HeadCommit: checkout.HeadCommit, Dirty: checkout.Dirty, Revision: checkout.Revision,
 		},
-		Dependencies: dependencies,
+		Dependencies: dependencies, Inbox: inbox,
 		Policy: domain.ContextPolicy{
 			AllowedTools:     append([]string(nil), runScopedTools...),
-			DeniedOperations: []string{"change another run or task", "push or merge source", "deploy", "message a person", "read unscoped context"},
+			DeniedOperations: []string{"change another run or task", "push or merge source", "deploy", "message a person or broadcast", "read unscoped context"},
 			ApprovalRequired: []string{"shared repository mutation", "external side effect", "destructive operation"},
 		},
 		Reporting: domain.ContextReporting{
@@ -148,7 +156,7 @@ func (s *Store) buildContextPacketInTransaction(ctx context.Context, tx *sql.Tx,
 		},
 		Excluded: []domain.ContextExclusion{
 			{Section: "accepted_knowledge", Reason: "no canonical knowledge capability is enabled"},
-			{Section: "messages", Reason: "agent messaging is not enabled"},
+			{Section: "messages", Reason: "full message bodies are excluded; the bounded inbox summary contains only identifiers and previews"},
 			{Section: "claims", Reason: "scope claims and overlap detection are not enabled"},
 			{Section: "transcripts", Reason: "raw provider transcripts are not context authority"},
 		},
@@ -156,6 +164,9 @@ func (s *Store) buildContextPacketInTransaction(ctx context.Context, tx *sql.Tx,
 	}
 	for _, dependency := range dependencies {
 		packet.Included = append(packet.Included, domain.ContextSelection{Section: "dependencies", EntityType: "task", EntityID: dependency.TaskID, Revision: dependency.Revision, Reason: "direct task dependency"})
+	}
+	for _, item := range inbox.Items {
+		packet.Included = append(packet.Included, domain.ContextSelection{Section: "inbox", EntityType: "message", EntityID: item.MessageID, Revision: 1, Reason: "unseen message addressed to the assigned agent"})
 	}
 	semantic := packet
 	semantic.ID, semantic.ContentHash, semantic.CreatedAt, semantic.CreatedBy = "", "", "", ""
@@ -248,7 +259,7 @@ func queryContextPacket(ctx context.Context, database queryRower, workspaceID, p
 	if err := json.Unmarshal([]byte(packetJSON), &packet); err != nil {
 		return domain.ContextPacket{}, storageFailure("decode context packet", err)
 	}
-	if packet.Schema != domain.ContextPacketSchema || packet.ID != packetID || packet.WorkspaceID != workspaceID || packet.ByteSize != len(packetJSON) {
+	if (packet.Schema != domain.ContextPacketSchemaV1 && packet.Schema != domain.ContextPacketSchema) || packet.ID != packetID || packet.WorkspaceID != workspaceID || packet.ByteSize != len(packetJSON) {
 		return domain.ContextPacket{}, storageFailure("validate context packet", errors.New("stored packet identity or size is invalid"))
 	}
 	return packet, nil

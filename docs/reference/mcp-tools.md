@@ -1,7 +1,7 @@
 # MCP tool contract
 
-Status: implemented run-scoped subset; messaging, claims, knowledge, meetings, and
-manager/outcome tools remain planned.
+Status: implemented run-scoped briefing, reporting, artifact, and durable mailbox
+subset. Claims, knowledge, meetings, and manager/outcome tools remain planned.
 
 ## Transport and authentication
 
@@ -22,6 +22,11 @@ runtime launch specification, and Crewfold-generated log metadata/API results.
 Node key, capability directory, and token files use owner-only permissions. A
 malicious same-user provider could still read and print its token; process
 containment is a separate boundary.
+
+Tool discovery and invocation are both intersected with the immutable packet's
+`allowed_tools`. A run created with a v1 packet before mailbox support therefore
+does not gain message authority merely because the daemon binary was upgraded.
+New v2 packets record the mailbox tools and bounded inbox snapshot explicitly.
 
 ## Implemented resources
 
@@ -115,12 +120,63 @@ worker waits for the process to settle, evaluates the scenario's evidence gate,
 then either creates the accepted handoff or leaves the task in
 `changes_requested`. Process exit alone is not completion authority.
 
+### `crewfold_list_inbox`
+
+Input is `{"limit": 20}` with a required limit from 1 through 50. The authenticated
+run receives only messages for its assigned agent that are unscoped or belong to
+the run's project. Listing changes `queued` messages to `delivered` for that run;
+it does not mark them read or acknowledged.
+
+### `crewfold_read_message`
+
+```json
+{"message_id":"msg_id","idempotency_key":"provider-turn-key"}
+```
+
+Marks one inbox message read. The message must belong to the authenticated agent
+and be visible in the run's project. Repeating the same scoped key and input
+returns the original mutation.
+
+### `crewfold_send_message`
+
+```json
+{
+  "recipient_agent": "engine-review",
+  "kind": "review_request",
+  "subject": "Review ordering contract",
+  "body": "Please inspect the attached evidence.",
+  "artifact_ids": ["artifact_id"],
+  "idempotency_key": "provider-turn-key"
+}
+```
+
+The sender identity, run, task, and project come from the authenticated capability;
+they cannot be selected in tool input. A send creates a new thread unless
+`thread_id` is supplied. Replies may also supply `reply_to_message_id`. The target
+is exactly one enabled agent, self-addressing and human/broadcast recipients are
+denied, and an agent can continue only a thread in which sender and recipient are
+already participants. Bodies are limited to 4096 UTF-8 bytes, artifact lists to
+16 IDs, and every artifact must have been published by the sender run.
+
+### `crewfold_acknowledge_message`
+
+```json
+{"message_id":"msg_id","idempotency_key":"provider-turn-key"}
+```
+
+Acknowledges one visible recipient message. Acknowledging also establishes any
+missing delivered/read timestamps; it never changes the immutable message body.
+
+Newly built context packets include a bounded summary of at most ten queued or
+delivered messages for the assigned agent and project. Full message bodies remain
+outside the base packet and are retrieved explicitly through the mailbox tools.
+
 ## Idempotency and audit
 
-Report and artifact idempotency is local to the authenticated run. Repeating the
-same key and content returns the same durable record while the capability remains
-active, including after the worker has applied a progress report. Reusing a key
-with different content returns
+Report, artifact, message-send, read, and acknowledgement idempotency is local to
+the authenticated actor/run. Repeating the same key and content returns the same
+durable record while the capability remains active, including after the worker
+has applied a progress report. Reusing a key with different content returns
 `invalid_input` without another mutation.
 
 Allowed tools/resources append `run.tool_called`; denied scope probes append
@@ -145,7 +201,8 @@ tool results with `isError: true` and the same structured body.
 
 ## Deferred tools and resources
 
-Mailbox, send/acknowledge, claims, knowledge proposals, meetings, manager actions,
-outcome assessments, and project briefings are deliberately absent. Their future
-URIs and tools will use the same scope, idempotency, audit, and domain-authority
-rules; M7 does not reserve unchecked behavior merely by documenting a name.
+Claims, knowledge proposals, meetings, manager actions, outcome assessments, and
+project briefings are deliberately absent. Their future URIs and tools will use
+the same scope, idempotency, audit, and domain-authority rules. Thread closing,
+multi-recipient conversation, runtime-specific live prompting, and human-directed
+messages are also not exposed by the current mailbox surface.

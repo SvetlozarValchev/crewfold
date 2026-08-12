@@ -183,6 +183,7 @@ test/
 │  ├─ deterministic-execution/
 │  ├─ direct-runtime/
 │  ├─ scoped-mcp/
+│  ├─ agent-messaging/
 │  └─ ...
 └─ live/
    ├─ herdr/
@@ -258,7 +259,21 @@ already filtered the action.
 
 ## Test suite commands
 
-The exact build tool is chosen in M0, but preserve these conceptual tiers:
+The complete implemented offline gate is:
+
+```sh
+./scripts/check.sh
+```
+
+It runs formatting, vet, all package tests, the race suite when supported, and
+nine built-binary scenarios through durable two-agent messaging. The messaging
+scenario uses only public CLI/MCP surfaces, stops and restarts the daemon after an
+offline send, compares inbox JSON byte-for-byte across restart, then has agents in
+adjacent standalone clones read, acknowledge, reply, and complete. It also proves
+forbidden recipients, oversized bodies, idempotency, bounded packet summary, and
+visible wake failure without message loss.
+
+Preserve these conceptual future tiers as the suite expands:
 
 ```sh
 # Fast, deterministic, offline

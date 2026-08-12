@@ -333,6 +333,34 @@ func (c *Client) ContextExplain(ctx context.Context, workspace, contextID string
 	return result, nil
 }
 
+func (c *Client) MessageSend(ctx context.Context, paramsValue MessageSendParams) (MessageSendResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	if paramsValue.ArtifactIDs == nil {
+		paramsValue.ArtifactIDs = []string{}
+	}
+	var result MessageSendResult
+	if err := c.callParams(ctx, MethodMessageSend, paramsValue, &result); err != nil {
+		return MessageSendResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) InboxList(ctx context.Context, workspace, agent string, limit int) (InboxListResult, error) {
+	var result InboxListResult
+	if err := c.callParams(ctx, MethodInboxList, InboxListParams{Workspace: workspace, Agent: agent, Limit: limit}, &result); err != nil {
+		return InboxListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ThreadShow(ctx context.Context, workspace, thread string) (ThreadShowResult, error) {
+	var result ThreadShowResult
+	if err := c.callParams(ctx, MethodThreadShow, ThreadQueryParams{Workspace: workspace, Thread: thread}, &result); err != nil {
+		return ThreadShowResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) RunStart(ctx context.Context, paramsValue RunStartParams) (RunMutationResult, error) {
 	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
 	var result RunMutationResult

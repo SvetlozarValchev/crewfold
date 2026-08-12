@@ -48,6 +48,34 @@
         "duplicate_report": {"type": "boolean"},
         "publish_artifact": {"type": "boolean"}
       }
+    },
+    "mailbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "send": {"$ref": "#/$defs/mailbox_message"},
+        "wait_for_kind": {"$ref": "#/$defs/message_kind"},
+        "reply": {"$ref": "#/$defs/mailbox_message"},
+        "acknowledge_received": {"type": "boolean"},
+        "require_inbox_summary": {"type": "boolean"},
+        "wait_timeout_millis": {"type": "integer", "minimum": 0, "maximum": 30000},
+        "denied_recipient_probe": {"type": "string", "minLength": 1, "maxLength": 128},
+        "oversized_recipient_probe": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    }
+  },
+  "$defs": {
+    "message_kind": {"enum": ["inform", "question", "request", "review_request", "handoff", "decision_notice", "risk", "conflict", "approval_request"]},
+    "mailbox_message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "body"],
+      "properties": {
+        "recipient_agent": {"type": "string", "minLength": 1, "maxLength": 128},
+        "kind": {"$ref": "#/$defs/message_kind"},
+        "subject": {"type": "string", "minLength": 1, "maxLength": 160},
+        "body": {"type": "string", "minLength": 1, "maxLength": 4096}
+      }
     }
   },
   "oneOf": [

@@ -6,9 +6,9 @@ The current binary implements `help`, `version`, self/database diagnostics,
 foreground daemon lifecycle, process and workspace status, workspace/event
 queries, project/checkout registration and observation, durable
 agent/objective/task coordination, immutable context packets, deterministic fake
-execution, supervised direct fixture subprocesses, and run-scoped MCP reporting.
-It supports text and JSON output. Teams, claims, messages, meetings, canonical
-knowledge, policy, and approval
+execution, supervised direct fixture subprocesses, run-scoped MCP reporting, and
+durable one-recipient agent mail. It supports text and JSON output. Teams, claims,
+meetings, canonical knowledge, policy, and approval
 commands in later sections are intended future contracts and are not yet available.
 
 ## Goals
@@ -17,9 +17,9 @@ The CLI is both a human interface and a scriptable client. Commands should provi
 readable output by default and stable structured output with `--output json`.
 Mutations return the durable entity and event cursor they created.
 
-The daemon, workspace, source, agent/task, and fake-run examples below are
-implemented. Later sections define intended behavior, not an implemented
-interface.
+The daemon, workspace, source, agent/task/run, context, and message examples below
+are implemented. Claims, meetings, knowledge, policy, and management sections
+define intended behavior rather than an available interface.
 
 ## Daemon and workspace
 
@@ -209,13 +209,29 @@ crewfold overlap resolve OVERLAP_ID --strategy sequence --first TASK_A
 
 ```sh
 crewfold message send engine-review \
+  --workspace personal \
   --kind review_request \
   --task TASK_A \
-  --body "Review ordering guarantees in the attached diff"
-crewfold inbox
-crewfold message ack MESSAGE_ID
-crewfold thread show THREAD_ID
+  --body "Review ordering guarantees in the attached diff" \
+  --socket /path/to/crewfold.sock
+crewfold inbox --workspace personal --agent engine-review \
+  --socket /path/to/crewfold.sock
+crewfold thread show THREAD_ID --workspace personal \
+  --socket /path/to/crewfold.sock
 ```
+
+These owner-facing commands are implemented. `message send` creates a thread when
+`--thread` is absent and accepts optional `--subject`, `--project`, `--task`,
+`--reply-to`, and comma-separated `--artifact-ids`. It sends to exactly one enabled
+agent: human recipients and broadcasts are denied. The body is limited to 4096
+UTF-8 bytes and at most 16 artifacts may be linked. Owner messages cannot attach
+run-scoped artifacts through this command.
+
+`inbox` is an inspection query with a limit from 1 through 50; it does not mark a
+message delivered, read, or acknowledged. `thread show` returns ordered immutable
+messages plus per-message delivery and wake status. Delivery/read/acknowledgement
+mutations are authenticated agent operations exposed through MCP rather than
+owner impersonation in the CLI.
 
 ## Meetings
 

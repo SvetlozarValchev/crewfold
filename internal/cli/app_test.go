@@ -209,7 +209,7 @@ func TestInvalidOutputAndCommandArgumentsAreUsageErrors(t *testing.T) {
 func TestHelpTopics(t *testing.T) {
 	t.Parallel()
 
-	for _, topic := range []string{"version", "doctor", "daemon", "status", "workspace", "project", "checkout", "agent", "objective", "task", "run", "events", "help"} {
+	for _, topic := range []string{"version", "doctor", "daemon", "status", "workspace", "project", "checkout", "agent", "objective", "task", "context", "message", "inbox", "thread", "run", "events", "help"} {
 		t.Run(topic, func(t *testing.T) {
 			t.Parallel()
 
@@ -224,6 +224,29 @@ func TestHelpTopics(t *testing.T) {
 				t.Fatalf("stderr = %q, want empty", stderr.String())
 			}
 		})
+	}
+}
+
+func TestMessageSendPassesBoundedRecipientAndThreadInputs(t *testing.T) {
+	t.Parallel()
+	client := &fakeDaemonClient{messageSend: localapi.MessageSendResult{Schema: localapi.MessageSendSchema, Type: "message_send", Mutation: domain.MessageMutation{Message: domain.Message{ID: "msg_00000000000000000000000000000001"}}}}
+	app, stdout, stderr := newTestApp()
+	app.newClient = func(socketPath string) daemonClient {
+		if socketPath != "/tmp/messages.sock" {
+			t.Fatalf("socket path = %q", socketPath)
+		}
+		return client
+	}
+	args := []string{"message", "send", "reviewer", "--workspace", "personal", "--kind", "question", "--body", "Check the contract", "--subject", "Contract review", "--thread", "thread_00000000000000000000000000000001", "--artifact-ids", "artifact_one,artifact_two", "--reply-to", "msg_00000000000000000000000000000002", "--socket", "/tmp/messages.sock", "--idempotency-key", "message-key", "--output", "json"}
+	if exitCode := app.Run(args); exitCode != ExitOK || stderr.Len() != 0 {
+		t.Fatalf("Run(message send) exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+	params := client.messageSendParams
+	if params.Workspace != "personal" || params.RecipientAgent != "reviewer" || params.Kind != "question" || params.Thread == "" || params.ReplyToMessage == "" || len(params.ArtifactIDs) != 2 || params.IdempotencyKey != "message-key" {
+		t.Fatalf("MessageSend params = %#v", params)
+	}
+	if !strings.Contains(stdout.String(), localapi.MessageSendSchema) {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
 
@@ -829,6 +852,10 @@ type fakeDaemonClient struct {
 	runLogsRun            string
 	runLogsTail           int
 	coordination          localapi.CoordinationStatusResult
+	messageSend           localapi.MessageSendResult
+	inboxList             localapi.InboxListResult
+	threadShow            localapi.ThreadShowResult
+	messageSendParams     localapi.MessageSendParams
 	agentCreateParams     localapi.AgentCreateParams
 	objectiveCreateParams localapi.ObjectiveCreateParams
 	taskCreateParams      localapi.TaskCreateParams
@@ -964,6 +991,19 @@ func (client *fakeDaemonClient) ContextShow(context.Context, string, string) (lo
 
 func (client *fakeDaemonClient) ContextExplain(context.Context, string, string) (localapi.ContextExplainResult, error) {
 	return localapi.ContextExplainResult{}, nil
+}
+
+func (client *fakeDaemonClient) MessageSend(_ context.Context, params localapi.MessageSendParams) (localapi.MessageSendResult, error) {
+	client.messageSendParams = params
+	return client.messageSend, nil
+}
+
+func (client *fakeDaemonClient) InboxList(context.Context, string, string, int) (localapi.InboxListResult, error) {
+	return client.inboxList, nil
+}
+
+func (client *fakeDaemonClient) ThreadShow(context.Context, string, string) (localapi.ThreadShowResult, error) {
+	return client.threadShow, nil
 }
 
 func (client *fakeDaemonClient) RunStart(_ context.Context, params localapi.RunStartParams) (localapi.RunMutationResult, error) {

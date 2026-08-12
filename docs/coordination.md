@@ -8,7 +8,7 @@ one another and an unrestricted shared chat that becomes the de facto database.
 
 ## Implemented foundation
 
-Crewfold currently implements the non-executing foundation of this model:
+Crewfold currently implements this foundation of the model:
 
 - durable provider-neutral agent definitions;
 - project-scoped objectives and tasks with explicit budgets;
@@ -16,11 +16,15 @@ Crewfold currently implements the non-executing foundation of this model:
 - optimistic task revisions;
 - one active primary assignment per task with a durable lease/history record;
 - ready, assigned, active, blocked, and cancelled coordination transitions;
-- a workspace status projection and immutable event history.
+- a workspace status projection and immutable event history;
+- deterministic and direct fixture execution with run-scoped MCP capabilities;
+- immutable base context with a bounded project-scoped inbox summary;
+- durable single-recipient agent threads, delivery/read/acknowledgement state, and
+  best-effort wake diagnostics.
 
-No command in this layer starts Codex, Claude Code, Herdr, a shell process, or any
-other runtime. Messaging, claims, meetings, managers, and the scheduler described
-below remain layers built on these records.
+The current runtime can start only fixed provider-free fixtures; it does not start
+Codex, Claude Code, Herdr, or arbitrary shell commands. Claims, meetings, managers,
+and the expanded scheduler described below remain layers built on these records.
 
 ## Delegation
 
@@ -55,6 +59,15 @@ This gives communication:
 Direct terminal prompting remains a runtime control mechanism. It is used by
 Crewfold to deliver a wake-up or instruction to a session, not as the only record
 of the underlying message.
+
+The implemented mailbox sends one immutable message to one enabled agent. An
+offline recipient remains queued until a later live run lists its project-scoped
+inbox. A live recipient also creates a durable best-effort wake job; wake failure
+is diagnostic state and cannot erase or falsely deliver the message. Listing,
+reading, and acknowledging are separate transitions. Agent replies stay within
+the original participants, and owner inspection never advances recipient state.
+Group threads, thread closing, human recipients, and live runtime prompting are
+not implemented yet.
 
 ### Message kinds
 

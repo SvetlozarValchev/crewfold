@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 6.
+Status: implemented through schema version 7.
 
 ## Location and ownership
 
@@ -164,6 +164,34 @@ Old runs migrate without invented packet bindings or capabilities; only runs
 created under schema version 6 receive them. Capability expiry and terminal run
 state are both checked on each MCP request.
 
+## Schema version 7
+
+`message_threads` stores workspace/project/task scope, a bounded subject, open or
+closed state, revision, and actor provenance. `messages` stores immutable sender,
+kind, bounded body, artifact links, reply link, and creation time.
+`message_recipients` stores mutable queued/delivered/read/acknowledged state and
+timestamps separately from the message. The current command creates exactly one
+recipient row; the table keeps recipient state explicit for later evolution.
+
+`message_wake_jobs` is a separate durable queue for best-effort delivery to an
+already-live recipient run. Sending to an offline agent commits mail without a
+wake job. Sending to a live agent commits a pending wake intent atomically with
+the message; daemon startup reclaims pending or expired leased jobs. Wake success
+may advance a still-queued delivery to delivered. Wake failure stores a bounded
+diagnostic and leaves delivery queued so later inbox polling remains authoritative.
+
+Message sends are idempotent within their sender identity, and read/acknowledge
+mutations are idempotent within the authenticated run. Artifact references are
+validated against the sender run. A run inbox is restricted to its agent and
+project; owner inspection is wider but does not mutate delivery state. Existing
+schema-version-6 databases migrate with empty message tables and no fabricated
+threads, mail, recipients, or wake work.
+
+New context packets use domain schema v2 because adding the inbox snapshot is an
+incompatible wire change. Stored v1 packets remain readable, retain their original
+byte size and semantic hash, omit the v2 inbox, and do not acquire the new mailbox
+tools. Local `context.show` accepts either version; `context.build` emits v2.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -188,10 +216,11 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 6 contains agent/task/run coordination, immutable
-context packets, scoped report/artifact/audit records, opaque fake/direct
-bindings, and direct supervisor references but no message, canonical knowledge,
-or real model-provider session state. Backup of a live installation must include a
+without its WAL. Schema version 7 contains agent/task/run coordination, immutable
+context packets, scoped report/artifact/audit records, durable
+message/thread/delivery/wake state, opaque fake/direct bindings, and direct
+supervisor references but no canonical knowledge or real model-provider session
+state. Backup of a live installation must include a
 coordinated snapshot of the database, direct-runtime state, node key, and
 capability files; restored capabilities still obey their stored expiry and run
 state.

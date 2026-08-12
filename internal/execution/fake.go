@@ -182,6 +182,12 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 	if scenario.StartFailure != "" && scenario.Process != (domain.FixtureProcess{}) {
 		return errors.New("start-failure scenarios cannot contain process controls")
 	}
+	if scenario.StartFailure != "" && scenario.Mailbox != (domain.FixtureMailbox{}) {
+		return errors.New("start-failure scenarios cannot contain mailbox controls")
+	}
+	if err := validateFixtureMailbox(scenario.Mailbox); err != nil {
+		return err
+	}
 	for index, step := range scenario.Steps {
 		if step.Kind != domain.ObservationProgress && step.Kind != domain.ObservationBlocked && step.Kind != domain.ObservationCompletion {
 			return fmt.Errorf("fake scenario step %d has unsupported kind %q", index, step.Kind)
@@ -208,6 +214,55 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 		}
 	}
 	return nil
+}
+
+func validateFixtureMailbox(mailbox domain.FixtureMailbox) error {
+	if mailbox == (domain.FixtureMailbox{}) {
+		return nil
+	}
+	if mailbox.WaitTimeoutMillis < 0 || mailbox.WaitTimeoutMillis > 30000 {
+		return errors.New("fixture mailbox wait must not exceed 30 seconds")
+	}
+	if mailbox.Reply != nil && mailbox.WaitForKind == "" {
+		return errors.New("fixture mailbox reply requires an incoming message kind")
+	}
+	if mailbox.AcknowledgeReceived && mailbox.WaitForKind == "" {
+		return errors.New("fixture mailbox acknowledgement requires an incoming message kind")
+	}
+	if mailbox.RequireInboxSummary && mailbox.WaitForKind == "" {
+		return errors.New("fixture inbox summary assertion requires an incoming message kind")
+	}
+	for label, message := range map[string]*domain.FixtureMailboxMessage{"send": mailbox.Send, "reply": mailbox.Reply} {
+		if message == nil {
+			continue
+		}
+		if label == "send" && strings.TrimSpace(message.RecipientAgent) == "" {
+			return errors.New("fixture mailbox send requires one recipient agent")
+		}
+		if !supportedFixtureMessageKind(message.Kind) || strings.TrimSpace(message.Body) == "" || len(message.Body) > 4096 || len(message.Subject) > 160 {
+			return fmt.Errorf("fixture mailbox %s contains invalid or unbounded fields", label)
+		}
+	}
+	if mailbox.WaitForKind != "" && !supportedFixtureMessageKind(mailbox.WaitForKind) {
+		return errors.New("fixture mailbox wait kind is unsupported")
+	}
+	for _, probe := range []string{mailbox.DeniedRecipientProbe, mailbox.OversizedRecipientProbe} {
+		if len(probe) > 128 || strings.ContainsAny(probe, "\r\n\x00") {
+			return errors.New("fixture mailbox recipient probe is invalid")
+		}
+	}
+	return nil
+}
+
+func supportedFixtureMessageKind(kind string) bool {
+	switch kind {
+	case domain.MessageInform, domain.MessageQuestion, domain.MessageRequest, domain.MessageReviewRequest,
+		domain.MessageHandoff, domain.MessageDecisionNotice, domain.MessageRisk, domain.MessageConflict,
+		domain.MessageApprovalRequest:
+		return true
+	default:
+		return false
+	}
 }
 
 func AcceptancePasses(rule domain.AcceptanceRule, evidence []string) (bool, []string) {

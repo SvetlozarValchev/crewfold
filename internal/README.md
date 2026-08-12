@@ -8,7 +8,7 @@ daemon/       implemented foreground daemon and socket lifecycle
 cli/          implemented human/machine command surface
 buildinfo/    implemented embedded build metadata
 domain/       implemented storage/transport-neutral coordination and run records
-store/        implemented SQLite migrations, projections, event journal, and run queue
+store/        implemented SQLite migrations, projections, journals, and durable run/message queues
 execution/    implemented runtime/provider contracts, fake adapters, and direct supervision
 mcp/          implemented run-scoped JSON-RPC/MCP protocol and fixture client
 scheduler/    future expanded placement and dependency policy

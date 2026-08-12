@@ -70,3 +70,20 @@ func TestCheckedInDirectRuntimeScenariosSatisfySemanticContract(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckedInAgentMessagingScenariosSatisfySemanticContract(t *testing.T) {
+	t.Parallel()
+
+	paths, err := filepath.Glob("../test/fixtures/agent-messaging/*.json")
+	if err != nil {
+		t.Fatalf("filepath.Glob() error = %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("agent messaging scenario count = %d, want 2; paths = %v", len(paths), paths)
+	}
+	for _, path := range paths {
+		if _, err := execution.LoadScenario(path); err != nil {
+			t.Errorf("execution.LoadScenario(%q) error = %v", path, err)
+		}
+	}
+}

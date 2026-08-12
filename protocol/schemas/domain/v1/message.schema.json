@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:message:v1",
+  "title": "Crewfold durable agent message v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "workspace_id", "thread_id", "sender_type", "sender_id", "kind", "body", "artifact_ids", "created_at"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^msg_[0-9a-f]{32}$"},
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "thread_id": {"type": "string", "pattern": "^thread_[0-9a-f]{32}$"},
+    "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "sender_type": {"enum": ["owner", "agent_run"]},
+    "sender_id": {"type": "string", "minLength": 1},
+    "sender_agent_id": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
+    "sender_agent_name": {"type": "string", "minLength": 1, "maxLength": 63},
+    "sender_run_id": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
+    "kind": {"enum": ["inform", "question", "request", "review_request", "handoff", "decision_notice", "risk", "conflict", "approval_request"]},
+    "body": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "artifact_ids": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+    "reply_to_message_id": {"type": "string", "pattern": "^msg_[0-9a-f]{32}$"},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

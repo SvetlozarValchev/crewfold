@@ -54,3 +54,6 @@ printf 'Direct subprocess black-box acceptance\n'
 
 printf 'Scoped MCP capability black-box acceptance\n'
 "$repo_root/test/scenarios/scoped-mcp/run.sh"
+
+printf 'Durable agent messaging black-box acceptance\n'
+"$repo_root/test/scenarios/agent-messaging/run.sh"

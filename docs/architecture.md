@@ -139,7 +139,9 @@ The implemented server recognizes MCP envelopes on the existing Unix socket. A
 node-secret HMAC token authenticates one run through request metadata; ordinary
 tool arguments cannot select a different identity. The database stores capability
 expiry and immutable context binding, never the credential. Resource and tool
-scope violations are denied and audited.
+scope violations are denied and audited. The same identity derives mailbox sender,
+recipient visibility, project scope, and thread-participant authority; agents
+cannot select a different sender or run in message tool arguments.
 
 ### Command handlers
 
@@ -182,10 +184,11 @@ reports. Automatic acceptance is limited to low-risk scopes and explicit rules.
 
 Before canonical knowledge exists, the implemented packet builder is deliberately
 deterministic: it snapshots only current role, task, checkout, dependency, policy,
-and reporting facts and records explicit exclusions for knowledge, messages,
-claims, and transcripts. Equivalent inputs have one semantic hash; packets remain
-immutable and single-run-bound. This is a bounded context authority, not RAG or a
-transcript accumulator.
+reporting facts, and a bounded project-scoped inbox summary. It records explicit
+exclusions for canonical knowledge, claims, transcripts, and full message bodies.
+Equivalent inputs have one semantic hash; packets remain immutable and
+single-run-bound. This is a bounded context authority, not RAG or a transcript
+accumulator.
 
 ### Outcome and briefing projector
 
@@ -285,6 +288,13 @@ fixture provider must still emit a structured completion report and pass domain
 acceptance. Current process identity and process-group enforcement are Linux-first.
 
 The same pattern applies to prompts, stops, meetings, and external actions.
+
+Durable mail already applies the pattern at a smaller boundary. Message, recipient,
+and optional wake intent commit together. Wake execution happens afterward from a
+separate queue. A crash before effect leaves recoverable pending work; a definite
+wake failure records its diagnostic while durable delivery remains queued. The
+recipient's later inbox read is sufficient for delivery even when no runtime wake
+mechanism exists.
 
 ### Leases
 

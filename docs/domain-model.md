@@ -144,8 +144,13 @@ An immutable, bounded base briefing bound to exactly one run. It snapshots the
 assigned agent role, exact task revision, selected checkout and repository
 observation, direct dependency revisions, allowed tools, denied/approval-required
 operations, and reporting instructions. It also records why each section was
-included and which unavailable capabilities—canonical knowledge, messages,
-claims, and transcripts—were deliberately excluded.
+included and which unavailable capabilities—canonical knowledge, claims, and
+transcripts—were deliberately excluded. It includes only a bounded, project-scoped
+summary of unseen inbox items; full message bodies remain explicit mailbox reads.
+
+Packets built with mailbox support use context-packet schema v2. Existing v1
+packets remain immutable and do not gain either the inbox field or mailbox tool
+authority after an upgrade.
 
 The packet's semantic content hash excludes packet identity and creation metadata,
 so equivalent controlled inputs have the same hash while retaining distinct
@@ -211,18 +216,26 @@ claims; they do not retroactively become authorization.
 
 ### Message
 
-A durable envelope from one actor to one or more recipients. It has a message kind,
-thread, urgency, acknowledgement requirement, optional task or artifact links, and
-delivery/read/acknowledgement state.
+A durable envelope from one actor to a recipient. It has a message kind, thread,
+optional project/task/artifact/reply links, and separate
+delivery/read/acknowledgement and wake state.
 
 Messages contain concise coordination content. Large evidence lives in artifacts
 or source systems and is linked.
 
+The implemented contract accepts one enabled agent recipient and a body of at most
+4096 UTF-8 bytes. A message is immutable after commit. Its recipient row progresses
+from `queued` through `delivered`, `read`, and `acknowledged`; a separate wake job
+is `pending`, `leased`, `succeeded`, or `failed`. `not_requested` means no live
+recipient run existed at send time. Wake failure never means message failure.
+
 ### Thread
 
 An ordered conversation around a task, question, conflict, or announcement.
-Threads are asynchronous and durable. A thread may be promoted into a meeting when
-structured multi-party resolution is needed.
+Threads are asynchronous and durable. The implemented subset creates open threads
+and allows scoped replies between their existing agent participants; closing and
+multi-party expansion remain planned. A thread may later be promoted into a
+meeting when structured multi-party resolution is needed.
 
 ### Meeting
 

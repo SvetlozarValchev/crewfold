@@ -91,21 +91,26 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 		fmt.Fprintln(diagnostics, "read scoped capability file failed")
 		return 1
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
-	client, err := mcp.Dial(ctx, os.Getenv("CREWFOLD_MCP_SOCKET"), strings.TrimSpace(string(tokenBytes)))
+	client := &fixtureMCPConnection{socketPath: os.Getenv("CREWFOLD_MCP_SOCKET"), token: strings.TrimSpace(string(tokenBytes))}
+	err = client.connect(ctx)
 	if err != nil {
 		fmt.Fprintln(diagnostics, err)
 		return 1
 	}
 	defer client.Close()
-	if err := client.Initialize(ctx); err != nil {
-		fmt.Fprintln(diagnostics, err)
-		return 1
-	}
-	if result, err := client.CallTool(ctx, "crewfold_get_briefing", map[string]any{}); err != nil || result.IsError {
+	briefingResult, err := client.CallTool(ctx, "crewfold_get_briefing", map[string]any{})
+	if err != nil || briefingResult.IsError {
 		fmt.Fprintln(diagnostics, "get scoped briefing failed")
 		return 1
+	}
+	if scenario.Mailbox.RequireInboxSummary {
+		var briefing domain.RunBriefing
+		if err := json.Unmarshal(briefingResult.StructuredContent, &briefing); err != nil || briefing.Packet.Inbox.UnseenCount < 1 || len(briefing.Packet.Inbox.Items) < 1 {
+			fmt.Fprintln(diagnostics, "scoped briefing omitted required inbox summary")
+			return 1
+		}
 	}
 	if scenario.Process.CrossRunProbe {
 		_, err := client.ReadResource(ctx, "crewfold://runs/run_ffffffffffffffffffffffffffffffff/briefing")
@@ -123,6 +128,10 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 			fmt.Fprintln(diagnostics, "publish scoped artifact failed")
 			return 1
 		}
+	}
+	if err := runFixtureMailbox(ctx, client, scenario.Mailbox); err != nil {
+		fmt.Fprintln(diagnostics, err)
+		return 1
 	}
 	for index, step := range scenario.Steps {
 		result, err := reportFixtureStep(ctx, client, index, step)
@@ -154,7 +163,213 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 	return scenario.Process.ExitCode
 }
 
-func reportFixtureStep(ctx context.Context, client *mcp.Client, index int, step domain.FakeStep) (mcp.ToolCallResult, error) {
+type fixtureToolClient interface {
+	CallTool(context.Context, string, any) (mcp.ToolCallResult, error)
+	ReadResource(context.Context, string) ([]mcp.ResourceContents, error)
+}
+
+type fixtureMCPConnection struct {
+	socketPath string
+	token      string
+	client     *mcp.Client
+}
+
+func (connection *fixtureMCPConnection) connect(ctx context.Context) error {
+	client, err := mcp.Dial(ctx, connection.socketPath, connection.token)
+	if err != nil {
+		return err
+	}
+	if err := client.Initialize(ctx); err != nil {
+		_ = client.Close()
+		return err
+	}
+	connection.client = client
+	return nil
+}
+
+func (connection *fixtureMCPConnection) Close() error {
+	if connection.client == nil {
+		return nil
+	}
+	err := connection.client.Close()
+	connection.client = nil
+	return err
+}
+
+func (connection *fixtureMCPConnection) CallTool(ctx context.Context, name string, arguments any) (mcp.ToolCallResult, error) {
+	for {
+		if connection.client == nil {
+			if err := connection.reconnect(ctx); err != nil {
+				return mcp.ToolCallResult{}, err
+			}
+		}
+		result, err := connection.client.CallTool(ctx, name, arguments)
+		if err == nil || !retryableFixtureMCPError(err) {
+			return result, err
+		}
+		_ = connection.Close()
+	}
+}
+
+func (connection *fixtureMCPConnection) ReadResource(ctx context.Context, uri string) ([]mcp.ResourceContents, error) {
+	for {
+		if connection.client == nil {
+			if err := connection.reconnect(ctx); err != nil {
+				return nil, err
+			}
+		}
+		result, err := connection.client.ReadResource(ctx, uri)
+		if err == nil || !retryableFixtureMCPError(err) {
+			return result, err
+		}
+		_ = connection.Close()
+	}
+}
+
+func (connection *fixtureMCPConnection) reconnect(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := connection.connect(ctx); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
+func retryableFixtureMCPError(err error) bool {
+	var rpcError *mcp.RPCError
+	return !errors.As(err, &rpcError)
+}
+
+func runFixtureMailbox(ctx context.Context, client fixtureToolClient, plan domain.FixtureMailbox) error {
+	if plan == (domain.FixtureMailbox{}) {
+		return nil
+	}
+	if plan.DeniedRecipientProbe != "" {
+		result, err := client.CallTool(ctx, "crewfold_send_message", map[string]any{
+			"recipient_agent": plan.DeniedRecipientProbe, "kind": domain.MessageInform,
+			"subject": "Denied recipient probe", "body": "This message must be denied.",
+			"artifact_ids": []string{}, "idempotency_key": "fixture-denied-recipient",
+		})
+		if err != nil || !result.IsError || fixtureToolErrorCode(result) != "denied_by_policy" {
+			return errors.New("unauthorized message recipient probe was not denied")
+		}
+	}
+	if plan.OversizedRecipientProbe != "" {
+		result, err := client.CallTool(ctx, "crewfold_send_message", map[string]any{
+			"recipient_agent": plan.OversizedRecipientProbe, "kind": domain.MessageInform,
+			"subject": "Oversized message probe", "body": strings.Repeat("x", 4097),
+			"artifact_ids": []string{}, "idempotency_key": "fixture-oversized-message",
+		})
+		if err != nil || !result.IsError || fixtureToolErrorCode(result) != "invalid_input" {
+			return errors.New("oversized message probe was not rejected")
+		}
+	}
+	threadID := ""
+	if plan.Send != nil {
+		mutation, err := sendFixtureMessage(ctx, client, *plan.Send, "", "", "fixture-mail-send")
+		if err != nil {
+			return err
+		}
+		threadID = mutation.Thread.ID
+	}
+	if plan.WaitForKind == "" {
+		return nil
+	}
+	wait := time.Duration(plan.WaitTimeoutMillis) * time.Millisecond
+	if wait == 0 {
+		wait = 10 * time.Second
+	}
+	deadline := time.Now().Add(wait)
+	var incoming domain.InboxItem
+	for time.Now().Before(deadline) {
+		result, err := client.CallTool(ctx, "crewfold_list_inbox", map[string]any{"limit": 50})
+		if err != nil {
+			return fmt.Errorf("list fixture inbox: %w", err)
+		}
+		if result.IsError {
+			return errors.New("list fixture inbox was denied")
+		}
+		var items []domain.InboxItem
+		if err := json.Unmarshal(result.StructuredContent, &items); err != nil {
+			return fmt.Errorf("decode fixture inbox: %w", err)
+		}
+		for _, item := range items {
+			if item.Message.Kind == plan.WaitForKind && (threadID == "" || item.Message.ThreadID == threadID) {
+				incoming = item
+				break
+			}
+		}
+		if incoming.Message.ID != "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	if incoming.Message.ID == "" {
+		return fmt.Errorf("timed out waiting for fixture mailbox kind %q", plan.WaitForKind)
+	}
+	read, err := client.CallTool(ctx, "crewfold_read_message", map[string]any{"message_id": incoming.Message.ID, "idempotency_key": "fixture-read-" + incoming.Message.ID})
+	if err != nil || read.IsError {
+		return errors.New("read fixture message failed")
+	}
+	if plan.AcknowledgeReceived {
+		acknowledged, err := client.CallTool(ctx, "crewfold_acknowledge_message", map[string]any{"message_id": incoming.Message.ID, "idempotency_key": "fixture-ack-" + incoming.Message.ID})
+		if err != nil || acknowledged.IsError {
+			return errors.New("acknowledge fixture message failed")
+		}
+	}
+	if plan.Reply != nil {
+		reply := *plan.Reply
+		reply.RecipientAgent = incoming.Message.SenderAgentID
+		if _, err := sendFixtureMessage(ctx, client, reply, incoming.Message.ThreadID, incoming.Message.ID, "fixture-mail-reply"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sendFixtureMessage(ctx context.Context, client fixtureToolClient, message domain.FixtureMailboxMessage, threadID, replyTo, key string) (domain.MessageMutation, error) {
+	arguments := map[string]any{
+		"recipient_agent": message.RecipientAgent, "kind": message.Kind, "body": message.Body,
+		"artifact_ids": []string{}, "idempotency_key": key,
+	}
+	if message.Subject != "" {
+		arguments["subject"] = message.Subject
+	}
+	if threadID != "" {
+		arguments["thread_id"] = threadID
+	}
+	if replyTo != "" {
+		arguments["reply_to_message_id"] = replyTo
+	}
+	result, err := client.CallTool(ctx, "crewfold_send_message", arguments)
+	if err != nil || result.IsError {
+		return domain.MessageMutation{}, errors.New("send fixture message failed")
+	}
+	var mutation domain.MessageMutation
+	if err := json.Unmarshal(result.StructuredContent, &mutation); err != nil || mutation.Message.ID == "" {
+		return domain.MessageMutation{}, errors.New("decode fixture message result failed")
+	}
+	return mutation, nil
+}
+
+func fixtureToolErrorCode(result mcp.ToolCallResult) string {
+	var body mcp.ToolError
+	_ = json.Unmarshal(result.StructuredContent, &body)
+	return body.Code
+}
+
+func reportFixtureStep(ctx context.Context, client fixtureToolClient, index int, step domain.FakeStep) (mcp.ToolCallResult, error) {
 	key := fmt.Sprintf("fixture-step-%d", index)
 	switch step.Kind {
 	case domain.ObservationProgress:

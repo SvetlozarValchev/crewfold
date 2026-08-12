@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:inbox-list-params:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "agent"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1},
+    "agent": {"type": "string", "minLength": 1, "maxLength": 128},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 50}
+  }
+}

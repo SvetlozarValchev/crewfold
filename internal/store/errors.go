@@ -39,6 +39,9 @@ const (
 	CodeCapabilityExpired    = "capability_expired"
 	CodeCapabilityInactive   = "capability_inactive"
 	CodeInvalidReport        = "invalid_report"
+	CodeInvalidMessage       = "invalid_message"
+	CodeMessageNotFound      = "message_not_found"
+	CodeMessageDenied        = "message_denied"
 	CodeIdempotencyConflict  = "idempotency_conflict"
 	CodeStorageFailed        = "storage_failed"
 )

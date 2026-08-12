@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:message-mutation:v1",
+  "title": "Crewfold message mutation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["thread", "message", "recipient"],
+  "properties": {
+    "thread": {"$ref": "message-thread.schema.json"},
+    "message": {"$ref": "message.schema.json"},
+    "recipient": {"$ref": "message-delivery.schema.json"}
+  }
+}

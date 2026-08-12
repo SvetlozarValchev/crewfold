@@ -72,6 +72,9 @@ type daemonClient interface {
 	ContextBuild(context.Context, localapi.ContextBuildParams) (localapi.ContextBuildResult, error)
 	ContextShow(context.Context, string, string) (localapi.ContextShowResult, error)
 	ContextExplain(context.Context, string, string) (localapi.ContextExplainResult, error)
+	MessageSend(context.Context, localapi.MessageSendParams) (localapi.MessageSendResult, error)
+	InboxList(context.Context, string, string, int) (localapi.InboxListResult, error)
+	ThreadShow(context.Context, string, string) (localapi.ThreadShowResult, error)
 	RunStart(context.Context, localapi.RunStartParams) (localapi.RunMutationResult, error)
 	RunShow(context.Context, string, string) (localapi.RunShowResult, error)
 	RunList(context.Context, string, string, string) (localapi.RunListResult, error)
@@ -138,6 +141,12 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runTask(ctx, mode, args[1:])
 	case "context":
 		return a.runContext(ctx, mode, args[1:])
+	case "message":
+		return a.runMessage(ctx, mode, args[1:])
+	case "inbox":
+		return a.runInbox(ctx, mode, args[1:])
+	case "thread":
+		return a.runThread(ctx, mode, args[1:])
 	case "run":
 		return a.runRun(ctx, mode, args[1:])
 	case "events":
@@ -684,6 +693,12 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, taskHelp)
 	case "context":
 		fmt.Fprint(a.stdout, contextHelp)
+	case "message":
+		fmt.Fprint(a.stdout, messageHelp)
+	case "inbox":
+		fmt.Fprint(a.stdout, inboxHelp)
+	case "thread":
+		fmt.Fprint(a.stdout, threadHelp)
 	case "run":
 		fmt.Fprint(a.stdout, runHelp)
 	case "events":
@@ -1152,6 +1167,9 @@ Commands:
   objective      Define project objectives and budgets
   task           Coordinate dependency-aware, leased work
   context        Build and inspect immutable run briefings
+  message        Send one bounded durable message to an agent
+  inbox          Inspect an agent's durable mailbox
+  thread         Inspect a durable agent conversation
   run            Launch and inspect provider-neutral execution
   events         Inspect the durable event journal
   help [command] Show command help
@@ -1161,8 +1179,8 @@ Global options:
   -h, --help          Show help
 
 This build coordinates provider-neutral agents, objectives, tasks, dependencies,
-leases, deterministic fake runs, and bounded direct fixture subprocesses. It does
-not mutate source repositories.
+leases, durable mail, deterministic fake runs, and bounded direct fixture
+subprocesses. It does not mutate source repositories.
 `
 
 const versionHelp = `Usage:

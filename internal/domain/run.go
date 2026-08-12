@@ -48,6 +48,7 @@ type FakeScenario struct {
 	Acceptance   AcceptanceRule `json:"acceptance"`
 	Steps        []FakeStep     `json:"steps"`
 	Process      FixtureProcess `json:"process,omitempty"`
+	Mailbox      FixtureMailbox `json:"mailbox,omitempty"`
 }
 
 // FixtureProcess describes deterministic operating-system behavior for the
@@ -63,6 +64,24 @@ type FixtureProcess struct {
 	CrossRunProbe     bool `json:"cross_run_probe,omitempty"`
 	DuplicateReport   bool `json:"duplicate_report,omitempty"`
 	PublishArtifact   bool `json:"publish_artifact,omitempty"`
+}
+
+type FixtureMailboxMessage struct {
+	RecipientAgent string `json:"recipient_agent,omitempty"`
+	Kind           string `json:"kind"`
+	Subject        string `json:"subject,omitempty"`
+	Body           string `json:"body"`
+}
+
+type FixtureMailbox struct {
+	Send                    *FixtureMailboxMessage `json:"send,omitempty"`
+	WaitForKind             string                 `json:"wait_for_kind,omitempty"`
+	Reply                   *FixtureMailboxMessage `json:"reply,omitempty"`
+	AcknowledgeReceived     bool                   `json:"acknowledge_received,omitempty"`
+	RequireInboxSummary     bool                   `json:"require_inbox_summary,omitempty"`
+	WaitTimeoutMillis       int                    `json:"wait_timeout_millis,omitempty"`
+	DeniedRecipientProbe    string                 `json:"denied_recipient_probe,omitempty"`
+	OversizedRecipientProbe string                 `json:"oversized_recipient_probe,omitempty"`
 }
 
 type Run struct {

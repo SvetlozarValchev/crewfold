@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:thread-show-result:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "detail"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:thread-show-result:v1"},
+    "type": {"const": "thread"},
+    "detail": {"$ref": "../../domain/v1/thread-detail.schema.json"}
+  }
+}

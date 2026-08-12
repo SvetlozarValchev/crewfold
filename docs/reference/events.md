@@ -5,9 +5,10 @@ coordination events and the run events used by deterministic and direct executio
 are implemented, including request, start, runtime binding, progress, blockage,
 resume, completion proposal, handoff, completion/failure, stop, lost-runtime,
 scoped tool audit, report receipt, artifact publication, and context-packet facts.
-Names for later messaging, meetings, canonical knowledge, policy, checks, and
-external integrations remain proposals; the catalogue defines intended coverage,
-not a frozen schema.
+Thread creation, durable message send/delivery/read/acknowledgement, and wake
+success/failure facts are also implemented. Names for later meetings, canonical
+knowledge, policy, checks, and external integrations remain proposals; the
+catalogue defines intended coverage, not a frozen schema.
 
 ## Envelope
 
@@ -137,13 +138,19 @@ overlap.dismissed
 
 ## Communication and meetings
 
+Thread creation and the six message/wake facts through `message.wake_failed` are
+implemented. Thread closing, delivery failure distinct from wake failure, and all
+meeting names remain proposals.
+
 ```text
+thread.created
 message.sent
 message.delivered
 message.read
 message.acknowledged
+message.wake_succeeded
+message.wake_failed
 message.delivery_failed
-thread.created
 thread.closed
 meeting.proposed
 meeting.created

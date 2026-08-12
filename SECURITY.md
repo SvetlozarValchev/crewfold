@@ -6,9 +6,9 @@ scope reduces the attack surface but does not make it harmless.
 ## Security status
 
 The repository is pre-release. The local API, durable coordination core, immutable
-run briefings, run-scoped MCP surface, and fixed provider-free direct-process
-fixtures have executable enforcement and tests, but arbitrary agent commands,
-provider credentials, network policy, and an
+run briefings, run-scoped MCP surface, durable agent mail, and fixed provider-free
+direct-process fixtures have executable enforcement and tests, but arbitrary
+agent commands, provider credentials, network policy, and an
 operating-system sandbox are not implemented. There is no supported production
 version or private vulnerability channel yet. Do not rely on Crewfold to protect
 sensitive environments.
@@ -66,6 +66,20 @@ environment value, database field, or launch specification. MCP tools contain no
 caller-selected run identity. Cross-run resources, expired capabilities, and
 terminal-run capabilities are denied; allowed and denied calls are audited without
 request bodies or tokens.
+
+Mailbox authorization is derived from the authenticated run. A run can address
+one enabled agent, cannot address itself, a human, or a broadcast, and can only
+attach artifacts published by that sender run. Agent replies stay within existing
+thread participants and a run sees only mail applicable to its project (plus
+explicitly unscoped owner mail). Bodies are valid UTF-8 and limited to 4096 bytes;
+larger evidence must remain a linked artifact. Context packets contain at most ten
+unseen message previews, never an unbounded transcript or all message bodies.
+
+Message persistence and runtime wake-up are separate effects. A failed or stale
+wake attempt records a diagnostic while the recipient remains `queued`; inbox
+polling can still deliver the message later. The current fixture runtime has no
+live prompt API, so its wake hook intentionally reports failure. This is a visible
+capability limitation, not message loss.
 
 This is least authority inside the MCP protocol, not isolation from the owner's
 machine. Direct children currently run under the same operating-system user as the

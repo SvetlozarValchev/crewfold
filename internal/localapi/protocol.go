@@ -43,6 +43,9 @@ const (
 	MethodContextBuild       = "context.build"
 	MethodContextShow        = "context.show"
 	MethodContextExplain     = "context.explain"
+	MethodMessageSend        = "message.send"
+	MethodInboxList          = "inbox.list"
+	MethodThreadShow         = "thread.show"
 	MethodRunStart           = "run.start"
 	MethodRunShow            = "run.show"
 	MethodRunList            = "run.list"
@@ -71,9 +74,12 @@ const (
 	TaskShowSchema           = "urn:crewfold:schema:local-api:task-show-result:v1"
 	TaskListSchema           = "urn:crewfold:schema:local-api:task-list-result:v1"
 	TaskTimelineSchema       = "urn:crewfold:schema:local-api:task-timeline-result:v1"
-	ContextBuildSchema       = "urn:crewfold:schema:local-api:context-build-result:v1"
-	ContextShowSchema        = "urn:crewfold:schema:local-api:context-show-result:v1"
+	ContextBuildSchema       = "urn:crewfold:schema:local-api:context-build-result:v2"
+	ContextShowSchema        = "urn:crewfold:schema:local-api:context-show-result:v2"
 	ContextExplainSchema     = "urn:crewfold:schema:local-api:context-explain-result:v1"
+	MessageSendSchema        = "urn:crewfold:schema:local-api:message-send-result:v1"
+	InboxListSchema          = "urn:crewfold:schema:local-api:inbox-list-result:v1"
+	ThreadShowSchema         = "urn:crewfold:schema:local-api:thread-show-result:v1"
 	RunMutationSchema        = "urn:crewfold:schema:local-api:run-mutation-result:v1"
 	RunShowSchema            = "urn:crewfold:schema:local-api:run-show-result:v1"
 	RunListSchema            = "urn:crewfold:schema:local-api:run-list-result:v1"
@@ -441,6 +447,51 @@ type ContextExplainResult struct {
 	Schema      string                    `json:"schema"`
 	Type        string                    `json:"type"`
 	Explanation domain.ContextExplanation `json:"explanation"`
+}
+
+type MessageSendParams struct {
+	Workspace      string   `json:"workspace"`
+	RecipientAgent string   `json:"recipient_agent"`
+	Thread         string   `json:"thread,omitempty"`
+	Project        string   `json:"project,omitempty"`
+	Task           string   `json:"task,omitempty"`
+	Kind           string   `json:"kind"`
+	Subject        string   `json:"subject,omitempty"`
+	Body           string   `json:"body"`
+	ArtifactIDs    []string `json:"artifact_ids"`
+	ReplyToMessage string   `json:"reply_to_message,omitempty"`
+	IdempotencyKey string   `json:"idempotency_key"`
+}
+
+type MessageSendResult struct {
+	Schema        string                 `json:"schema"`
+	Type          string                 `json:"type"`
+	Mutation      domain.MessageMutation `json:"mutation"`
+	EventSequence int64                  `json:"event_sequence"`
+}
+
+type InboxListParams struct {
+	Workspace string `json:"workspace"`
+	Agent     string `json:"agent"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
+type InboxListResult struct {
+	Schema string             `json:"schema"`
+	Type   string             `json:"type"`
+	Agent  string             `json:"agent"`
+	Items  []domain.InboxItem `json:"items"`
+}
+
+type ThreadQueryParams struct {
+	Workspace string `json:"workspace"`
+	Thread    string `json:"thread"`
+}
+
+type ThreadShowResult struct {
+	Schema string              `json:"schema"`
+	Type   string              `json:"type"`
+	Detail domain.ThreadDetail `json:"detail"`
 }
 
 type RunStartParams struct {

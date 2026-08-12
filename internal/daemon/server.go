@@ -42,6 +42,7 @@ type Config struct {
 	RuntimeDrivers   map[string]execution.RuntimeDriver
 	ProviderAdapters map[string]execution.ProviderAdapter
 	RunWorkerHook    func(string, domain.Run) error
+	MessageWake      func(context.Context, domain.MessageWakeJob) error
 	DisableRunWorker bool
 	defaultProviders bool
 }
@@ -131,6 +132,7 @@ func Run(ctx context.Context, config Config) error {
 	}
 	defer instance.cleanupSocket()
 	instance.startRunWorker()
+	instance.processMessageWakeJobs()
 
 	resolved.Logger.Info("daemon started",
 		"component", "daemon",
@@ -177,6 +179,11 @@ func resolveConfig(config Config) (Config, error) {
 	}
 	if config.GitInspector == nil {
 		config.GitInspector = gitstate.NewInspector()
+	}
+	if config.MessageWake == nil {
+		config.MessageWake = func(context.Context, domain.MessageWakeJob) error {
+			return errors.New("runtime wake-up is unavailable for this runtime driver")
+		}
 	}
 	if config.RuntimeDrivers == nil {
 		fakeRuntime := execution.NewFakeRuntime()
@@ -477,6 +484,12 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleContextShow(request), false
 	case localapi.MethodContextExplain:
 		return s.handleContextExplain(request), false
+	case localapi.MethodMessageSend:
+		return s.handleMessageSend(request), false
+	case localapi.MethodInboxList:
+		return s.handleInboxList(request), false
+	case localapi.MethodThreadShow:
+		return s.handleThreadShow(request), false
 	case localapi.MethodRunStart:
 		return s.handleRunStart(request), false
 	case localapi.MethodRunShow:

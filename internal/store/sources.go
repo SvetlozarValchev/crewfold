@@ -574,6 +574,10 @@ FROM checkouts WHERE project_id = ? ORDER BY path`, projectID)
 }
 
 func appendEvent(ctx context.Context, transaction *sql.Tx, workspaceID, entityType, entityID string, revision int64, eventType, correlationID, now string, data any) (int64, error) {
+	return appendEventForActor(ctx, transaction, workspaceID, entityType, entityID, revision, eventType, correlationID, now, localOwnerActorID, localActorType, data)
+}
+
+func appendEventForActor(ctx context.Context, transaction *sql.Tx, workspaceID, entityType, entityID string, revision int64, eventType, correlationID, now, actorID, actorType string, data any) (int64, error) {
 	eventID, err := randomID("evt_")
 	if err != nil {
 		return 0, storageFailure("generate event id", err)
@@ -588,7 +592,7 @@ INSERT INTO events(
     actor_id, actor_type, workspace_id, entity_type, entity_id,
     entity_revision, correlation_id, causation_id, data_json
 ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
-		eventID, eventType, now, now, localOwnerActorID, localActorType, workspaceID,
+		eventID, eventType, now, now, actorID, actorType, workspaceID,
 		entityType, entityID, revision, correlationID, string(dataJSON),
 	)
 	if err != nil {

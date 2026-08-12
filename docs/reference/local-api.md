@@ -1,9 +1,9 @@
 # Local API v1
 
 Status: implemented for daemon health, durable workspaces/events, read-only Git
-inspection, provider-neutral agent/objective/task/run coordination, and immutable
-context packets. Subscriptions, messages, claims, and canonical knowledge arrive
-later.
+inspection, provider-neutral agent/objective/task/run coordination, immutable
+context packets, and owner-facing durable agent mail. Subscriptions, claims, and
+canonical knowledge arrive later.
 
 ## Transport
 
@@ -269,6 +269,10 @@ policy, reporting instructions, and explicit included/excluded explanations.
 `context.show` returns that exact packet; `context.explain` returns its stable
 selection reasons, semantic hash, and byte size.
 
+New builds return context-packet/result schema v2 with a bounded inbox snapshot.
+`context.show` result v2 can carry a preserved v1 packet created before mailbox
+support or a current v2 packet; it never upgrades the stored packet in place.
+
 `run.start` takes `workspace`, task ID, optional checkout ID, optional context
 packet ID, runtime, provider, one validated deterministic scenario,
 `expected_task_revision`, and
@@ -344,6 +348,25 @@ separately.
 The same socket also recognizes JSON-RPC 2.0 MCP envelopes; these do not use local
 API protocol negotiation. The MCP contract and authentication boundary are
 documented separately in [MCP tools](mcp-tools.md).
+
+### Messages and threads
+
+`message.send` takes `workspace`, one `recipient_agent`, `kind`, `body`, and an
+idempotency key. It optionally accepts `subject`, `thread`, `project`, `task`,
+`artifact_ids`, and `reply_to_message`. The local API actor is the owner. It can
+create unscoped or project/task-scoped mail for one enabled agent but cannot attach
+run-owned artifacts. A body contains 1 through 4096 bytes of valid UTF-8; at most
+16 unique artifact IDs are accepted. Sending and queuing its recipient commit in
+one transaction.
+
+`inbox.list` takes `workspace`, agent ID/name, and a limit from 1 through 50. It is
+an owner inspection query and does not advance delivery state. `thread.show` takes
+`workspace` and thread ID and returns its ordered messages and delivery records,
+including acknowledgement and separate wake status/diagnostic.
+
+The owner surface deliberately has no read/acknowledge mutation on behalf of an
+agent. Those transitions require an authenticated live run through MCP. The local
+socket remains owner-only and is not itself the run authorization boundary.
 
 ### `coordination.status`
 

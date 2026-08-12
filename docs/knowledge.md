@@ -6,10 +6,10 @@ Crewfold's knowledge system supplies the smallest trustworthy context needed for
 task. It is not a transcript archive disguised as memory.
 
 Status: immutable base packets containing role, task, checkout, dependency,
-policy, and reporting context are implemented. Canonical knowledge records,
-curation, retrieval, packet refresh/deltas, claims, and mailbox selection below
-remain the planned knowledge system; unimplemented sections are explicitly named
-as exclusions in current packets.
+policy, reporting context, and a bounded project-scoped inbox summary are
+implemented. Canonical knowledge records, curation, retrieval, packet
+refresh/deltas, and claims below remain planned; unimplemented sections are
+explicitly named as exclusions in current packets.
 
 The system separates four layers:
 
@@ -100,6 +100,11 @@ checkpoints.
 7. Unread or high-priority mailbox items.
 8. Repository/checkout identity and current Git snapshot.
 9. How to report progress, completion, blockage, and knowledge proposals.
+
+Today the mailbox section is a deterministic snapshot: total unseen count plus at
+most ten queued/delivered previews for the assigned agent and project. Agents use
+the live inbox tools for full bodies and state transitions. Existing packets never
+silently change when new mail arrives; refresh/delta delivery remains future work.
 
 ### Selection order
 

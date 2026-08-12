@@ -13,12 +13,16 @@ import (
 )
 
 const (
-	toolBriefing   = "crewfold_get_briefing"
-	toolStatus     = "crewfold_get_status"
-	toolProgress   = "crewfold_report_progress"
-	toolBlocked    = "crewfold_report_blocked"
-	toolArtifact   = "crewfold_publish_artifact"
-	toolCompletion = "crewfold_propose_completion"
+	toolBriefing    = "crewfold_get_briefing"
+	toolStatus      = "crewfold_get_status"
+	toolInbox       = "crewfold_list_inbox"
+	toolRead        = "crewfold_read_message"
+	toolSend        = "crewfold_send_message"
+	toolAcknowledge = "crewfold_acknowledge_message"
+	toolProgress    = "crewfold_report_progress"
+	toolBlocked     = "crewfold_report_blocked"
+	toolArtifact    = "crewfold_publish_artifact"
+	toolCompletion  = "crewfold_propose_completion"
 )
 
 func (s *server) handleMCPRequest(request mcp.Request) mcp.Response {
@@ -55,12 +59,12 @@ func (s *server) handleMCPRequest(request mcp.Request) mcp.Response {
 			"protocolVersion": mcp.ProtocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}, "resources": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]string{"name": "crewfold", "version": s.config.Version.Version},
-			"instructions":    "Use only the run-scoped Crewfold briefing, status, reporting, artifact, and completion capabilities exposed here.",
+			"instructions":    "Use only the run-scoped Crewfold briefing, mailbox, status, reporting, artifact, and completion capabilities exposed here.",
 		})
 	case "ping":
 		return mcp.Success(request.ID, map[string]any{})
 	case "tools/list":
-		return mcp.Success(request.ID, map[string]any{"tools": scopedMCPTools()})
+		return mcp.Success(request.ID, map[string]any{"tools": allowedMCPTools(briefing.Packet.Policy.AllowedTools)})
 	case "resources/list":
 		return mcp.Success(request.ID, map[string]any{"resources": scopedMCPResources(briefing)})
 	case "resources/read":
@@ -128,6 +132,12 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 		return s.mcpDenied(request, briefing.Run.ID, "", "invalid_input", "tools/call requires a tool name and arguments", "error")
 	}
 	name := strings.TrimSpace(params.Name)
+	if !knownMCPTool(name) {
+		return s.mcpDenied(request, briefing.Run.ID, name, "invalid_input", "tool is not supported", "error")
+	}
+	if !containsString(briefing.Packet.Policy.AllowedTools, name) {
+		return s.mcpDenied(request, briefing.Run.ID, name, "denied_by_policy", "tool is absent from this immutable run capability", "denied")
+	}
 	var value any
 	var err error
 	switch name {
@@ -140,6 +150,51 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 			"run_id": briefing.Run.ID, "run_status": briefing.Run.Status, "run_revision": briefing.Run.Revision,
 			"task_id": briefing.Task.ID, "task_status": briefing.Task.Status, "task_revision": briefing.Task.Revision,
 			"budget": briefing.Task.Budget, "blocked_question": briefing.Run.BlockedQuestion,
+		}
+	case toolInbox:
+		var arguments inboxArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			err = arguments.validate()
+		}
+		if err == nil {
+			value, err = s.store.RunInbox(context.Background(), briefing.Run.ID, arguments.Limit)
+		}
+	case toolRead:
+		var arguments messageTransitionArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			var result store.MutationResult[domain.InboxItem]
+			result, err = s.store.ReadRunMessage(context.Background(), briefing.Run.ID, arguments.MessageID, arguments.IdempotencyKey)
+			value = result.Value
+		}
+	case toolAcknowledge:
+		var arguments messageTransitionArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			var result store.MutationResult[domain.InboxItem]
+			result, err = s.store.AcknowledgeRunMessage(context.Background(), briefing.Run.ID, arguments.MessageID, arguments.IdempotencyKey)
+			value = result.Value
+		}
+	case toolSend:
+		var arguments sendMessageArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			err = arguments.validate()
+		}
+		if err == nil {
+			var result store.MutationResult[domain.MessageMutation]
+			result, err = s.store.SendMessage(context.Background(), store.SendMessageCommand{
+				WorkspaceIdentifier: briefing.Run.WorkspaceID, SenderRunID: briefing.Run.ID,
+				RecipientAgent: arguments.RecipientAgent, ThreadID: arguments.ThreadID,
+				Kind: arguments.Kind, Subject: arguments.Subject, Body: arguments.Body,
+				ArtifactIDs: arguments.ArtifactIDs, ReplyToMessageID: arguments.ReplyToMessageID,
+				IdempotencyKey: arguments.IdempotencyKey, CorrelationID: "mcp-" + mcpRequestID(request.ID),
+			})
+			value = result.Value
+			if err == nil {
+				s.processMessageWakeJobs()
+			}
 		}
 	case toolProgress:
 		var arguments progressArguments
@@ -194,7 +249,11 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 		if !isStoreError(err) {
 			errorBody = mcp.ToolError{Code: "invalid_input", Message: err.Error()}
 		}
-		return s.mcpDenied(request, briefing.Run.ID, name, errorBody.Code, errorBody.Message, "error")
+		outcome := "error"
+		if errorBody.Code == "out_of_scope" || errorBody.Code == "denied_by_policy" {
+			outcome = "denied"
+		}
+		return s.mcpDenied(request, briefing.Run.ID, name, errorBody.Code, errorBody.Message, outcome)
 	}
 	structured, err := json.Marshal(value)
 	if err != nil {
@@ -270,11 +329,43 @@ func scopedMCPTools() []mcp.Tool {
 	return []mcp.Tool{
 		{Name: toolBriefing, Description: "Read this run's briefing and immutable context packet.", InputSchema: empty},
 		{Name: toolStatus, Description: "Read current status and revisions for this run and task.", InputSchema: empty},
+		{Name: toolInbox, Description: "List this agent's bounded durable inbox and mark queued items delivered to this run.", InputSchema: objectSchema([]string{"limit"}, map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 50}})},
+		{Name: toolRead, Description: "Read one message addressed to this run's agent.", InputSchema: objectSchema([]string{"message_id", "idempotency_key"}, map[string]any{"message_id": stringSchema(1, 128), "idempotency_key": stringSchema(1, 128)})},
+		{Name: toolSend, Description: "Send one bounded durable message to an enabled workspace agent.", InputSchema: objectSchema([]string{"recipient_agent", "kind", "body", "artifact_ids", "idempotency_key"}, map[string]any{"recipient_agent": stringSchema(1, 128), "thread_id": stringSchema(1, 128), "subject": stringSchema(1, 160), "kind": map[string]any{"type": "string", "enum": []string{"inform", "question", "request", "review_request", "handoff", "decision_notice", "risk", "conflict", "approval_request"}}, "body": stringSchema(1, 4096), "artifact_ids": boundedStringArraySchema(16), "reply_to_message_id": stringSchema(1, 128), "idempotency_key": stringSchema(1, 128)})},
+		{Name: toolAcknowledge, Description: "Acknowledge one message addressed to this run's agent.", InputSchema: objectSchema([]string{"message_id", "idempotency_key"}, map[string]any{"message_id": stringSchema(1, 128), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolProgress, Description: "Submit a structured progress report for this run.", InputSchema: objectSchema([]string{"summary", "completed", "next", "risks", "evidence_ids", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "completed": stringArraySchema(), "next": stringArraySchema(), "risks": stringArraySchema(), "evidence_ids": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolBlocked, Description: "Report that this run needs an owner or coordinator decision.", InputSchema: objectSchema([]string{"reason", "needs", "severity", "related_ids", "idempotency_key"}, map[string]any{"reason": stringSchema(1, 1024), "needs": stringArraySchema(), "severity": map[string]any{"type": "string", "enum": []string{"blocking", "high", "medium", "low"}}, "related_ids": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolArtifact, Description: "Publish bounded evidence owned by this run.", InputSchema: objectSchema([]string{"name", "media_type", "content", "idempotency_key"}, map[string]any{"name": stringSchema(1, 128), "media_type": stringSchema(1, 128), "content": stringSchema(0, 32768), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolCompletion, Description: "Propose completion with an executive handoff and evidence.", InputSchema: objectSchema([]string{"summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "handoff": stringSchema(1, 4096), "evidence_ids": stringArraySchema(), "changed_paths": stringArraySchema(), "checks": stringArraySchema(), "remaining_risks": stringArraySchema(), "unknowns": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 	}
+}
+
+func allowedMCPTools(allowed []string) []mcp.Tool {
+	result := make([]mcp.Tool, 0, len(allowed))
+	for _, tool := range scopedMCPTools() {
+		if containsString(allowed, tool.Name) {
+			result = append(result, tool)
+		}
+	}
+	return result
+}
+
+func knownMCPTool(name string) bool {
+	for _, tool := range scopedMCPTools() {
+		if tool.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func objectSchema(required []string, properties map[string]any) map[string]any {
@@ -289,7 +380,45 @@ func stringSchema(minimum, maximum int) map[string]any {
 }
 
 func stringArraySchema() map[string]any {
-	return map[string]any{"type": "array", "maxItems": 32, "items": stringSchema(1, 128)}
+	return boundedStringArraySchema(32)
+}
+
+func boundedStringArraySchema(maximum int) map[string]any {
+	return map[string]any{"type": "array", "maxItems": maximum, "items": stringSchema(1, 128)}
+}
+
+type inboxArguments struct {
+	Limit int `json:"limit"`
+}
+
+func (arguments inboxArguments) validate() error {
+	if arguments.Limit < 1 || arguments.Limit > 50 {
+		return errors.New("inbox limit must be from 1 to 50")
+	}
+	return nil
+}
+
+type messageTransitionArguments struct {
+	MessageID      string `json:"message_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type sendMessageArguments struct {
+	RecipientAgent   string   `json:"recipient_agent"`
+	ThreadID         string   `json:"thread_id,omitempty"`
+	Subject          string   `json:"subject,omitempty"`
+	Kind             string   `json:"kind"`
+	Body             string   `json:"body"`
+	ArtifactIDs      []string `json:"artifact_ids"`
+	ReplyToMessageID string   `json:"reply_to_message_id,omitempty"`
+	IdempotencyKey   string   `json:"idempotency_key"`
+}
+
+func (arguments sendMessageArguments) validate() error {
+	if arguments.ArtifactIDs == nil {
+		return errors.New("message artifact_ids is required; use an empty array when no artifacts are linked")
+	}
+	return nil
 }
 
 type progressArguments struct {
@@ -371,11 +500,11 @@ func mcpErrorFromStore(err error) mcp.ToolError {
 	code := store.ErrorCode(err)
 	result := mcp.ToolError{Message: err.Error()}
 	switch code {
-	case store.CodeInvalidContext, store.CodeInvalidReport, store.CodeInvalidRun, store.CodeIdempotencyConflict:
+	case store.CodeInvalidContext, store.CodeInvalidReport, store.CodeInvalidRun, store.CodeInvalidMessage, store.CodeIdempotencyConflict:
 		result.Code = "invalid_input"
-	case store.CodeContextNotFound, store.CodeRunNotFound:
+	case store.CodeContextNotFound, store.CodeRunNotFound, store.CodeMessageNotFound:
 		result.Code = "out_of_scope"
-	case store.CodeCapabilityExpired, store.CodeCapabilityInactive, store.CodeRunConflict:
+	case store.CodeCapabilityExpired, store.CodeCapabilityInactive, store.CodeRunConflict, store.CodeMessageDenied:
 		result.Code = "denied_by_policy"
 	default:
 		result.Code, result.Retryable = "temporarily_unavailable", true

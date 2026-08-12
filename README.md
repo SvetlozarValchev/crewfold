@@ -30,10 +30,14 @@ standalone clones and linked worktrees. It persists process bindings, reconciles
 children across daemon restart, exposes capped logs with API redaction, and
 supports timeout and graceful-stop fallback. Runs now bind immutable, bounded
 context packets and can use an authenticated, run-scoped MCP surface for briefing,
-status, structured progress/blockage/completion reports, and text artifacts. The
-direct `fixture-mcp` worker proves that loop without reading reports from terminal
-output. Model sessions, inter-agent messaging, claims, canonical knowledge, and
-the operator TUI are still to come.
+status, structured progress/blockage/completion reports, text artifacts, and
+durable agent mail. One agent can send bounded, task-scoped mail while another is
+offline; the recipient later receives, reads, acknowledges, and replies without
+using terminal output as coordination state. Delivery survives daemon restart,
+and best-effort runtime wake-up is recorded separately from the durable message.
+The direct `fixture-mcp` worker proves that loop across adjacent standalone clones.
+Real model sessions, live runtime wake-up, claims, canonical knowledge, and the
+operator TUI are still to come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.

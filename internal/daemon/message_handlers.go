@@ -1,0 +1,51 @@
+package daemon
+
+import (
+	"context"
+	"strings"
+
+	"crewfold/internal/localapi"
+	"crewfold/internal/store"
+)
+
+func (s *server) handleMessageSend(request localapi.Request) localapi.Response {
+	var params localapi.MessageSendParams
+	if err := decodeParams(request.Params, &params); err != nil || params.ArtifactIDs == nil {
+		return invalidParamsResponse(request, "message.send requires workspace, recipient_agent, kind, body, artifact_ids, and idempotency_key")
+	}
+	result, err := s.store.SendMessage(context.Background(), store.SendMessageCommand{
+		WorkspaceIdentifier: params.Workspace, RecipientAgent: params.RecipientAgent,
+		ThreadID: params.Thread, ProjectIdentifier: params.Project, TaskID: params.Task,
+		Kind: params.Kind, Subject: params.Subject, Body: params.Body, ArtifactIDs: params.ArtifactIDs,
+		ReplyToMessageID: params.ReplyToMessage, IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	s.processMessageWakeJobs()
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.MessageSendResult{Schema: localapi.MessageSendSchema, Type: "message_send", Mutation: result.Value, EventSequence: result.EventSequence})
+}
+
+func (s *server) handleInboxList(request localapi.Request) localapi.Response {
+	var params localapi.InboxListParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Agent) == "" {
+		return invalidParamsResponse(request, "inbox.list requires workspace and agent and accepts a limit from 1 to 50")
+	}
+	items, err := s.store.Inbox(context.Background(), params.Workspace, params.Agent, params.Limit)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.InboxListResult{Schema: localapi.InboxListSchema, Type: "inbox", Agent: params.Agent, Items: items})
+}
+
+func (s *server) handleThreadShow(request localapi.Request) localapi.Response {
+	var params localapi.ThreadQueryParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Thread) == "" {
+		return invalidParamsResponse(request, "thread.show requires workspace and thread")
+	}
+	detail, err := s.store.Thread(context.Background(), params.Workspace, params.Thread)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ThreadShowResult{Schema: localapi.ThreadShowSchema, Type: "thread", Detail: detail})
+}

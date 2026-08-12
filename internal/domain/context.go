@@ -1,6 +1,9 @@
 package domain
 
-const ContextPacketSchema = "urn:crewfold:schema:domain:context-packet:v1"
+const (
+	ContextPacketSchemaV1 = "urn:crewfold:schema:domain:context-packet:v1"
+	ContextPacketSchema   = "urn:crewfold:schema:domain:context-packet:v2"
+)
 
 type ContextRole struct {
 	AgentID  string `json:"agent_id"`
@@ -81,6 +84,7 @@ type ContextPacket struct {
 	Task         ContextTask         `json:"task"`
 	Checkout     ContextCheckout     `json:"checkout"`
 	Dependencies []ContextDependency `json:"dependencies"`
+	Inbox        InboxSummary        `json:"inbox,omitzero"`
 	Policy       ContextPolicy       `json:"policy"`
 	Reporting    ContextReporting    `json:"reporting"`
 	Included     []ContextSelection  `json:"included"`

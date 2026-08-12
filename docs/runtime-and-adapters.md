@@ -81,9 +81,10 @@ driver after restart to inspect the same supervisor state.
 The first direct providers are hidden provider-free worker modes of the Crewfold
 binary. `fixture` converts checked-in scenarios into structured process output for
 the direct-runtime compatibility gate. `fixture-mcp` reads its immutable briefing
-and submits reports/artifacts through authenticated MCP; stdout is no longer
-completion authority. Both exercise the same run/task acceptance decision without
-model credentials.
+and submits reports/artifacts through authenticated MCP; its messaging fixture can
+also list, read, acknowledge, send, wait for, and reply to durable mail. Stdout is
+no longer completion or communication authority. Both exercise the same run/task
+acceptance decision without model credentials.
 
 Safety boundaries:
 
@@ -244,9 +245,18 @@ The implemented subset shares the owner-only local API socket and accepts
 JSON-RPC/MCP protocol `2025-06-18`. A node-secret HMAC capability authenticates one
 run through MCP `_meta`; SQLite stores only its expiry and context binding. The
 server exposes only briefing/context resources and tools for briefing, status,
-progress, blockage, bounded text artifacts, and completion proposals. Every scope
-probe is audited. The run worker consumes normalized queued reports and retains
-authority over evidence acceptance and final state.
+progress, blockage, bounded text artifacts, completion proposals, and durable
+single-recipient mail. Every scope probe is audited. The run worker consumes
+normalized queued reports and retains authority over evidence acceptance and final
+state.
+
+Mail delivery does not depend on a runtime driver. The database stores the message
+and recipient state first, then a separate durable wake job may ask the runtime to
+notify an already-live run. The injected wake hook is the future driver seam. The
+current direct fixture has no prompt operation, so the default hook records a
+bounded failure diagnostic and the agent discovers the still-queued message by
+polling its inbox. Herdr can later implement that hook without changing message
+identity, scope, or delivery semantics.
 
 ## Adapter testing
 

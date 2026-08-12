@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:inbox-list-result:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "agent", "items"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:inbox-list-result:v1"},
+    "type": {"const": "inbox"},
+    "agent": {"type": "string", "minLength": 1},
+    "items": {"type": "array", "maxItems": 50, "items": {"$ref": "../../domain/v1/inbox-item.schema.json"}}
+  }
+}

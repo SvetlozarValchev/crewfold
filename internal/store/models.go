@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 6
+	LatestSchemaVersion = 7
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -235,6 +235,22 @@ type PublishRunArtifactCommand struct {
 	MediaType      string
 	Content        string
 	IdempotencyKey string
+}
+
+type SendMessageCommand struct {
+	WorkspaceIdentifier string
+	SenderRunID         string
+	RecipientAgent      string
+	ThreadID            string
+	ProjectIdentifier   string
+	TaskID              string
+	Kind                string
+	Subject             string
+	Body                string
+	ArtifactIDs         []string
+	ReplyToMessageID    string
+	IdempotencyKey      string
+	CorrelationID       string
 }
 
 type RunWork struct {

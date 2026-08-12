@@ -12,10 +12,11 @@ import (
 func TestContextSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 	t.Parallel()
 	for path, expectedID := range map[string]string{
-		"schemas/domain/v1/context-packet.schema.json":        domain.ContextPacketSchema,
-		"schemas/local/v1/context-build.result.schema.json":   localapi.ContextBuildSchema,
-		"schemas/local/v1/context-show.result.schema.json":    localapi.ContextShowSchema,
-		"schemas/local/v1/context-explain.result.schema.json": localapi.ContextExplainSchema,
+		"schemas/domain/v1/context-packet.schema.json":         domain.ContextPacketSchemaV1,
+		"schemas/domain/v1/context-packet-v2.schema.json":      domain.ContextPacketSchema,
+		"schemas/local/v1/context-build-v2.result.schema.json": localapi.ContextBuildSchema,
+		"schemas/local/v1/context-show-v2.result.schema.json":  localapi.ContextShowSchema,
+		"schemas/local/v1/context-explain.result.schema.json":  localapi.ContextExplainSchema,
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil {
