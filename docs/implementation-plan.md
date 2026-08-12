@@ -491,6 +491,13 @@ has not begun, so failures remain attributable to the runtime driver.
 
 ### M10 — Codex canary
 
+**Status:** implementation and offline acceptance are complete on 2026-08-12;
+the milestone exit gate remains pending until an operator explicitly opts into the
+checked-in real-model canary. The adapter uses stable `codex exec --json`, a
+required run-scoped STDIO MCP bridge, ephemeral provider history, and the existing
+Herdr/direct runtime contracts. No user Codex configuration is modified and no
+model call occurs in the default gate.
+
 **Question answered:** Can one real Codex session execute the already-proven MCP
 work loop in a disposable repository?
 

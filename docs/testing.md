@@ -49,6 +49,7 @@ Exercise one real boundary at a time:
 - direct runtime plus fixture worker;
 - MCP server plus fixture client;
 - Herdr driver plus recorded CLI/schema/session responses;
+- Codex adapter plus recorded version/help/auth and lifecycle responses;
 - Git observer plus real temporary repositories.
 
 Each component suite labels its boundary in errors and exposes operation IDs.
@@ -159,6 +160,26 @@ read, attach, and close. Component fixtures add moved-pane, missing-pane, and
 connection-loss responses. The opt-in dedicated-session test verifies those
 assumptions against an installed Herdr without a model provider.
 
+### Recorded Codex endpoint
+
+The checked-in endpoint implements the exact no-model commands used by the
+provider probe and accepts the real Codex launch manifest. During a run it starts
+Crewfold's actual STDIO MCP bridge, reads the scoped briefing, submits a completion
+proposal, and emits bounded JSONL lifecycle events. Authentication failure is a
+separate recorded mode. This proves adapter wiring and failure attribution without
+credentials, network access, or inference.
+
+The real canary has a second acknowledgement gate because it consumes network and
+provider usage:
+
+```sh
+CREWFOLD_LIVE_CODEX=1 CREWFOLD_ALLOW_MODEL_CALLS=1 ./test/live/codex/run.sh
+```
+
+It creates its own Git repository and Herdr session, permits one exact file
+change, runs one local check, verifies the diff and commit count, and never
+configures a remote. Without both flags it cannot call a model.
+
 ### Management workload fixture
 
 A provider-free fixture represents enough parallel work that transcript review is
@@ -188,6 +209,7 @@ test/
 │  ├─ scoped-mcp/
 │  ├─ agent-messaging/
 │  ├─ herdr-runtime/
+│  ├─ codex-provider/
 │  └─ ...
 └─ live/
    ├─ herdr/

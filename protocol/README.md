@@ -11,7 +11,7 @@ conformance fixtures, and compatibility tests for:
 MCP tool schemas are generated or validated against the same domain payloads but
 remain a separate agent-facing surface.
 
-Published schemas currently cover version/self-doctor/error responses; the
+Published schemas currently cover version/self/runtime-doctor/provider-doctor/error responses; the
 newline-delimited local request/response envelope; daemon and database status;
 durable workspace/event records; project, repository, and checkout observation;
 and provider-neutral agent, objective, task, dependency, assignment, readiness,

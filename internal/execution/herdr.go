@@ -213,6 +213,7 @@ func (runtime *HerdrRuntime) Inspect(ctx context.Context, operationID, rawHandle
 		return RuntimeSnapshot{}, fmt.Errorf("read Herdr pane supervisor state: %w", err)
 	}
 	terminal := state.Status == RuntimeStateExited || state.Status == RuntimeStateStopped || state.Status == RuntimeStateTimedOut || state.Status == herdrSupervisorStartFailed
+	var resolvedPane herdr.PaneInfo
 	if terminal || runtime.surfaceCheckDue(operationID) {
 		pane, resolveErr := runtime.resolvePane(ctx, handle.TerminalID)
 		if resolveErr != nil {
@@ -235,8 +236,18 @@ func (runtime *HerdrRuntime) Inspect(ctx context.Context, operationID, rawHandle
 				}
 			}
 		}
+		resolvedPane = pane
 	}
-	return herdrSnapshot(state), nil
+	snapshot := herdrSnapshot(state)
+	if terminal {
+		text, readErr := runtime.client.ReadPane(ctx, resolvedPane.PaneID, 500)
+		if readErr != nil {
+			return RuntimeSnapshot{}, runtimeControlError("read terminal Herdr provider output", readErr)
+		}
+		text = redactDirectOutput(text)
+		snapshot.Stdout = domain.CapturedLog{Text: text, CapturedBytes: int64(len(text))}
+	}
+	return snapshot, nil
 }
 
 func (runtime *HerdrRuntime) Stop(ctx context.Context, operationID, rawHandle string, spec StopSpec) (StopResult, error) {

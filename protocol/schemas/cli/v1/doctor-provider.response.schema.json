@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:provider:codex-probe:v1",
+  "title": "Crewfold Codex provider doctor response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "provider", "status", "binary", "capabilities", "checks"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:provider:codex-probe:v1"},
+    "provider": {"const": "codex"},
+    "status": {"enum": ["ok", "failed"]},
+    "binary": {"type": "string", "minLength": 1},
+    "version": {"type": "string", "minLength": 1},
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["headless_execution", "mcp_client", "structured_events"]}
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": {"enum": ["binary", "capabilities", "authentication"]},
+          "status": {"enum": ["ok", "failed"]},
+          "detail": {"type": "string", "minLength": 1, "maxLength": 4096}
+        }
+      }
+    }
+  }
+}

@@ -184,6 +184,13 @@ Allowed tools/resources append `run.tool_called`; denied scope probes append
 `run.artifact_published`. Audits contain request/method/target/outcome/error code,
 not capability tokens or arbitrary request bodies.
 
+Codex connects through Crewfold's local STDIO bridge. Codex receives only the
+socket path and private capability-file path as forwarded environment variables;
+the bridge reads the token and injects `crewfold/capability` into requests sent to
+the owner-only Unix socket. Client notifications are consumed locally because the
+daemon's scoped request contract requires an ID. Neither STDIO direction contains
+the token.
+
 ## Error vocabulary
 
 The implemented scoped surface uses exactly:

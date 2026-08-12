@@ -383,6 +383,25 @@ func TestHerdrDoctorUsesExplicitBinaryAndSession(t *testing.T) {
 	}
 }
 
+func TestCodexDoctorUsesExplicitBinaryAndHome(t *testing.T) {
+	t.Parallel()
+
+	app, stdout, stderr := newTestApp()
+	app.probeCodex = func(_ context.Context, executable, codexHome string) execution.CodexProbeReport {
+		if executable != "/opt/codex" || codexHome != "/private/codex" {
+			t.Fatalf("probe args = %q, %q", executable, codexHome)
+		}
+		return execution.CodexProbeReport{
+			Schema: execution.CodexProbeSchema, Provider: "codex", Status: "ok", Binary: executable,
+			Capabilities: []string{"headless_execution", "mcp_client", "structured_events"},
+			Checks:       []execution.CodexProbeCheck{{Name: "authentication", Status: "ok"}},
+		}
+	}
+	if exit := app.Run([]string{"doctor", "--provider", "codex", "--codex-binary", "/opt/codex", "--codex-home", "/private/codex", "--output", "json"}); exit != ExitOK || stderr.Len() != 0 || !strings.Contains(stdout.String(), execution.CodexProbeSchema) {
+		t.Fatalf("Run(doctor provider) exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+}
+
 func TestProjectAndCheckoutCommandsUseExplicitScopeAndStructuredResults(t *testing.T) {
 	t.Parallel()
 

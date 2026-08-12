@@ -163,6 +163,47 @@ This supports unknown terminal agents with reduced lifecycle fidelity. Agents th
 cannot call MCP can still be driven, but must use terminal prompts and structured
 handoff files or wrappers; Crewfold reports the degraded capability clearly.
 
+## Implemented Codex provider canary
+
+The first real provider adapter uses `codex exec --json`. Headless execution is a
+better fit for the existing completion contract than the interactive TUI: after
+the provider submits an MCP completion proposal, the process settles and the core
+can evaluate evidence without screen scraping or inventing a TUI-exit convention.
+The same command runs under either `direct` or `herdr`; the provider contains no
+runtime-name branch.
+
+Preparation performs a no-model compatibility probe over the installed version,
+headless flags, and authentication status. Each run receives inline Codex config
+for one required `crewfold` STDIO MCP server. `--ignore-user-config` prevents a
+user or project MCP definition from replacing that binding, while `CODEX_HOME`
+continues to supply existing authentication. `--ephemeral` avoids leaving an
+unmanaged private transcript that Crewfold cannot yet resume. The launch uses the
+workspace-write sandbox, no interactive command approvals, no live web search,
+and no dangerous sandbox bypass.
+
+Codex starts the current Crewfold binary in hidden STDIO-bridge mode. The bridge
+reads the run token from its owner-only capability file, injects it into requests
+sent over the local Unix socket, ignores client notifications that need no daemon
+response, and never writes the token to stdio. Setting the MCP server `required`
+makes missing bridge/socket/capability configuration a provider/MCP startup
+failure instead of an agent that silently works without Crewfold context.
+
+Normalized authority remains unchanged:
+
+- a Crewfold MCP report is the only source of progress, blockage, or proposed
+  completion;
+- Codex JSONL and runtime exit are bounded diagnostic evidence;
+- explicit approval/permission output may normalize to blocked;
+- authentication or required-MCP startup output becomes a provider-boundary
+  failure; and
+- a clean exit without a report fails rather than completing the task.
+
+The installed CLI exposes native resume and the experimental app-server exposes
+thread/turn lifecycle and steering, but this adapter does not claim those
+capabilities yet. Persistent Codex threads, active-turn steering, runtime-aware
+mailbox wake, structured usage, and app-server ownership are deliberate follow-up
+work.
+
 ## Enhanced provider adapters
 
 Provider-specific integration is additive. An adapter advertises capabilities such
@@ -283,6 +324,12 @@ Every adapter must provide:
 - an opt-in live conformance suite.
 
 Normal unit tests must never launch a paid model session.
+
+The Codex adapter follows this rule with a recorded external CLI endpoint that
+executes the real launch manifest and STDIO bridge in regular CI. The installed
+provider canary requires both `CREWFOLD_LIVE_CODEX=1` and
+`CREWFOLD_ALLOW_MODEL_CALLS=1`, uses a disposable one-file repository in a
+dedicated Herdr session, and never pushes.
 
 ## Versioning
 

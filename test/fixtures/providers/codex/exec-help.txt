@@ -1,0 +1,11 @@
+Usage: codex exec [OPTIONS] [PROMPT]
+
+Options:
+  -c, --config <key=value>
+      --ephemeral
+      --ignore-user-config
+      --json
+  -s, --sandbox <SANDBOX_MODE>
+
+Commands:
+  resume

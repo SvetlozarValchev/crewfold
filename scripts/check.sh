@@ -60,3 +60,6 @@ printf 'Durable agent messaging black-box acceptance\n'
 
 printf 'Herdr runtime black-box acceptance\n'
 "$repo_root/test/scenarios/herdr-runtime/run.sh"
+
+printf 'Codex provider black-box acceptance\n'
+"$repo_root/test/scenarios/codex-provider/run.sh"

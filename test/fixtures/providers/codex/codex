@@ -1,0 +1,93 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+  --version)
+    printf 'codex-cli 1.2.3-fixture\n'
+    exit 0
+    ;;
+  login)
+    if [ "${2:-}" = "status" ]
+    then
+      if [ "${CREWFOLD_FIXTURE_CODEX_AUTH:-authenticated}" = "missing" ]
+      then
+        printf 'Not logged in. Run codex login.\n' >&2
+        exit 1
+      fi
+      printf 'Logged in using a recorded fixture\n'
+      exit 0
+    fi
+    ;;
+  exec)
+    if [ "${2:-}" = "--help" ] || [ "${2:-}" = "-h" ]
+    then
+      cat "$(dirname "$0")/exec-help.txt"
+      exit 0
+    fi
+    ;;
+esac
+
+if [ "${1:-}" != "exec" ]
+then
+  printf 'unsupported recorded Codex command\n' >&2
+  exit 2
+fi
+shift
+
+bridge=''
+required='false'
+while [ "$#" -gt 0 ]
+do
+  case "$1" in
+    -c|--config)
+      if [ "$#" -lt 2 ]
+      then
+        printf 'missing recorded Codex config value\n' >&2
+        exit 2
+      fi
+      setting=$2
+      case "$setting" in
+        mcp_servers.crewfold.command=*)
+          bridge=${setting#mcp_servers.crewfold.command=}
+          bridge=${bridge#\"}
+          bridge=${bridge%\"}
+          ;;
+        mcp_servers.crewfold.required=true)
+          required='true'
+          ;;
+      esac
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$bridge" ] || [ "$required" != "true" ]
+then
+  printf '{"type":"error","message":"required MCP server crewfold MCP initialization failed"}\n' >&2
+  exit 1
+fi
+
+response_file="${TMPDIR:-/tmp}/crewfold-codex-fixture-$$.jsonl"
+cleanup() {
+  rm -f "$response_file"
+}
+trap cleanup EXIT HUP INT TERM
+
+{
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"codex-fixture","version":"1"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"crewfold_get_briefing","arguments":{}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"crewfold_propose_completion","arguments":{"summary":"Recorded Codex endpoint completed the scoped work loop.","handoff":"Review the exact fixture task, accepted evidence, and run-scoped MCP audit.","evidence_ids":["implementation_complete","tests_passed"],"changed_paths":["answer.txt"],"checks":["./check.sh"],"remaining_risks":[],"unknowns":[],"idempotency_key":"recorded-codex-completion"}}}'
+} | "$bridge" __mcp-stdio-bridge >"$response_file"
+
+if [ "$(wc -l <"$response_file")" -ne 3 ] || grep -Fq '"error"' "$response_file" || grep -Fq '"isError":true' "$response_file"
+then
+  printf '{"type":"error","message":"Crewfold MCP fixture call failed"}\n' >&2
+  exit 1
+fi
+
+printf '{"type":"thread.started","thread_id":"codex-fixture-thread"}\n'
+printf '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}\n'

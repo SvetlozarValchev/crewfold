@@ -7,7 +7,8 @@ foreground daemon lifecycle, process and workspace status, workspace/event
 queries, project/checkout registration and observation, durable
 agent/objective/task coordination, immutable context packets, deterministic fake
 execution, supervised direct and Herdr fixture subprocesses, run-scoped MCP
-reporting, and durable one-recipient agent mail. It supports text and JSON output.
+reporting, durable one-recipient agent mail, and an offline-proven Codex provider
+adapter. It supports text and JSON output.
 Teams, claims,
 meetings, canonical knowledge, policy, and approval
 commands in later sections are intended future contracts and are not yet available.
@@ -30,6 +31,7 @@ crewfold daemon stop --socket /path/to/crewfold.sock
 crewfold status --socket /path/to/crewfold.sock
 crewfold doctor --database --socket /path/to/crewfold.sock
 crewfold doctor --runtime herdr
+crewfold doctor --provider codex
 crewfold workspace init personal --socket /path/to/crewfold.sock \
   --idempotency-key initialize-personal
 crewfold workspace show personal --socket /path/to/crewfold.sock
@@ -48,7 +50,10 @@ supply a stable key.
 and selected live session. `doctor --runtime herdr` does not launch an agent or
 create a workspace. It reports the binary version, schema/protocol compatibility,
 and session reachability; an unsupported schema is a hard launch gate with upgrade
-guidance.
+guidance. `doctor --provider codex` makes no model call. It verifies the binary,
+the stable headless JSON/MCP flags Crewfold needs, and existing Codex
+authentication. `--codex-binary` and `--codex-home` allow an explicit installation
+or auth/config root; the same values can be passed to `daemon run`.
 
 ## Projects and checkouts
 
@@ -193,8 +198,9 @@ supervisor identity and exit state to reconcile across daemon restart. `run logs
 reports captured and omitted byte counts. `run stop --graceful` requests
 termination and records whether forced kill was required. If Crewfold cannot trust
 the process identity or outcome, the run becomes `lost`, the task is blocked, and
-capacity stays reserved. Arbitrary executable/path selection, attach, interrupt,
-dry-run, and real model providers remain deferred.
+capacity stays reserved. Arbitrary executable/path selection, direct-runtime
+attach/interrupt, and dry-run remain deferred; the Codex adapter below is the one
+allowlisted real provider command.
 
 The implemented `fixture-mcp` provider uses that same direct runtime but reports
 only through authenticated MCP tools. Its stdout contains runtime metadata, not
@@ -214,6 +220,23 @@ completed. `prompt` and mailbox wake submit terminal input, `interrupt` sends
 `ctrl+c`, `attach` delegates to `herdr terminal attach`, and durable `run stop`
 closes only that run's pane after its grace policy. Provider completion still
 requires an MCP proposal, settled process state, and Crewfold acceptance.
+
+The implemented `codex` provider launches stable non-interactive
+`codex exec --json` in the selected checkout. Crewfold supplies only inline,
+run-scoped configuration: user config is ignored for the run, existing
+authentication still comes from `CODEX_HOME`, the sandbox is `workspace-write`,
+interactive approvals are disabled, and the Crewfold MCP server is required. The
+MCP server command is the current Crewfold binary's hidden STDIO bridge; only the
+socket and private capability-file names are forwarded. The token itself is never
+an argument, config value, environment value, or terminal record.
+
+The current Codex slice is one-shot and ephemeral. It can be observed or attached
+through Herdr while active, and its JSONL output retains a native thread reference
+for diagnosis, but Crewfold does not yet persist/resume that native thread or steer
+an active turn. Runtime prompt delivery to a headless Codex process is therefore
+not a provider-level steering guarantee. Those controls require the later richer
+provider session contract; the current OpenAI app-server surface is intentionally
+not made a core dependency here.
 
 ## Claims and overlaps
 

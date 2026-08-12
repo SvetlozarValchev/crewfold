@@ -15,6 +15,7 @@ import (
 
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/daemon"
+	"crewfold/internal/execution"
 	"crewfold/internal/herdr"
 	"crewfold/internal/localapi"
 )
@@ -44,6 +45,7 @@ type App struct {
 	runDaemon      func(context.Context, daemon.Config) error
 	newClient      func(string) daemonClient
 	probeHerdr     func(context.Context, string, string) herdr.ProbeReport
+	probeCodex     func(context.Context, string, string) execution.CodexProbeReport
 	runInteractive func(context.Context, localapi.RunAttachResult) error
 }
 
@@ -102,6 +104,9 @@ func New(stdout, stderr io.Writer, info buildinfo.Info) *App {
 		runDaemon:      daemon.Run,
 		probeHerdr: func(ctx context.Context, executable, session string) herdr.ProbeReport {
 			return herdr.NewClient(executable, session, nil).Probe(ctx)
+		},
+		probeCodex: func(ctx context.Context, executable, codexHome string) execution.CodexProbeReport {
+			return execution.NewCodexProbe(executable, codexHome, nil).Run(ctx)
 		},
 		runInteractive: runAttachedProcess,
 		newClient: func(socketPath string) daemonClient {
@@ -558,7 +563,7 @@ func (a *App) runDaemonForeground(ctx context.Context, mode outputMode, args []s
 		fmt.Fprint(a.stdout, daemonRunHelp)
 		return ExitOK
 	}
-	options, failure := parseOptions(args, "data-dir", "socket", "herdr-binary", "herdr-session")
+	options, failure := parseOptions(args, "data-dir", "socket", "herdr-binary", "herdr-session", "codex-binary", "codex-home")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -579,6 +584,8 @@ func (a *App) runDaemonForeground(ctx context.Context, mode outputMode, args []s
 		Logger:          logger,
 		HerdrExecutable: options["herdr-binary"],
 		HerdrSession:    options["herdr-session"],
+		CodexExecutable: options["codex-binary"],
+		CodexHome:       options["codex-home"],
 	})
 	if err == nil {
 		return ExitOK
@@ -802,9 +809,12 @@ func (a *App) runDoctor(ctx context.Context, mode outputMode, args []string) int
 	if len(args) > 0 && args[0] == "--runtime" {
 		return a.runRuntimeDoctor(ctx, mode, args[1:])
 	}
+	if len(args) > 0 && args[0] == "--provider" {
+		return a.runProviderDoctor(ctx, mode, args[1:])
+	}
 	if len(args) != 1 || args[0] != "--self" {
 		return a.writeFailure(mode, usageFailure(
-			"doctor requires --self, --database, or --runtime herdr",
+			"doctor requires --self, --database, --runtime herdr, or --provider codex",
 			"run 'crewfold help doctor' for usage",
 		))
 	}
@@ -827,6 +837,51 @@ func (a *App) runDoctor(ctx context.Context, mode outputMode, args []string) int
 	}
 
 	if report.Status != "ok" {
+		return ExitFailure
+	}
+	return ExitOK
+}
+
+func (a *App) runProviderDoctor(ctx context.Context, mode outputMode, args []string) int {
+	providerName, optionArgs, failure := requiredLeadingArgument(args, "provider name")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	if providerName != "codex" {
+		return a.writeFailure(mode, usageFailure(fmt.Sprintf("unsupported provider doctor %q", providerName), "use --provider codex"))
+	}
+	options, failure := parseOptions(optionArgs, "codex-binary", "codex-home")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	executable := strings.TrimSpace(options["codex-binary"])
+	if executable == "" {
+		executable = strings.TrimSpace(os.Getenv("CREWFOLD_CODEX_BINARY"))
+	}
+	if executable == "" {
+		executable = "codex"
+	}
+	codexHome := strings.TrimSpace(options["codex-home"])
+	if codexHome == "" {
+		codexHome = strings.TrimSpace(os.Getenv("CREWFOLD_CODEX_HOME"))
+	}
+	report := a.probeCodex(ctx, executable, codexHome)
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, report); err != nil {
+			return a.writeFailure(outputText, internalFailure("write Codex doctor output", err))
+		}
+	} else {
+		fmt.Fprintln(a.stdout, "Crewfold Codex provider")
+		for _, check := range report.Checks {
+			fmt.Fprintf(a.stdout, "  %-16s %s", check.Name+":", check.Status)
+			if check.Detail != "" {
+				fmt.Fprintf(a.stdout, " — %s", check.Detail)
+			}
+			fmt.Fprintln(a.stdout)
+		}
+		fmt.Fprintf(a.stdout, "status: %s\n", report.Status)
+	}
+	if !report.Compatible() {
 		return ExitFailure
 	}
 	return ExitOK
@@ -1258,6 +1313,7 @@ const doctorHelp = `Usage:
   crewfold doctor --self [--output text|json]
   crewfold doctor --database --socket <path> [--output text|json]
   crewfold doctor --runtime herdr [--herdr-binary <path>] [--herdr-session <name>] [--output text|json]
+  crewfold doctor --provider codex [--codex-binary <path>] [--codex-home <path>] [--output text|json]
 
 Run checks for the current executable or query the daemon's SQLite schema,
 journal mode, foreign-key enforcement, and integrity status.
@@ -1293,7 +1349,7 @@ SQLite coordination database.
 `
 
 const daemonRunHelp = `Usage:
-  crewfold daemon run --data-dir <path> --socket <path> [--herdr-binary <path>] [--herdr-session <name>] [--output text|json]
+  crewfold daemon run --data-dir <path> --socket <path> [--herdr-binary <path>] [--herdr-session <name>] [--codex-binary <path>] [--codex-home <path>] [--output text|json]
 
 Run the local daemon in the foreground. Logs are newline-delimited JSON on stderr.
 The socket is owner-only and the data directory is locked for this process.

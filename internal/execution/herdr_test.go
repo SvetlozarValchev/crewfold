@@ -57,6 +57,8 @@ func (runner *fixtureHerdrRunner) Run(_ context.Context, _ string, arguments []s
 		return herdr.CommandResult{Stdout: []byte(`{"id":"cli:request","result":{"type":"pane_process_info","process_info":{"pane_id":"` + runner.paneID + `","foreground_processes":[{"pid":101,"name":"fixture"}]}}}`)}, nil
 	case "pane read " + runner.paneID + " --source recent-unwrapped --lines 25":
 		return herdr.CommandResult{Stdout: []byte("fixture output\n")}, nil
+	case "pane read " + runner.paneID + " --source recent-unwrapped --lines 500":
+		return herdr.CommandResult{Stdout: []byte("fixture output\n")}, nil
 	case "pane send-text " + runner.paneID + " wake now", "pane send-keys " + runner.paneID + " enter", "pane send-keys " + runner.paneID + " ctrl+c":
 		return herdr.CommandResult{}, nil
 	case "pane close " + runner.paneID:
@@ -174,7 +176,7 @@ func TestHerdrRuntimeOnlyCompletesAfterProviderExitWhilePaneExists(t *testing.T)
 	}
 	runtime := NewHerdrRuntime(HerdrRuntimeOptions{StateRoot: stateRoot, HerdrExecutable: "herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner})
 	snapshot, err := runtime.Inspect(context.Background(), "run_fixture", rawHandle)
-	if err != nil || !snapshot.CompletionReady || snapshot.State != RuntimeStateExited {
+	if err != nil || !snapshot.CompletionReady || snapshot.State != RuntimeStateExited || snapshot.Stdout.Text != "fixture output\n" {
 		t.Fatalf("Inspect(exited) = %#v, %v", snapshot, err)
 	}
 	logs, err := runtime.Logs(context.Background(), "run_fixture", rawHandle, 25)

@@ -22,6 +22,8 @@ func main() {
 			os.Exit(execution.RunFixtureMCPProvider(os.Stdin, os.Stdout, os.Stderr))
 		case "__herdr-pane-supervisor":
 			os.Exit(execution.RunHerdrPaneSupervisor(os.Args[2:]))
+		case "__mcp-stdio-bridge":
+			os.Exit(execution.RunMCPStdioBridge(os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
 

@@ -41,8 +41,14 @@ two-agent messaging loop inside isolated Herdr workspaces. Crewfold probes Herdr
 installed API schema, follows stable terminals across pane moves, reconciles after
 daemon restart, delivers prompt-based mailbox wakes, and exposes attach,
 interrupt, stop, and pane logs without treating terminal lifecycle as completion
-authority. Real Codex/Claude sessions, claims, canonical knowledge, and the
-operator TUI are still to come.
+authority. The first concrete provider edge is now implemented for Codex:
+`doctor --provider codex` verifies the installed headless/MCP surface and
+authentication, `codex exec` receives an isolated run-scoped MCP configuration,
+and a STDIO bridge keeps the capability token out of arguments and terminal
+output. A recorded Codex endpoint proves the full offline task-to-handoff path.
+The disposable real-model canary is checked in but remains deliberately gated on
+explicit network/model-usage opt-in. Claude sessions, claims, canonical knowledge,
+and the operator TUI are still to come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.

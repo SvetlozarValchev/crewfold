@@ -45,6 +45,8 @@ type Config struct {
 	MessageWake      func(context.Context, domain.MessageWakeJob) error
 	HerdrExecutable  string
 	HerdrSession     string
+	CodexExecutable  string
+	CodexHome        string
 	DisableRunWorker bool
 	defaultProviders bool
 }
@@ -95,6 +97,23 @@ func Run(ctx context.Context, config Config) error {
 	if resolved.defaultProviders {
 		resolved.ProviderAdapters["fixture-mcp"] = execution.NewFixtureMCPProvider(capabilities)
 		resolved.ProviderAdapters["fixture-terminal"] = execution.NewFixtureTerminalProvider(capabilities)
+		crewfoldExecutable, executableErr := os.Executable()
+		if executableErr != nil {
+			return &StartupError{Code: CodeInvalidConfiguration, Message: "resolve daemon executable for Codex MCP bridge", Cause: executableErr}
+		}
+		codexExecutable := strings.TrimSpace(resolved.CodexExecutable)
+		if codexExecutable == "" {
+			codexExecutable = strings.TrimSpace(os.Getenv("CREWFOLD_CODEX_BINARY"))
+		}
+		codexHome := strings.TrimSpace(resolved.CodexHome)
+		if codexHome == "" {
+			codexHome = strings.TrimSpace(os.Getenv("CREWFOLD_CODEX_HOME"))
+		}
+		codexProvider := execution.NewCodexProvider(execution.CodexProviderOptions{
+			CapabilityPreparer: capabilities, CodexExecutable: codexExecutable,
+			CrewfoldExecutable: crewfoldExecutable, CodexHome: codexHome,
+		})
+		resolved.ProviderAdapters[codexProvider.Name()] = codexProvider
 	}
 
 	if err := prepareSocketPath(resolved.SocketPath); err != nil {

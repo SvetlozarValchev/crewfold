@@ -28,7 +28,11 @@ implementation commit is `bc6235d76ee45d98a94c8e01b024c69b9eb2299f`. The M7 impl
 implementation commits are
 `7973bded9f99e965bc01a662b6b4d532e679d2c3` and
 `dbce60007de652d09862a8f673886702ba9860bc`, with assignment-policy coverage in
-`c821ab12cc649d7807a504ee615e61796591178e`. M10 is next and has not started.
+`c821ab12cc649d7807a504ee615e61796591178e`. The M10 Codex adapter, doctor,
+run-scoped STDIO MCP bridge, recorded endpoint, and disposable live canary are
+implemented and pass the complete offline gate. M10 remains open only because the
+real-model canary requires explicit network/provider-usage consent and has not
+been run in this implementation turn.
 
 ## Sequence
 
@@ -44,7 +48,7 @@ implementation commits are
 | M7 ✓ | MCP/briefing | Let a run read scoped context and report through authenticated MCP | M6 |
 | M8 ✓ | Agent messaging | Exchange and acknowledge durable mail while one agent is offline | M7 |
 | M9 ✓ | Herdr runtime | Run the fixture agent in Herdr and reconcile terminal lifecycle | M8 |
-| M10 | Codex canary | Complete the proven task/MCP loop with one real Codex session | M9 |
+| M10 ◐ | Codex canary | Offline adapter path passes; real disposable session awaits explicit opt-in | M9 |
 | M11 | Claude canary | Complete the same loop with Claude and switch providers via handoff | M10 |
 | M12 | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
 | M13 | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
@@ -193,25 +197,22 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M9 is the next approved implementation target:
+M10's implementation is complete; its remaining approved action is the explicit
+live gate:
 
-1. probe the installed Herdr endpoint and report exact API/schema compatibility
-   before Crewfold creates a surface or launches a run;
-2. implement a runtime driver that maps registered placement to Herdr
-   workspace/tab/pane state while keeping Crewfold run identity authoritative;
-3. launch the provider-free fixture terminal through Herdr and use the existing
-   MCP briefing, reporting, and mailbox contracts unchanged;
-4. implement structured observe, attach, prompt/wake, interrupt, stop, and restart
-   reconciliation with stable opaque runtime handles;
-5. keep recorded/fake Herdr protocol fixtures in the normal offline gate and add
-   a strictly opt-in live conformance scenario when Herdr is installed.
+```sh
+CREWFOLD_LIVE_CODEX=1 CREWFOLD_ALLOW_MODEL_CALLS=1 ./test/live/codex/run.sh
+```
 
-M9 must run the deterministic task loop and durable two-agent communication
-through Herdr without adding provider-specific branches to the core. A moved pane
-must not change task identity, and a closed/missing pane must produce an explicit
-failed or lost observation rather than completion. Codex, Claude, claims,
-meetings, canonical knowledge, remote users, and automatic source mutation remain
-outside this milestone. Every completed capability scenario remains a required
-gate.
+The gate creates a disposable Git repository and dedicated Herdr session, allows
+one exact file change and two local checks, requires the scoped MCP handoff, and
+verifies that no commit, push, unrelated path, or capability token appears. It is
+not part of `scripts/check.sh` because merely continuing ordinary development is
+not consent to network/model usage. M11 does not start until this gate passes or
+the owner records an explicit waiver.
+
+Native Codex resume, active-turn steering, app-server ownership, Claude, claims,
+meetings, canonical knowledge, remote users, and automatic source integration
+remain outside this gate. Every completed capability scenario remains required.
 
 No upstream repository should be created until the owner explicitly requests it.

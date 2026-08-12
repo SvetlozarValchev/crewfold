@@ -42,9 +42,14 @@ crewfold run interrupt RUN_ID ...
 crewfold run attach RUN_ID ...
 ```
 
-The regular offline gate uses a stateful recorded Herdr CLI endpoint. Installed
-Herdr conformance is explicitly opt-in and creates a dedicated session:
+The same runtime can host the implemented headless Codex provider; provider
+completion remains MCP-authoritative and terminal output remains diagnostic. The
+regular offline gate uses a stateful recorded Herdr CLI endpoint. Installed Herdr
+conformance is explicitly opt-in and creates a dedicated session:
 
 ```sh
 CREWFOLD_LIVE_HERDR=1 ./test/live/herdr/run.sh
 ```
+
+The combined real Codex/Herdr canary has a separate model-usage gate documented in
+[`test/live/codex/run.sh`](../../test/live/codex/run.sh).
