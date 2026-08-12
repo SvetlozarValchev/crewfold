@@ -29,9 +29,88 @@ func (a *App) runRun(ctx context.Context, mode outputMode, args []string) int {
 		return a.runWatch(ctx, mode, args[1:])
 	case "resume":
 		return a.runResume(ctx, mode, args[1:])
+	case "stop":
+		return a.runStop(ctx, mode, args[1:])
+	case "logs":
+		return a.runLogs(ctx, mode, args[1:])
 	default:
 		return a.writeFailure(mode, commandFailure{exitCode: ExitUsage, code: "unknown_run_command", message: fmt.Sprintf("unknown run command %q", args[0]), hint: "run 'crewfold help run' for usage"})
 	}
+}
+
+func (a *App) runStop(ctx context.Context, mode outputMode, args []string) int {
+	runID, optionArgs, failure := requiredLeadingArgument(args, "run ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	normalized := make([]string, 0, len(optionArgs))
+	graceful := false
+	for _, argument := range optionArgs {
+		if argument == "--graceful" {
+			if graceful {
+				return a.writeFailure(mode, usageFailure("--graceful may be specified only once", "remove the duplicate option"))
+			}
+			graceful = true
+			continue
+		}
+		normalized = append(normalized, argument)
+	}
+	if !graceful {
+		return a.writeFailure(mode, usageFailure("run stop requires --graceful", "use --graceful to request termination with a forced fallback"))
+	}
+	options, failure := parseOptions(normalized, "workspace", "expected-revision", "grace-millis", "socket", "idempotency-key")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	revision, failure := requiredInt64Option(options, "expected-revision", 1, 1<<62)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	graceMillis, failure := intOption(options, "grace-millis", 500, 1, 30000)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).RunStop(ctx, localapi.RunStopParams{Workspace: workspace, Run: runID, ExpectedRevision: revision, GracePeriodMillis: int64(graceMillis), IdempotencyKey: options["idempotency-key"]})
+	if err != nil {
+		return a.writeClientFailure(mode, "stop run", err)
+	}
+	return a.writeRunMutation(mode, result)
+}
+
+func (a *App) runLogs(ctx context.Context, mode outputMode, args []string) int {
+	runID, optionArgs, failure := requiredLeadingArgument(args, "run ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "tail", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	tail, failure := intOption(options, "tail", 50, 0, 10000)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).RunLogs(ctx, workspace, runID, tail)
+	if err != nil {
+		return a.writeClientFailure(mode, "read run logs", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write run logs", err))
+		}
+	} else {
+		fmt.Fprintf(a.stdout, "run: %s\nstate: %s\nstdout: captured=%d omitted=%d\n%s", result.Logs.RunID, result.Logs.State, result.Logs.Stdout.CapturedBytes, result.Logs.Stdout.OmittedBytes, result.Logs.Stdout.Text)
+		fmt.Fprintf(a.stdout, "stderr: captured=%d omitted=%d\n%s", result.Logs.Stderr.CapturedBytes, result.Logs.Stderr.OmittedBytes, result.Logs.Stderr.Text)
+	}
+	return ExitOK
 }
 
 func (a *App) runStart(ctx context.Context, mode outputMode, args []string) int {
@@ -185,7 +264,7 @@ func (a *App) runWatch(ctx context.Context, mode outputMode, args []string) int 
 
 func runWatchSettled(status string) bool {
 	switch status {
-	case domain.RunBlocked, domain.RunReview, domain.RunCompleted, domain.RunStartFailed, domain.RunFailed:
+	case domain.RunBlocked, domain.RunStopped, domain.RunLost, domain.RunReview, domain.RunCompleted, domain.RunStartFailed, domain.RunFailed:
 		return true
 	default:
 		return false
@@ -226,6 +305,9 @@ func writeRunText(a *App, detail domain.RunDetail) {
 	if detail.Run.FailureMessage != "" {
 		fmt.Fprintf(a.stdout, "failure: %s: %s\n", detail.Run.FailureCode, detail.Run.FailureMessage)
 	}
+	if detail.Run.Status == domain.RunStopped {
+		fmt.Fprintf(a.stdout, "stop_forced: %t\n", detail.Run.StopForced)
+	}
 	if detail.Handoff != nil {
 		fmt.Fprintf(a.stdout, "handoff: %s\n", detail.Handoff.Summary)
 	}
@@ -237,7 +319,10 @@ const runHelp = `Usage:
   crewfold run list --workspace <scope> [--task <id>] [--status <status>] --socket <path>
   crewfold run watch <id> --workspace <scope> --socket <path> [--wait-seconds <n>]
   crewfold run resume <id> --workspace <scope> --expected-revision <n> --socket <path>
+  crewfold run stop <id> --graceful --workspace <scope> --expected-revision <n> --socket <path> [--grace-millis <n>]
+  crewfold run logs <id> --workspace <scope> --socket <path> [--tail <lines>]
 
-The fake runtime exercises durable placement, observation, acceptance, blockage,
-handoff, and restart behavior without launching an external coding agent.
+The fake runtime exercises durable domain behavior without a process. The direct
+runtime supervises a bounded local subprocess and exposes durable logs and stop
+diagnostics.
 `

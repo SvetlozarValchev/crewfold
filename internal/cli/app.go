@@ -73,6 +73,8 @@ type daemonClient interface {
 	RunShow(context.Context, string, string) (localapi.RunShowResult, error)
 	RunList(context.Context, string, string, string) (localapi.RunListResult, error)
 	RunResume(context.Context, localapi.RunResumeParams) (localapi.RunMutationResult, error)
+	RunStop(context.Context, localapi.RunStopParams) (localapi.RunMutationResult, error)
+	RunLogs(context.Context, string, string, int) (localapi.RunLogsResult, error)
 	CoordinationStatus(context.Context, string) (localapi.CoordinationStatusResult, error)
 	EventsList(context.Context, int64, int) (localapi.EventsListResult, error)
 }
@@ -1151,7 +1153,8 @@ Global options:
   -h, --help          Show help
 
 This build coordinates provider-neutral agents, objectives, tasks, dependencies,
-leases, and deterministic fake runs. It does not mutate source repositories.
+leases, deterministic fake runs, and bounded direct fixture subprocesses. It does
+not mutate source repositories.
 `
 
 const versionHelp = `Usage:

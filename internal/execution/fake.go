@@ -20,13 +20,18 @@ type StartError struct{ Message string }
 
 func (e *StartError) Error() string { return e.Message }
 
+type OutcomeUnknownError struct{ Message string }
+
+func (e *OutcomeUnknownError) Error() string { return e.Message }
+
 type FakeRuntime struct {
 	mu       sync.Mutex
 	launches map[string]RuntimeBinding
+	stopped  map[string]bool
 }
 
 func NewFakeRuntime() *FakeRuntime {
-	return &FakeRuntime{launches: make(map[string]RuntimeBinding)}
+	return &FakeRuntime{launches: make(map[string]RuntimeBinding), stopped: make(map[string]bool)}
 }
 
 func (runtime *FakeRuntime) Name() string { return "fake" }
@@ -36,6 +41,9 @@ func (runtime *FakeRuntime) Launch(_ context.Context, operationID string, _ doma
 	defer runtime.mu.Unlock()
 	if binding, exists := runtime.launches[operationID]; exists {
 		return binding, nil
+	}
+	if spec.Command != nil {
+		return RuntimeBinding{}, &StartError{Message: "fake runtime cannot execute a command specification"}
 	}
 	if spec.Scenario.StartFailure != "" {
 		return RuntimeBinding{}, &StartError{Message: spec.Scenario.StartFailure}
@@ -54,6 +62,35 @@ func (runtime *FakeRuntime) Reconcile(_ context.Context, operationID, handle str
 	binding := RuntimeBinding{RuntimeHandle: handle}
 	runtime.launches[operationID] = binding
 	return binding, nil
+}
+
+func (runtime *FakeRuntime) Inspect(_ context.Context, operationID, handle string) (RuntimeSnapshot, error) {
+	if strings.TrimSpace(handle) == "" {
+		return RuntimeSnapshot{}, errors.New("fake runtime handle is empty")
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.stopped[operationID] {
+		return RuntimeSnapshot{State: RuntimeStateStopped, ExitCode: 0, ExitKnown: true}, nil
+	}
+	return RuntimeSnapshot{State: RuntimeStateRunning, CompletionReady: true}, nil
+}
+
+func (runtime *FakeRuntime) Stop(_ context.Context, operationID, handle string, _ StopSpec) (StopResult, error) {
+	if strings.TrimSpace(handle) == "" {
+		return StopResult{}, errors.New("fake runtime handle is empty")
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	runtime.stopped[operationID] = true
+	return StopResult{Diagnostic: "fake runtime stopped"}, nil
+}
+
+func (runtime *FakeRuntime) Logs(_ context.Context, operationID, handle string, _ int) (domain.RunLogs, error) {
+	if strings.TrimSpace(handle) == "" {
+		return domain.RunLogs{}, errors.New("fake runtime handle is empty")
+	}
+	return domain.RunLogs{RunID: operationID, State: RuntimeStateRunning}, nil
 }
 
 func (runtime *FakeRuntime) LaunchCount() int {
@@ -80,7 +117,7 @@ func (FakeProvider) Bind(_ context.Context, run domain.Run, binding RuntimeBindi
 	return ProviderBinding{ProviderHandle: "fake-provider:" + run.ID}, nil
 }
 
-func (FakeProvider) Next(_ context.Context, run domain.Run, scenario domain.FakeScenario) (domain.RunObservation, bool, error) {
+func (FakeProvider) Next(_ context.Context, run domain.Run, scenario domain.FakeScenario, _ RuntimeSnapshot) (domain.RunObservation, bool, error) {
 	if err := ValidateScenario(scenario); err != nil {
 		return domain.RunObservation{}, false, err
 	}
@@ -135,6 +172,15 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 		if !validEvidence(item) {
 			return errors.New("acceptance evidence names must contain 1 to 128 printable characters")
 		}
+	}
+	if scenario.Process.ExitCode < 0 || scenario.Process.ExitCode > 125 || scenario.Process.StepDelayMillis < 0 || scenario.Process.StepDelayMillis > 5000 || scenario.Process.TimeoutMillis < 0 || scenario.Process.TimeoutMillis > 60000 || scenario.Process.StdoutNoiseBytes < 0 || scenario.Process.StdoutNoiseBytes > 2*1024*1024 || scenario.Process.StderrNoiseBytes < 0 || scenario.Process.StderrNoiseBytes > 2*1024*1024 {
+		return errors.New("fixture process controls exceed their bounded limits")
+	}
+	if scenario.Process.IgnoreTermination && !scenario.Process.HangAfterSteps {
+		return errors.New("fixture process can ignore termination only while hanging")
+	}
+	if scenario.StartFailure != "" && scenario.Process != (domain.FixtureProcess{}) {
+		return errors.New("start-failure scenarios cannot contain process controls")
 	}
 	for index, step := range scenario.Steps {
 		if step.Kind != domain.ObservationProgress && step.Kind != domain.ObservationBlocked && step.Kind != domain.ObservationCompletion {

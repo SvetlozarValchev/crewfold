@@ -1,0 +1,17 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "direct-graceful-stop",
+  "acceptance": {
+    "required_evidence": []
+  },
+  "steps": [
+    {
+      "kind": "progress",
+      "message": "fixture is waiting for graceful termination",
+      "wait_for_resume": true
+    }
+  ],
+  "process": {
+    "hang_after_steps": true
+  }
+}

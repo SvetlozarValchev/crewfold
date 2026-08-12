@@ -18,6 +18,7 @@ func TestExecutionSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 		"schemas/local/v1/run-mutation.result.schema.json":  localapi.RunMutationSchema,
 		"schemas/local/v1/run-show.result.schema.json":      localapi.RunShowSchema,
 		"schemas/local/v1/run-list.result.schema.json":      localapi.RunListSchema,
+		"schemas/local/v1/run-logs.result.schema.json":      localapi.RunLogsSchema,
 		"schemas/local/v1/task-timeline.result.schema.json": localapi.TaskTimelineSchema,
 	} {
 		data, err := os.ReadFile(path)
@@ -45,6 +46,23 @@ func TestCheckedInExecutionScenariosSatisfySemanticContract(t *testing.T) {
 	}
 	if len(paths) != 5 {
 		t.Fatalf("execution scenario count = %d, want 5; paths = %v", len(paths), paths)
+	}
+	for _, path := range paths {
+		if _, err := execution.LoadScenario(path); err != nil {
+			t.Errorf("execution.LoadScenario(%q) error = %v", path, err)
+		}
+	}
+}
+
+func TestCheckedInDirectRuntimeScenariosSatisfySemanticContract(t *testing.T) {
+	t.Parallel()
+
+	paths, err := filepath.Glob("../test/fixtures/direct-runtime/*.json")
+	if err != nil {
+		t.Fatalf("filepath.Glob() error = %v", err)
+	}
+	if len(paths) != 8 {
+		t.Fatalf("direct-runtime scenario count = %d, want 8; paths = %v", len(paths), paths)
 	}
 	for _, path := range paths {
 		if _, err := execution.LoadScenario(path); err != nil {

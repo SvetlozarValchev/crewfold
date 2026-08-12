@@ -14,6 +14,7 @@ import (
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/daemon"
 	"crewfold/internal/domain"
+	"crewfold/internal/execution"
 	"crewfold/internal/localapi"
 )
 
@@ -251,6 +252,55 @@ func TestRunStartLoadsValidatedScenarioAndPassesPlacementInputs(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), localapi.RunMutationSchema) {
 		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunStopAndLogsPassBoundedRuntimeOptions(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeDaemonClient{
+		runMutation: localapi.RunMutationResult{Schema: localapi.RunMutationSchema, Type: "run_mutation"},
+		runLogs: localapi.RunLogsResult{
+			Schema: localapi.RunLogsSchema,
+			Type:   "run_logs",
+			Logs:   domain.RunLogs{RunID: "run_00000000000000000000000000000001", State: execution.RuntimeStateRunning},
+		},
+	}
+	for _, args := range [][]string{
+		{"run", "stop", "run_00000000000000000000000000000001", "--graceful", "--workspace", "personal", "--expected-revision", "7", "--grace-millis", "250", "--socket", "/tmp/crewfold.sock", "--idempotency-key", "stop-run", "--output", "json"},
+		{"run", "logs", "run_00000000000000000000000000000001", "--workspace", "personal", "--tail", "25", "--socket", "/tmp/crewfold.sock", "--output", "json"},
+	} {
+		app, stdout, stderr := newTestApp()
+		app.newClient = func(string) daemonClient { return client }
+		if exitCode := app.Run(args); exitCode != ExitOK {
+			t.Fatalf("Run(%q) exit code = %d; stderr = %q", args, exitCode, stderr.String())
+		}
+		if stdout.Len() == 0 || stderr.Len() != 0 {
+			t.Fatalf("Run(%q) stdout = %q, stderr = %q", args, stdout.String(), stderr.String())
+		}
+	}
+	if params := client.runStopParams; params.Workspace != "personal" || params.ExpectedRevision != 7 || params.GracePeriodMillis != 250 || params.IdempotencyKey != "stop-run" {
+		t.Fatalf("RunStop params = %#v", params)
+	}
+	if client.runLogsWorkspace != "personal" || client.runLogsRun != "run_00000000000000000000000000000001" || client.runLogsTail != 25 {
+		t.Fatalf("RunLogs args = %q, %q, %d", client.runLogsWorkspace, client.runLogsRun, client.runLogsTail)
+	}
+}
+
+func TestRunStopAndLogsRejectUnsafeOptions(t *testing.T) {
+	t.Parallel()
+
+	for name, args := range map[string][]string{
+		"stop without graceful marker": {"run", "stop", "run_1234", "--workspace", "personal", "--expected-revision", "1", "--socket", "/tmp/socket"},
+		"stop grace too large":         {"run", "stop", "run_1234", "--graceful", "--workspace", "personal", "--expected-revision", "1", "--grace-millis", "30001", "--socket", "/tmp/socket"},
+		"negative log tail":            {"run", "logs", "run_1234", "--workspace", "personal", "--tail", "-1", "--socket", "/tmp/socket"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			app, _, stderr := newTestApp()
+			if exitCode := app.Run(args); exitCode != ExitUsage || stderr.Len() == 0 {
+				t.Fatalf("Run() exit code = %d, stderr = %q", exitCode, stderr.String())
+			}
+		})
 	}
 }
 
@@ -771,8 +821,13 @@ type fakeDaemonClient struct {
 	runMutation           localapi.RunMutationResult
 	runShow               localapi.RunShowResult
 	runList               localapi.RunListResult
+	runLogs               localapi.RunLogsResult
 	runStartParams        localapi.RunStartParams
 	runResumeParams       localapi.RunResumeParams
+	runStopParams         localapi.RunStopParams
+	runLogsWorkspace      string
+	runLogsRun            string
+	runLogsTail           int
 	coordination          localapi.CoordinationStatusResult
 	agentCreateParams     localapi.AgentCreateParams
 	objectiveCreateParams localapi.ObjectiveCreateParams
@@ -915,6 +970,18 @@ func (client *fakeDaemonClient) RunList(context.Context, string, string, string)
 func (client *fakeDaemonClient) RunResume(_ context.Context, params localapi.RunResumeParams) (localapi.RunMutationResult, error) {
 	client.runResumeParams = params
 	return client.runMutation, nil
+}
+
+func (client *fakeDaemonClient) RunStop(_ context.Context, params localapi.RunStopParams) (localapi.RunMutationResult, error) {
+	client.runStopParams = params
+	return client.runMutation, nil
+}
+
+func (client *fakeDaemonClient) RunLogs(_ context.Context, workspace, run string, tail int) (localapi.RunLogsResult, error) {
+	client.runLogsWorkspace = workspace
+	client.runLogsRun = run
+	client.runLogsTail = tail
+	return client.runLogs, nil
 }
 
 func (client *fakeDaemonClient) CoordinationStatus(_ context.Context, workspace string) (localapi.CoordinationStatusResult, error) {

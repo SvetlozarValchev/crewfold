@@ -129,6 +129,20 @@ idempotency response commit atomically. Worker transitions update run/task state
 timeline, handoff, assignment release, and events in transactions separate from
 adapter effects.
 
+## Schema version 5
+
+Run state adds `stopping`, `stopped`, and `lost`, plus bounded stop-grace and
+forced-stop facts. The migration rebuilds the run-owned tables in dependency order
+and preserves existing run intents, handles, queues, timelines, and handoffs.
+
+The live-run uniqueness and checkout-capacity indexes include `stopping` and
+`lost`. A lost process may still be writing, so uncertainty cannot silently free
+its assignment or checkout. Direct supervisor files live under owner-only daemon
+state rather than SQLite; the database stores only the opaque runtime handle and
+coordination meaning. Each supervisor state file is atomically replaced and
+contains process identity, exit/timeout/stop result, output byte counts, and an
+explicit unknown state when identity cannot be verified.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -153,6 +167,7 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 4 contains agent/task/run coordination and opaque
-fake-adapter bindings but no message, knowledge, real provider-session, or real
-runtime-process state.
+without its WAL. Schema version 5 contains agent/task/run coordination, opaque
+fake/direct bindings, and direct supervisor references but no message, knowledge,
+or real model-provider session state. Backup of a live installation must include a
+coordinated snapshot of the database and direct-runtime state directory.

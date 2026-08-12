@@ -117,17 +117,24 @@ Run state:
 ```text
 requested -> starting -> active -> completed
                          |   |----> blocked -> active
+                         |   |----> stopping -> stopped
+                         |   |----> lost
                          |   |----> review
                          |   \----> failed
                          \--------> start_failed
 ```
 
-`blocked` and an explicit active checkpoint are resumable. `review` means the
+`blocked` and an explicit active checkpoint are resumable. `stopped` means an
+operator stop completed and records whether forced termination was required;
+the task remains assigned for an explicit retry/reassignment decision. `lost`
+means process identity or outcome cannot be trusted, so the task is blocked and
+capacity remains reserved. `review` means the
 provider proposed completion but required acceptance evidence was missing; the
 task becomes `changes_requested` and retains its assignment. Runtime-observed
-state and Crewfold run state are related but not identical. Real provider resume
-handles, heartbeats, usage, budgets, settling/stopping, and context packets remain
-planned.
+state and Crewfold run state are related but not identical. The direct fixture
+runtime now persists bindings, bounded output, timeout, stop, and restart
+reconciliation. Real provider resume handles, heartbeats, usage, budgets, and
+context packets remain planned.
 
 ### Objective
 

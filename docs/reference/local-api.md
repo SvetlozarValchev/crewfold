@@ -262,7 +262,8 @@ two writers using the same revision yield exactly one success and one
 ### Runs, placement, and timelines
 
 `run.start` takes `workspace`, task ID, optional checkout ID, runtime, provider,
-one validated fake scenario, `expected_task_revision`, and `idempotency_key`. It
+one validated deterministic scenario, `expected_task_revision`, and
+`idempotency_key`. It
 requires the task to be `assigned` with a current lease. The assigned agent must
 be enabled, below `max_concurrency`, and configured for the exact opaque
 runtime/provider pair.
@@ -280,6 +281,8 @@ The daemon worker leases pending jobs and applies this durable lifecycle:
 ```text
 requested -> starting -> active -> completed
                          |   |----> blocked -> active (resume)
+                         |   |----> stopping -> stopped
+                         |   |----> lost
                          |   |----> review / task changes_requested
                          |   \----> failed
                          \--------> start_failed
@@ -294,6 +297,12 @@ assignment and leaves the run in `review` with the task in `changes_requested`.
 A runtime start failure leaves the task assigned so the owner can retry or
 reassign it.
 
+With `runtime=direct` and `provider=fixture`, the scenario runs in a real local
+subprocess supervised outside the daemon lifecycle. The working directory is the
+selected checkout and cannot be overridden through `run.start`. Environment
+inheritance and stdout/stderr are bounded. Completion waits for the process to
+settle; non-zero exit, timeout, and an untrustworthy process outcome stay distinct.
+
 `run.show` takes `workspace` and run ID. `run.list` accepts optional task and
 status filters. Both return run, current task/agent/checkout projections, the run
 timeline, and an accepted handoff when present. `run.resume` requires the observed
@@ -301,11 +310,24 @@ run revision and resumes a blocked run or an explicitly paused active run from i
 persisted cursor. `task.timeline` returns the task, all its runs, and ordered
 normalized run/timeline facts.
 
+`run.logs` takes `workspace`, run ID, and a line-tail bound. It returns runtime
+state plus independently capped stdout/stderr, captured/omitted byte counts, and
+truncation flags. Secret-like values are redacted from the API result.
+
+`run.stop` takes `workspace`, run ID, `expected_revision`, a grace period from 1
+to 30,000 milliseconds, and `idempotency_key`. It moves an active/blocked run to
+`stopping`; the worker requests graceful process-group termination and then a
+forced fallback. The terminal `stopped` record preserves whether force was used,
+returns the task to `assigned`, and retains its lease. If process identity cannot
+be trusted, the run becomes `lost`, the task remains blocked, and capacity is not
+released automatically.
+
 The runtime driver's `Launch` operation is idempotent by stable run ID. A restart
 after committed intent or after runtime launch reclaims the durable job and
 returns/reconciles the same runtime binding rather than inventing a second effect.
-The current implementation ships only deterministic in-memory fake adapters; a
-real subprocess boundary follows separately.
+The current implementation ships deterministic in-memory fake adapters plus the
+real direct/fixture subprocess boundary. Real model-provider adapters follow
+separately.
 
 ### `coordination.status`
 

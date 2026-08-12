@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:run-logs:v1",
+  "title": "Crewfold run logs v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "state", "stdout", "stderr"],
+  "properties": {
+    "run_id": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
+    "state": {"enum": ["starting", "running", "exited", "stopped", "timed_out", "unknown"]},
+    "stdout": {"$ref": "captured-log.schema.json"},
+    "stderr": {"$ref": "captured-log.schema.json"}
+  }
+}

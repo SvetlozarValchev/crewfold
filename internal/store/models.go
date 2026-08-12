@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 4
+	LatestSchemaVersion = 5
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -189,6 +189,15 @@ type ResumeRunCommand struct {
 	WorkspaceIdentifier string
 	RunID               string
 	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type StopRunCommand struct {
+	WorkspaceIdentifier string
+	RunID               string
+	ExpectedRevision    int64
+	GracePeriodMillis   int64
 	IdempotencyKey      string
 	CorrelationID       string
 }

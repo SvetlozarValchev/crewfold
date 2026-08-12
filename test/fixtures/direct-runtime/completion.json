@@ -1,0 +1,19 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "direct-completion",
+  "acceptance": {
+    "required_evidence": ["tests_passed"]
+  },
+  "steps": [
+    {
+      "kind": "progress",
+      "message": "fixture subprocess started in the assigned checkout"
+    },
+    {
+      "kind": "completion",
+      "message": "fixture subprocess completed",
+      "evidence": ["tests_passed"],
+      "handoff": "Review the direct subprocess result."
+    }
+  ]
+}

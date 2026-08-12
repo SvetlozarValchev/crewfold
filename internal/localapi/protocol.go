@@ -44,6 +44,8 @@ const (
 	MethodRunShow            = "run.show"
 	MethodRunList            = "run.list"
 	MethodRunResume          = "run.resume"
+	MethodRunStop            = "run.stop"
+	MethodRunLogs            = "run.logs"
 	MethodCoordinationStatus = "coordination.status"
 	MethodEventsList         = "events.list"
 
@@ -69,6 +71,7 @@ const (
 	RunMutationSchema        = "urn:crewfold:schema:local-api:run-mutation-result:v1"
 	RunShowSchema            = "urn:crewfold:schema:local-api:run-show-result:v1"
 	RunListSchema            = "urn:crewfold:schema:local-api:run-list-result:v1"
+	RunLogsSchema            = "urn:crewfold:schema:local-api:run-logs-result:v1"
 	CoordinationStatusSchema = "urn:crewfold:schema:local-api:coordination-status-result:v1"
 	EventsListSchema         = "urn:crewfold:schema:local-api:events-list-result:v1"
 )
@@ -426,6 +429,20 @@ type RunResumeParams struct {
 	IdempotencyKey   string `json:"idempotency_key"`
 }
 
+type RunStopParams struct {
+	Workspace         string `json:"workspace"`
+	Run               string `json:"run"`
+	ExpectedRevision  int64  `json:"expected_revision"`
+	GracePeriodMillis int64  `json:"grace_period_millis"`
+	IdempotencyKey    string `json:"idempotency_key"`
+}
+
+type RunLogsParams struct {
+	Workspace string `json:"workspace"`
+	Run       string `json:"run"`
+	Tail      int    `json:"tail"`
+}
+
 type RunMutationResult struct {
 	Schema        string           `json:"schema"`
 	Type          string           `json:"type"`
@@ -443,6 +460,12 @@ type RunListResult struct {
 	Schema string             `json:"schema"`
 	Type   string             `json:"type"`
 	Runs   []domain.RunDetail `json:"runs"`
+}
+
+type RunLogsResult struct {
+	Schema string         `json:"schema"`
+	Type   string         `json:"type"`
+	Logs   domain.RunLogs `json:"logs"`
 }
 
 type CoordinationStatusParams struct {

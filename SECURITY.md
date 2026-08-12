@@ -5,10 +5,12 @@ scope reduces the attack surface but does not make it harmless.
 
 ## Security status
 
-The repository is pre-release and currently contains design documentation only.
-There is no supported production version and no private vulnerability channel yet.
-Do not rely on Crewfold to protect sensitive environments until the security model
-has executable enforcement and tests.
+The repository is pre-release. The local API, durable coordination core, and a
+fixed provider-free direct-process fixture have executable enforcement and tests,
+but arbitrary agent commands, provider credentials, network policy, and an
+operating-system sandbox are not implemented. There is no supported production
+version or private vulnerability channel yet. Do not rely on Crewfold to protect
+sensitive environments.
 
 ## Trust boundaries
 
@@ -39,6 +41,21 @@ instructions to Crewfold's privileged control plane.
 - Record privileged actions and their initiator in an append-only audit stream.
 - Treat generated context packets as untrusted input to the receiving model.
 - Validate every adapter event and reject unsupported protocol versions.
+
+## Implemented direct-process boundary
+
+The current `direct` driver only launches Crewfold's fixed fixture provider. Its
+working directory is selected from a registered checkout, its inherited
+environment is allowlisted, stdout and stderr are independently capped, and API
+log responses heuristically redact secret-like assignments. Owner-only raw capture
+files under the daemon data directory can still contain provider-emitted secrets;
+they are diagnostic evidence, not shared context, and must be treated as sensitive.
+The driver supervises process groups and distinguishes exit, timeout, requested
+stop, and unknown process identity across daemon restarts.
+
+This boundary is process supervision, not containment. Running arbitrary project
+or model-provider commands remains disabled until command policy and an explicit
+sandbox decision are implemented.
 
 ## Initial autonomy classes
 

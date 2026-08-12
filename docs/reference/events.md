@@ -1,13 +1,12 @@
 # Event catalogue
 
-Status: the v1 envelope is implemented. Durable facts currently emitted are
-`workspace.created`, `project.registered`, `repository.registered`,
-`checkout.registered`, `checkout.git_observed`, `agent.created`, `agent.updated`,
-`objective.created`, `objective.updated`, `task.created`, `task.updated`,
-`task.dependency_added`, `task.assigned`, `task.started`, `task.blocked`,
-`task.readied`, `task.cancelled`, and `task.assignment_expired`. Remaining names
-and payload details are proposed; the catalogue defines their intended coverage,
-not a frozen schema.
+Status: the v1 envelope is implemented. Workspace/source/agent/objective/task
+coordination events and the run events used by deterministic and direct execution
+are implemented, including request, start, runtime binding, progress, blockage,
+resume, completion proposal, handoff, completion/failure, stop, and lost-runtime
+facts. Names for later messaging, meetings, knowledge, policy, checks, and external
+integrations remain proposals; the catalogue defines intended coverage, not a
+frozen schema.
 
 ## Envelope
 
@@ -53,8 +52,8 @@ checkout.write_policy_changed
 
 ## Agents, teams, and runs
 
-Implemented today: `agent.created` and `agent.updated`. The other names below are
-reserved proposals.
+Agent create/update and run lifecycle names through `run.lost` are implemented.
+Team, heartbeat, settling, and provider resume names remain proposals.
 
 ```text
 team.created
@@ -68,7 +67,10 @@ run.starting
 run.started
 run.runtime_observed
 run.heartbeat_recorded
+run.progress_reported
 run.blocked
+run.resumed
+run.completion_proposed
 run.settling
 run.completed
 run.start_failed
@@ -81,10 +83,8 @@ run.resume_handle_recorded
 
 ## Objectives and tasks
 
-Implemented today: `objective.created`, `objective.updated`, `task.created`,
-`task.updated`, `task.dependency_added`, `task.assigned`, `task.started`,
-`task.blocked`, `task.readied`, `task.cancelled`, and
-`task.assignment_expired`. The other names below are reserved proposals.
+Objective create/update and task lifecycle names used by coordination and run
+execution are implemented. Unused decomposition/retry names remain proposals.
 
 ```text
 objective.created
@@ -110,6 +110,7 @@ task.failed
 task.retry_requested
 task.cancelled
 task.handoff_recorded
+task.run_stopped
 ```
 
 ## Claims and overlaps

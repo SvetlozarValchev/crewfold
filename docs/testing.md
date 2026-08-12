@@ -136,8 +136,11 @@ operation and supports controlled failure before/after acknowledgement.
 
 ### Fixture worker
 
-A tiny local executable for the direct and Herdr runtime tests. It can act as a
-generic terminal process or MCP client and never calls a model provider.
+A hidden provider-free mode of the built Crewfold binary for direct-runtime tests,
+and later a generic terminal/MCP-client mode for Herdr tests. It emits structured
+reports, exposes its assigned working directory and environment names for safety
+assertions, supports deterministic exit/timeout/signal behavior, and never calls a
+model provider.
 
 ### Fixture Git repository
 
@@ -177,6 +180,7 @@ test/
 │  ├─ daemon-api-spine/
 │  ├─ persistent-workspace/
 │  ├─ deterministic-execution/
+│  ├─ direct-runtime/
 │  └─ ...
 └─ live/
    ├─ herdr/

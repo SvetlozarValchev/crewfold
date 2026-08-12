@@ -9,12 +9,12 @@ cli/          implemented human/machine command surface
 buildinfo/    implemented embedded build metadata
 domain/       implemented storage/transport-neutral coordination and run records
 store/        implemented SQLite migrations, projections, event journal, and run queue
-execution/    implemented runtime/provider contracts and deterministic fake adapters
+execution/    implemented runtime/provider contracts, fake adapters, and direct supervision
 api/          future domain API and MCP translation
 scheduler/    future expanded placement and dependency policy
 supervisor/   conditions, recommendations, and policy responses
 knowledge/    curation, retrieval, and context packets
-runtime/      future concrete runtime drivers and wider reconciliation
+runtime/      future interactive/remote runtime drivers and wider reconciliation
 provider/     future concrete provider adapters
 gitstate/     repository identity and checkout observations
 policy/       authorization, approvals, and budgets

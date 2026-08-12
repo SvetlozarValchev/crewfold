@@ -342,6 +342,23 @@ func (c *Client) RunResume(ctx context.Context, paramsValue RunResumeParams) (Ru
 	return result, nil
 }
 
+func (c *Client) RunStop(ctx context.Context, paramsValue RunStopParams) (RunMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result RunMutationResult
+	if err := c.callParams(ctx, MethodRunStop, paramsValue, &result); err != nil {
+		return RunMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) RunLogs(ctx context.Context, workspace, run string, tail int) (RunLogsResult, error) {
+	var result RunLogsResult
+	if err := c.callParams(ctx, MethodRunLogs, RunLogsParams{Workspace: workspace, Run: run, Tail: tail}, &result); err != nil {
+		return RunLogsResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) CoordinationStatus(ctx context.Context, workspace string) (CoordinationStatusResult, error) {
 	var result CoordinationStatusResult
 	if err := c.callParams(ctx, MethodCoordinationStatus, CoordinationStatusParams{Workspace: workspace}, &result); err != nil {

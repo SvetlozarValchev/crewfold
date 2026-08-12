@@ -5,10 +5,10 @@
 The current binary implements `help`, `version`, self/database diagnostics,
 foreground daemon lifecycle, process and workspace status, workspace/event
 queries, project/checkout registration and observation, durable
-agent/objective/task coordination, and deterministic run execution. It supports
-text and JSON output. Teams, claims, messages, meetings, knowledge, policy, and
-approval commands in later sections are intended future contracts and are not yet
-available.
+agent/objective/task coordination, deterministic fake execution, and supervised
+direct fixture subprocesses with bounded logs and stop control. It supports text
+and JSON output. Teams, claims, messages, meetings, knowledge, policy, and approval
+commands in later sections are intended future contracts and are not yet available.
 
 ## Goals
 
@@ -138,6 +138,10 @@ crewfold run list --workspace personal --task TASK_A --socket /path/to/crewfold.
 crewfold run watch RUN_ID --workspace personal --wait-seconds 30 --socket /path/to/crewfold.sock
 crewfold run resume RUN_ID --workspace personal --expected-revision 4 \
   --socket /path/to/crewfold.sock
+crewfold run logs RUN_ID --workspace personal --tail 50 \
+  --socket /path/to/crewfold.sock
+crewfold run stop RUN_ID --graceful --grace-millis 500 --workspace personal \
+  --expected-revision 4 --socket /path/to/crewfold.sock
 crewfold task timeline TASK_A --workspace personal --socket /path/to/crewfold.sock
 ```
 
@@ -147,12 +151,22 @@ selects an available writable checkout within the task's project, or validates a
 explicit `--checkout` ID. It treats adjacent standalone clones and linked
 worktrees identically and persists the reasons for its decision before any launch.
 
-The current built-in `fake` adapters read a bounded JSON scenario. The daemon
+The built-in `fake` adapters read a bounded JSON scenario. The daemon
 persists intent, starts asynchronously, records normalized progress, pauses on a
 block or explicit checkpoint, evaluates completion evidence, and creates a handoff
 only when acceptance passes. `run watch` returns when a run is blocked, needs
-review, completes, or fails. Attach, interrupt, stop, dry-run, real providers, and
-real runtime processes remain deferred.
+review, is stopped/lost, completes, or fails.
+
+The implemented `direct` runtime plus `fixture` provider executes the same
+scenario through a real child process in the assigned checkout. It inherits only
+an explicit environment allowlist, captures bounded stdout/stderr in owner-only
+daemon state, redacts secret-like values at the API boundary, and persists enough
+supervisor identity and exit state to reconcile across daemon restart. `run logs`
+reports captured and omitted byte counts. `run stop --graceful` requests
+termination and records whether forced kill was required. If Crewfold cannot trust
+the process identity or outcome, the run becomes `lost`, the task is blocked, and
+capacity stays reserved. Arbitrary executable/path selection, attach, interrupt,
+dry-run, and real model providers remain deferred.
 
 ## Claims and overlaps
 

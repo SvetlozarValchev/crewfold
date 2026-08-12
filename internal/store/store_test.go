@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestOpenCreatesHealthyMigratedOwnerOnlyDatabase(t *testing.T) {
@@ -225,6 +226,91 @@ func TestRunSchemaUpgradePreservesCoordinationRecords(t *testing.T) {
 		if err := storage.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("new table %s count = %d, %v, want 0", table, count, err)
 		}
+	}
+}
+
+func TestDirectRuntimeSchemaUpgradePreservesActiveRunAndQueue(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	parts := make([][]byte, 0, 4)
+	for _, path := range []string{
+		"testdata/schema-v002.sql",
+		"migrations/003_agents_objectives_tasks.sql",
+		"testdata/coordination-upgrade.sql",
+		"migrations/004_runs_and_worker_queue.sql",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("os.ReadFile(%q) error = %v", path, err)
+		}
+		parts = append(parts, data)
+	}
+	database, err := sql.Open("sqlite3", filepath.Join(dataDir, databaseFilename))
+	if err != nil {
+		t.Fatalf("sql.Open(fixture) error = %v", err)
+	}
+	for index, script := range parts {
+		if _, err := database.Exec(string(script)); err != nil {
+			_ = database.Close()
+			t.Fatalf("apply fixture part %d: %v", index, err)
+		}
+	}
+	const runID = "run_00000000000000000000000000000004"
+	if _, err := database.Exec("UPDATE tasks SET status = 'active', revision = 3 WHERE id = 'task_00000000000000000000000000000032'"); err != nil {
+		_ = database.Close()
+		t.Fatalf("update active task fixture: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO runs(
+    id, workspace_id, project_id, task_id, agent_id, checkout_id, runtime, provider,
+    scenario_name, scenario_json, placement_reasons_json, status, step_cursor,
+    runtime_handle, provider_handle, revision, created_at, updated_at, started_at,
+    created_by, updated_by
+) VALUES (
+    ?, 'ws_00000000000000000000000000000002',
+    'prj_00000000000000000000000000000002',
+    'task_00000000000000000000000000000032',
+    'agent_00000000000000000000000000000003',
+    'co_00000000000000000000000000000002',
+    'fake', 'fake', 'upgrade-active-run',
+    '{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"upgrade-active-run","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress","message":"continue"}]}',
+    '["preserved placement"]', 'active', 0, 'runtime-handle', 'provider-handle', 3,
+    '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z',
+    'local-owner', 'local-owner'
+)
+`, runID); err != nil {
+		_ = database.Close()
+		t.Fatalf("insert active run fixture: %v", err)
+	}
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{"INSERT INTO run_jobs VALUES (?, 'pending', '2026-08-12T00:00:00Z', NULL, 2, '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z')", []any{runID}},
+		{"INSERT INTO run_timeline(run_id, kind, message, evidence_json, recorded_at) VALUES (?, 'run.started', 'preserve me', '[]', '2026-08-12T00:00:00Z')", []any{runID}},
+		{"INSERT INTO schema_migrations VALUES (4, '004_runs_and_worker_queue.sql', '2026-08-12T00:00:00Z')", nil},
+		{"PRAGMA user_version = 4", nil},
+	} {
+		if _, err := database.Exec(statement.query, statement.args...); err != nil {
+			_ = database.Close()
+			t.Fatalf("complete active run fixture: %v", err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("close fixture database: %v", err)
+	}
+
+	storage := openTestStore(t, dataDir, Options{})
+	detail, err := storage.RunDetail(context.Background(), "upgrade-fixture", runID)
+	if err != nil {
+		t.Fatalf("RunDetail(upgraded direct-runtime schema) error = %v", err)
+	}
+	if detail.Run.Status != "active" || detail.Run.RuntimeHandle != "runtime-handle" || detail.Run.StopForced || detail.Run.StopGraceMillis != 0 || len(detail.Timeline) != 1 {
+		t.Fatalf("upgraded run detail = %#v", detail)
+	}
+	work, found, err := storage.ClaimRunJob(context.Background(), time.Second)
+	if err != nil || !found || work.Run.ID != runID || work.Scenario.Name != "upgrade-active-run" {
+		t.Fatalf("ClaimRunJob(upgraded run) = %#v, %t, %v", work, found, err)
 	}
 }
 

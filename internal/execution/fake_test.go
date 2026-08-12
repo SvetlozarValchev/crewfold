@@ -36,6 +36,17 @@ func TestFakeRuntimeReportsConfiguredStartFailure(t *testing.T) {
 	}
 }
 
+func TestFakeRuntimeRejectsProcessCommandsItCannotSupervise(t *testing.T) {
+	t.Parallel()
+
+	runtime := NewFakeRuntime()
+	_, err := runtime.Launch(context.Background(), "run_command", domain.RunPlacement{}, LaunchSpec{Command: &CommandSpec{Executable: "/fixture"}})
+	var startError *StartError
+	if !errors.As(err, &startError) || runtime.LaunchCount() != 0 {
+		t.Fatalf("Launch(command) error = %v, count = %d", err, runtime.LaunchCount())
+	}
+}
+
 func TestFakeProviderEmitsNormalizedStepsAndAcceptanceIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -46,7 +57,7 @@ func TestFakeProviderEmitsNormalizedStepsAndAcceptanceIsDeterministic(t *testing
 		Steps:      []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "done", Evidence: []string{"tests_passed"}, Handoff: "implementation ready for review"}},
 	}
 	provider := FakeProvider{}
-	observation, exists, err := provider.Next(context.Background(), domain.Run{StepCursor: 0}, scenario)
+	observation, exists, err := provider.Next(context.Background(), domain.Run{StepCursor: 0}, scenario, RuntimeSnapshot{State: RuntimeStateRunning})
 	if err != nil || !exists || observation.Kind != domain.ObservationCompletion {
 		t.Fatalf("Next() = %#v, %t, %v", observation, exists, err)
 	}

@@ -200,6 +200,68 @@ func TestRejectedCompletionRequestsChangesAndRetainsAssignment(t *testing.T) {
 	}
 }
 
+func TestRunStopRetainsAssignmentAndRecordsForcedFallback(t *testing.T) {
+	t.Parallel()
+
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, _, _, _, assigned := initializeRunTest(t, storage, "stopped run")
+	scenario := domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "stopped-run", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "waiting"}}}
+	created := createRunTest(t, storage, workspace.ID, assigned, scenario, "start-stopped-run")
+	_, _ = storage.MarkRunStarting(context.Background(), created.Run.ID, "worker-starting")
+	active, err := storage.MarkRunStarted(context.Background(), created.Run.ID, "runtime", "provider", "worker-started")
+	if err != nil {
+		t.Fatalf("MarkRunStarted() error = %v", err)
+	}
+	command := StopRunCommand{
+		WorkspaceIdentifier: workspace.ID,
+		RunID:               active.Run.ID,
+		ExpectedRevision:    active.Run.Revision,
+		GracePeriodMillis:   250,
+		IdempotencyKey:      "stop-active-run",
+		CorrelationID:       "request-stop-active-run",
+	}
+	requested, err := storage.RequestRunStop(context.Background(), command)
+	if err != nil || requested.Detail.Run.Status != domain.RunStopping || requested.Detail.Run.StopGraceMillis != 250 {
+		t.Fatalf("RequestRunStop() = %#v, %v", requested, err)
+	}
+	replayed, err := storage.RequestRunStop(context.Background(), command)
+	if err != nil || !reflect.DeepEqual(requested, replayed) {
+		t.Fatalf("RequestRunStop(replay) = %#v, %v; want %#v", replayed, err, requested)
+	}
+	stopped, err := storage.MarkRunStopped(context.Background(), active.Run.ID, true, "process ignored graceful stop and was force-killed", "worker-stopped")
+	if err != nil {
+		t.Fatalf("MarkRunStopped() error = %v", err)
+	}
+	if stopped.Run.Status != domain.RunStopped || !stopped.Run.StopForced || stopped.Run.StopGraceMillis != 0 || stopped.Task.Status != domain.TaskAssigned || stopped.Task.AssignmentID == "" {
+		t.Fatalf("stopped detail = %#v", stopped)
+	}
+	if _, err := storage.CreateRun(context.Background(), CreateRunCommand{WorkspaceIdentifier: workspace.ID, TaskID: stopped.Task.ID, Runtime: "fake", Provider: "fake", Scenario: scenario, ExpectedTaskRevision: stopped.Task.Revision, IdempotencyKey: "replacement-after-stop", CorrelationID: "request-replacement-after-stop"}); err != nil {
+		t.Fatalf("CreateRun(replacement) error = %v", err)
+	}
+}
+
+func TestLostRunRetainsAssignmentAndCheckoutCapacity(t *testing.T) {
+	t.Parallel()
+
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, _, _, _, assigned := initializeRunTest(t, storage, "lost run")
+	scenario := domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "lost-run", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "unknown"}}}
+	created := createRunTest(t, storage, workspace.ID, assigned, scenario, "start-lost-run")
+	if _, err := storage.MarkRunStarting(context.Background(), created.Run.ID, "worker-starting"); err != nil {
+		t.Fatalf("MarkRunStarting() error = %v", err)
+	}
+	lost, err := storage.LoseRun(context.Background(), created.Run.ID, "supervisor disappeared before final state", "worker-lost")
+	if err != nil {
+		t.Fatalf("LoseRun() error = %v", err)
+	}
+	if lost.Run.Status != domain.RunLost || lost.Task.Status != domain.TaskBlocked || lost.Task.AssignmentID == "" || lost.Run.FinishedAt != "" {
+		t.Fatalf("lost detail = %#v", lost)
+	}
+	if _, err := storage.CreateRun(context.Background(), CreateRunCommand{WorkspaceIdentifier: workspace.ID, TaskID: lost.Task.ID, Runtime: "fake", Provider: "fake", Scenario: scenario, ExpectedTaskRevision: lost.Task.Revision, IdempotencyKey: "unsafe-replacement", CorrelationID: "request-unsafe-replacement"}); ErrorCode(err) != CodeRunConflict {
+		t.Fatalf("CreateRun(after lost runtime) error = %v, code = %q", err, ErrorCode(err))
+	}
+}
+
 func initializeRunTest(t *testing.T, storage *Store, title string) (domain.Workspace, domain.Project, domain.AgentDefinition, domain.Checkout, domain.TaskDetail) {
 	t.Helper()
 	workspace, project := initializeWorkTestProject(t, storage)

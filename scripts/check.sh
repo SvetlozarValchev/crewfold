@@ -48,3 +48,6 @@ printf 'Durable coordination black-box acceptance\n'
 
 printf 'Deterministic execution black-box acceptance\n'
 "$repo_root/test/scenarios/deterministic-execution/run.sh"
+
+printf 'Direct subprocess black-box acceptance\n'
+"$repo_root/test/scenarios/direct-runtime/run.sh"

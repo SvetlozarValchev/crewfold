@@ -1,0 +1,18 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "direct-bounded-output",
+  "acceptance": {
+    "required_evidence": []
+  },
+  "steps": [
+    {
+      "kind": "completion",
+      "message": "large-output fixture completed",
+      "handoff": "Review bounded stdout and stderr diagnostics."
+    }
+  ],
+  "process": {
+    "stdout_noise_bytes": 200000,
+    "stderr_noise_bytes": 200000
+  }
+}

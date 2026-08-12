@@ -33,6 +33,10 @@ Examples: Codex, Claude Code, OpenCode, generic terminal agent.
 Any compatible provider adapter should be usable on any runtime driver that
 satisfies its capabilities.
 
+Independence does not imply that every pair is compatible. A runtime must reject a
+launch specification it cannot supervise; for example, the in-memory fake runtime
+rejects a provider command instead of accepting a run that can never advance.
+
 ## Implemented deterministic contract
 
 The first executable contract deliberately keeps the two axes separate:
@@ -42,12 +46,15 @@ RuntimeDriver:
   Name
   Launch(operation_id, placement, launch_spec) -> runtime_binding
   Reconcile(operation_id, stored_handle) -> runtime_binding
+  Inspect(operation_id, stored_handle) -> runtime_snapshot
+  Stop(operation_id, stored_handle, grace_policy) -> stop_result
+  Logs(operation_id, stored_handle, tail) -> bounded_logs
 
 ProviderAdapter:
   Name
   Prepare(run, scenario) -> launch_spec
   Bind(run, runtime_binding) -> provider_binding
-  Next(run, scenario) -> normalized observation
+  Next(run, scenario, runtime_snapshot) -> normalized observation
 ```
 
 `Launch` is idempotent for a stable operation ID. The fake runtime records one
@@ -62,6 +69,39 @@ accepted report, and can resume a requested, starting, blocked, or checkpointed
 active run after restart. Runtime/provider registries are injected by name, so a
 future direct or Herdr runtime does not require provider-specific branches in the
 core.
+
+## Implemented direct subprocess runtime
+
+The `direct` runtime launches one detached supervisor per run. The supervisor owns
+the child process, process group, capped stdout/stderr files, timeout, stop
+fallback, and an atomically replaced state record under the daemon data directory.
+The daemon stores an opaque `direct:<run-id>` binding and can construct a fresh
+driver after restart to inspect the same supervisor state.
+
+The first direct provider is `fixture`, a hidden provider-free worker mode of the
+Crewfold binary. It converts checked-in scenarios into structured process reports,
+so the existing run/task acceptance authority is exercised through an actual OS
+boundary without model credentials.
+
+Safety boundaries:
+
+- the working directory always comes from the selected checkout; the run command
+  accepts no arbitrary executable or working-directory argument;
+- only `PATH`, locale, temporary-directory, timezone, and the Crewfold run ID are
+  inherited; provider command/environment policy becomes a later adapter feature;
+- each output stream has an independent byte cap and omitted-byte counter;
+- API log reads heuristically redact secret-like assignments; raw owner-only
+  capture files remain local diagnostic evidence and are not shared context;
+- completion reports are not accepted until the direct process has settled;
+- start, non-zero exit, timeout, graceful stop, forced stop, and unknown identity
+  remain distinct outcomes;
+- an unknown supervisor/child outcome becomes `lost` and retains task assignment
+  and checkout capacity rather than assuming the process stopped.
+
+This is process supervision, not an OS sandbox. The fixed fixture command is
+trusted test code; allowing arbitrary project commands later requires explicit
+command policy and, where needed, a sandbox/container boundary. The implemented
+process identity and process-group behavior is currently Linux-first.
 
 ## Herdr as the preferred interactive runtime
 
@@ -156,10 +196,10 @@ stop(process_handle, grace_policy)
 reconcile(stored_handle) -> current state
 ```
 
-The wider operations above are the target contract. The smaller implemented
-interface proves launch, binding, normalization, acceptance, and reconciliation;
-probe, delivery, attach, interrupt, stop, checkpoint, and usage arrive with the
-capabilities that exercise them.
+The wider operations above are the target contract. The implemented interface now
+proves launch, binding, inspection, bounded logs, stop, normalization, acceptance,
+and reconciliation. Probe, delivery, attach, interrupt, checkpoint, and usage
+arrive with the capabilities that exercise them.
 
 ## Lifecycle authority
 
@@ -184,8 +224,9 @@ for:
 - environments where Herdr is not installed;
 - future service execution.
 
-It should capture bounded stdout/stderr, preserve the exit result, support graceful
-and forced stop, and never retain unlimited output in memory.
+It captures bounded stdout/stderr, preserves the exit result, supports graceful
+and forced stop, and never retains unlimited output in memory. Arbitrary headless
+provider commands are not yet exposed.
 
 ## MCP coordination surface
 

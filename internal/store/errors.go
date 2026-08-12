@@ -33,6 +33,7 @@ const (
 	CodeRunConflict          = "run_conflict"
 	CodePlacementUnavailable = "placement_unavailable"
 	CodeAdapterUnavailable   = "adapter_unavailable"
+	CodeRuntimeFailed        = "runtime_failed"
 	CodeIdempotencyConflict  = "idempotency_conflict"
 	CodeStorageFailed        = "storage_failed"
 )

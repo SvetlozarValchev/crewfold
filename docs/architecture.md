@@ -248,14 +248,29 @@ Launching an agent is a saga:
 
 1. Commit `run.requested` with task, agent, checkout, and limits.
 2. Runtime worker attempts the launch with an idempotency token.
-3. Commit `run.started` with the runtime handle, or `run.start_failed`.
-4. Reconciliation checks for orphaned processes after a crash.
+3. Persist the runtime binding before the post-launch acknowledgement boundary.
+4. Commit `run.started` with provider binding, or `run.start_failed` when launch
+   definitely did not occur.
+5. Reconciliation inspects the persisted binding after a crash; an untrustworthy
+   process outcome becomes `run.lost` without releasing capacity.
+
+If provider binding fails after a runtime exists, the worker first stops that
+known runtime. It records a normal start failure only after cleanup is confirmed;
+otherwise it records `run.lost` and preserves the assignment and checkout claim.
 
 The fake runtime currently proves steps 1–3 and replay-safe recovery at the
 post-effect/pre-acknowledgement boundary. Its operation ID is the durable run ID;
 replaying launch returns the same binding. Requested intents, blocked runs, and
 active checkpoints also survive daemon restart through the SQLite worker queue
 and persisted scenario cursor.
+
+The direct runtime additionally proves restart across a real process boundary. A
+detached per-run supervisor persists process identity, bounded output counts, and
+exit/timeout/stop state in owner-only daemon storage. A freshly constructed driver
+can reconcile that state after daemon restart while the child continues. The
+runtime never treats terminal text or exit zero as task-completion authority; the
+fixture provider must still emit a structured completion report and pass domain
+acceptance. Current process identity and process-group enforcement are Linux-first.
 
 The same pattern applies to prompts, stops, meetings, and external actions.
 

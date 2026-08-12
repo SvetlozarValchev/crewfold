@@ -169,11 +169,25 @@ func resolveConfig(config Config) (Config, error) {
 	}
 	if config.RuntimeDrivers == nil {
 		fakeRuntime := execution.NewFakeRuntime()
-		config.RuntimeDrivers = map[string]execution.RuntimeDriver{fakeRuntime.Name(): fakeRuntime}
+		executable, executableErr := os.Executable()
+		if executableErr != nil {
+			return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "resolve daemon executable for direct runtime", Cause: executableErr}
+		}
+		directRuntime := execution.NewDirectRuntime(execution.DirectRuntimeOptions{
+			StateRoot: filepath.Join(dataDir, "runtime"), SupervisorExecutable: executable,
+		})
+		config.RuntimeDrivers = map[string]execution.RuntimeDriver{
+			fakeRuntime.Name():   fakeRuntime,
+			directRuntime.Name(): directRuntime,
+		}
 	}
 	if config.ProviderAdapters == nil {
 		fakeProvider := execution.FakeProvider{}
-		config.ProviderAdapters = map[string]execution.ProviderAdapter{fakeProvider.Name(): fakeProvider}
+		fixtureProvider := execution.NewFixtureProvider()
+		config.ProviderAdapters = map[string]execution.ProviderAdapter{
+			fakeProvider.Name():    fakeProvider,
+			fixtureProvider.Name(): fixtureProvider,
+		}
 	}
 	for name, driver := range config.RuntimeDrivers {
 		if driver == nil || strings.TrimSpace(name) == "" || name != driver.Name() {
@@ -435,6 +449,10 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleRunList(request), false
 	case localapi.MethodRunResume:
 		return s.handleRunResume(request), false
+	case localapi.MethodRunStop:
+		return s.handleRunStop(request), false
+	case localapi.MethodRunLogs:
+		return s.handleRunLogs(request), false
 	case localapi.MethodCoordinationStatus:
 		return s.handleCoordinationStatus(request), false
 	case localapi.MethodEventsList:

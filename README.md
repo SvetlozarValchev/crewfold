@@ -25,9 +25,11 @@ foreground local daemon, an owner-only Unix socket, and durable workspace,
 project, repository, checkout, agent, objective, task, dependency, assignment,
 lease, budget, run, placement, timeline, handoff, and event records in SQLite. It
 can execute the complete task-to-run-to-handoff lifecycle with deterministic fake
-runtime/provider adapters across adjacent standalone clones and linked worktrees.
-Real subprocesses and model sessions, messaging, claims, knowledge, and the
-operator TUI are still to come.
+adapters or a supervised, bounded local fixture subprocess across adjacent
+standalone clones and linked worktrees. It persists process bindings, reconciles
+children across daemon restart, exposes capped logs with API redaction, and
+supports timeout and graceful-stop fallback. Model sessions, messaging, claims,
+knowledge, and the operator TUI are still to come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.

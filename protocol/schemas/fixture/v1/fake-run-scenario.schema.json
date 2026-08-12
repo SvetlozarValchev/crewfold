@@ -32,6 +32,19 @@
           "wait_for_resume": {"type": "boolean"}
         }
       }
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exit_code": {"type": "integer", "minimum": 0, "maximum": 125},
+        "step_delay_millis": {"type": "integer", "minimum": 0, "maximum": 5000},
+        "timeout_millis": {"type": "integer", "minimum": 0, "maximum": 60000},
+        "stdout_noise_bytes": {"type": "integer", "minimum": 0, "maximum": 2097152},
+        "stderr_noise_bytes": {"type": "integer", "minimum": 0, "maximum": 2097152},
+        "hang_after_steps": {"type": "boolean"},
+        "ignore_termination": {"type": "boolean"}
+      }
     }
   },
   "oneOf": [

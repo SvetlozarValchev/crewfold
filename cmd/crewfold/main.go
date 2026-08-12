@@ -8,9 +8,19 @@ import (
 
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/cli"
+	"crewfold/internal/execution"
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "__direct-supervisor":
+			os.Exit(execution.RunDirectSupervisor(os.Args[2:]))
+		case "__fixture-provider":
+			os.Exit(execution.RunFixtureProvider(os.Stdin, os.Stdout, os.Stderr))
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

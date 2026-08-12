@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"strings"
+	"time"
 
 	"crewfold/internal/execution"
 	"crewfold/internal/localapi"
@@ -71,6 +72,50 @@ func (s *server) handleRunResume(request localapi.Request) localapi.Response {
 		return storeErrorResponse(request, err)
 	}
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunMutationResult{Schema: localapi.RunMutationSchema, Type: "run_mutation", Detail: result.Detail, EventSequence: result.EventSequence})
+}
+
+func (s *server) handleRunStop(request localapi.Request) localapi.Response {
+	var params localapi.RunStopParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "run.stop requires workspace, run, expected_revision, grace_period_millis, and idempotency_key")
+	}
+	result, err := s.store.RequestRunStop(context.Background(), store.StopRunCommand{
+		WorkspaceIdentifier: params.Workspace,
+		RunID:               params.Run,
+		ExpectedRevision:    params.ExpectedRevision,
+		GracePeriodMillis:   params.GracePeriodMillis,
+		IdempotencyKey:      params.IdempotencyKey,
+		CorrelationID:       request.ID,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunMutationResult{Schema: localapi.RunMutationSchema, Type: "run_mutation", Detail: result.Detail, EventSequence: result.EventSequence})
+}
+
+func (s *server) handleRunLogs(request localapi.Request) localapi.Response {
+	var params localapi.RunLogsParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Run) == "" || params.Tail < 0 || params.Tail > 10000 {
+		return invalidParamsResponse(request, "run.logs requires workspace and run and accepts a tail from 0 to 10000")
+	}
+	detail, err := s.store.RunDetail(context.Background(), params.Workspace, params.Run)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	driver, exists := s.runtimes[detail.Run.Runtime]
+	if !exists {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeAdapterUnavailable, Message: "run runtime driver is unavailable"})
+	}
+	if detail.Run.RuntimeHandle == "" {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeRunConflict, Message: "run has no runtime handle yet"})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	logs, err := driver.Logs(ctx, detail.Run.ID, detail.Run.RuntimeHandle, params.Tail)
+	if err != nil {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeRuntimeFailed, Message: "read runtime logs", Cause: err})
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunLogsResult{Schema: localapi.RunLogsSchema, Type: "run_logs", Logs: logs})
 }
 
 func (s *server) handleTaskTimeline(request localapi.Request) localapi.Response {

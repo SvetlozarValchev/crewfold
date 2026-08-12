@@ -5,6 +5,9 @@ const (
 	RunStarting    = "starting"
 	RunActive      = "active"
 	RunBlocked     = "blocked"
+	RunStopping    = "stopping"
+	RunStopped     = "stopped"
+	RunLost        = "lost"
 	RunReview      = "review"
 	RunCompleted   = "completed"
 	RunStartFailed = "start_failed"
@@ -44,6 +47,19 @@ type FakeScenario struct {
 	StartFailure string         `json:"start_failure,omitempty"`
 	Acceptance   AcceptanceRule `json:"acceptance"`
 	Steps        []FakeStep     `json:"steps"`
+	Process      FixtureProcess `json:"process,omitempty"`
+}
+
+// FixtureProcess describes deterministic operating-system behavior for the
+// provider-free direct-runtime fixture. The fake adapters ignore these controls.
+type FixtureProcess struct {
+	ExitCode          int  `json:"exit_code,omitempty"`
+	StepDelayMillis   int  `json:"step_delay_millis,omitempty"`
+	TimeoutMillis     int  `json:"timeout_millis,omitempty"`
+	StdoutNoiseBytes  int  `json:"stdout_noise_bytes,omitempty"`
+	StderrNoiseBytes  int  `json:"stderr_noise_bytes,omitempty"`
+	HangAfterSteps    bool `json:"hang_after_steps,omitempty"`
+	IgnoreTermination bool `json:"ignore_termination,omitempty"`
 }
 
 type Run struct {
@@ -64,6 +80,8 @@ type Run struct {
 	ResultSummary   string       `json:"result_summary,omitempty"`
 	FailureCode     string       `json:"failure_code,omitempty"`
 	FailureMessage  string       `json:"failure_message,omitempty"`
+	StopGraceMillis int64        `json:"stop_grace_millis,omitempty"`
+	StopForced      bool         `json:"stop_forced,omitempty"`
 	Revision        int64        `json:"revision"`
 	CreatedAt       string       `json:"created_at"`
 	UpdatedAt       string       `json:"updated_at"`
@@ -114,4 +132,18 @@ type RunObservation struct {
 	Evidence []string
 	Handoff  string
 	Pause    bool
+}
+
+type CapturedLog struct {
+	Text          string `json:"text"`
+	CapturedBytes int64  `json:"captured_bytes"`
+	OmittedBytes  int64  `json:"omitted_bytes"`
+	Truncated     bool   `json:"truncated"`
+}
+
+type RunLogs struct {
+	RunID  string      `json:"run_id"`
+	State  string      `json:"state"`
+	Stdout CapturedLog `json:"stdout"`
+	Stderr CapturedLog `json:"stderr"`
 }
