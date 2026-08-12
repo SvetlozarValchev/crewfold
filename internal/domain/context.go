@@ -2,7 +2,8 @@ package domain
 
 const (
 	ContextPacketSchemaV1 = "urn:crewfold:schema:domain:context-packet:v1"
-	ContextPacketSchema   = "urn:crewfold:schema:domain:context-packet:v2"
+	ContextPacketSchemaV2 = "urn:crewfold:schema:domain:context-packet:v2"
+	ContextPacketSchema   = "urn:crewfold:schema:domain:context-packet:v3"
 )
 
 type ContextRole struct {
@@ -68,31 +69,52 @@ type ContextSelection struct {
 }
 
 type ContextExclusion struct {
-	Section string `json:"section"`
-	Reason  string `json:"reason"`
+	Section               string `json:"section"`
+	EntityType            string `json:"entity_type,omitempty"`
+	EntityID              string `json:"entity_id,omitempty"`
+	Revision              int64  `json:"revision,omitempty"`
+	RequestedRevisionID   string `json:"requested_revision_id,omitempty"`
+	ReplacementRevisionID string `json:"replacement_revision_id,omitempty"`
+	ReasonCode            string `json:"reason_code,omitempty"`
+	Reason                string `json:"reason"`
+	ByteSize              int    `json:"byte_size,omitempty"`
+}
+
+type ContextBudgetUsage struct {
+	LimitBytes     int `json:"limit_bytes"`
+	UsedBytes      int `json:"used_bytes"`
+	RemainingBytes int `json:"remaining_bytes"`
+}
+
+type ContextBudget struct {
+	Total     ContextBudgetUsage `json:"total"`
+	Knowledge ContextBudgetUsage `json:"knowledge"`
 }
 
 type ContextPacket struct {
-	Schema       string              `json:"schema"`
-	ID           string              `json:"id"`
-	WorkspaceID  string              `json:"workspace_id"`
-	ProjectID    string              `json:"project_id"`
-	TaskID       string              `json:"task_id"`
-	AgentID      string              `json:"agent_id"`
-	CheckoutID   string              `json:"checkout_id"`
-	Role         ContextRole         `json:"role"`
-	Task         ContextTask         `json:"task"`
-	Checkout     ContextCheckout     `json:"checkout"`
-	Dependencies []ContextDependency `json:"dependencies"`
-	Inbox        InboxSummary        `json:"inbox,omitzero"`
-	Policy       ContextPolicy       `json:"policy"`
-	Reporting    ContextReporting    `json:"reporting"`
-	Included     []ContextSelection  `json:"included"`
-	Excluded     []ContextExclusion  `json:"excluded"`
-	ContentHash  string              `json:"content_hash"`
-	ByteSize     int                 `json:"byte_size"`
-	CreatedAt    string              `json:"created_at"`
-	CreatedBy    string              `json:"created_by"`
+	Schema                        string              `json:"schema"`
+	ID                            string              `json:"id"`
+	WorkspaceID                   string              `json:"workspace_id"`
+	ProjectID                     string              `json:"project_id"`
+	TaskID                        string              `json:"task_id"`
+	AgentID                       string              `json:"agent_id"`
+	CheckoutID                    string              `json:"checkout_id"`
+	Role                          ContextRole         `json:"role"`
+	Task                          ContextTask         `json:"task"`
+	Checkout                      ContextCheckout     `json:"checkout"`
+	Dependencies                  []ContextDependency `json:"dependencies"`
+	Inbox                         InboxSummary        `json:"inbox,omitzero"`
+	RequestedKnowledgeRevisionIDs []string            `json:"requested_knowledge_revision_ids,omitzero"`
+	AcceptedKnowledge             []KnowledgeRevision `json:"accepted_knowledge,omitzero"`
+	Policy                        ContextPolicy       `json:"policy"`
+	Reporting                     ContextReporting    `json:"reporting"`
+	Included                      []ContextSelection  `json:"included"`
+	Excluded                      []ContextExclusion  `json:"excluded"`
+	Budget                        ContextBudget       `json:"budget,omitzero"`
+	ContentHash                   string              `json:"content_hash"`
+	ByteSize                      int                 `json:"byte_size"`
+	CreatedAt                     string              `json:"created_at"`
+	CreatedBy                     string              `json:"created_by"`
 }
 
 type ContextExplanation struct {
@@ -101,6 +123,7 @@ type ContextExplanation struct {
 	ByteSize    int                `json:"byte_size"`
 	Included    []ContextSelection `json:"included"`
 	Excluded    []ContextExclusion `json:"excluded"`
+	Budget      ContextBudget      `json:"budget,omitzero"`
 }
 
 type RunCapability struct {

@@ -8,7 +8,9 @@ scoped tool audit, report receipt, artifact publication, and context-packet fact
 Thread creation, durable message send/delivery/read/acknowledgement, and wake
 success/failure facts are also implemented. Claim add/release/expiry, overlap
 open/resolution, drift open/resolution, and structured meeting facts are
-implemented. Names for canonical knowledge, policy, checks, and external integrations remain proposals; the
+implemented. Canonical knowledge proposal/governance, authority-denial, and
+context-packet build facts are also implemented. Names for policy, checks, context
+deltas, contradiction handling, and external integrations remain proposals; the
 catalogue defines intended coverage, not a frozen schema.
 
 ## Envelope
@@ -177,16 +179,37 @@ meeting.human_takeover
 
 ## Knowledge and context
 
+The implemented facts are:
+
 ```text
-artifact.registered
-artifact.redacted
 knowledge.proposed
 knowledge.accepted
 knowledge.rejected
 knowledge.marked_stale
-knowledge.disputed
 knowledge.superseded
+knowledge.acceptance_denied
+knowledge.rejection_denied
+knowledge.stale_denied
 context.packet_built
+```
+
+Proposal events identify the item, project, optional task scope, predecessor, and
+source count without embedding the whole body. Accept/reject/stale/supersede facts
+advance the knowledge state revision. A non-owner operation that reaches the
+internal governance boundary preserves the revision state and commits both its
+action-specific denial fact and authority-check record. A run cannot normally
+reach that boundary: its unadvertised governance-tool probe is instead captured as
+`run.tool_denied` by capability policy.
+`context.packet_built` identifies the immutable packet, task, agent, checkout,
+semantic hash, and final byte size. Selection details and exact requested knowledge
+IDs live in packet v3 rather than being duplicated into the event.
+
+The following remain proposals:
+
+```text
+artifact.registered
+artifact.redacted
+knowledge.disputed
 context.packet_dispatched
 context_delta.built
 context_delta.acknowledged

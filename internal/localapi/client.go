@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net"
 	"time"
+
+	"crewfold/internal/domain"
 )
 
 const defaultTimeout = 2 * time.Second
@@ -310,6 +312,9 @@ func (c *Client) TaskTimeline(ctx context.Context, workspace, task string) (Task
 
 func (c *Client) ContextBuild(ctx context.Context, paramsValue ContextBuildParams) (ContextBuildResult, error) {
 	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	if paramsValue.KnowledgeRevisionIDs == nil {
+		paramsValue.KnowledgeRevisionIDs = []string{}
+	}
 	var result ContextBuildResult
 	if err := c.callParams(ctx, MethodContextBuild, paramsValue, &result); err != nil {
 		return ContextBuildResult{}, err
@@ -329,6 +334,61 @@ func (c *Client) ContextExplain(ctx context.Context, workspace, contextID string
 	var result ContextExplainResult
 	if err := c.callParams(ctx, MethodContextExplain, ContextQueryParams{Workspace: workspace, Context: contextID}, &result); err != nil {
 		return ContextExplainResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) KnowledgePropose(ctx context.Context, params KnowledgeProposeParams) (KnowledgeMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	if params.Sources == nil {
+		params.Sources = []domain.KnowledgeSourceInput{}
+	}
+	var result KnowledgeMutationResult
+	if err := c.callParams(ctx, MethodKnowledgePropose, params, &result); err != nil {
+		return KnowledgeMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) KnowledgeShow(ctx context.Context, workspace, revision string) (KnowledgeShowResult, error) {
+	var result KnowledgeShowResult
+	if err := c.callParams(ctx, MethodKnowledgeShow, KnowledgeQueryParams{Workspace: workspace, KnowledgeRevision: revision}, &result); err != nil {
+		return KnowledgeShowResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) KnowledgeList(ctx context.Context, params KnowledgeListParams) (KnowledgeListResult, error) {
+	var result KnowledgeListResult
+	if err := c.callParams(ctx, MethodKnowledgeList, params, &result); err != nil {
+		return KnowledgeListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) KnowledgeAccept(ctx context.Context, params KnowledgeDecisionParams) (KnowledgeMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result KnowledgeMutationResult
+	if err := c.callParams(ctx, MethodKnowledgeAccept, params, &result); err != nil {
+		return KnowledgeMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) KnowledgeReject(ctx context.Context, params KnowledgeDecisionParams) (KnowledgeMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result KnowledgeMutationResult
+	if err := c.callParams(ctx, MethodKnowledgeReject, params, &result); err != nil {
+		return KnowledgeMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) KnowledgeMarkStale(ctx context.Context, params KnowledgeMarkStaleParams) (KnowledgeMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result KnowledgeMutationResult
+	if err := c.callParams(ctx, MethodKnowledgeMarkStale, params, &result); err != nil {
+		return KnowledgeMutationResult{}, err
 	}
 	return result, nil
 }

@@ -43,6 +43,12 @@ const (
 	MethodContextBuild       = "context.build"
 	MethodContextShow        = "context.show"
 	MethodContextExplain     = "context.explain"
+	MethodKnowledgePropose   = "knowledge.propose"
+	MethodKnowledgeShow      = "knowledge.show"
+	MethodKnowledgeList      = "knowledge.list"
+	MethodKnowledgeAccept    = "knowledge.accept"
+	MethodKnowledgeReject    = "knowledge.reject"
+	MethodKnowledgeMarkStale = "knowledge.mark_stale"
 	MethodMessageSend        = "message.send"
 	MethodInboxList          = "inbox.list"
 	MethodThreadShow         = "thread.show"
@@ -89,9 +95,12 @@ const (
 	TaskShowSchema           = "urn:crewfold:schema:local-api:task-show-result:v1"
 	TaskListSchema           = "urn:crewfold:schema:local-api:task-list-result:v1"
 	TaskTimelineSchema       = "urn:crewfold:schema:local-api:task-timeline-result:v1"
-	ContextBuildSchema       = "urn:crewfold:schema:local-api:context-build-result:v2"
-	ContextShowSchema        = "urn:crewfold:schema:local-api:context-show-result:v2"
-	ContextExplainSchema     = "urn:crewfold:schema:local-api:context-explain-result:v1"
+	ContextBuildSchema       = "urn:crewfold:schema:local-api:context-build-result:v3"
+	ContextShowSchema        = "urn:crewfold:schema:local-api:context-show-result:v3"
+	ContextExplainSchema     = "urn:crewfold:schema:local-api:context-explain-result:v2"
+	KnowledgeMutationSchema  = "urn:crewfold:schema:local-api:knowledge-mutation-result:v1"
+	KnowledgeShowSchema      = "urn:crewfold:schema:local-api:knowledge-show-result:v1"
+	KnowledgeListSchema      = "urn:crewfold:schema:local-api:knowledge-list-result:v1"
 	MessageSendSchema        = "urn:crewfold:schema:local-api:message-send-result:v1"
 	InboxListSchema          = "urn:crewfold:schema:local-api:inbox-list-result:v1"
 	ThreadShowSchema         = "urn:crewfold:schema:local-api:thread-show-result:v1"
@@ -575,12 +584,13 @@ type MeetingInspectResult struct {
 }
 
 type ContextBuildParams struct {
-	Workspace            string `json:"workspace"`
-	Task                 string `json:"task"`
-	Agent                string `json:"agent"`
-	Checkout             string `json:"checkout,omitempty"`
-	ExpectedTaskRevision int64  `json:"expected_task_revision"`
-	IdempotencyKey       string `json:"idempotency_key"`
+	Workspace            string   `json:"workspace"`
+	Task                 string   `json:"task"`
+	Agent                string   `json:"agent"`
+	Checkout             string   `json:"checkout,omitempty"`
+	KnowledgeRevisionIDs []string `json:"knowledge_revision_ids"`
+	ExpectedTaskRevision int64    `json:"expected_task_revision"`
+	IdempotencyKey       string   `json:"idempotency_key"`
 }
 
 type ContextQueryParams struct {
@@ -605,6 +615,72 @@ type ContextExplainResult struct {
 	Schema      string                    `json:"schema"`
 	Type        string                    `json:"type"`
 	Explanation domain.ContextExplanation `json:"explanation"`
+}
+
+type KnowledgeProposeParams struct {
+	Workspace            string                        `json:"workspace"`
+	Project              string                        `json:"project,omitempty"`
+	TaskScopeID          string                        `json:"task_scope_id,omitempty"`
+	Type                 string                        `json:"type"`
+	Title                string                        `json:"title"`
+	Body                 string                        `json:"body"`
+	Confidence           string                        `json:"confidence"`
+	VerificationStatus   string                        `json:"verification_status"`
+	FreshnessPolicy      string                        `json:"freshness_policy"`
+	FreshUntil           string                        `json:"fresh_until,omitempty"`
+	Sources              []domain.KnowledgeSourceInput `json:"sources"`
+	SupersedesRevisionID string                        `json:"supersedes_revision_id,omitempty"`
+	IdempotencyKey       string                        `json:"idempotency_key"`
+}
+
+type KnowledgeQueryParams struct {
+	Workspace         string `json:"workspace"`
+	KnowledgeRevision string `json:"knowledge_revision"`
+}
+
+type KnowledgeListParams struct {
+	Workspace      string `json:"workspace"`
+	Project        string `json:"project"`
+	TaskScopeID    string `json:"task_scope_id,omitempty"`
+	Type           string `json:"type,omitempty"`
+	ReviewStatus   string `json:"review_status,omitempty"`
+	CurrencyStatus string `json:"currency_status,omitempty"`
+}
+
+type KnowledgeDecisionParams struct {
+	Workspace             string `json:"workspace"`
+	KnowledgeRevision     string `json:"knowledge_revision"`
+	ExpectedStateRevision int64  `json:"expected_state_revision"`
+	DecisionNote          string `json:"decision_note,omitempty"`
+	IdempotencyKey        string `json:"idempotency_key"`
+}
+
+type KnowledgeMarkStaleParams struct {
+	Workspace             string `json:"workspace"`
+	KnowledgeRevision     string `json:"knowledge_revision"`
+	ExpectedStateRevision int64  `json:"expected_state_revision"`
+	Reason                string `json:"reason"`
+	IdempotencyKey        string `json:"idempotency_key"`
+}
+
+type KnowledgeMutationResult struct {
+	Schema         string                          `json:"schema"`
+	Type           string                          `json:"type"`
+	Revision       domain.KnowledgeRevision        `json:"revision"`
+	AuthorityCheck *domain.KnowledgeAuthorityCheck `json:"authority_check,omitempty"`
+	EventSequence  int64                           `json:"event_sequence"`
+}
+
+type KnowledgeShowResult struct {
+	Schema string                 `json:"schema"`
+	Type   string                 `json:"type"`
+	Detail domain.KnowledgeDetail `json:"detail"`
+}
+
+type KnowledgeListResult struct {
+	Schema string               `json:"schema"`
+	Type   string               `json:"type"`
+	List   domain.KnowledgeList `json:"list"`
 }
 
 type MessageSendParams struct {

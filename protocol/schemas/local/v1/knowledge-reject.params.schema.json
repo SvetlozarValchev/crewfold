@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:knowledge-reject-params:v1",
+  "title": "Crewfold local API knowledge rejection parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "knowledge_revision", "expected_state_revision", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "knowledge_revision": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+    "expected_state_revision": {"type": "integer", "minimum": 1},
+    "decision_note": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

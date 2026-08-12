@@ -5,13 +5,20 @@
 Crewfold's knowledge system supplies the smallest trustworthy context needed for a
 task. It is not a transcript archive disguised as memory.
 
-Status: immutable base packets containing role, task, checkout, dependency,
-policy, reporting context, and a bounded project-scoped inbox summary are
-implemented. Durable claims and overlaps now exist as coordination records, but
-including their live snapshot in context packets remains planned. Canonical
-knowledge records, curation, retrieval, and packet refresh/deltas also remain
-planned; unimplemented sections are explicitly named as exclusions in current
-packets.
+The canonical knowledge core and context-packet v3 contract are implemented. The
+milestone is not marked complete until its acceptance scenario and review gate are
+recorded. The current implementation supports:
+
+- canonical `decision` and `finding` items with immutable content revisions;
+- task, concluded-meeting, and accepted meeting-proposal provenance;
+- owner-governed acceptance, rejection, staleness, and supersession;
+- proposals from either the owner CLI or an authenticated agent run;
+- explicit, exact revision links in bounded context packets; and
+- explanation of selection, exclusion, revision, and byte budgets.
+
+It does not ingest provider transcripts, search for knowledge, curate
+automatically, or refresh a running agent with context deltas. Those remain later
+capabilities.
 
 The system separates four layers:
 
@@ -19,206 +26,192 @@ The system separates four layers:
 raw observations -> evidence/artifacts -> proposed knowledge -> accepted knowledge
 ```
 
-Each transition reduces noise and increases the amount of governance required.
+Each transition reduces noise and increases the governance required.
 
-## Knowledge types
+## Implemented canonical record
 
-| Type | Example | Typical authority |
+### Identity and lifecycle
+
+A stable knowledge item has a `know_...` ID, workspace, project, optional task
+applicability scope, and type. Its content lives in numbered `krev_...` revisions.
+Revision title, body, quality metadata, provenance, freshness policy, and
+supersession link are immutable after proposal. Governance changes advance a
+separate state revision rather than rewriting content.
+
+Review and currency are independent axes:
+
+- review is `proposed`, `accepted`, or `rejected`;
+- currency is `pending`, `current`, `stale`, or `superseded`.
+
+A new proposal is pending. Accepting it makes it current. The owner may mark
+current accepted knowledge stale. To correct accepted content, a caller proposes a
+successor with `--supersedes`; accepting that successor atomically marks the prior
+revision superseded while retaining both bodies and their audit history. Proposing
+a successor alone does not displace the current revision.
+
+### Scope and provenance
+
+Every revision has one primary source and may have supporting sources, up to 16
+total. Implemented source types are:
+
+- a task at its recorded revision;
+- a concluded meeting at its recorded revision; or
+- an accepted meeting proposal whose meeting is concluded, at the proposal's
+  recorded revision.
+
+All sources must belong to one workspace and project. The primary source derives
+the knowledge project; an explicit `--project` must match it. `--task-scope` may
+narrow applicability to one task in that project. A task source does not by itself
+make the knowledge task-only: without `--task-scope`, the revision is project-wide.
+
+The record also carries confidence (`low|medium|high`), verification status
+(`unverified|supported|verified`), and either `until_superseded` freshness or an
+RFC3339 expiry. Sources are stored in deterministic order with frozen source
+revisions, so the knowledge body is useful and inspectable without a transcript.
+
+### Authority
+
+The local owner may propose, accept, reject, or mark knowledge stale through the
+CLI. An authenticated run may call `crewfold_propose_knowledge`; its primary source
+is fixed to that run's task and its actor identity is fixed to the run. Tool
+arguments cannot choose another actor or source project.
+
+Agent proposals still require owner acceptance. There is no run-scoped accept,
+reject, or stale tool: invoking a reserved governance name is rejected by the
+immutable capability policy and produces `run.tool_denied` without touching the
+revision. As defense in depth, any non-owner call that reaches the internal
+knowledge-governance boundary preserves the revision and commits a `kauth_`
+authority check plus its action-specific denial event. Owner decisions also
+produce authority checks. Governance mutations require the state revision the
+owner inspected.
+
+## Context packet v3
+
+The packet builder continues to snapshot the assigned role, exact task and
+checkout revisions, direct dependencies, policy, reporting instructions, and a
+bounded project inbox summary. Packet v3 adds explicit canonical knowledge; active
+claim snapshots and full message bodies remain excluded.
+
+`crewfold context build ... --include krev_...` accepts at most 16 unique revision
+IDs. Requests remain in caller order in `requested_knowledge_revision_ids`. There
+is no project-wide scan or implicit retrieval.
+
+For each exact requested ID, the builder includes the complete revision snapshot
+only when it is:
+
+- accepted and current at build time;
+- in the task's workspace and project;
+- project-wide or explicitly scoped to that task; and
+- still within an explicit freshness deadline, when one exists.
+
+An unknown revision ID fails the build. Known but ineligible revisions remain out
+of the packet with a stable reason: `proposed`, `rejected`, `stale`,
+`superseded`, `out_of_scope`, or `over_budget`. A superseded exact pin is not
+silently replaced; its exclusion may identify the current successor as
+`replacement_revision_id`, and the caller must explicitly request that successor
+to include it.
+
+Packets have a fixed 32 KiB total limit and a 12 KiB accepted-knowledge sub-budget.
+Knowledge is included whole or not at all; Crewfold never truncates a decision or
+finding to make it fit. The packet and explanation report total and knowledge
+limit, used, and remaining bytes. `context explain --output json` also exposes the
+exact included and excluded entities and revisions.
+
+Eligibility is evaluated once, inside the packet-build transaction. The resulting
+snapshot is immutable: later acceptance, staleness, expiry, or supersession does
+not rewrite an existing packet or invalidate its run binding. A new packet build
+evaluates current state again. Context-packet schemas v1 and v2 remain readable;
+new builds use v3.
+
+Raw terminal and provider transcript text is not a packet input and is recorded as
+an explicit exclusion. The replacement-agent path combines a durable handoff or
+mailbox message with explicitly pinned accepted knowledge, not copied session
+history.
+
+## Planned curator and retrieval
+
+M15 introduces the context curator, deterministic search, contradiction handling,
+and explicit refresh/deltas. The planned curator is a role plus a deterministic
+pipeline, not an all-powerful memory agent. It may propose concise revisions from
+structured handoffs, accepted meeting resolutions, review findings, test evidence,
+and explicit owner decisions, but it cannot silently rewrite history or grant its
+own proposals authority.
+
+Planned retrieval will filter by hard scope and authority before ranking by
+applicability, freshness, confidence, and measured utility. Full-text or semantic
+matching may discover candidates; neither can determine truth or acceptance.
+Existing explicit revision links remain authoritative and reproducible.
+
+Long-running sessions do not currently receive knowledge changes. A future context
+delta may report a dependency change, accepted or superseded decision, important
+message, claim conflict, or explicit refresh request. Deltas will reference an
+immutable base packet rather than mutate it.
+
+## Planned broader knowledge types
+
+M14 deliberately implements only decisions and findings. The broader product model
+retains these planned types:
+
+| Planned type | Example | Typical future authority |
 | --- | --- | --- |
 | Project brief | Purpose, users, current objective | Owner or manager |
 | Constraint | “Server remains offline-capable” | Owner or accepted decision |
-| Decision | Selected storage or API boundary | Named decision owner |
 | Glossary | Domain meaning of “run” | Curator with review rule |
-| Finding | Reproduced behavior or measured result | Agent plus evidence |
 | Risk | Migration may invalidate old clients | Any agent proposes; owner triages |
-| Runbook | How to execute a reliable operation | Maintainer/reviewer |
+| Runbook | How to execute a reliable operation | Maintainer or reviewer |
 | Summary | Current state of a component | Curator; freshness-limited |
 
-Tasks, claims, messages, and live status remain coordination records and are not
-duplicated as knowledge merely to make them retrievable.
+Future revisions may add component scope, labels, related entities, sensitivity,
+sharing classification, contradiction records, and richer evidence/artifact
+links. Those fields are not part of the implemented M14 authority contract.
 
-## Knowledge record
-
-Every revision includes:
-
-- type, title, and concise body;
-- workspace/project/component/task scope;
-- author and approving authority;
-- source artifacts and events;
-- confidence and verification status;
-- validity interval or freshness policy;
-- labels and related entities;
-- the revision it supersedes or contradicts;
-- sensitivity and sharing classification.
-
-Revision bodies should be useful without reading the source transcript. Evidence
-links let a reviewer drill down when necessary.
-
-## The context curator
-
-The curator is a role plus a deterministic pipeline, not an all-powerful memory
-agent.
-
-### Inputs
-
-- structured handoffs and completion reports;
-- accepted meeting resolutions;
-- review findings and test evidence;
-- explicit decisions and owner messages;
-- stale or contradictory knowledge alerts.
-
-### Responsibilities
-
-- propose new or revised knowledge;
-- merge redundant descriptions without losing provenance;
-- mark stale content and identify contradictions;
-- keep project and component summaries within size budgets;
-- ensure accepted decisions appear in relevant future packets;
-- avoid promoting speculation or transient status into shared truth.
-
-### Acceptance policy
-
-Low-risk normalization, such as adding a source link or fixing formatting, may be
-automatic. Factual findings require evidence. Constraints and architecture
-decisions require their named authority. Sensitive content may be excluded from
-model-based curation entirely.
-
-The curator cannot silently rewrite history. Accepted revisions remain available,
-and supersession is explicit.
-
-## Context packet assembly
-
-A context packet is assembled at run start and can be refreshed at explicit
-checkpoints.
-
-### Required sections
-
-1. Agent role, permissions, and escalation route.
-2. Task outcome, deliverables, acceptance checks, and budgets.
-3. Dependency state and relevant handoffs.
-4. Active claims and known overlaps.
-5. Applicable accepted constraints and decisions.
-6. Relevant current findings, glossary, and runbook excerpts.
-7. Unread or high-priority mailbox items.
-8. Repository/checkout identity and current Git snapshot.
-9. How to report progress, completion, blockage, and knowledge proposals.
-
-Today the mailbox section is a deterministic snapshot: total unseen count plus at
-most ten queued/delivered previews for the assigned agent and project. Agents use
-the live inbox tools for full bodies and state transitions. Existing packets never
-silently change when new mail arrives; refresh/delta delivery remains future work.
-
-### Selection order
-
-Crewfold retrieves by hard scope and authority first:
-
-1. explicit task links;
-2. active project/component constraints and decisions;
-3. direct dependencies and handoffs;
-4. recipient messages;
-5. deterministic full-text and label matches;
-6. optional semantic matches below a bounded share of the packet.
-
-Items are ranked by applicability, authority, freshness, confidence, and estimated
-utility. Recency alone is not truth, and semantic similarity alone is not
-relevance.
-
-### Budgets
-
-Every packet has section budgets and a total approximate token/byte budget. If the
-packet is too large, Crewfold excludes lower-ranked items and records the reason.
-It does not truncate a decision in a way that changes its meaning.
-
-### Refresh
-
-Long-running sessions do not receive every event. Crewfold sends a context delta
-when:
-
-- a dependency completes or changes;
-- an applicable decision is accepted or superseded;
-- an important direct message arrives;
-- a claim conflict affects the task;
-- the agent requests refresh;
-- a configured checkpoint is reached.
-
-The delta references the base packet and records what changed.
+Tasks, claims, messages, meetings, and live status remain coordination records and
+are not duplicated as knowledge merely to make them retrievable.
 
 ## Where RAG fits
 
 Retrieval-augmented generation is an implementation technique, not the knowledge
-architecture.
+architecture. M14 performs no full-text or semantic retrieval. A later
+deterministic retrieval layer can use relational scope queries, SQLite FTS, and
+explicit graph traversal. Optional embeddings may improve candidate discovery,
+but they must be rebuildable from canonical records and can never become the sole
+source of truth or acceptance.
 
-The MVP uses:
-
-- structured relational queries;
-- scope and label filtering;
-- SQLite FTS5 full-text search;
-- explicit graph traversal across tasks, decisions, artifacts, and dependencies;
-- deterministic ranking with provenance.
-
-Optional embeddings can later improve discovery across old findings, docs, and
-semantically related tasks. They should retrieve candidates, not determine
-authority or overwrite accepted knowledge. A pluggable embedding index can be
-rebuilt from canonical records and therefore is never the sole source of truth.
-
-A separate vector database is unjustified for the personal MVP. SQLite metadata,
-FTS, and an optional local vector extension are enough until measured recall or
-scale proves otherwise.
+A separate vector database is unjustified for the personal product until measured
+recall or scale proves otherwise.
 
 ## Raw transcripts
 
-Provider transcripts may remain in provider-native storage. Crewfold can record a
-reference and a short retained excerpt when needed for evidence, subject to
-redaction and retention policy.
+Provider transcripts may remain in provider-native storage. Crewfold does not
+ingest full transcripts into canonical knowledge or context packets by default
+because they can contain secrets and unrelated repository content, amplify prompt
+injection, consume large budgets, mix tentative reasoning with accepted outcomes,
+and create provider-specific retention obligations.
 
-Crewfold should not ingest full transcripts by default because they:
-
-- contain secrets and unrelated repository content;
-- amplify prompt-injection risk;
-- are expensive to summarize repeatedly;
-- mix tentative reasoning with accepted outcomes;
-- create provider lock-in and retention obligations.
+If a future evidence policy retains an excerpt or reference, it remains evidence;
+it does not become accepted knowledge without an explicit proposal and owner
+decision.
 
 ## Management briefings are not shared memory
 
 Canonical knowledge and management understanding serve different purposes.
-Knowledge items preserve reusable facts, constraints, decisions, findings, and
-runbooks. A management briefing is a current derived view across commitments,
-accepted outcome assessments, decisions, evidence, checks, risks, overlaps, and
-follow-up work. It must not be stored as a second, loosely governed version of
-project truth.
+Knowledge preserves reusable governed facts and decisions. A management briefing
+is a current derived view across commitments, accepted outcome assessments,
+decisions, evidence, checks, risks, overlaps, and follow-up work. It must not be
+stored as a second, loosely governed version of project truth.
 
-The structured briefing projection answers:
+The planned briefing projection remains bounded and provenance-linked. Optional
+model rendering may compress it for an audience but may not invent acceptance,
+erase disagreement, or upgrade evidence strength. Raw transcripts are never
+required to build it.
 
-1. What was promised and what was accepted as delivered?
-2. What materially changed since the selected owner checkpoint?
-3. Which decisions shaped the result, and what constraints drove them?
-4. Which verification supports reliability and stability, how independent is it,
-   and is it still fresh?
-5. What failed, deviated, conflicts, remains unknown, or still carries risk?
-6. Which decisions or interventions now require the owner?
+## Contradictions and export
 
-The base projection is bounded, revisioned, and provenance-linked. Optional model
-rendering may compress it for a particular audience, but it receives the
-structured projection as input and may not invent acceptance, erase disagreement,
-or upgrade evidence strength. Raw transcripts are never required to answer these
-questions; they remain optional drill-down sources when retained.
+M14 preserves immutable supersession history and explicit staleness but does not
+automatically detect or reconcile contradictions. Future contradiction handling
+will preserve both sources, exclude unsafe derived claims, and route a decision to
+the responsible authority rather than blending conflicting statements.
 
-## Contradictions and staleness
-
-Knowledge can be `current`, `stale`, `disputed`, `superseded`, or `withdrawn`.
-
-When two accepted-looking items conflict, Crewfold does not blend them into a
-confident summary. It creates a contradiction record, excludes unsafe derived
-claims, alerts the responsible authority, and preserves both sources until a new
-revision resolves them.
-
-Freshness policies can be time-based or event-based. For example, an architectural
-decision remains current until superseded, while a build-status summary becomes
-stale when HEAD changes.
-
-## Export and portability
-
-Canonical knowledge must be exportable as readable Markdown plus machine-readable
-metadata. Provider embeddings, hidden prompts, and proprietary databases cannot be
-required to recover project decisions and briefs.
+Human-readable export plus machine-readable metadata remains planned. Provider
+embeddings, hidden prompts, and proprietary databases must never be required to
+recover canonical decisions and findings.

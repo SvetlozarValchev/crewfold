@@ -1,0 +1,118 @@
+package daemon
+
+import (
+	"context"
+
+	"crewfold/internal/domain"
+	"crewfold/internal/localapi"
+	"crewfold/internal/store"
+)
+
+func (s *server) handleKnowledgePropose(request localapi.Request) localapi.Response {
+	var params localapi.KnowledgeProposeParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "knowledge.propose requires workspace, type, title, body, quality metadata, structured sources, and idempotency_key")
+	}
+	result, err := s.store.ProposeKnowledge(context.Background(), store.ProposeKnowledgeCommand{
+		WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, TaskScopeID: params.TaskScopeID,
+		Type: params.Type, Title: params.Title, Body: params.Body, Confidence: params.Confidence,
+		VerificationStatus: params.VerificationStatus, FreshnessPolicy: params.FreshnessPolicy,
+		FreshUntil: params.FreshUntil, Sources: params.Sources, SupersedesRevisionID: params.SupersedesRevisionID,
+		Actor: store.OwnerKnowledgeActor(), IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return marshalKnowledgeMutation(request, result)
+}
+
+func (s *server) handleKnowledgeShow(request localapi.Request) localapi.Response {
+	var params localapi.KnowledgeQueryParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "knowledge.show requires workspace and knowledge_revision")
+	}
+	revision, err := s.store.KnowledgeRevision(context.Background(), params.Workspace, params.KnowledgeRevision)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	checks, err := s.store.ListKnowledgeAuthorityChecks(context.Background(), params.Workspace, params.KnowledgeRevision)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.KnowledgeShowResult{
+		Schema: localapi.KnowledgeShowSchema, Type: "knowledge_detail",
+		Detail: domain.KnowledgeDetail{Revision: revision, AuthorityChecks: checks},
+	})
+}
+
+func (s *server) handleKnowledgeList(request localapi.Request) localapi.Response {
+	var params localapi.KnowledgeListParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "knowledge.list requires workspace and project")
+	}
+	revisions, err := s.store.ListKnowledge(context.Background(), store.ListKnowledgeQuery{
+		WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, TaskScopeID: params.TaskScopeID,
+		Type: params.Type, ReviewStatus: params.ReviewStatus, CurrencyStatus: params.CurrencyStatus,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.KnowledgeListResult{
+		Schema: localapi.KnowledgeListSchema, Type: "knowledge_list", List: domain.KnowledgeList{Revisions: revisions},
+	})
+}
+
+func (s *server) handleKnowledgeAccept(request localapi.Request) localapi.Response {
+	var params localapi.KnowledgeDecisionParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "knowledge.accept requires workspace, knowledge_revision, expected_state_revision, and idempotency_key")
+	}
+	result, err := s.store.AcceptKnowledge(context.Background(), store.AcceptKnowledgeCommand{
+		WorkspaceIdentifier: params.Workspace, RevisionID: params.KnowledgeRevision,
+		ExpectedStateRevision: params.ExpectedStateRevision, DecisionNote: params.DecisionNote,
+		Actor: store.OwnerKnowledgeActor(), IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return marshalKnowledgeMutation(request, result)
+}
+
+func (s *server) handleKnowledgeReject(request localapi.Request) localapi.Response {
+	var params localapi.KnowledgeDecisionParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "knowledge.reject requires workspace, knowledge_revision, expected_state_revision, and idempotency_key")
+	}
+	result, err := s.store.RejectKnowledge(context.Background(), store.RejectKnowledgeCommand{
+		WorkspaceIdentifier: params.Workspace, RevisionID: params.KnowledgeRevision,
+		ExpectedStateRevision: params.ExpectedStateRevision, DecisionNote: params.DecisionNote,
+		Actor: store.OwnerKnowledgeActor(), IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return marshalKnowledgeMutation(request, result)
+}
+
+func (s *server) handleKnowledgeMarkStale(request localapi.Request) localapi.Response {
+	var params localapi.KnowledgeMarkStaleParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "knowledge.mark_stale requires workspace, knowledge_revision, expected_state_revision, reason, and idempotency_key")
+	}
+	result, err := s.store.MarkKnowledgeStale(context.Background(), store.MarkKnowledgeStaleCommand{
+		WorkspaceIdentifier: params.Workspace, RevisionID: params.KnowledgeRevision,
+		ExpectedStateRevision: params.ExpectedStateRevision, Reason: params.Reason,
+		Actor: store.OwnerKnowledgeActor(), IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return marshalKnowledgeMutation(request, result)
+}
+
+func marshalKnowledgeMutation(request localapi.Request, result store.KnowledgeMutationResult) localapi.Response {
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.KnowledgeMutationResult{
+		Schema: localapi.KnowledgeMutationSchema, Type: "knowledge_mutation", Revision: result.Revision,
+		AuthorityCheck: result.AuthorityCheck, EventSequence: result.EventSequence,
+	})
+}

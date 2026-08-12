@@ -79,6 +79,12 @@ type daemonClient interface {
 	ContextBuild(context.Context, localapi.ContextBuildParams) (localapi.ContextBuildResult, error)
 	ContextShow(context.Context, string, string) (localapi.ContextShowResult, error)
 	ContextExplain(context.Context, string, string) (localapi.ContextExplainResult, error)
+	KnowledgePropose(context.Context, localapi.KnowledgeProposeParams) (localapi.KnowledgeMutationResult, error)
+	KnowledgeShow(context.Context, string, string) (localapi.KnowledgeShowResult, error)
+	KnowledgeList(context.Context, localapi.KnowledgeListParams) (localapi.KnowledgeListResult, error)
+	KnowledgeAccept(context.Context, localapi.KnowledgeDecisionParams) (localapi.KnowledgeMutationResult, error)
+	KnowledgeReject(context.Context, localapi.KnowledgeDecisionParams) (localapi.KnowledgeMutationResult, error)
+	KnowledgeMarkStale(context.Context, localapi.KnowledgeMarkStaleParams) (localapi.KnowledgeMutationResult, error)
 	MessageSend(context.Context, localapi.MessageSendParams) (localapi.MessageSendResult, error)
 	InboxList(context.Context, string, string, int) (localapi.InboxListResult, error)
 	ThreadShow(context.Context, string, string) (localapi.ThreadShowResult, error)
@@ -173,6 +179,8 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runTask(ctx, mode, args[1:])
 	case "context":
 		return a.runContext(ctx, mode, args[1:])
+	case "knowledge":
+		return a.runKnowledge(ctx, mode, args[1:])
 	case "message":
 		return a.runMessage(ctx, mode, args[1:])
 	case "inbox":
@@ -779,6 +787,8 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, taskHelp)
 	case "context":
 		fmt.Fprint(a.stdout, contextHelp)
+	case "knowledge":
+		fmt.Fprint(a.stdout, knowledgeHelp)
 	case "message":
 		fmt.Fprint(a.stdout, messageHelp)
 	case "inbox":
@@ -838,6 +848,16 @@ func clientFailureHint(code string) string {
 		return "retry the original command payload or choose a new idempotency key"
 	case "invalid_workspace", "invalid_request":
 		return "check the command arguments and run the command with --help"
+	case "invalid_knowledge":
+		return "check the structured source, Markdown bounds, scope, freshness, and knowledge command help"
+	case "knowledge_not_found":
+		return "verify the exact krev_ revision ID and workspace"
+	case "knowledge_conflict":
+		return "inspect the revision's current governance state before retrying"
+	case "knowledge_denied":
+		return "only the trusted local owner can accept, reject, or mark canonical knowledge stale"
+	case "revision_conflict":
+		return "inspect the current entity revision and retry with that exact expected revision"
 	case "storage_failed":
 		return "run 'crewfold doctor --database --socket <path>' and inspect daemon logs"
 	default:
@@ -1397,6 +1417,7 @@ Commands:
   objective      Define project objectives and budgets
   task           Coordinate dependency-aware, leased work
   context        Build and inspect immutable run briefings
+  knowledge      Curate versioned decisions and findings
   message        Send one bounded durable message to an agent
   inbox          Inspect an agent's durable mailbox
   thread         Inspect a durable agent conversation

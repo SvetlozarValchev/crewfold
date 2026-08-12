@@ -9,12 +9,25 @@ import (
 )
 
 type Querier interface {
+	AcceptKnowledgeRevision(ctx context.Context, arg AcceptKnowledgeRevisionParams) (int64, error)
 	DecideMeetingProposal(ctx context.Context, arg DecideMeetingProposalParams) error
+	FindAcceptedKnowledgeSuccessor(ctx context.Context, arg FindAcceptedKnowledgeSuccessorParams) (string, error)
 	FindActiveMeetingForOverlap(ctx context.Context, overlapID string) (string, error)
+	FindLiveKnowledgeSuccessor(ctx context.Context, supersedesRevisionID *string) (string, error)
+	GetKnowledgeActorRunWorkspace(ctx context.Context, id string) (string, error)
+	GetKnowledgeAuthorityCheckByKey(ctx context.Context, arg GetKnowledgeAuthorityCheckByKeyParams) (KnowledgeAuthorityCheck, error)
+	GetKnowledgeRevision(ctx context.Context, arg GetKnowledgeRevisionParams) (GetKnowledgeRevisionRow, error)
+	GetKnowledgeSourceMeeting(ctx context.Context, id string) (GetKnowledgeSourceMeetingRow, error)
+	GetKnowledgeSourceMeetingProposal(ctx context.Context, id string) (GetKnowledgeSourceMeetingProposalRow, error)
+	GetKnowledgeSourceTask(ctx context.Context, id string) (GetKnowledgeSourceTaskRow, error)
 	GetMeeting(ctx context.Context, arg GetMeetingParams) (Meeting, error)
 	GetMeetingContribution(ctx context.Context, arg GetMeetingContributionParams) (MeetingContribution, error)
 	GetMeetingProposal(ctx context.Context, meetingID string) (MeetingProposal, error)
 	HasLiveTaskRun(ctx context.Context, taskID string) (bool, error)
+	InsertKnowledgeAuthorityCheck(ctx context.Context, arg InsertKnowledgeAuthorityCheckParams) error
+	InsertKnowledgeItem(ctx context.Context, arg InsertKnowledgeItemParams) error
+	InsertKnowledgeRevision(ctx context.Context, arg InsertKnowledgeRevisionParams) error
+	InsertKnowledgeSource(ctx context.Context, arg InsertKnowledgeSourceParams) error
 	InsertMeeting(ctx context.Context, arg InsertMeetingParams) error
 	InsertMeetingAction(ctx context.Context, arg InsertMeetingActionParams) error
 	InsertMeetingAssignment(ctx context.Context, arg InsertMeetingAssignmentParams) error
@@ -24,16 +37,23 @@ type Querier interface {
 	InsertMeetingProposal(ctx context.Context, arg InsertMeetingProposalParams) error
 	InsertMeetingTaskRole(ctx context.Context, arg InsertMeetingTaskRoleParams) error
 	InsertSplitTask(ctx context.Context, arg InsertSplitTaskParams) error
+	ListKnowledgeAuthorityChecks(ctx context.Context, arg ListKnowledgeAuthorityChecksParams) ([]KnowledgeAuthorityCheck, error)
+	ListKnowledgeRevisionIDs(ctx context.Context, arg ListKnowledgeRevisionIDsParams) ([]string, error)
+	ListKnowledgeRevisionSources(ctx context.Context, revisionID string) ([]KnowledgeSource, error)
 	ListMeetingActions(ctx context.Context, proposalID string) ([]MeetingAction, error)
 	ListMeetingContributions(ctx context.Context, meetingID string) ([]MeetingContribution, error)
 	ListMeetingParticipants(ctx context.Context, meetingID string) ([]MeetingParticipant, error)
+	MarkKnowledgeRevisionStale(ctx context.Context, arg MarkKnowledgeRevisionStaleParams) (int64, error)
 	MarkMeetingActionApplied(ctx context.Context, arg MarkMeetingActionAppliedParams) error
 	MaxEventSequence(ctx context.Context) (int64, error)
+	MaxKnowledgeRevisionNumber(ctx context.Context, itemID string) (int64, error)
 	MeetingDependencyExists(ctx context.Context, arg MeetingDependencyExistsParams) (bool, error)
+	RejectKnowledgeRevision(ctx context.Context, arg RejectKnowledgeRevisionParams) (int64, error)
 	ReleaseMeetingClaim(ctx context.Context, arg ReleaseMeetingClaimParams) error
 	ReleaseTaskAssignmentsForMeeting(ctx context.Context, arg ReleaseTaskAssignmentsForMeetingParams) error
 	SetMeetingTaskAssigned(ctx context.Context, arg SetMeetingTaskAssignedParams) error
 	SetMeetingTaskCancelled(ctx context.Context, arg SetMeetingTaskCancelledParams) error
+	SupersedeKnowledgeRevision(ctx context.Context, arg SupersedeKnowledgeRevisionParams) (int64, error)
 	TouchMeetingTask(ctx context.Context, arg TouchMeetingTaskParams) error
 	UpdateMeetingParticipantStatus(ctx context.Context, arg UpdateMeetingParticipantStatusParams) error
 	UpdateMeetingState(ctx context.Context, arg UpdateMeetingStateParams) error

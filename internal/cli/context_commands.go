@@ -32,7 +32,7 @@ func (a *App) runContextBuild(ctx context.Context, mode outputMode, args []strin
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	options, failure := parseOptions(optionArgs, "workspace", "agent", "checkout", "expected-task-revision", "socket", "idempotency-key")
+	options, repeated, failure := parseRepeatedOptions(optionArgs, map[string]bool{"include": true}, "workspace", "agent", "checkout", "include", "expected-task-revision", "socket", "idempotency-key")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -50,7 +50,8 @@ func (a *App) runContextBuild(ctx context.Context, mode outputMode, args []strin
 	}
 	result, err := a.newClient(socket).ContextBuild(ctx, localapi.ContextBuildParams{
 		Workspace: workspace, Task: taskID, Agent: agent, Checkout: options["checkout"],
-		ExpectedTaskRevision: revision, IdempotencyKey: options["idempotency-key"],
+		KnowledgeRevisionIDs: repeated["include"], ExpectedTaskRevision: revision,
+		IdempotencyKey: options["idempotency-key"],
 	})
 	if err != nil {
 		return a.writeClientFailure(mode, "build context packet", err)
@@ -107,7 +108,7 @@ func (a *App) runContextShow(ctx context.Context, mode outputMode, args []string
 }
 
 const contextHelp = `Usage:
-  crewfold context build <task-id> --workspace <scope> --agent <agent> --expected-task-revision <n> --socket <path> [--checkout <id>]
+  crewfold context build <task-id> --workspace <scope> --agent <agent> --expected-task-revision <n> --socket <path> [--checkout <id>] [--include <knowledge-revision> ...]
   crewfold context show <id> --workspace <scope> --socket <path>
   crewfold context explain <id> --workspace <scope> --socket <path>
 

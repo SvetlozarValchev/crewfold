@@ -554,6 +554,18 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleContextShow(request), false
 	case localapi.MethodContextExplain:
 		return s.handleContextExplain(request), false
+	case localapi.MethodKnowledgePropose:
+		return s.handleKnowledgePropose(request), false
+	case localapi.MethodKnowledgeShow:
+		return s.handleKnowledgeShow(request), false
+	case localapi.MethodKnowledgeList:
+		return s.handleKnowledgeList(request), false
+	case localapi.MethodKnowledgeAccept:
+		return s.handleKnowledgeAccept(request), false
+	case localapi.MethodKnowledgeReject:
+		return s.handleKnowledgeReject(request), false
+	case localapi.MethodKnowledgeMarkStale:
+		return s.handleKnowledgeMarkStale(request), false
 	case localapi.MethodMessageSend:
 		return s.handleMessageSend(request), false
 	case localapi.MethodInboxList:

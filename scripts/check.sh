@@ -67,6 +67,9 @@ printf 'Claims, overlap, and drift black-box acceptance\n'
 printf 'Structured meeting black-box acceptance\n'
 "$repo_root/test/scenarios/structured-meetings/run.sh"
 
+printf 'Canonical knowledge and provider-switch black-box acceptance\n'
+"$repo_root/test/scenarios/canonical-knowledge/run.sh"
+
 printf 'Herdr runtime black-box acceptance\n'
 "$repo_root/test/scenarios/herdr-runtime/run.sh"
 

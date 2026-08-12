@@ -117,14 +117,22 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 handoff_mode=false
+knowledge_mode=false
 case "$prompt" in
   *provider_handoff_received*) handoff_mode=true ;;
+esac
+case "$prompt" in
+  *canonical_knowledge_received*) knowledge_mode=true ;;
 esac
 
 evidence='["implementation_complete","tests_passed"]'
 if [ "$handoff_mode" = true ]
 then
   evidence='["implementation_complete","tests_passed","provider_handoff_received"]'
+fi
+if [ "$knowledge_mode" = true ]
+then
+  evidence='["implementation_complete","tests_passed","provider_handoff_received","canonical_knowledge_received"]'
 fi
 
 {
@@ -142,6 +150,11 @@ fi
 if [ "$handoff_mode" = true ] && ! grep -Fq 'Durable provider handoff' "$response_file"
 then
   printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Crewfold durable provider handoff was absent from the briefing"}' >&2
+  exit 1
+fi
+if [ "$knowledge_mode" = true ] && ! grep -Fq 'Accepted contact ordering contract' "$response_file"
+then
+  printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Crewfold accepted canonical knowledge was absent from the briefing"}' >&2
   exit 1
 fi
 

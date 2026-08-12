@@ -22,7 +22,12 @@ const (
 	toolProgress    = "crewfold_report_progress"
 	toolBlocked     = "crewfold_report_blocked"
 	toolArtifact    = "crewfold_publish_artifact"
-	toolCompletion  = "crewfold_propose_completion"
+	toolKnowledge   = "crewfold_propose_knowledge"
+	// toolKnowledgeAccept is a reserved governance operation. It is recognized
+	// so attempts receive a durable policy denial, but it is never advertised or
+	// included in a run capability; acceptance remains local-owner-only.
+	toolKnowledgeAccept = "crewfold_accept_knowledge"
+	toolCompletion      = "crewfold_propose_completion"
 )
 
 func (s *server) handleMCPRequest(request mcp.Request) mcp.Response {
@@ -241,6 +246,26 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 				Content: arguments.Content, IdempotencyKey: arguments.IdempotencyKey,
 			})
 		}
+	case toolKnowledge:
+		var arguments proposeKnowledgeArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			err = arguments.validate()
+		}
+		if err == nil {
+			var result store.KnowledgeMutationResult
+			result, err = s.store.ProposeKnowledge(context.Background(), store.ProposeKnowledgeCommand{
+				WorkspaceIdentifier: briefing.Run.WorkspaceID, ProjectIdentifier: briefing.Run.ProjectID,
+				TaskScopeID: arguments.TaskScopeID, Type: arguments.Type, Title: arguments.Title, Body: arguments.Body,
+				Confidence: arguments.Confidence, VerificationStatus: arguments.VerificationStatus,
+				FreshnessPolicy: arguments.FreshnessPolicy, FreshUntil: arguments.FreshUntil,
+				Sources:              []domain.KnowledgeSourceInput{{Type: domain.KnowledgeSourceTask, ID: briefing.Task.ID, Role: domain.KnowledgeSourcePrimary}},
+				SupersedesRevisionID: arguments.SupersedesRevisionID,
+				Actor:                domain.KnowledgeActor{ID: briefing.Run.ID, Type: domain.KnowledgeActorAgentRun},
+				IdempotencyKey:       arguments.IdempotencyKey, CorrelationID: "mcp-" + mcpRequestID(request.ID),
+			})
+			value = result.Revision
+		}
 	default:
 		return s.mcpDenied(request, briefing.Run.ID, name, "out_of_scope", "tool is outside this run capability", "denied")
 	}
@@ -336,6 +361,7 @@ func scopedMCPTools() []mcp.Tool {
 		{Name: toolProgress, Description: "Submit a structured progress report for this run.", InputSchema: objectSchema([]string{"summary", "completed", "next", "risks", "evidence_ids", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "completed": stringArraySchema(), "next": stringArraySchema(), "risks": stringArraySchema(), "evidence_ids": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolBlocked, Description: "Report that this run needs an owner or coordinator decision.", InputSchema: objectSchema([]string{"reason", "needs", "severity", "related_ids", "idempotency_key"}, map[string]any{"reason": stringSchema(1, 1024), "needs": stringArraySchema(), "severity": map[string]any{"type": "string", "enum": []string{"blocking", "high", "medium", "low"}}, "related_ids": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolArtifact, Description: "Publish bounded evidence owned by this run.", InputSchema: objectSchema([]string{"name", "media_type", "content", "idempotency_key"}, map[string]any{"name": stringSchema(1, 128), "media_type": stringSchema(1, 128), "content": stringSchema(0, 32768), "idempotency_key": stringSchema(1, 128)})},
+		{Name: toolKnowledge, Description: "Propose one concise decision or finding sourced from this run's task; owner acceptance is still required.", InputSchema: objectSchema([]string{"type", "title", "body", "confidence", "verification_status", "freshness_policy", "idempotency_key"}, map[string]any{"type": map[string]any{"type": "string", "enum": []string{"decision", "finding"}}, "title": stringSchema(1, 160), "body": stringSchema(1, 16384), "confidence": map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}}, "verification_status": map[string]any{"type": "string", "enum": []string{"unverified", "supported", "verified"}}, "freshness_policy": map[string]any{"type": "string", "enum": []string{"until_superseded", "expires_at"}}, "fresh_until": stringSchema(1, 64), "task_scope_id": stringSchema(1, 128), "supersedes_revision_id": stringSchema(1, 128), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolCompletion, Description: "Propose completion with an executive handoff and evidence.", InputSchema: objectSchema([]string{"summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "handoff": stringSchema(1, 4096), "evidence_ids": stringArraySchema(), "changed_paths": stringArraySchema(), "checks": stringArraySchema(), "remaining_risks": stringArraySchema(), "unknowns": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 	}
 }
@@ -351,6 +377,9 @@ func allowedMCPTools(allowed []string) []mcp.Tool {
 }
 
 func knownMCPTool(name string) bool {
+	if name == toolKnowledgeAccept {
+		return true
+	}
 	for _, tool := range scopedMCPTools() {
 		if tool.Name == name {
 			return true
@@ -456,6 +485,29 @@ type artifactArguments struct {
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
+type proposeKnowledgeArguments struct {
+	Type                 string `json:"type"`
+	Title                string `json:"title"`
+	Body                 string `json:"body"`
+	Confidence           string `json:"confidence"`
+	VerificationStatus   string `json:"verification_status"`
+	FreshnessPolicy      string `json:"freshness_policy"`
+	FreshUntil           string `json:"fresh_until,omitempty"`
+	TaskScopeID          string `json:"task_scope_id,omitempty"`
+	SupersedesRevisionID string `json:"supersedes_revision_id,omitempty"`
+	IdempotencyKey       string `json:"idempotency_key"`
+}
+
+func (arguments proposeKnowledgeArguments) validate() error {
+	if arguments.FreshnessPolicy == domain.KnowledgeFreshExpiresAt && strings.TrimSpace(arguments.FreshUntil) == "" {
+		return errors.New("expires_at knowledge requires fresh_until")
+	}
+	if arguments.FreshnessPolicy == domain.KnowledgeFreshUntilSuperseded && strings.TrimSpace(arguments.FreshUntil) != "" {
+		return errors.New("until_superseded knowledge cannot set fresh_until")
+	}
+	return nil
+}
+
 func (arguments progressArguments) validate() error {
 	if err := validateMCPStringItems(arguments.Completed, arguments.Next, arguments.Risks, arguments.EvidenceIDs); err != nil {
 		return err
@@ -500,11 +552,11 @@ func mcpErrorFromStore(err error) mcp.ToolError {
 	code := store.ErrorCode(err)
 	result := mcp.ToolError{Message: err.Error()}
 	switch code {
-	case store.CodeInvalidContext, store.CodeInvalidReport, store.CodeInvalidRun, store.CodeInvalidMessage, store.CodeIdempotencyConflict:
+	case store.CodeInvalidContext, store.CodeInvalidReport, store.CodeInvalidRun, store.CodeInvalidMessage, store.CodeInvalidKnowledge, store.CodeIdempotencyConflict:
 		result.Code = "invalid_input"
-	case store.CodeContextNotFound, store.CodeRunNotFound, store.CodeMessageNotFound:
+	case store.CodeContextNotFound, store.CodeRunNotFound, store.CodeMessageNotFound, store.CodeKnowledgeNotFound:
 		result.Code = "out_of_scope"
-	case store.CodeCapabilityExpired, store.CodeCapabilityInactive, store.CodeRunConflict, store.CodeMessageDenied:
+	case store.CodeCapabilityExpired, store.CodeCapabilityInactive, store.CodeRunConflict, store.CodeMessageDenied, store.CodeKnowledgeDenied:
 		result.Code = "denied_by_policy"
 	default:
 		result.Code, result.Retryable = "temporarily_unavailable", true

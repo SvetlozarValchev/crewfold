@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:knowledge-list-params:v1",
+  "title": "Crewfold local API knowledge list parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "project"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "project": {"type": "string", "minLength": 1, "maxLength": 128},
+    "task_scope_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "type": {"enum": ["decision", "finding"]},
+    "review_status": {"enum": ["proposed", "accepted", "rejected"]},
+    "currency_status": {"enum": ["pending", "current", "stale", "superseded"]}
+  }
+}

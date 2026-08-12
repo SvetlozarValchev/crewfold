@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:knowledge-revision:v1",
+  "title": "Crewfold canonical knowledge revision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "item_id", "workspace_id", "project_id", "type", "revision_number",
+    "state_revision", "title", "body", "content_hash", "review_status",
+    "currency_status", "confidence", "verification_status", "freshness_policy",
+    "proposed_at", "proposed_by", "proposed_by_type", "sources"
+  ],
+  "properties": {
+    "id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+    "item_id": {"type": "string", "pattern": "^know_[0-9a-f]{32}$"},
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "task_scope_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "type": {"enum": ["decision", "finding"]},
+    "revision_number": {"type": "integer", "minimum": 1},
+    "state_revision": {"type": "integer", "minimum": 1},
+    "title": {"type": "string", "minLength": 1, "maxLength": 160},
+    "body": {"type": "string", "minLength": 1, "maxLength": 16384},
+    "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "review_status": {"enum": ["proposed", "accepted", "rejected"]},
+    "currency_status": {"enum": ["pending", "current", "stale", "superseded"]},
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "verification_status": {"enum": ["unverified", "supported", "verified"]},
+    "freshness_policy": {"enum": ["until_superseded", "expires_at"]},
+    "fresh_until": {"type": "string", "format": "date-time"},
+    "supersedes_revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+    "proposed_at": {"type": "string", "format": "date-time"},
+    "proposed_by": {"type": "string", "minLength": 1, "maxLength": 128},
+    "proposed_by_type": {"enum": ["human", "agent_run", "subsystem"]},
+    "accepted_at": {"type": "string", "format": "date-time"},
+    "accepted_by": {"type": "string", "minLength": 1, "maxLength": 128},
+    "accepted_by_type": {"enum": ["human", "agent_run", "subsystem"]},
+    "rejected_at": {"type": "string", "format": "date-time"},
+    "rejected_by": {"type": "string", "minLength": 1, "maxLength": 128},
+    "rejected_by_type": {"enum": ["human", "agent_run", "subsystem"]},
+    "stale_at": {"type": "string", "format": "date-time"},
+    "stale_by": {"type": "string", "minLength": 1, "maxLength": 128},
+    "stale_by_type": {"enum": ["human", "agent_run", "subsystem"]},
+    "decision_note": {"type": "string", "maxLength": 1024},
+    "stale_reason": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {"$ref": "knowledge-source.schema.json"},
+      "contains": {
+        "type": "object",
+        "required": ["role"],
+        "properties": {"role": {"const": "primary"}}
+      },
+      "minContains": 1,
+      "maxContains": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"review_status": {"const": "accepted"}}, "required": ["review_status"]},
+      "then": {
+        "required": ["accepted_at", "accepted_by", "accepted_by_type"],
+        "properties": {"currency_status": {"enum": ["current", "stale", "superseded"]}}
+      },
+      "else": {
+        "properties": {"currency_status": {"const": "pending"}},
+        "not": {
+          "anyOf": [
+            {"required": ["accepted_at"]},
+            {"required": ["accepted_by"]},
+            {"required": ["accepted_by_type"]}
+          ]
+        }
+      }
+    },
+    {
+      "if": {"properties": {"review_status": {"const": "rejected"}}, "required": ["review_status"]},
+      "then": {"required": ["rejected_at", "rejected_by", "rejected_by_type"]},
+      "else": {
+        "not": {
+          "anyOf": [
+            {"required": ["rejected_at"]},
+            {"required": ["rejected_by"]},
+            {"required": ["rejected_by_type"]}
+          ]
+        }
+      }
+    },
+    {
+      "if": {"properties": {"currency_status": {"const": "stale"}}, "required": ["currency_status"]},
+      "then": {"required": ["stale_at", "stale_by", "stale_by_type", "stale_reason"]},
+      "else": {
+        "not": {
+          "anyOf": [
+            {"required": ["stale_at"]},
+            {"required": ["stale_by"]},
+            {"required": ["stale_by_type"]},
+            {"required": ["stale_reason"]}
+          ]
+        }
+      }
+    },
+    {
+      "if": {"properties": {"freshness_policy": {"const": "expires_at"}}, "required": ["freshness_policy"]},
+      "then": {"required": ["fresh_until"]},
+      "else": {"not": {"required": ["fresh_until"]}}
+    }
+  ]
+}

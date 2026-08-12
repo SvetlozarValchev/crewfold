@@ -15,8 +15,9 @@ func (s *server) handleContextBuild(request localapi.Request) localapi.Response 
 	}
 	result, err := s.store.BuildContextPacket(context.Background(), store.BuildContextCommand{
 		WorkspaceIdentifier: params.Workspace, TaskID: params.Task, AgentIdentifier: params.Agent,
-		CheckoutIdentifier: params.Checkout, ExpectedTaskRevision: params.ExpectedTaskRevision,
-		IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
+		CheckoutIdentifier: params.Checkout, KnowledgeRevisionIDs: params.KnowledgeRevisionIDs,
+		ExpectedTaskRevision: params.ExpectedTaskRevision,
+		IdempotencyKey:       params.IdempotencyKey, CorrelationID: request.ID,
 	})
 	if err != nil {
 		return storeErrorResponse(request, err)

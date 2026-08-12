@@ -1,7 +1,8 @@
 # MCP tool contract
 
-Status: implemented run-scoped briefing, reporting, artifact, and durable mailbox
-subset. Claims, knowledge, meetings, and manager/outcome tools remain planned.
+Status: implemented run-scoped briefing, reporting, artifact, durable mailbox, and
+canonical-knowledge proposal subset. Claims, meetings, and manager/outcome tools
+remain planned.
 
 ## Transport and authentication
 
@@ -24,9 +25,10 @@ malicious same-user provider could still read and print its token; process
 containment is a separate boundary.
 
 Tool discovery and invocation are both intersected with the immutable packet's
-`allowed_tools`. A run created with a v1 packet before mailbox support therefore
-does not gain message authority merely because the daemon binary was upgraded.
-New v2 packets record the mailbox tools and bounded inbox snapshot explicitly.
+`allowed_tools`. A run created with an older packet therefore does not gain
+mailbox or knowledge-proposal authority merely because the daemon binary was
+upgraded. New v3 packets record both tool sets, the bounded inbox snapshot, and
+any explicitly selected accepted knowledge.
 
 ## Implemented resources
 
@@ -167,22 +169,45 @@ already participants. Bodies are limited to 4096 UTF-8 bytes, artifact lists to
 Acknowledges one visible recipient message. Acknowledging also establishes any
 missing delivered/read timestamps; it never changes the immutable message body.
 
+### `crewfold_propose_knowledge`
+
+```json
+{
+  "type": "finding",
+  "title": "Contact ordering is byte-stable",
+  "body": "The deterministic fixture verifies byte-order emission.",
+  "confidence": "high",
+  "verification_status": "verified",
+  "freshness_policy": "until_superseded",
+  "idempotency_key": "contact-ordering-finding"
+}
+```
+
+The authenticated run and its task fix the actor, workspace, project, and primary
+provenance source. Optional `task_scope_id` narrows applicability;
+`supersedes_revision_id` proposes a successor; `expires_at` freshness additionally
+requires `fresh_until`. The result remains proposed until the local owner accepts
+it. No accept, reject, or stale tool is advertised to a run.
+
 Newly built context packets include a bounded summary of at most ten queued or
 delivered messages for the assigned agent and project. Full message bodies remain
 outside the base packet and are retrieved explicitly through the mailbox tools.
 
 ## Idempotency and audit
 
-Report, artifact, message-send, read, and acknowledgement idempotency is local to
-the authenticated actor/run. Repeating the same key and content returns the same
-durable record while the capability remains active, including after the worker
-has applied a progress report. Reusing a key with different content returns
-`invalid_input` without another mutation.
+Report, artifact, message-send, read, acknowledgement, and knowledge-proposal
+idempotency is local to the authenticated actor/run. Repeating the same key and
+content returns the same durable record while the capability remains active,
+including after the worker has applied a progress report. Reusing a key with
+different content returns `invalid_input` without another mutation.
 
 Allowed tools/resources append `run.tool_called`; denied scope probes append
 `run.tool_denied`. Reports and artifacts append `run.report_received` and
-`run.artifact_published`. Audits contain request/method/target/outcome/error code,
-not capability tokens or arbitrary request bodies.
+`run.artifact_published`; a successful knowledge proposal also appends
+`knowledge.proposed`. A reserved governance-tool probe never reaches knowledge
+state and is recorded only as `run.tool_denied`. Audits contain
+request/method/target/outcome/error code, not capability tokens or arbitrary
+request bodies.
 
 Codex connects through Crewfold's local STDIO bridge. Codex receives only the
 socket path and private capability-file path as forwarded environment variables;
@@ -208,8 +233,9 @@ tool results with `isError: true` and the same structured body.
 
 ## Deferred tools and resources
 
-Claims, knowledge proposals, meetings, manager actions, outcome assessments, and
-project briefings are deliberately absent. Their future URIs and tools will use
-the same scope, idempotency, audit, and domain-authority rules. Thread closing,
+Claims, meetings, manager actions, outcome assessments, and project briefings are
+deliberately absent. Their future URIs and tools will use the same scope,
+idempotency, audit, and domain-authority rules. Knowledge governance remains an
+owner-only local API rather than a deferred agent tool. Thread closing,
 multi-recipient conversation, runtime-specific live prompting, and human-directed
 messages are also not exposed by the current mailbox surface.

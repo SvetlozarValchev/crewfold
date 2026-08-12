@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:knowledge-show-result:v1",
+  "title": "Crewfold local API knowledge show result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "detail"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:knowledge-show-result:v1"},
+    "type": {"const": "knowledge_detail"},
+    "detail": {"$ref": "../../domain/v1/knowledge-detail.schema.json"}
+  }
+}

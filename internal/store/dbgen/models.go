@@ -4,6 +4,31 @@
 
 package dbgen
 
+type KnowledgeAuthorityCheck struct {
+	ID             string  `json:"id"`
+	WorkspaceID    string  `json:"workspace_id"`
+	RevisionID     string  `json:"revision_id"`
+	Action         string  `json:"action"`
+	ActorID        string  `json:"actor_id"`
+	ActorType      string  `json:"actor_type"`
+	Outcome        string  `json:"outcome"`
+	Reason         string  `json:"reason"`
+	Note           *string `json:"note"`
+	IdempotencyKey string  `json:"idempotency_key"`
+	RequestHash    string  `json:"request_hash"`
+	EventSequence  int64   `json:"event_sequence"`
+	CreatedAt      string  `json:"created_at"`
+}
+
+type KnowledgeSource struct {
+	RevisionID     string `json:"revision_id"`
+	Ordinal        int64  `json:"ordinal"`
+	SourceType     string `json:"source_type"`
+	SourceID       string `json:"source_id"`
+	SourceRevision int64  `json:"source_revision"`
+	Role           string `json:"role"`
+}
+
 type Meeting struct {
 	ID                 string  `json:"id"`
 	WorkspaceID        string  `json:"workspace_id"`

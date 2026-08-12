@@ -47,6 +47,11 @@ authority, typed consolidation actions, human takeover, and the pinned `sqlc`
 persistence boundary. Its implementation commit is
 `432e6e02a85c4793ec26f08bfcfc7783a587d04d`.
 
+M14's canonical decision/finding store, owner-governed lifecycle, agent proposal
+tool, and exact-link context packet v3 are implemented. M14 is not marked complete
+below until its replacement-agent scenario, persistence and failure evidence,
+milestone review, and implementation commit satisfy the normal gate.
+
 ## Sequence
 
 | Milestone | Increment | Demonstrable outcome | Depends on |
@@ -133,8 +138,9 @@ changes task ownership or ordering.
 
 ### Knowledge preview — M14 through M15
 
-Agents resume from canonical knowledge; a curator and deterministic search keep it
-relevant without making retrieval authoritative.
+M14 lets agents resume from owner-accepted decisions/findings linked by exact
+revision. M15 adds a curator, deterministic search, contradiction handling, and
+explicit refresh without making retrieval authoritative.
 
 ### Personal alpha — M16 through M17
 
@@ -210,13 +216,16 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M14 is next: preserve explicitly proposed and accepted decisions/findings as
-canonical, provenance-linked knowledge and deliver them to replacement agents
-without copying transcripts. Meeting resolutions provide the first decision
-source, but retrieval cannot make content authoritative.
+The M14 acceptance gate is next. Its implementation preserves explicitly proposed
+and owner-accepted decisions/findings with task, concluded-meeting, or accepted
+meeting-proposal provenance. A replacement agent receives only exact requested,
+accepted/current/applicable revisions in packet v3; old superseded pins are
+explained rather than silently followed. Fixed total and knowledge byte budgets
+exclude whole revisions with reasons instead of truncating them.
 
 Native provider resume, active-turn steering, app-server ownership, remote users,
-and automatic source integration remain outside M14. Every completed capability
-scenario remains required.
+search, automatic curation, contradiction handling, broader knowledge types, and
+context deltas remain outside M14. Provider transcripts are not ingested. Every
+completed capability scenario remains required.
 
 No upstream repository should be created until the owner explicitly requests it.

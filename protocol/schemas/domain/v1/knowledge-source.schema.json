@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:knowledge-source:v1",
+  "title": "Crewfold canonical knowledge provenance source v1",
+  "$ref": "#/$defs/source",
+  "$defs": {
+    "sourceInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "role"],
+      "properties": {
+        "type": {"enum": ["task", "meeting", "meeting_proposal"]},
+        "id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "role": {"enum": ["primary", "supporting"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "task"}}, "required": ["type"]},
+          "then": {"properties": {"id": {"pattern": "^task_[0-9a-f]{32}$"}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "meeting"}}, "required": ["type"]},
+          "then": {"properties": {"id": {"pattern": "^meet_[0-9a-f]{32}$"}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "meeting_proposal"}}, "required": ["type"]},
+          "then": {"properties": {"id": {"pattern": "^proposal_[0-9a-f]{32}$"}}}
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "revision", "role", "ordinal"],
+      "properties": {
+        "type": {"enum": ["task", "meeting", "meeting_proposal"]},
+        "id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "revision": {"type": "integer", "minimum": 1},
+        "role": {"enum": ["primary", "supporting"]},
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 15}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "task"}}, "required": ["type"]},
+          "then": {"properties": {"id": {"pattern": "^task_[0-9a-f]{32}$"}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "meeting"}}, "required": ["type"]},
+          "then": {"properties": {"id": {"pattern": "^meet_[0-9a-f]{32}$"}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "meeting_proposal"}}, "required": ["type"]},
+          "then": {"properties": {"id": {"pattern": "^proposal_[0-9a-f]{32}$"}}}
+        }
+      ]
+    }
+  }
+}

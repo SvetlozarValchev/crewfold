@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 9
+	LatestSchemaVersion = 10
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -214,6 +214,7 @@ type BuildContextCommand struct {
 	TaskID               string
 	AgentIdentifier      string
 	CheckoutIdentifier   string
+	KnowledgeRevisionIDs []string
 	ExpectedTaskRevision int64
 	IdempotencyKey       string
 	CorrelationID        string
@@ -335,6 +336,69 @@ type TakeoverMeetingCommand struct {
 type MeetingMutationResult struct {
 	Detail        domain.MeetingDetail `json:"detail"`
 	EventSequence int64                `json:"event_sequence"`
+}
+
+type ProposeKnowledgeCommand struct {
+	WorkspaceIdentifier  string
+	ProjectIdentifier    string
+	TaskScopeID          string
+	Type                 string
+	Title                string
+	Body                 string
+	Confidence           string
+	VerificationStatus   string
+	FreshnessPolicy      string
+	FreshUntil           string
+	Sources              []domain.KnowledgeSourceInput
+	SupersedesRevisionID string
+	Actor                domain.KnowledgeActor
+	IdempotencyKey       string
+	CorrelationID        string
+}
+
+type AcceptKnowledgeCommand struct {
+	WorkspaceIdentifier   string
+	RevisionID            string
+	ExpectedStateRevision int64
+	DecisionNote          string
+	Actor                 domain.KnowledgeActor
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type RejectKnowledgeCommand struct {
+	WorkspaceIdentifier   string
+	RevisionID            string
+	ExpectedStateRevision int64
+	DecisionNote          string
+	Actor                 domain.KnowledgeActor
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type MarkKnowledgeStaleCommand struct {
+	WorkspaceIdentifier   string
+	RevisionID            string
+	ExpectedStateRevision int64
+	Reason                string
+	Actor                 domain.KnowledgeActor
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type ListKnowledgeQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	TaskScopeID         string
+	Type                string
+	ReviewStatus        string
+	CurrencyStatus      string
+}
+
+type KnowledgeMutationResult struct {
+	Revision       domain.KnowledgeRevision        `json:"revision"`
+	AuthorityCheck *domain.KnowledgeAuthorityCheck `json:"authority_check,omitempty"`
+	EventSequence  int64                           `json:"event_sequence"`
 }
 
 type ClaimWatchTarget struct {

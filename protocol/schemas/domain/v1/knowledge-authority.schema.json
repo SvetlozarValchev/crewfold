@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:knowledge-authority:v1",
+  "title": "Crewfold canonical knowledge authority check v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "workspace_id", "revision_id", "action", "actor", "outcome", "reason",
+    "idempotency_key", "request_hash", "event_sequence", "created_at"
+  ],
+  "properties": {
+    "id": {"type": "string", "pattern": "^kauth_[0-9a-f]{32}$"},
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+    "action": {"enum": ["accept", "reject", "mark_stale", "supersede"]},
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "type": {"enum": ["human", "agent_run", "subsystem"]}
+      }
+    },
+    "outcome": {"enum": ["allowed", "denied"]},
+    "reason": {"enum": ["workspace_owner", "actor_not_workspace_owner", "state_policy"]},
+    "note": {"type": "string", "maxLength": 1024},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128},
+    "request_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "event_sequence": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"outcome": {"const": "allowed"}}, "required": ["outcome"]},
+      "then": {"properties": {"reason": {"enum": ["workspace_owner", "state_policy"]}}},
+      "else": {"properties": {"reason": {"enum": ["actor_not_workspace_owner", "state_policy"]}}}
+    }
+  ]
+}

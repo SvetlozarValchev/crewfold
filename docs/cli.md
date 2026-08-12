@@ -5,15 +5,15 @@
 The current binary implements `help`, `version`, self/database diagnostics,
 foreground daemon lifecycle, process and workspace status, workspace/event
 queries, project/checkout registration and observation, durable
-agent/objective/task coordination, immutable context packets, deterministic fake
+agent/objective/task coordination, claims and drift, structured meetings,
+canonical decisions/findings, immutable context packets, deterministic fake
 execution, supervised direct and Herdr fixture subprocesses, run-scoped MCP
-reporting, durable one-recipient agent mail, and an offline-proven Codex provider
-adapter. The Claude Code adapter, provider doctor, and recorded Codex-to-Claude
-handoff are also implemented; only its separately gated live conformance call is
-pending. It supports text and JSON output.
-Teams, claims,
-meetings, canonical knowledge, policy, and approval
-commands in later sections are intended future contracts and are not yet available.
+reporting and knowledge proposal, durable one-recipient agent mail, and an
+offline-proven Codex provider adapter. The Claude Code adapter, provider doctor,
+and recorded Codex-to-Claude handoff are also implemented; only its separately
+gated live conformance call is pending. It supports text and JSON output. Teams,
+automatic knowledge curation/search, policy/approval commands, management
+briefings, and the TUI remain future contracts.
 
 ## Goals
 
@@ -21,9 +21,9 @@ The CLI is both a human interface and a scriptable client. Commands should provi
 readable output by default and stable structured output with `--output json`.
 Mutations return the durable entity and event cursor they created.
 
-The daemon, workspace, source, agent/task/run, context, and message examples below
-are implemented. Claims, meetings, knowledge, policy, and management sections
-define intended behavior rather than an available interface.
+The daemon, workspace, source, agent/task/run, context, message, claim, meeting,
+and canonical-knowledge examples below are implemented. Policy and management
+sections define intended behavior rather than an available interface.
 
 ## Daemon and workspace
 
@@ -313,8 +313,9 @@ does not terminate a run already in progress.
 task's checkout contains a dirty path outside that task's active path-claim union;
 it does not change the claim. A watcher identity change marks an observation gap.
 Shared checkout warnings are explicit because claims coordinate intent but do not
-provide operating-system or filesystem isolation. Structured meetings and owner-
-authorized consolidation arrive in M13; there is no `overlap resolve` command yet.
+provide operating-system or filesystem isolation. Structured meetings provide the
+owner-authorized consolidation path; there is no separate `overlap resolve`
+command.
 
 ## Messages
 
@@ -348,33 +349,77 @@ owner impersonation in the CLI.
 
 ```sh
 crewfold meeting create \
-  --agenda "Choose ownership of the shared contact schema" \
+  --workspace personal \
+  --from-overlap OVERLAP_ID \
   --participant engine-impl \
   --participant engine-review \
   --facilitator workspace-manager \
-  --from-overlap OVERLAP_ID
-crewfold meeting run MEETING_ID
-crewfold meeting inspect MEETING_ID
-crewfold meeting conclude MEETING_ID --resolution-file resolution.md
+  --socket /path/to/crewfold.sock
+crewfold meeting run MEETING_ID --fixture positions-and-proposal.json \
+  --expected-revision 1 --workspace personal --socket /path/to/crewfold.sock
+crewfold meeting inspect MEETING_ID --workspace personal \
+  --socket /path/to/crewfold.sock
+crewfold meeting accept MEETING_ID --expected-revision 2 \
+  --workspace personal --socket /path/to/crewfold.sock
 ```
 
-The first implementation may combine create and run, but the domain operations
-remain distinct so a human can inspect the input snapshot.
+These commands are implemented. The meeting's frozen input, independent positions,
+proposal, authority policy, and typed actions remain separately inspectable.
 
 ## Knowledge and context
 
 ```sh
-crewfold knowledge list --project world-engine --type decision
-crewfold knowledge propose --type finding --from-task TASK_A finding.md
-crewfold knowledge accept KNOWLEDGE_REVISION
-crewfold context build TASK_A --workspace personal --agent engine-impl \
-  --expected-task-revision 2 --socket /path/to/crewfold.sock
-crewfold context explain CONTEXT_PACKET_ID --workspace personal \
+crewfold knowledge propose finding.md --workspace personal --type finding \
+  --from-task TASK_A --socket /path/to/crewfold.sock
+crewfold knowledge show KNOWLEDGE_REVISION --workspace personal \
   --socket /path/to/crewfold.sock
+crewfold knowledge list --workspace personal --project world-engine \
+  --type finding --socket /path/to/crewfold.sock
+crewfold knowledge accept KNOWLEDGE_REVISION --expected-state-revision 1 \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold context build NEXT_TASK --workspace personal --agent engine-impl \
+  --include KNOWLEDGE_REVISION \
+  --expected-task-revision 2 --socket /path/to/crewfold.sock
+crewfold context show CONTEXT_PACKET_ID --workspace personal \
+  --socket /path/to/crewfold.sock --output json
+crewfold context explain CONTEXT_PACKET_ID --workspace personal \
+  --socket /path/to/crewfold.sock --output json
 ```
 
-`context explain` shows why each item was included or excluded and the applied size
-budget.
+The proposal file is UTF-8 Markdown beginning with one `# ` title and a non-empty
+body. M14 implements only `decision` and `finding`. A proposal requires exactly one
+primary source: `--from-task`, `--from-meeting`, or
+`--from-meeting-proposal`. Meeting sources must be concluded; a meeting-proposal
+source must be accepted and its meeting concluded. Repeated `--supporting-task`,
+`--supporting-meeting`, and `--supporting-meeting-proposal` options add provenance.
+All sources must share a workspace and project.
+
+The primary source derives the knowledge project. Optional `--project` is a
+consistency check and must match it. Applicability is project-wide unless
+`--task-scope` narrows it; using `--from-task` does not implicitly make a revision
+task-only. The owner may accept, reject, or `mark-stale` a revision using the state
+revision it inspected. A successor proposal uses `--supersedes`; accepting it
+atomically preserves and supersedes the prior current revision. Authenticated runs
+may propose task-sourced knowledge through `crewfold_propose_knowledge`, but only
+the local owner may govern it.
+
+`--include` is repeatable and accepts at most 16 unique exact knowledge revision
+IDs in caller order. Context packet v3 includes a complete snapshot only when the
+requested revision is accepted, current, fresh, and applicable to `NEXT_TASK`.
+Proposed, rejected, stale, superseded, out-of-scope, and over-budget revisions are
+excluded with reasons. An unknown ID fails the build. A superseded pin is never
+silently replaced; its explanation may name the current replacement, which must be
+requested explicitly.
+
+The fixed packet budget is 32 KiB with a 12 KiB whole-knowledge sub-budget.
+`context show --output json` preserves the exact ordered request list and embedded
+snapshots; `context explain --output json` shows included and excluded revisions
+plus total and knowledge byte accounting. Eligibility is frozen at build, so later
+governance never rewrites an existing packet. There is no transcript ingestion,
+implicit project retrieval, search, automatic curation, or context delta in M14.
+To give a run explicit knowledge, build this packet first and pass its ID to
+`run start --context`; an atomically generated default run packet has no
+caller-supplied knowledge links.
 
 ## Outcomes and management briefings
 

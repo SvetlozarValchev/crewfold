@@ -39,7 +39,7 @@ func (a *App) runMeeting(ctx context.Context, mode outputMode, args []string) in
 }
 
 func (a *App) runMeetingCreate(ctx context.Context, mode outputMode, args []string) int {
-	options, repeated, failure := parseMeetingOptions(args, map[string]bool{"participant": true, "allow-action": true}, "from-overlap", "participant", "facilitator", "policy", "reviewer", "allow-action", "timeout", "workspace", "socket", "idempotency-key")
+	options, repeated, failure := parseRepeatedOptions(args, map[string]bool{"participant": true, "allow-action": true}, "from-overlap", "participant", "facilitator", "policy", "reviewer", "allow-action", "timeout", "workspace", "socket", "idempotency-key")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -217,7 +217,7 @@ func writeMeetingDetail(a *App, detail domain.MeetingDetail) {
 	}
 }
 
-func parseMeetingOptions(args []string, repeatable map[string]bool, allowedNames ...string) (map[string]string, map[string][]string, *commandFailure) {
+func parseRepeatedOptions(args []string, repeatable map[string]bool, allowedNames ...string) (map[string]string, map[string][]string, *commandFailure) {
 	allowed := make(map[string]struct{}, len(allowedNames))
 	for _, name := range allowedNames {
 		allowed[name] = struct{}{}

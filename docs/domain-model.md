@@ -143,19 +143,29 @@ handles, heartbeats, usage accounting, and enforced budgets remain planned.
 An immutable, bounded base briefing bound to exactly one run. It snapshots the
 assigned agent role, exact task revision, selected checkout and repository
 observation, direct dependency revisions, allowed tools, denied/approval-required
-operations, and reporting instructions. It also records why each section was
-included and which unavailable capabilities—canonical knowledge, claims, and
-transcripts—were deliberately excluded. It includes only a bounded, project-scoped
-summary of unseen inbox items; full message bodies remain explicit mailbox reads.
+operations, reporting instructions, and a bounded project-scoped summary of unseen
+inbox items. Full message bodies remain explicit mailbox reads; active claim
+snapshots and provider transcripts are deliberate exclusions.
 
-Packets built with mailbox support use context-packet schema v2. Existing v1
-packets remain immutable and do not gain either the inbox field or mailbox tool
-authority after an upgrade.
+New builds use context-packet schema v3. The caller may provide up to 16 ordered,
+unique knowledge revision IDs. The packet preserves those exact requests and
+includes complete snapshots only for revisions that are accepted, current, fresh,
+and applicable to the task's project and optional task scope. It never searches
+for related knowledge or silently follows a superseded pin. Proposed, rejected,
+stale, superseded, out-of-scope, and over-budget requests are explained per
+revision; a superseded exclusion may identify the current replacement as metadata.
+
+The total packet limit is 32 KiB, including a 12 KiB knowledge sub-budget. An item
+is included whole or excluded. Existing v1 and v2 packets remain readable and
+immutable after an upgrade.
 
 The packet's semantic content hash excludes packet identity and creation metadata,
-so equivalent controlled inputs have the same hash while retaining distinct
-packet IDs. Runs never silently refresh a packet; later context changes become
-explicit deltas or a new run.
+so equivalent controlled inputs—including ordered explicit knowledge links—have
+the same hash while retaining distinct packet IDs. Eligibility is frozen when the
+packet is built. Later acceptance, expiry, staleness, or supersession does not
+rewrite the snapshot or invalidate its binding. Runs never silently refresh a
+packet; future context changes require a new packet or a later explicit delta
+capability.
 
 ### Objective
 
@@ -260,29 +270,38 @@ stores metadata and only copies content when retention policy requires it.
 
 ### Knowledge item
 
-A versioned, scoped statement intended for reuse. Types include brief, constraint,
-decision, glossary entry, finding, risk, runbook, and summary. Each revision has
-provenance, authority, confidence, freshness, and supersession relationships.
+A stable, scoped statement intended for reuse. The implemented types are
+`decision` and `finding`; briefs, constraints, glossary entries, risks, runbooks,
+and summaries remain planned. An item belongs to one workspace and project and may
+be narrowed to one task. Its project is derived from its primary provenance source,
+not selected independently by retrieval.
 
-### Context packet
+### Knowledge revision
 
-An immutable record of exactly what Crewfold selected for a run or meeting:
+A numbered immutable-content snapshot with a `krev_...` ID. It records title, body,
+content hash, confidence, verification, freshness, and an optional predecessor.
+It has one primary source and up to 15 supporting sources, frozen at their source
+revisions. Implemented sources are a task, a concluded meeting, or an accepted
+meeting proposal from a concluded meeting; every source must share the item's
+workspace and project.
 
-- objective and task contract;
-- role and policy;
-- relevant accepted knowledge;
-- active claims, dependencies, and recent messages;
-- selected evidence links;
-- retrieval reasons and size estimates.
+Review state (`proposed|accepted|rejected`) is separate from currency
+(`pending|current|stale|superseded`). Content never changes after proposal;
+governance advances a state revision. Accepting a proposed successor atomically
+makes it current and preserves its prior current revision as superseded history.
 
-Packets enable reproducibility and explain why an agent knew—or did not know—a
-fact.
+The local owner may propose and govern revisions. An authenticated agent run may
+propose a decision or finding sourced from its assigned task, but cannot accept,
+reject, or stale it. Allowed and denied governance attempts produce durable
+authority records.
 
 ### Decision
 
-A special authoritative knowledge item with status `proposed`, `accepted`,
-`superseded`, or `rejected`. Decisions record alternatives, rationale, owner, scope,
-and consequences.
+An implemented knowledge type for a governed choice. Its authority comes from an
+accepted revision and owner authority record, not from the actor that proposed it
+or from its presence in a model response. Rich structured alternatives,
+consequences, and decision-owner policies remain future extensions to the concise
+title/body contract.
 
 ### Outcome assessment
 
@@ -348,8 +367,10 @@ launched it.
 4. Intersecting claims from different tasks produce one deterministic overlap;
    configured policy decides whether to notify, deny the new claim, pause new run
    scheduling, or require resolution.
-5. Knowledge revisions are immutable; correction creates a new revision.
-6. A context packet is immutable after dispatch.
+5. Knowledge revision content and provenance are immutable; correction creates an
+   explicit successor revision, and only the owner can accept it.
+6. A context packet is immutable after build; knowledge eligibility is not
+   re-evaluated when a run binds or reads it.
 7. A message is never modified after send; delivery metadata changes separately.
 8. Runtime termination cannot delete durable task or communication state.
 9. Every privileged action is attributable to an actor and policy decision.

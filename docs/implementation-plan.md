@@ -684,41 +684,68 @@ from records without reading terminal transcripts.
 **Question answered:** Can Crewfold preserve an accepted decision or finding and
 deliver it explicitly to a replacement agent without copying a transcript?
 
+**Implementation status:** The storage, command, protocol, and packet-v3 contract
+described here is present. M14 remains open until its checked-in replacement-agent
+scenario, failure proof, persistence proof, and milestone review pass the normal
+exit gate.
+
 **Visible result**
 
 ```sh
-crewfold knowledge propose --type finding --from-task TASK_ID finding.md
-crewfold knowledge accept KNOWLEDGE_REVISION
-crewfold context build --task NEXT_TASK --include KNOWLEDGE_REVISION
-crewfold context explain CONTEXT_PACKET_ID
+crewfold knowledge propose finding.md --workspace personal --type finding \
+  --from-task TASK_ID --socket "$socket"
+crewfold knowledge accept KNOWLEDGE_REVISION --expected-state-revision 1 \
+  --workspace personal --socket "$socket"
+crewfold context build NEXT_TASK --workspace personal --agent replacement \
+  --include KNOWLEDGE_REVISION --expected-task-revision 2 --socket "$socket"
+crewfold context show CONTEXT_PACKET_ID --workspace personal \
+  --socket "$socket" --output json
+crewfold context explain CONTEXT_PACKET_ID --workspace personal \
+  --socket "$socket" --output json
 ```
 
 **Deliverables**
 
-- Versioned knowledge types, provenance, authority, freshness, and supersession.
-- Proposal, acceptance, rejection, stale, and superseded operations.
-- Budgeted immutable context packets using explicit links only.
-- Context explanation showing inclusions, exclusions, revisions, and size.
-- No transcript ingestion or semantic retrieval.
+- Stable items and immutable-content revisions for `decision` and `finding`, with
+  separate review/currency state, freshness, and explicit supersession.
+- Frozen provenance from tasks, concluded meetings, and accepted meeting proposals
+  from concluded meetings; the primary source derives project scope and optional
+  task scope narrows applicability.
+- Owner acceptance/rejection/staleness/supersession with durable authority checks,
+  plus authenticated agent-run proposal without agent governance authority.
+- Context packet v3 using ordered exact revision links only, with a 32 KiB total
+  limit and 12 KiB whole-item knowledge sub-budget.
+- Packet output preserving exact requests, plus explanation of inclusions,
+  exclusions, replacement metadata, revisions, and total/knowledge byte
+  accounting.
+- No transcript ingestion, search, automatic curation, implicit retrieval, or
+  context deltas.
 
 **Automated acceptance**
 
 - An accepted decision appears in a new packet at the requested revision.
-- Proposed, stale, out-of-scope, and over-budget items are excluded with reasons.
-- Superseding an item leaves history intact and selects only the current revision.
+- Proposed, rejected, stale, superseded, out-of-scope, and over-budget items are
+  excluded with stable per-revision reasons; an unknown ID fails the build.
+- Superseding an item leaves history intact. An exact old pin is excluded with
+  replacement metadata, and only an explicitly requested current successor can be
+  included.
+- A task source defaults to project-wide applicability; explicit task scope is
+  enforced without changing the source-derived project.
 - A provider-switch run continues from handoff plus explicit accepted knowledge.
 - Unrelated terminal transcript text is absent from the packet and database.
 
 **Failure injection**
 
-- Attempt to accept a decision as an actor without the required authority; preserve
-  the proposal and produce an approval/denial record without creating accepted
-  knowledge.
+- At the internal governance boundary, attempt to accept a decision as an actor
+  without the required authority; preserve the proposal and produce an authority
+  denial record without creating accepted knowledge. An authenticated run's
+  unadvertised acceptance-tool probe is separately recorded as `run.tool_denied`.
 
 **Exit gate**
 
-One replacement-agent scenario succeeds using explicit canonical knowledge. Search,
-automatic curation, and context deltas remain out of scope.
+One replacement-agent scenario succeeds using explicit canonical knowledge.
+Search, broader knowledge types, automatic curation, contradiction handling, and
+context deltas remain out of scope.
 
 ### M15 — Curator, deterministic retrieval, and context deltas
 

@@ -22,7 +22,7 @@ flowchart TB
         Projections[Read projections]
         Scheduler[Scheduler]
         Supervisor[Supervisor]
-        Curator[Context curator]
+        FutureCurator[Future context curator]
         Outcomes[Outcome and briefing projector]
         Watchers[Git and runtime watchers]
     end
@@ -47,7 +47,7 @@ flowchart TB
     Journal --> Projections
     Journal --> Scheduler
     Journal --> Supervisor
-    Journal --> Curator
+    Journal -. M15 .-> FutureCurator
     Journal --> Outcomes
     Watchers --> Commands
     Journal --> DB
@@ -69,8 +69,11 @@ crewfold daemon
   ├─ owner-only Unix socket: local API plus run-scoped JSON-RPC/MCP
   ├─ SQLite database in WAL mode
   ├─ runtime-driver processes or CLI calls
-  └─ bounded background loops: scheduler, watchers, curator queue
+  └─ bounded background loops: scheduler and watchers
 ```
+
+Canonical knowledge and explicit packet assembly run through normal transactional
+commands. The curator queue and automatic retrieval remain future M15 components.
 
 The CLI can start the daemon on demand. A foreground mode makes debugging easy; a
 user service may keep it running. The same binary can expose CLI subcommands so
@@ -141,7 +144,10 @@ tool arguments cannot select a different identity. The database stores capabilit
 expiry and immutable context binding, never the credential. Resource and tool
 scope violations are denied and audited. The same identity derives mailbox sender,
 recipient visibility, project scope, and thread-participant authority; agents
-cannot select a different sender or run in message tool arguments.
+cannot select a different sender or run in message tool arguments. The implemented
+`crewfold_propose_knowledge` tool similarly fixes proposal actor, workspace,
+project, and primary provenance to the authenticated run and its task. It cannot
+accept or otherwise govern the resulting proposal.
 
 ### Command handlers
 
@@ -181,19 +187,42 @@ Consumes task, run, claim, message, and watcher events. It applies deterministic
 rules first and may ask a manager model for a recommendation when judgment is
 useful. Recommendations do not gain more authority because a model generated them.
 
-### Context curator
+### Canonical knowledge and future context curator
 
-Maintains the difference between evidence and accepted shared knowledge. It can
-extract proposed decisions, findings, risks, and summaries from structured agent
-reports. Automatic acceptance is limited to low-risk scopes and explicit rules.
+The implemented canonical store separates stable knowledge items from numbered,
+immutable-content revisions. It currently accepts only decisions and findings.
+Each proposal freezes one to 16 ordered sources: tasks, concluded meetings, or
+accepted proposals from concluded meetings. The primary source derives the
+project; an optional task scope narrows applicability. SQLite constraints and
+triggers preserve item and revision history, while typed `sqlc` queries load exact
+revisions and their ordered provenance.
 
-Before canonical knowledge exists, the implemented packet builder is deliberately
-deterministic: it snapshots only current role, task, checkout, dependency, policy,
-reporting facts, and a bounded project-scoped inbox summary. It records explicit
-exclusions for canonical knowledge, claims, transcripts, and full message bodies.
-Equivalent inputs have one semantic hash; packets remain immutable and
-single-run-bound. This is a bounded context authority, not RAG or a transcript
-accumulator.
+Proposal and governance use the same transaction/event path as other domain
+commands. The local owner may accept, reject, stale, or accept a successor that
+atomically supersedes the prior current revision. Agent runs may only propose.
+Governance operations reaching the store create inspectable allowed or denied
+authority records, and caller payloads never select the trusted actor. The run
+capability advertises no governance operation; probes of a reserved acceptance
+name stop earlier as audited `run.tool_denied` policy violations.
+
+The context-packet v3 builder starts from the existing role, task, checkout,
+dependency, policy, reporting, and bounded-inbox snapshot. It then evaluates only
+the caller's ordered exact revision IDs—never a search result. Accepted, current,
+fresh, applicable revisions are embedded as complete snapshots. Other known
+candidates receive per-revision exclusion reasons; unknown IDs fail. Superseded
+pins may expose a replacement ID as explanation metadata but are never silently
+followed.
+
+Packet assembly enforces a 32 KiB total limit and a 12 KiB whole-item knowledge
+sub-budget. It records requested IDs, inclusion/exclusion decisions, and budget
+accounting in the immutable packet. Eligibility freezes inside the build
+transaction, so later governance cannot change an existing run briefing. Provider
+transcripts are neither queried nor ingested. This is bounded context authority,
+not RAG or a transcript accumulator.
+
+The M15 context curator will propose broader knowledge, reconcile contradictions,
+and drive deterministic search and explicit deltas. It does not yet run, and no
+automatic acceptance or retrieval path exists in M14.
 
 ### Outcome and briefing projector
 

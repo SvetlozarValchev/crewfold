@@ -52,6 +52,10 @@ const (
 	CodeMeetingNotFound      = "meeting_not_found"
 	CodeMeetingConflict      = "meeting_conflict"
 	CodeMeetingStale         = "meeting_input_stale"
+	CodeInvalidKnowledge     = "invalid_knowledge"
+	CodeKnowledgeNotFound    = "knowledge_not_found"
+	CodeKnowledgeConflict    = "knowledge_conflict"
+	CodeKnowledgeDenied      = "knowledge_denied"
 	CodeIdempotencyConflict  = "idempotency_conflict"
 	CodeStorageFailed        = "storage_failed"
 )

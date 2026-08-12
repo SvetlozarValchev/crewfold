@@ -1031,6 +1031,13 @@ type fakeDaemonClient struct {
 	objectiveCreateParams localapi.ObjectiveCreateParams
 	taskCreateParams      localapi.TaskCreateParams
 	taskAssignParams      localapi.TaskAssignParams
+	contextBuildParams    localapi.ContextBuildParams
+	knowledgeMutation     localapi.KnowledgeMutationResult
+	knowledgeShow         localapi.KnowledgeShowResult
+	knowledgeList         localapi.KnowledgeListResult
+	knowledgePropose      localapi.KnowledgeProposeParams
+	knowledgeDecision     localapi.KnowledgeDecisionParams
+	knowledgeStale        localapi.KnowledgeMarkStaleParams
 	coordinationWorkspace string
 	initName              string
 	initKey               string
@@ -1152,7 +1159,8 @@ func (client *fakeDaemonClient) TaskTimeline(context.Context, string, string) (l
 	return client.taskTimeline, nil
 }
 
-func (client *fakeDaemonClient) ContextBuild(context.Context, localapi.ContextBuildParams) (localapi.ContextBuildResult, error) {
+func (client *fakeDaemonClient) ContextBuild(_ context.Context, params localapi.ContextBuildParams) (localapi.ContextBuildResult, error) {
+	client.contextBuildParams = params
 	return localapi.ContextBuildResult{}, nil
 }
 
@@ -1162,6 +1170,34 @@ func (client *fakeDaemonClient) ContextShow(context.Context, string, string) (lo
 
 func (client *fakeDaemonClient) ContextExplain(context.Context, string, string) (localapi.ContextExplainResult, error) {
 	return localapi.ContextExplainResult{}, nil
+}
+
+func (client *fakeDaemonClient) KnowledgePropose(_ context.Context, params localapi.KnowledgeProposeParams) (localapi.KnowledgeMutationResult, error) {
+	client.knowledgePropose = params
+	return client.knowledgeMutation, nil
+}
+
+func (client *fakeDaemonClient) KnowledgeShow(context.Context, string, string) (localapi.KnowledgeShowResult, error) {
+	return client.knowledgeShow, nil
+}
+
+func (client *fakeDaemonClient) KnowledgeList(context.Context, localapi.KnowledgeListParams) (localapi.KnowledgeListResult, error) {
+	return client.knowledgeList, nil
+}
+
+func (client *fakeDaemonClient) KnowledgeAccept(_ context.Context, params localapi.KnowledgeDecisionParams) (localapi.KnowledgeMutationResult, error) {
+	client.knowledgeDecision = params
+	return client.knowledgeMutation, nil
+}
+
+func (client *fakeDaemonClient) KnowledgeReject(_ context.Context, params localapi.KnowledgeDecisionParams) (localapi.KnowledgeMutationResult, error) {
+	client.knowledgeDecision = params
+	return client.knowledgeMutation, nil
+}
+
+func (client *fakeDaemonClient) KnowledgeMarkStale(_ context.Context, params localapi.KnowledgeMarkStaleParams) (localapi.KnowledgeMutationResult, error) {
+	client.knowledgeStale = params
+	return client.knowledgeMutation, nil
 }
 
 func (client *fakeDaemonClient) MessageSend(_ context.Context, params localapi.MessageSendParams) (localapi.MessageSendResult, error) {

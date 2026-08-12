@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:knowledge-detail:v1",
+  "title": "Crewfold canonical knowledge detail v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["revision", "authority_checks"],
+  "properties": {
+    "revision": {"$ref": "knowledge-revision.schema.json"},
+    "authority_checks": {
+      "type": "array",
+      "items": {"$ref": "knowledge-authority.schema.json"}
+    }
+  }
+}

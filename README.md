@@ -56,7 +56,14 @@ pass. The installed-Claude canary remains an optional release and upgrade
 conformance check, not a development gate. Crewfold now detects deterministic
 claim overlap and resolves it through durable two-/three-agent meetings with
 frozen inputs, explicit authority, restart-safe positions, and atomic task/claim
-actions. Canonical knowledge and the operator TUI are still to come.
+actions. The canonical knowledge core now preserves task/meeting-provenanced
+decisions and findings as immutable revisions: authenticated runs may propose,
+while the local owner accepts, rejects, marks stale, or accepts an explicit
+successor. Context packet v3 can deliver exact accepted/current revision snapshots
+to a replacement run under fixed byte budgets without reading provider
+transcripts. The M14 acceptance gate is still pending; automatic curation,
+search, context deltas, broader knowledge types, and the operator TUI remain to
+come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.
