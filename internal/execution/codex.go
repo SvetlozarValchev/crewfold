@@ -17,9 +17,11 @@ import (
 )
 
 const (
-	CodexProbeSchema          = "urn:crewfold:schema:provider:codex-probe:v1"
-	codexProviderHandlePrefix = "codex-provider:v1:"
-	codexMaximumProbeOutput   = 1024 * 1024
+	CodexProbeSchema             = "urn:crewfold:schema:provider:codex-probe:v1"
+	CodexSandboxWorkspaceWrite   = "workspace-write"
+	CodexSandboxDangerFullAccess = "danger-full-access"
+	codexProviderHandlePrefix    = "codex-provider:v1:"
+	codexMaximumProbeOutput      = 1024 * 1024
 )
 
 var codexRequiredExecHelp = []string{
@@ -267,19 +269,25 @@ func defaultCodexHome() string {
 }
 
 type CodexProviderOptions struct {
-	CapabilityPreparer RunCapabilityPreparer
-	CodexExecutable    string
-	CrewfoldExecutable string
-	CodexHome          string
-	ProbeRunner        CodexCommandRunner
+	CapabilityPreparer  RunCapabilityPreparer
+	CodexExecutable     string
+	CrewfoldExecutable  string
+	CodexHome           string
+	SandboxMode         string
+	ExternallySandboxed bool
+	ToolNetworkAccess   bool
+	ProbeRunner         CodexCommandRunner
 }
 
 type CodexProvider struct {
-	preparer           RunCapabilityPreparer
-	codexExecutable    string
-	crewfoldExecutable string
-	codexHome          string
-	probeRunner        CodexCommandRunner
+	preparer            RunCapabilityPreparer
+	codexExecutable     string
+	crewfoldExecutable  string
+	codexHome           string
+	sandboxMode         string
+	externallySandboxed bool
+	toolNetworkAccess   bool
+	probeRunner         CodexCommandRunner
 }
 
 func NewCodexProvider(options CodexProviderOptions) CodexProvider {
@@ -287,11 +295,18 @@ func NewCodexProvider(options CodexProviderOptions) CodexProvider {
 	if codexExecutable == "" {
 		codexExecutable = "codex"
 	}
+	sandboxMode := strings.TrimSpace(options.SandboxMode)
+	if sandboxMode == "" {
+		sandboxMode = CodexSandboxWorkspaceWrite
+	}
 	return CodexProvider{
 		preparer: options.CapabilityPreparer, codexExecutable: codexExecutable,
-		crewfoldExecutable: strings.TrimSpace(options.CrewfoldExecutable),
-		codexHome:          firstNonEmpty(strings.TrimSpace(options.CodexHome), defaultCodexHome()),
-		probeRunner:        options.ProbeRunner,
+		crewfoldExecutable:  strings.TrimSpace(options.CrewfoldExecutable),
+		codexHome:           firstNonEmpty(strings.TrimSpace(options.CodexHome), defaultCodexHome()),
+		sandboxMode:         sandboxMode,
+		externallySandboxed: options.ExternallySandboxed,
+		toolNetworkAccess:   options.ToolNetworkAccess,
+		probeRunner:         options.ProbeRunner,
 	}
 }
 
@@ -310,6 +325,12 @@ func (provider CodexProvider) Prepare(ctx context.Context, run domain.Run, scena
 	}
 	if provider.preparer == nil {
 		return LaunchSpec{}, errors.New("Codex provider cannot prepare the run-scoped MCP capability")
+	}
+	if err := ValidateCodexSandboxMode(provider.sandboxMode); err != nil {
+		return LaunchSpec{}, err
+	}
+	if provider.sandboxMode == CodexSandboxDangerFullAccess && !provider.externallySandboxed {
+		return LaunchSpec{}, errors.New("Codex danger-full-access requires an independently enforced external sandbox")
 	}
 	report := provider.Probe(ctx)
 	if err := report.Error(); err != nil {
@@ -331,7 +352,7 @@ func (provider CodexProvider) Prepare(ctx context.Context, run domain.Run, scena
 		return LaunchSpec{}, errors.New("prepare Codex MCP capability: socket or capability file is missing")
 	}
 
-	arguments := codexLaunchArguments(crewfoldExecutable, run, scenario)
+	arguments := codexLaunchArguments(crewfoldExecutable, run, scenario, provider.sandboxMode, provider.toolNetworkAccess)
 	environment := map[string]string{
 		"CREWFOLD_MCP_SOCKET":          access.SocketPath,
 		"CREWFOLD_MCP_CAPABILITY_FILE": access.CapabilityFile,
@@ -386,19 +407,33 @@ func codexBoundaryMatch(value string, candidates []string) bool {
 	return false
 }
 
-func codexLaunchArguments(crewfoldExecutable string, run domain.Run, scenario domain.FakeScenario) []string {
+func ValidateCodexSandboxMode(value string) error {
+	switch strings.TrimSpace(value) {
+	case CodexSandboxWorkspaceWrite, CodexSandboxDangerFullAccess:
+		return nil
+	default:
+		return fmt.Errorf("Codex sandbox must be %q or %q", CodexSandboxWorkspaceWrite, CodexSandboxDangerFullAccess)
+	}
+}
+
+func codexLaunchArguments(crewfoldExecutable string, run domain.Run, scenario domain.FakeScenario, sandboxMode string, toolNetworkAccess bool) []string {
 	bridgeArguments := tomlStringArray([]string{"__mcp-stdio-bridge"})
 	forwardedEnvironment := tomlStringArray([]string{"CREWFOLD_MCP_SOCKET", "CREWFOLD_MCP_CAPABILITY_FILE"})
-	return []string{
-		"exec", "--json", "--color", "never", "--ephemeral", "--ignore-user-config", "--sandbox", "workspace-write", "-C", run.Placement.CheckoutPath,
+	arguments := []string{
+		"exec", "--json", "--color", "never", "--ephemeral", "--ignore-user-config", "--sandbox", sandboxMode, "-C", run.Placement.CheckoutPath,
 		"-c", `approval_policy="never"`,
-		"-c", "mcp_servers.crewfold.command=" + strconv.Quote(crewfoldExecutable),
-		"-c", "mcp_servers.crewfold.args=" + bridgeArguments,
-		"-c", "mcp_servers.crewfold.env_vars=" + forwardedEnvironment,
+	}
+	if sandboxMode == CodexSandboxWorkspaceWrite {
+		arguments = append(arguments, "-c", "sandbox_workspace_write.network_access="+strconv.FormatBool(toolNetworkAccess))
+	}
+	return append(arguments,
+		"-c", "mcp_servers.crewfold.command="+strconv.Quote(crewfoldExecutable),
+		"-c", "mcp_servers.crewfold.args="+bridgeArguments,
+		"-c", "mcp_servers.crewfold.env_vars="+forwardedEnvironment,
 		"-c", `mcp_servers.crewfold.required=true`,
 		"-c", `mcp_servers.crewfold.default_tools_approval_mode="approve"`,
 		codexInitialPrompt(scenario.Acceptance.RequiredEvidence),
-	}
+	)
 }
 
 func codexInitialPrompt(requiredEvidence []string) string {

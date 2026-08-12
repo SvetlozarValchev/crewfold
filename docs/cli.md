@@ -53,7 +53,15 @@ and session reachability; an unsupported schema is a hard launch gate with upgra
 guidance. `doctor --provider codex` makes no model call. It verifies the binary,
 the stable headless JSON/MCP flags Crewfold needs, and existing Codex
 authentication. `--codex-binary` and `--codex-home` allow an explicit installation
-or auth/config root; the same values can be passed to `daemon run`.
+or auth/config root; the same values can be passed to `daemon run`. Codex child
+commands remain in the `workspace-write` filesystem sandbox. Their network is
+disabled by default; an operator who has authorized it can pass
+`--codex-tool-network-access true` to `daemon run`. This does not select Codex
+full-access mode. `--codex-sandbox danger-full-access` is available only for an
+operator who independently confines the entire Codex process, such as in a
+container that mounts only the assigned checkout, and Crewfold additionally
+requires `--codex-external-sandbox true`. It must never be used as a workaround
+on an otherwise unrestricted host.
 
 ## Projects and checkouts
 

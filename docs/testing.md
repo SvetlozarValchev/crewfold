@@ -178,7 +178,37 @@ CREWFOLD_LIVE_CODEX=1 CREWFOLD_ALLOW_MODEL_CALLS=1 ./test/live/codex/run.sh
 
 It creates its own Git repository and Herdr session, permits one exact file
 change, runs one local check, verifies the diff and commit count, and never
-configures a remote. Without both flags it cannot call a model.
+configures a remote. Without both flags it cannot call a model. The test enables
+Codex child-command network access because some nested Linux environments cannot
+construct Codex's isolated network namespace; workspace filesystem isolation
+remains enabled and the task itself forbids network use.
+
+On a Linux host where bubblewrap cannot construct its namespace, the canary can
+instead put the whole Codex process inside an independently enforced container:
+
+```sh
+./test/live/codex/build-container.sh
+CREWFOLD_CODEX_BINARY="$PWD/test/live/codex/containerized-cli.sh" \
+CREWFOLD_LIVE_CODEX_SANDBOX=danger-full-access \
+CREWFOLD_EXTERNAL_CODEX_SANDBOX=1 \
+CREWFOLD_LIVE_CODEX=1 CREWFOLD_ALLOW_MODEL_CALLS=1 \
+  ./test/live/codex/run.sh
+```
+
+The pinned container definition contains the installed Codex executable, its
+matching `codex-code-mode-host` companion, and only the runtime libraries, CA
+roots, and Git needed by the live task. The build helper copies no auth or
+configuration. At runtime the wrapper copies only `auth.json` and the installation
+identifier into an owner-private temporary `CODEX_HOME`, so
+Codex may create ephemeral app-server state without modifying the real home. The
+wrapper refuses to pull images itself, uses a read-only root with no Linux
+capabilities, and mounts only that temporary auth/state directory plus the
+disposable canary directory read-write. The outer
+container is the security boundary; the inner Codex sandbox is disabled because
+nesting it is exactly what the host cannot support. The wrapper closes container
+stdin because the prompt is passed as an argument; otherwise Docker would expose
+Herdr's persistent PTY as a pipe and `codex exec` would wait for an impossible
+end-of-file before starting.
 
 ### Management workload fixture
 

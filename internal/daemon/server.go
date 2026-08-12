@@ -33,22 +33,25 @@ const (
 )
 
 type Config struct {
-	DataDir          string
-	SocketPath       string
-	Version          buildinfo.Info
-	Logger           *slog.Logger
-	StoreOptions     store.Options
-	GitInspector     gitstate.Inspector
-	RuntimeDrivers   map[string]execution.RuntimeDriver
-	ProviderAdapters map[string]execution.ProviderAdapter
-	RunWorkerHook    func(string, domain.Run) error
-	MessageWake      func(context.Context, domain.MessageWakeJob) error
-	HerdrExecutable  string
-	HerdrSession     string
-	CodexExecutable  string
-	CodexHome        string
-	DisableRunWorker bool
-	defaultProviders bool
+	DataDir                  string
+	SocketPath               string
+	Version                  buildinfo.Info
+	Logger                   *slog.Logger
+	StoreOptions             store.Options
+	GitInspector             gitstate.Inspector
+	RuntimeDrivers           map[string]execution.RuntimeDriver
+	ProviderAdapters         map[string]execution.ProviderAdapter
+	RunWorkerHook            func(string, domain.Run) error
+	MessageWake              func(context.Context, domain.MessageWakeJob) error
+	HerdrExecutable          string
+	HerdrSession             string
+	CodexExecutable          string
+	CodexHome                string
+	CodexSandboxMode         string
+	CodexExternallySandboxed bool
+	CodexToolNetworkAccess   bool
+	DisableRunWorker         bool
+	defaultProviders         bool
 }
 
 type server struct {
@@ -112,6 +115,8 @@ func Run(ctx context.Context, config Config) error {
 		codexProvider := execution.NewCodexProvider(execution.CodexProviderOptions{
 			CapabilityPreparer: capabilities, CodexExecutable: codexExecutable,
 			CrewfoldExecutable: crewfoldExecutable, CodexHome: codexHome,
+			SandboxMode: resolved.CodexSandboxMode, ExternallySandboxed: resolved.CodexExternallySandboxed,
+			ToolNetworkAccess: resolved.CodexToolNetworkAccess,
 		})
 		resolved.ProviderAdapters[codexProvider.Name()] = codexProvider
 	}

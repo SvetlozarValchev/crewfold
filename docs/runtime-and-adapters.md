@@ -329,7 +329,17 @@ The Codex adapter follows this rule with a recorded external CLI endpoint that
 executes the real launch manifest and STDIO bridge in regular CI. The installed
 provider canary requires both `CREWFOLD_LIVE_CODEX=1` and
 `CREWFOLD_ALLOW_MODEL_CALLS=1`, uses a disposable one-file repository in a
-dedicated Herdr session, and never pushes.
+dedicated Herdr session, and never pushes. Codex uses `workspace-write` with tool
+network disabled by default. The daemon's explicit
+`--codex-tool-network-access true` override retains workspace filesystem
+isolation and exists for authorized workflows and Linux hosts where a nested
+network namespace is unavailable; the live canary uses that override only after
+its network/model acknowledgement gate. An explicit `danger-full-access` adapter
+mode supports Codex's documented externally sandboxed deployment pattern. It is
+never selected automatically, and the provider refuses it unless the daemon was
+started with `--codex-external-sandbox true`. The live suite requires a separate
+`CREWFOLD_EXTERNAL_CODEX_SANDBOX=1` assertion before supplying that daemon
+acknowledgement.
 
 ## Versioning
 

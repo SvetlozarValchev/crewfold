@@ -80,6 +80,7 @@ func TestCodexProviderBuildsIsolatedRequiredMCPLaunch(t *testing.T) {
 	joined := strings.Join(launch.Command.Arguments, "\n")
 	for _, wanted := range []string{
 		"exec", "--json", "--ephemeral", "--ignore-user-config", "workspace-write", `approval_policy="never"`,
+		`sandbox_workspace_write.network_access=false`,
 		`mcp_servers.crewfold.command="/opt/crewfold"`, `mcp_servers.crewfold.args=["__mcp-stdio-bridge"]`,
 		`mcp_servers.crewfold.required=true`, "implementation_complete, tests_passed", "/work/project",
 	} {
@@ -92,6 +93,44 @@ func TestCodexProviderBuildsIsolatedRequiredMCPLaunch(t *testing.T) {
 	}
 	if strings.Contains(joined, "cf1.") || strings.Contains(strings.Join(mapValues(launch.Command.Environment), "\n"), "cf1.") {
 		t.Fatal("launch manifest exposed the run capability token")
+	}
+}
+
+func TestCodexProviderCanEnableWorkspaceToolNetwork(t *testing.T) {
+	t.Parallel()
+
+	run := domain.Run{Placement: domain.RunPlacement{CheckoutPath: "/work/project"}}
+	arguments := codexLaunchArguments("/opt/crewfold", run, codexScenario(), CodexSandboxWorkspaceWrite, true)
+	if !strings.Contains(strings.Join(arguments, "\n"), `sandbox_workspace_write.network_access=true`) {
+		t.Fatalf("codexLaunchArguments() = %#v", arguments)
+	}
+}
+
+func TestCodexProviderSupportsAnExplicitExternalSandboxMode(t *testing.T) {
+	t.Parallel()
+
+	run := domain.Run{Placement: domain.RunPlacement{CheckoutPath: "/work/project"}}
+	arguments := codexLaunchArguments("/opt/crewfold", run, codexScenario(), CodexSandboxDangerFullAccess, false)
+	joined := strings.Join(arguments, "\n")
+	if !strings.Contains(joined, CodexSandboxDangerFullAccess) || strings.Contains(joined, "sandbox_workspace_write.network_access") {
+		t.Fatalf("codexLaunchArguments() = %#v", arguments)
+	}
+	if err := ValidateCodexSandboxMode("unbounded"); err == nil {
+		t.Fatal("ValidateCodexSandboxMode(unbounded) error = nil")
+	}
+}
+
+func TestCodexProviderRefusesFullAccessWithoutExternalSandbox(t *testing.T) {
+	t.Parallel()
+
+	provider := NewCodexProvider(CodexProviderOptions{
+		CapabilityPreparer: &recordedCapabilityPreparer{},
+		CodexExecutable:    "/opt/codex", CrewfoldExecutable: "/opt/crewfold",
+		SandboxMode: CodexSandboxDangerFullAccess, ProbeRunner: compatibleCodexRunner(t),
+	})
+	_, err := provider.Prepare(context.Background(), domain.Run{}, codexScenario())
+	if err == nil || !strings.Contains(err.Error(), "independently enforced external sandbox") {
+		t.Fatalf("Prepare() error = %v", err)
 	}
 }
 

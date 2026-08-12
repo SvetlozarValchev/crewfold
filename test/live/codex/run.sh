@@ -23,6 +23,23 @@ then
   printf 'Installed Codex canary: SKIP (herdr is not installed)\n'
   exit 0
 fi
+codex_sandbox=${CREWFOLD_LIVE_CODEX_SANDBOX:-workspace-write}
+codex_external_sandbox=false
+case "$codex_sandbox" in
+  workspace-write) ;;
+  danger-full-access)
+    if [ "${CREWFOLD_EXTERNAL_CODEX_SANDBOX:-}" != "1" ]
+    then
+      printf 'Installed Codex canary: REFUSED (danger-full-access requires CREWFOLD_EXTERNAL_CODEX_SANDBOX=1 and an independently enforced boundary)\n' >&2
+      exit 1
+    fi
+    codex_external_sandbox=true
+    ;;
+  *)
+    printf 'Installed Codex canary: REFUSED (unsupported CREWFOLD_LIVE_CODEX_SANDBOX value)\n' >&2
+    exit 1
+    ;;
+esac
 
 go_runner="$repo_root/scripts/go.sh"
 live_root=$(mktemp -d "${TMPDIR:-/tmp}/crewfold-live-codex.XXXXXX")
@@ -38,6 +55,10 @@ server_pid=''
 
 cleanup() {
   status=$?
+  if [ "$status" -ne 0 ] && [ -n "${run_id:-}" ] && [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null
+  then
+    "$binary" run logs "$run_id" --workspace canary --tail 200 --socket "$socket_path" --output json >"$live_root/logs.json" 2>/dev/null || true
+  fi
   if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null
   then
     kill "$daemon_pid" 2>/dev/null || true
@@ -102,11 +123,14 @@ done
 
 export CREWFOLD_HERDR_BINARY=$(command -v herdr)
 export CREWFOLD_HERDR_SESSION="$session"
-export CREWFOLD_CODEX_BINARY=$(command -v codex)
+if [ -z "${CREWFOLD_CODEX_BINARY:-}" ]
+then
+  export CREWFOLD_CODEX_BINARY=$(command -v codex)
+fi
 "$binary" doctor --runtime herdr --output json >"$live_root/herdr-doctor.json"
 "$binary" doctor --provider codex --output json >"$live_root/codex-doctor.json"
 
-"$binary" daemon run --data-dir "$data_dir" --socket "$socket_path" 2>"$daemon_log" &
+"$binary" daemon run --data-dir "$data_dir" --socket "$socket_path" --codex-sandbox "$codex_sandbox" --codex-external-sandbox "$codex_external_sandbox" --codex-tool-network-access true 2>"$daemon_log" &
 daemon_pid=$!
 attempts=0
 until "$binary" status --socket "$socket_path" --output json >"$live_root/status.json" 2>/dev/null

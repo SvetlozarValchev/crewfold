@@ -753,6 +753,9 @@ func TestDaemonRunPassesRequiredConfiguration(t *testing.T) {
 		"daemon", "run",
 		"--data-dir", "/tmp/crewfold-test-data",
 		"--socket=/tmp/crewfold-test.sock",
+		"--codex-sandbox", "danger-full-access",
+		"--codex-external-sandbox", "true",
+		"--codex-tool-network-access", "true",
 	})
 	if exitCode != ExitOK {
 		t.Fatalf("Run() exit code = %d, want %d; stderr = %q", exitCode, ExitOK, stderr.String())
@@ -766,8 +769,56 @@ func TestDaemonRunPassesRequiredConfiguration(t *testing.T) {
 	if received.Logger == nil {
 		t.Fatal("received.Logger = nil")
 	}
+	if !received.CodexToolNetworkAccess {
+		t.Fatal("received.CodexToolNetworkAccess = false")
+	}
+	if received.CodexSandboxMode != execution.CodexSandboxDangerFullAccess {
+		t.Fatalf("received.CodexSandboxMode = %q", received.CodexSandboxMode)
+	}
+	if !received.CodexExternallySandboxed {
+		t.Fatal("received.CodexExternallySandboxed = false")
+	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatalf("stdout = %q, stderr = %q, want empty", stdout.String(), stderr.String())
+	}
+}
+
+func TestDaemonRunRejectsInvalidCodexToolNetworkAccess(t *testing.T) {
+	t.Parallel()
+
+	app, _, stderr := newTestApp()
+	exitCode := app.Run([]string{
+		"daemon", "run", "--data-dir", "/tmp/data", "--socket", "/tmp/socket",
+		"--codex-tool-network-access", "sometimes",
+	})
+	if exitCode != ExitUsage || !strings.Contains(stderr.String(), "must be true or false") {
+		t.Fatalf("Run() exit=%d stderr=%q", exitCode, stderr.String())
+	}
+}
+
+func TestDaemonRunRejectsInvalidCodexSandbox(t *testing.T) {
+	t.Parallel()
+
+	app, _, stderr := newTestApp()
+	exitCode := app.Run([]string{
+		"daemon", "run", "--data-dir", "/tmp/data", "--socket", "/tmp/socket",
+		"--codex-sandbox", "unbounded",
+	})
+	if exitCode != ExitUsage || !strings.Contains(stderr.String(), "Codex sandbox must be") {
+		t.Fatalf("Run() exit=%d stderr=%q", exitCode, stderr.String())
+	}
+}
+
+func TestDaemonRunRefusesFullAccessWithoutExternalSandbox(t *testing.T) {
+	t.Parallel()
+
+	app, _, stderr := newTestApp()
+	exitCode := app.Run([]string{
+		"daemon", "run", "--data-dir", "/tmp/data", "--socket", "/tmp/socket",
+		"--codex-sandbox", "danger-full-access",
+	})
+	if exitCode != ExitUsage || !strings.Contains(stderr.String(), "requires --codex-external-sandbox true") {
+		t.Fatalf("Run() exit=%d stderr=%q", exitCode, stderr.String())
 	}
 }
 

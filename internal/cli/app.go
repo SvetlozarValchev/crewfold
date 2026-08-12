@@ -563,7 +563,7 @@ func (a *App) runDaemonForeground(ctx context.Context, mode outputMode, args []s
 		fmt.Fprint(a.stdout, daemonRunHelp)
 		return ExitOK
 	}
-	options, failure := parseOptions(args, "data-dir", "socket", "herdr-binary", "herdr-session", "codex-binary", "codex-home")
+	options, failure := parseOptions(args, "data-dir", "socket", "herdr-binary", "herdr-session", "codex-binary", "codex-home", "codex-sandbox", "codex-external-sandbox", "codex-tool-network-access")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -575,17 +575,44 @@ func (a *App) runDaemonForeground(ctx context.Context, mode outputMode, args []s
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
+	codexToolNetworkAccess := false
+	if _, present := options["codex-tool-network-access"]; present {
+		codexToolNetworkAccess, failure = boolOption(options, "codex-tool-network-access")
+		if failure != nil {
+			return a.writeFailure(mode, *failure)
+		}
+	}
+	codexSandboxMode := strings.TrimSpace(options["codex-sandbox"])
+	if codexSandboxMode == "" {
+		codexSandboxMode = execution.CodexSandboxWorkspaceWrite
+	}
+	if err := execution.ValidateCodexSandboxMode(codexSandboxMode); err != nil {
+		return a.writeFailure(mode, usageFailure(err.Error(), "use workspace-write unless Codex is externally sandboxed"))
+	}
+	codexExternallySandboxed := false
+	if _, present := options["codex-external-sandbox"]; present {
+		codexExternallySandboxed, failure = boolOption(options, "codex-external-sandbox")
+		if failure != nil {
+			return a.writeFailure(mode, *failure)
+		}
+	}
+	if codexSandboxMode == execution.CodexSandboxDangerFullAccess && !codexExternallySandboxed {
+		return a.writeFailure(mode, usageFailure("Codex danger-full-access requires --codex-external-sandbox true", "use only when an independent boundary confines the whole Codex process"))
+	}
 
 	logger := slog.New(slog.NewJSONHandler(a.stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	err := a.runDaemon(ctx, daemon.Config{
-		DataDir:         dataDir,
-		SocketPath:      socketPath,
-		Version:         a.info,
-		Logger:          logger,
-		HerdrExecutable: options["herdr-binary"],
-		HerdrSession:    options["herdr-session"],
-		CodexExecutable: options["codex-binary"],
-		CodexHome:       options["codex-home"],
+		DataDir:                  dataDir,
+		SocketPath:               socketPath,
+		Version:                  a.info,
+		Logger:                   logger,
+		HerdrExecutable:          options["herdr-binary"],
+		HerdrSession:             options["herdr-session"],
+		CodexExecutable:          options["codex-binary"],
+		CodexHome:                options["codex-home"],
+		CodexSandboxMode:         codexSandboxMode,
+		CodexExternallySandboxed: codexExternallySandboxed,
+		CodexToolNetworkAccess:   codexToolNetworkAccess,
 	})
 	if err == nil {
 		return ExitOK
@@ -1349,10 +1376,12 @@ SQLite coordination database.
 `
 
 const daemonRunHelp = `Usage:
-  crewfold daemon run --data-dir <path> --socket <path> [--herdr-binary <path>] [--herdr-session <name>] [--codex-binary <path>] [--codex-home <path>] [--output text|json]
+  crewfold daemon run --data-dir <path> --socket <path> [--herdr-binary <path>] [--herdr-session <name>] [--codex-binary <path>] [--codex-home <path>] [--codex-sandbox workspace-write|danger-full-access] [--codex-external-sandbox true|false] [--codex-tool-network-access true|false] [--output text|json]
 
 Run the local daemon in the foreground. Logs are newline-delimited JSON on stderr.
-The socket is owner-only and the data directory is locked for this process.
+The socket is owner-only and the data directory is locked for this process. Codex
+tool network access defaults to false and does not change workspace filesystem
+isolation.
 `
 
 const daemonStopHelp = `Usage:
