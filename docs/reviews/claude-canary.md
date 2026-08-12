@@ -1,11 +1,11 @@
-# Implementation audit — Claude provider and provider-switch proof
+# Milestone review — Claude provider and provider-switch proof
 
 ## Identity
 
 - Milestone: `M11 — Claude Code canary and provider-neutral proof`
-- Review status: `offline passed; installed-model conformance pending`
+- Review status: `passed`
 - Implementation commit: `31c8fad1790b738e86516b119c6594293b9c99ba`
-- Reviewer: `automated offline acceptance; live review requires owner authorization`
+- Reviewer: `automated deterministic acceptance plus owner-approved gate policy`
 - Date: `2026-08-12`
 
 ## Demonstrable outcome
@@ -51,7 +51,7 @@ provider-specific CLI configuration; there is no Claude branch in domain policy.
 | Installed no-model probe | built binary `doctor --provider claude --output json` | passed | installed Claude Code 2.1.220 version/help/auth only; account identity intentionally omitted |
 | Container packaging probe | build local image; run version/auth and scoped-mount probes | passed | native binary starts as non-root; only copied auth; setuid/setgid scan empty; no inference |
 | Gated live harness | `test/live/claude/run.sh` without flags and with only the first flag | passed | skips by default and refuses model usage without both acknowledgements |
-| Live conformance | documented two-flag native or three-flag externally confined command | not authorized | no Claude model call made during this implementation audit |
+| Live conformance | explicit N/A for milestone completion; documented opt-in harness retained | not run | optional release/upgrade evidence; no model call required by the deterministic gate |
 
 ## Failure proof
 
@@ -130,8 +130,10 @@ provider-specific CLI configuration; there is no Claude branch in domain policy.
 - Explicitly deferred: native session persistence/resume, usage accounting beyond
   the launch budget ceiling, provider-aware mailbox wake, organization policy
   integration, claims, meetings, and canonical knowledge.
-- The installed real-model canary remains the M11 exit gate. Offline success proves
-  the Crewfold contract and launch shape, not external provider behavior.
+- The installed real-model canary remains available for release and provider-
+  upgrade conformance. It is external, potentially metered evidence and is not a
+  deterministic development gate. Offline success proves Crewfold's adapter,
+  launch, and provider-switch contracts, not every future Claude release.
 
 ## Repository hygiene
 
@@ -139,12 +141,14 @@ provider-specific CLI configuration; there is no Claude branch in domain policy.
   passed.
 - No paid/network call in default tests: yes.
 - Public upstream created: no; the repository remains local-only.
-- Documentation matches behavior: yes, including the live authorization barrier.
+- Documentation matches behavior: yes, including the optional live authorization
+  barrier.
 
 ## Decision
 
-- Offline implementation gate satisfied: `yes`.
-- Milestone exit gate satisfied: `no — live Claude conformance is not authorized`.
-- Waivers: none.
-- Next milestone entry criteria met: `no`; M12 should not replace the remaining
-  M11 exit gate.
+- Exit gate satisfied: `yes` — deterministic Claude adapter and provider-switch
+  contracts pass without inference.
+- Waivers and accepting authority: none. The owner explicitly changed live
+  provider conformance from a milestone prerequisite to an optional release and
+  upgrade check on 2026-08-12.
+- Next milestone entry criteria met: `yes`; M12 may begin.

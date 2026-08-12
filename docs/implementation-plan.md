@@ -539,12 +539,12 @@ is included in this milestone.
 
 ### M11 — Claude Code canary and provider-neutral proof
 
-**Status:** offline implementation complete on 2026-08-12; the installed
-real-model canary remains pending explicit owner authorization. The recorded
-Claude endpoint, compatibility/failure probes, strict scoped launch, and
-Codex-to-Claude durable handoff pass without credentials, network access, or
-inference. Continuing development does not authorize the gated model call. See
-the [implementation audit](reviews/claude-canary.md).
+**Status:** complete on 2026-08-12. The recorded Claude endpoint,
+compatibility/failure probes, strict scoped launch, and Codex-to-Claude durable
+handoff pass without credentials, network access, or inference. The installed
+real-model canary remains an explicit opt-in conformance check for releases and
+provider upgrades; it is not a development milestone gate. See the
+[passed implementation audit](reviews/claude-canary.md).
 
 **Question answered:** Does a second provider use the same Crewfold domain and MCP
 tools without core changes?
@@ -566,7 +566,8 @@ crewfold run start CANARY_TASK --runtime herdr --provider claude
 **Automated acceptance**
 
 - Offline contract suite passes unchanged for both provider adapters.
-- Opt-in Claude canary completes the disposable task and structured handoff.
+- The opt-in installed-Claude canary remains available for release/upgrade
+  conformance but is not part of the deterministic completion gate.
 - One scenario starts with Codex, records a handoff, and resumes with Claude in a
   new run without sharing provider-private transcript state.
 
@@ -577,8 +578,10 @@ crewfold run start CANARY_TASK --runtime herdr --provider claude
 
 **Exit gate**
 
-The core diff for adding Claude contains no provider-name conditionals. Crewfold
-has now demonstrated real multi-provider portability.
+The recorded endpoint and provider-switch scenario pass through the same public
+domain and MCP contracts without provider-name conditionals in core policy.
+Crewfold has demonstrated deterministic multi-provider portability; current live
+provider behavior remains optional external conformance evidence.
 
 ## Stage D — Prove coordination intelligence
 
