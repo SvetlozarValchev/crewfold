@@ -17,7 +17,7 @@
 - Acceptance scenario path: `test/scenarios/persistent-workspace/run.sh`
 - Exact command: `./scripts/check.sh`
 - Expected result: static, unit, race, schema, migration, component, and all M0–M2
-  black-box checks pass; the M2 scenario prints `M2 acceptance: PASS`; no daemon
+  black-box checks pass; the persistence scenario prints `Persistent workspace acceptance: PASS`; no daemon
   or socket remains.
 - Observed result: passed on Linux/amd64 with Go 1.26.5 and SQLite provided by the
   vendored CGO-free `github.com/ncruces/go-sqlite3` v0.35.3 driver.
@@ -32,12 +32,12 @@
 | Store/migration | `go test ./internal/store` | passed | Fresh schema, v0 fixture upgrade, migration metadata, future-schema refusal, pragmas, permissions, identity, invariants, and restart |
 | Protocol | `go test ./protocol` | passed | Unique valid schemas, resolved references, published IDs, and nested actor/entity event envelope |
 | Component | `go test ./internal/daemon` | passed | API, database doctor, idempotency, pagination, restart, startup failure, and forced process-death recovery |
-| Black-box acceptance | M2 scenario via check script | passed | `M2 acceptance: PASS` after create/replay/query/stop/restart/restore |
-| Earlier milestones | M0 and M1 scenarios via check script | passed | `M0 acceptance: PASS`; `M1 acceptance: PASS` |
+| Black-box acceptance | Persistent workspace scenario via check script | passed | `Persistent workspace acceptance: PASS` after create/replay/query/stop/restart/restore |
+| Earlier milestones | Build and daemon scenarios via check script | passed | `Buildable repository acceptance: PASS`; `Daemon API spine acceptance: PASS` |
 | Clean module cache | `GOMODCACHE=<empty> GOPROXY=off go test -count=1 ./...` | passed | Vendored dependency makes a cold offline test deterministic |
 | CGO independence | `CGO_ENABLED=0 GOPROXY=off go test -count=1 ./...` | passed | SQLite path does not require a C toolchain or system SQLite |
 | Repetition | `go test -count=10 ./internal/store ./internal/daemon` | passed | Store/lifecycle/crash tests passed repeatedly |
-| Scenario repetition | Five consecutive M2 scenario runs | passed | No lifecycle, persistence, or cleanup flake |
+| Scenario repetition | Five consecutive persistent workspace scenario runs | passed | No lifecycle, persistence, or cleanup flake |
 | Live conformance | N/A | M2 has no runtime/provider/remote service | No network, model, or credential invocation |
 
 ## Failure proof

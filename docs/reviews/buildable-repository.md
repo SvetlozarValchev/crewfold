@@ -16,7 +16,7 @@
   `test/scenarios/buildable-repository/run.sh`
 - Exact command: `./scripts/check.sh`
 - Expected result: all static/unit/race/contract checks pass and the built-binary
-  scenario prints `M0 acceptance: PASS`.
+  scenario prints `Buildable repository acceptance: PASS`.
 - Observed result: passed on Linux/amd64 with Go 1.26.5.
 
 ## Test evidence
@@ -28,7 +28,7 @@
 | Unit | `go test ./...` | passed | buildinfo, CLI, protocol |
 | Race | `go test -race ./...` | passed | All test packages |
 | Schema contract | `go test ./protocol` | passed | Three valid unique schemas; version response validated |
-| Black-box acceptance | M0 scenario via check script | passed | `M0 acceptance: PASS` |
+| Black-box acceptance | Buildable repository scenario via check script | passed | `Buildable repository acceptance: PASS` |
 | Empty module cache | `GOMODCACHE=<empty> GOPROXY=off go test ./...` | passed | No external module dependencies |
 | Live conformance | N/A | M0 has no runtime/provider | No network/provider invocation |
 

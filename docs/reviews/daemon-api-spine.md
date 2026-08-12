@@ -29,10 +29,10 @@
 | Race | `go test -race ./...` | passed | All test packages |
 | Schema contract | `go test ./protocol` | passed | Local API request/response and result schemas are valid, uniquely identified, and locally resolvable |
 | Repetition | `go test -count=20 ./internal/daemon` | passed | Daemon concurrency and lifecycle component tests |
-| Black-box acceptance | M1 scenario via check script | passed | `M1 acceptance: PASS` |
-| Black-box repetition | Five consecutive M1 scenario runs | passed | No lifecycle flake or leaked owned process/socket |
+| Black-box acceptance | Daemon API spine scenario via check script | passed | `Daemon API spine acceptance: PASS` |
+| Black-box repetition | Five consecutive daemon API spine scenario runs | passed | No lifecycle flake or leaked owned process/socket |
 | Empty module cache | `GOMODCACHE=<empty> GOPROXY=off go test ./...` | passed | No external module dependency or network requirement |
-| Earlier milestone | M0 scenario via check script | passed | `M0 acceptance: PASS` |
+| Earlier milestone | Buildable repository scenario via check script | passed | `Buildable repository acceptance: PASS` |
 | Live conformance | N/A | M1 has no provider or remote service | No network/provider invocation |
 
 ## Failure proof

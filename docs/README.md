@@ -38,6 +38,7 @@ explicitly rather than silently treating either as authoritative.
 - [Daemon/API spine milestone review](reviews/daemon-api-spine.md)
 - [Persistent workspace milestone review](reviews/persistent-workspace.md)
 - [Projects/checkouts milestone review](reviews/projects-checkouts.md)
+- [Durable coordination milestone review](reviews/durable-coordination.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 

@@ -18,7 +18,7 @@
 - Acceptance scenario path: `test/scenarios/projects-checkouts/run.sh`
 - Exact command: `./scripts/check.sh`
 - Expected result: formatting, vet, unit, migration, protocol, race, and M0–M3
-  black-box checks pass; the M3 scenario prints `M3 acceptance: PASS`; no source
+  black-box checks pass; the source scenario prints `Projects and checkouts acceptance: PASS`; no source
   content, daemon, socket, or temporary fixture remains.
 - Observed result: passed on Linux/amd64 with Go 1.26.5 and the installed Git CLI.
   Three adjacent standalone clones and one linked worktree produced four checkout
@@ -35,12 +35,12 @@
 | Store/migration | `go test ./internal/store` | passed | Schema v2, representative v1 upgrade, atomic registration, shared repository identity, duplicate path, unavailable retention, events, and idempotency |
 | Protocol | `go test ./protocol` | passed | Unique valid schema IDs/references and M3 result-constant agreement |
 | Component | `go test ./internal/daemon` | passed | Real Git/Unix socket/SQLite flow, standalone and linked checkouts, dirty/moved refresh, restart, non-repository rejection, and fake Git failures |
-| Black-box acceptance | M3 scenario via check script | passed | Public CLI registers four locations, proves content digest unchanged, refreshes state, restarts, and restores the same checkout list |
-| Earlier milestones | M0–M2 scenarios via check script | passed | `M0 acceptance: PASS` through `M2 acceptance: PASS` |
+| Black-box acceptance | Projects and checkouts scenario via check script | passed | Public CLI registers four locations, proves content digest unchanged, refreshes state, restarts, and restores the same checkout list |
+| Earlier milestones | Build, daemon, and persistence scenarios via check script | passed | All three capability-named acceptance messages were observed |
 | Clean module cache | `GOMODCACHE=<empty> GOPROXY=off go test -count=1 ./...` | passed | Vendored build and test require no downloaded module |
 | CGO independence | `CGO_ENABLED=0 GOPROXY=off go test -count=1 ./...` | passed | M3 retains the portable SQLite/build boundary |
 | Repetition | `go test -count=10 ./internal/gitstate ./internal/store ./internal/daemon` | passed | Observer, persistence, transport, and restart paths passed repeatedly |
-| Scenario repetition | Five consecutive M3 scenario runs | passed | No lifecycle, Git observation, persistence, or cleanup flake |
+| Scenario repetition | Five consecutive projects/checkouts scenario runs | passed | No lifecycle, Git observation, persistence, or cleanup flake |
 | Live conformance | N/A | M3 invokes local fixture Git only | No model, runtime, credential, remote, or paid call |
 
 ## Failure proof

@@ -240,10 +240,13 @@ done before any process is launched?
 **Visible result**
 
 ```sh
-crewfold agent create implementer --role implementer --provider fake
-crewfold task create --project demo --title "Add greeting"
-crewfold task assign TASK_ID implementer
-crewfold status
+crewfold agent create implementer --workspace personal --role implementer \
+  --provider fake --socket /path/to/crewfold.sock
+crewfold task create --workspace personal --project demo --title "Add greeting" \
+  --socket /path/to/crewfold.sock
+crewfold task assign TASK_ID implementer --workspace personal \
+  --lease-seconds 3600 --expected-revision 1 --socket /path/to/crewfold.sock
+crewfold status --workspace personal --socket /path/to/crewfold.sock
 ```
 
 **Deliverables**

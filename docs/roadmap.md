@@ -7,13 +7,15 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M3 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M4 are complete**. Evidence is recorded in the [M0
 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
-review](reviews/projects-checkouts.md). M3's implementation commits are
-`2be19905ccd003b045b3af20a452177ac2d5f127` and
-`76f7dcef6464917eacec5921cc4d0368a2e66cf1`. M4 is next and has not started.
+review](reviews/projects-checkouts.md). [M4 evidence](reviews/durable-coordination.md)
+covers durable coordination. Its implementation commits are
+`7973bded9f99e965bc01a662b6b4d532e679d2c3` and
+`dbce60007de652d09862a8f673886702ba9860bc`, with assignment-policy coverage in
+`c821ab12cc649d7807a504ee615e61796591178e`. M5 is next and has not started.
 
 ## Sequence
 
@@ -23,7 +25,7 @@ review](reviews/projects-checkouts.md). M3's implementation commits are
 | M1 ✓ | Daemon/API spine | Start, query, diagnose, and cleanly stop a local daemon | M0 |
 | M2 ✓ | Persistent workspace | Commit an event, restart, restore, and inspect the same workspace | M1 |
 | M3 ✓ | Projects/checkouts | Register and observe a disposable Git repository without mutating it | M2 |
-| M4 | Agents/tasks | Define durable roles, tasks, dependencies, leases, and readiness | M3 |
+| M4 ✓ | Agents/tasks | Define durable roles, tasks, dependencies, leases, and readiness | M3 |
 | M5 | Fake-agent loop | Assign, launch, progress, block, complete, and hand off one task | M4 |
 | M6 | Direct runtime | Run and recover a real fixture subprocess with bounded output | M5 |
 | M7 | MCP/briefing | Let a run read scoped context and report through authenticated MCP | M6 |
@@ -170,19 +172,20 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M4 is the next approved implementation target:
+M5 is the next approved implementation target:
 
-1. add durable agent definitions, objectives, tasks, dependencies, assignments,
-   leases, and budgets through the next forward-only migration;
-2. define and test task state transitions, optimistic revisions, dependency-cycle
-   rejection, and deterministic readiness explanations;
-3. expose create/list/show/update/assign operations through the local API and CLI;
-4. expire a fixture assignment with a controlled clock without deleting history;
-5. prove restart persistence and a two-writer revision conflict.
+1. define runtime-driver and provider-adapter interfaces without embedding a
+   real provider in the domain layer;
+2. add a deterministic fake runtime/provider driven by checked-in scenarios;
+3. persist run intent, placement, progress, blockage, completion proposal,
+   acceptance, and handoff state;
+4. prove recovery at every run state without duplicate process launches;
+5. exercise success, blocked, start-failure, and rejected-completion paths through
+   the public CLI/API.
 
-M4 must describe work and ownership without launching an agent or provider
-process. Runtime execution, messaging, Herdr, provider SDKs, MCP, claims,
-supervision, and automatic source mutation remain out of scope. M0 through M3
-acceptance scenarios remain required gates.
+M5 must reuse the durable agent/task/lease records just completed. It may launch
+only the deterministic fixture runtime in the default gate. Real Codex, Claude
+Code, Herdr, MCP, messaging, claims, supervision, and automatic source mutation
+remain out of scope. Every completed capability scenario remains a required gate.
 
 No upstream repository should be created until the owner explicitly requests it.
