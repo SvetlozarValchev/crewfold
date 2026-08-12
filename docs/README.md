@@ -44,6 +44,7 @@ explicitly rather than silently treating either as authoritative.
 - [Run-scoped MCP milestone review](reviews/scoped-mcp.md)
 - [Durable two-agent messaging milestone review](reviews/agent-messaging.md)
 - [Herdr runtime milestone review](reviews/herdr-runtime.md)
+- [Codex canary implementation audit](reviews/codex-canary.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 

@@ -496,7 +496,8 @@ the milestone exit gate remains pending until an operator explicitly opts into t
 checked-in real-model canary. The adapter uses stable `codex exec --json`, a
 required run-scoped STDIO MCP bridge, ephemeral provider history, and the existing
 Herdr/direct runtime contracts. No user Codex configuration is modified and no
-model call occurs in the default gate.
+model call occurs in the default gate. See the
+[pending implementation audit](reviews/codex-canary.md).
 
 **Question answered:** Can one real Codex session execute the already-proven MCP
 work loop in a disposable repository?

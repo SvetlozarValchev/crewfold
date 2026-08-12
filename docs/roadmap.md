@@ -32,7 +32,9 @@ implementation commits are
 run-scoped STDIO MCP bridge, recorded endpoint, and disposable live canary are
 implemented and pass the complete offline gate. M10 remains open only because the
 real-model canary requires explicit network/provider-usage consent and has not
-been run in this implementation turn.
+been run in this implementation turn. The implementation commit is
+`d8f6aac5060eb31e380c95c9d01c8aa2dddadd49`; the
+[audit](reviews/codex-canary.md) remains pending on that one live result.
 
 ## Sequence
 
