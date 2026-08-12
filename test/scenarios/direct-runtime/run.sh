@@ -158,6 +158,19 @@ then
   exit 1
 fi
 
+review_task=$(create_assigned_task "Direct completion needs review" changes-requested)
+"$binary" run start "$review_task" --workspace personal --runtime direct --provider fixture --scenario "$repo_root/test/fixtures/execution/changes-requested.json" --expected-task-revision 2 --socket "$socket_path" --idempotency-key run-direct-changes-requested --output json >"$scenario_root/run-changes-requested.json"
+review_run=$(extract_id run "$scenario_root/run-changes-requested.json")
+"$binary" run watch "$review_run" --workspace personal --wait-seconds 8 --socket "$socket_path" --output json >"$scenario_root/changes-requested-final.json"
+grep -Fq '"status":"review"' "$scenario_root/changes-requested-final.json"
+grep -Fq '"status":"changes_requested"' "$scenario_root/changes-requested-final.json"
+grep -Fq 'missing security_reviewed' "$scenario_root/changes-requested-final.json"
+if grep -Fq '"handoff"' "$scenario_root/changes-requested-final.json"
+then
+  printf 'insufficient direct evidence unexpectedly created an accepted handoff\n' >&2
+  exit 1
+fi
+
 if "$binary" run start "$completion_task" --workspace personal --runtime direct --provider fixture --scenario "$repo_root/test/fixtures/direct-runtime/completion.json" --working-directory "$fixture_root/world-engine-2" --expected-task-revision 2 --socket "$socket_path" >/dev/null 2>&1
 then
   printf 'run start unexpectedly accepted a caller-supplied working directory\n' >&2

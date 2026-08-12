@@ -8,6 +8,7 @@ It demonstrates:
 
 - launch in the assigned checkout with an allowlisted environment;
 - normalized progress, blockage/resume, accepted completion, and durable handoffs;
+- rejection of a completion report whose evidence does not satisfy acceptance;
 - bounded stdout/stderr with explicit omitted-byte counts;
 - start failure, non-zero exit, timeout, graceful-stop fallback, and retained
   diagnostics;
