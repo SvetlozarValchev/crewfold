@@ -7,7 +7,7 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M12 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M13 are complete**. Evidence is recorded in the [M0
 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -41,6 +41,11 @@ M12's [claims and overlap review](reviews/claims-overlap.md) covers leased decla
 scope, exact path-glob intersection witnesses, deterministic policy response,
 restart-aware Git drift, and separate checkout attribution. Its implementation
 commit is `f756d7c427a82f3661997ccacdbe94ab1d085b36`.
+M13's [structured meeting review](reviews/structured-meetings.md) covers frozen
+inputs, restart-safe independent positions, owner/reviewer/bounded-manager
+authority, typed consolidation actions, human takeover, and the pinned `sqlc`
+persistence boundary. Its implementation commit is
+`432e6e02a85c4793ec26f08bfcfc7783a587d04d`.
 
 ## Sequence
 
@@ -59,7 +64,7 @@ commit is `f756d7c427a82f3661997ccacdbe94ab1d085b36`.
 | M10 ✓ | Codex canary | Complete the scoped MCP loop with a real disposable Codex session | M9 |
 | M11 ✓ | Claude portability | Complete the same recorded loop with Claude and switch providers via handoff | M10 |
 | M12 ✓ | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
-| M13 | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
+| M13 ✓ | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
 | M14 | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
 | M15 | Curator/retrieval | Find, reconcile, and refresh relevant knowledge deterministically | M14 |
 | M16 | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
@@ -205,13 +210,13 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M13 is next: turn an open overlap into a bounded two- or three-agent meeting with
-frozen inputs, durable contributions, an explainable proposal, and an authorized
-task/claim mutation. A missing participant or facilitator restart must remain
-visible and resumable without recollecting completed rounds.
+M14 is next: preserve explicitly proposed and accepted decisions/findings as
+canonical, provenance-linked knowledge and deliver them to replacement agents
+without copying transcripts. Meeting resolutions provide the first decision
+source, but retrieval cannot make content authoritative.
 
-Native provider resume, active-turn steering, app-server ownership, canonical
-knowledge, remote users, and automatic source integration remain outside M13.
-Every completed capability scenario remains required.
+Native provider resume, active-turn steering, app-server ownership, remote users,
+and automatic source integration remain outside M14. Every completed capability
+scenario remains required.
 
 No upstream repository should be created until the owner explicitly requests it.
