@@ -39,7 +39,8 @@ commit is `31c8fad1790b738e86516b119c6594293b9c99ba`; the installed-Claude canar
 retained as optional release/upgrade conformance.
 M12's [claims and overlap review](reviews/claims-overlap.md) covers leased declared
 scope, exact path-glob intersection witnesses, deterministic policy response,
-restart-aware Git drift, and separate checkout attribution.
+restart-aware Git drift, and separate checkout attribution. Its implementation
+commit is `f756d7c427a82f3661997ccacdbe94ab1d085b36`.
 
 ## Sequence
 
