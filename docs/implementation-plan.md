@@ -446,6 +446,11 @@ tools. This is the first genuinely multi-agent Crewfold release.
 
 ### M9 — Herdr runtime driver with fixture agent
 
+**Status:** complete on 2026-08-12. The implementation uses Herdr's documented
+CLI/schema surface with a stable-terminal runtime handle, a provider-free pane
+supervisor, deterministic recorded endpoint coverage, and an opt-in isolated live
+session. See [the milestone review](reviews/herdr-runtime.md).
+
 **Question answered:** Can Crewfold place and supervise an interactive run in Herdr
 without provider-specific behavior confusing the result?
 

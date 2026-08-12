@@ -7,7 +7,7 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M8 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M9 are complete**. Evidence is recorded in the [M0
 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -16,7 +16,10 @@ covers durable coordination. [M5 evidence](reviews/deterministic-execution.md)
 captures deterministic run execution, and [M6 evidence](reviews/direct-runtime.md)
 captures supervised direct execution. [M7 evidence](reviews/scoped-mcp.md)
 captures run-scoped MCP and immutable briefing. [M8 evidence](reviews/agent-messaging.md)
-captures offline-safe durable agent mail and request/reply coordination. The M8
+captures offline-safe durable agent mail and request/reply coordination. [M9
+evidence](reviews/herdr-runtime.md) captures the provider-free Herdr fixture
+runtime, stable terminal identity, interactive controls, and schema gate. The M9
+implementation commit is `c2ce4b6d9783aaa4a09269469e6f3607916a993d`. The M8
 implementation commit is `bc6235d76ee45d98a94c8e01b024c69b9eb2299f`. The M7 implementation commit is
 `99e9791d39e2c0b3e36333f366a4fd84bcbaf6ef`. The M6 implementation commits are
 `2c4043dd86bc1c22938184b3a65835b9754f7db0` and
@@ -25,7 +28,7 @@ implementation commit is `bc6235d76ee45d98a94c8e01b024c69b9eb2299f`. The M7 impl
 implementation commits are
 `7973bded9f99e965bc01a662b6b4d532e679d2c3` and
 `dbce60007de652d09862a8f673886702ba9860bc`, with assignment-policy coverage in
-`c821ab12cc649d7807a504ee615e61796591178e`. M9 is next and has not started.
+`c821ab12cc649d7807a504ee615e61796591178e`. M10 is next and has not started.
 
 ## Sequence
 
@@ -40,7 +43,7 @@ implementation commits are
 | M6 ✓ | Direct runtime | Run and recover a real fixture subprocess with bounded output | M5 |
 | M7 ✓ | MCP/briefing | Let a run read scoped context and report through authenticated MCP | M6 |
 | M8 ✓ | Agent messaging | Exchange and acknowledge durable mail while one agent is offline | M7 |
-| M9 | Herdr runtime | Run the fixture agent in Herdr and reconcile terminal lifecycle | M8 |
+| M9 ✓ | Herdr runtime | Run the fixture agent in Herdr and reconcile terminal lifecycle | M8 |
 | M10 | Codex canary | Complete the proven task/MCP loop with one real Codex session | M9 |
 | M11 | Claude canary | Complete the same loop with Claude and switch providers via handoff | M10 |
 | M12 | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
