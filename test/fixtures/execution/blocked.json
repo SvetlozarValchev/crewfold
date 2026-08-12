@@ -1,0 +1,25 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "blocked-then-complete",
+  "acceptance": {
+    "required_evidence": ["tests_passed"]
+  },
+  "steps": [
+    {
+      "kind": "blocked",
+      "message": "Which compatibility behavior should be preserved?",
+      "evidence": ["ambiguity_found"]
+    },
+    {
+      "kind": "progress",
+      "message": "owner direction applied",
+      "evidence": ["direction_received"]
+    },
+    {
+      "kind": "completion",
+      "message": "compatibility behavior implemented",
+      "evidence": ["tests_passed"],
+      "handoff": "Review the compatibility behavior selected by the owner."
+    }
+  ]
+}

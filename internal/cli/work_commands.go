@@ -332,6 +332,8 @@ func (a *App) runTask(ctx context.Context, mode outputMode, args []string) int {
 		return a.runTaskDepend(ctx, mode, args[1:])
 	case "assign":
 		return a.runTaskAssign(ctx, mode, args[1:])
+	case "timeline":
+		return a.runTaskTimeline(ctx, mode, args[1:])
 	case "start", "block", "unblock", "cancel":
 		return a.runTaskTransition(ctx, mode, args[0], args[1:])
 	default:
@@ -549,6 +551,36 @@ func (a *App) runTaskTransition(ctx context.Context, mode outputMode, action str
 	return a.writeTaskMutation(mode, result)
 }
 
+func (a *App) runTaskTimeline(ctx context.Context, mode outputMode, args []string) int {
+	task, optionArgs, failure := requiredLeadingArgument(args, "task ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).TaskTimeline(ctx, workspace, task)
+	if err != nil {
+		return a.writeClientFailure(mode, "show task timeline", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write task timeline", err))
+		}
+	} else {
+		fmt.Fprintf(a.stdout, "task: %s\nruns: %d\n", result.Timeline.Task.ID, len(result.Timeline.Runs))
+		for _, entry := range result.Timeline.Entries {
+			fmt.Fprintf(a.stdout, "%d\t%s\t%s\t%s\n", entry.Sequence, entry.RunID, entry.Kind, entry.Message)
+		}
+	}
+	return ExitOK
+}
+
 func (a *App) writeAgentMutation(mode outputMode, result localapi.AgentMutationResult) int {
 	if mode == outputJSON {
 		if err := writeJSON(a.stdout, result); err != nil {
@@ -722,6 +754,7 @@ const taskHelp = `Usage:
   crewfold task start|block|unblock|cancel <id> --workspace <scope> --expected-revision <n> --socket <path>
   crewfold task show <id> --workspace <scope> --socket <path>
   crewfold task list --workspace <scope> [--project <project>] [--ready true] --socket <path>
+  crewfold task timeline <id> --workspace <scope> --socket <path>
 
 Every mutation uses an expected revision and an optional stable idempotency key.
 Starting a task changes coordination state only; this command launches no process.

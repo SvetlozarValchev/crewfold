@@ -39,6 +39,11 @@ const (
 	MethodTaskDepend         = "task.dependency.add"
 	MethodTaskAssign         = "task.assign"
 	MethodTaskTransition     = "task.transition"
+	MethodTaskTimeline       = "task.timeline"
+	MethodRunStart           = "run.start"
+	MethodRunShow            = "run.show"
+	MethodRunList            = "run.list"
+	MethodRunResume          = "run.resume"
 	MethodCoordinationStatus = "coordination.status"
 	MethodEventsList         = "events.list"
 
@@ -60,6 +65,10 @@ const (
 	TaskMutationSchema       = "urn:crewfold:schema:local-api:task-mutation-result:v1"
 	TaskShowSchema           = "urn:crewfold:schema:local-api:task-show-result:v1"
 	TaskListSchema           = "urn:crewfold:schema:local-api:task-list-result:v1"
+	TaskTimelineSchema       = "urn:crewfold:schema:local-api:task-timeline-result:v1"
+	RunMutationSchema        = "urn:crewfold:schema:local-api:run-mutation-result:v1"
+	RunShowSchema            = "urn:crewfold:schema:local-api:run-show-result:v1"
+	RunListSchema            = "urn:crewfold:schema:local-api:run-list-result:v1"
 	CoordinationStatusSchema = "urn:crewfold:schema:local-api:coordination-status-result:v1"
 	EventsListSchema         = "urn:crewfold:schema:local-api:events-list-result:v1"
 )
@@ -379,6 +388,61 @@ type TaskListResult struct {
 	Schema string              `json:"schema"`
 	Type   string              `json:"type"`
 	Tasks  []domain.TaskDetail `json:"tasks"`
+}
+
+type TaskTimelineParams struct {
+	Workspace string `json:"workspace"`
+	Task      string `json:"task"`
+}
+
+type TaskTimelineResult struct {
+	Schema   string              `json:"schema"`
+	Type     string              `json:"type"`
+	Timeline domain.TaskTimeline `json:"timeline"`
+}
+
+type RunStartParams struct {
+	Workspace            string              `json:"workspace"`
+	Task                 string              `json:"task"`
+	Checkout             string              `json:"checkout,omitempty"`
+	Runtime              string              `json:"runtime"`
+	Provider             string              `json:"provider"`
+	Scenario             domain.FakeScenario `json:"scenario"`
+	ExpectedTaskRevision int64               `json:"expected_task_revision"`
+	IdempotencyKey       string              `json:"idempotency_key"`
+}
+
+type RunQueryParams struct {
+	Workspace string `json:"workspace"`
+	Run       string `json:"run,omitempty"`
+	Task      string `json:"task,omitempty"`
+	Status    string `json:"status,omitempty"`
+}
+
+type RunResumeParams struct {
+	Workspace        string `json:"workspace"`
+	Run              string `json:"run"`
+	ExpectedRevision int64  `json:"expected_revision"`
+	IdempotencyKey   string `json:"idempotency_key"`
+}
+
+type RunMutationResult struct {
+	Schema        string           `json:"schema"`
+	Type          string           `json:"type"`
+	Detail        domain.RunDetail `json:"detail"`
+	EventSequence int64            `json:"event_sequence"`
+}
+
+type RunShowResult struct {
+	Schema string           `json:"schema"`
+	Type   string           `json:"type"`
+	Detail domain.RunDetail `json:"detail"`
+}
+
+type RunListResult struct {
+	Schema string             `json:"schema"`
+	Type   string             `json:"type"`
+	Runs   []domain.RunDetail `json:"runs"`
 }
 
 type CoordinationStatusParams struct {

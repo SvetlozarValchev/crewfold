@@ -15,6 +15,7 @@ Published schemas currently cover version/self-doctor/error responses; the
 newline-delimited local request/response envelope; daemon and database status;
 durable workspace/event records; project, repository, and checkout observation;
 and provider-neutral agent, objective, task, dependency, assignment, readiness,
-budget, and coordination-status records. Later schemas remain proposals. See the
+budget, run, placement, timeline, handoff, fake-scenario, and coordination-status
+records. Later schemas remain proposals. See the
 [event catalogue](../docs/reference/events.md) and [MCP tool
 contract](../docs/reference/mcp-tools.md).

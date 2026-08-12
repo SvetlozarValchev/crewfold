@@ -68,6 +68,11 @@ type daemonClient interface {
 	TaskDepend(context.Context, localapi.TaskDependencyParams) (localapi.TaskMutationResult, error)
 	TaskAssign(context.Context, localapi.TaskAssignParams) (localapi.TaskMutationResult, error)
 	TaskTransition(context.Context, localapi.TaskTransitionParams) (localapi.TaskMutationResult, error)
+	TaskTimeline(context.Context, string, string) (localapi.TaskTimelineResult, error)
+	RunStart(context.Context, localapi.RunStartParams) (localapi.RunMutationResult, error)
+	RunShow(context.Context, string, string) (localapi.RunShowResult, error)
+	RunList(context.Context, string, string, string) (localapi.RunListResult, error)
+	RunResume(context.Context, localapi.RunResumeParams) (localapi.RunMutationResult, error)
 	CoordinationStatus(context.Context, string) (localapi.CoordinationStatusResult, error)
 	EventsList(context.Context, int64, int) (localapi.EventsListResult, error)
 }
@@ -126,6 +131,8 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runObjective(ctx, mode, args[1:])
 	case "task":
 		return a.runTask(ctx, mode, args[1:])
+	case "run":
+		return a.runRun(ctx, mode, args[1:])
 	case "events":
 		return a.runEvents(ctx, mode, args[1:])
 	default:
@@ -668,6 +675,8 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, objectiveHelp)
 	case "task":
 		fmt.Fprint(a.stdout, taskHelp)
+	case "run":
+		fmt.Fprint(a.stdout, runHelp)
 	case "events":
 		fmt.Fprint(a.stdout, eventsHelp)
 	case "help":
@@ -1133,6 +1142,7 @@ Commands:
   agent          Define provider-neutral agents and roles
   objective      Define project objectives and budgets
   task           Coordinate dependency-aware, leased work
+  run            Launch and inspect provider-neutral execution
   events         Inspect the durable event journal
   help [command] Show command help
 
@@ -1140,8 +1150,8 @@ Global options:
   --output text|json  Select human or machine-readable output
   -h, --help          Show help
 
-This build coordinates provider-neutral agents, objectives, tasks,
-dependencies, and leases. It does not launch agents or mutate source repositories.
+This build coordinates provider-neutral agents, objectives, tasks, dependencies,
+leases, and deterministic fake runs. It does not mutate source repositories.
 `
 
 const versionHelp = `Usage:

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "title": "Crewfold deterministic fake run scenario v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "name", "acceptance", "steps"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:fixture:fake-run-scenario:v1"},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "start_failure": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_evidence"],
+      "properties": {
+        "required_evidence": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 128}}
+      }
+    },
+    "steps": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind"],
+        "properties": {
+          "kind": {"enum": ["progress", "blocked", "completion"]},
+          "message": {"type": "string", "maxLength": 1024},
+          "evidence": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+          "handoff": {"type": "string", "maxLength": 4096},
+          "wait_for_resume": {"type": "boolean"}
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {"required": ["start_failure"], "properties": {"steps": {"maxItems": 0}}},
+    {"not": {"required": ["start_failure"]}, "properties": {"steps": {"minItems": 1}}}
+  ]
+}

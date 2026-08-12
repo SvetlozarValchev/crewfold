@@ -187,6 +187,21 @@ approval.expired
 ## Runtime and integration
 
 ```text
+run.requested
+run.starting
+run.started
+run.progress_reported
+run.blocked
+run.resumed
+run.completion_proposed
+run.completed
+run.start_failed
+run.failed
+task.completion_proposed
+task.changes_requested
+task.handoff_recorded
+task.completed
+task.failed
 runtime.probed
 runtime.surface_created
 runtime.surface_reconciled

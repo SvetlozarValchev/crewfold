@@ -100,27 +100,34 @@ the capabilities that consume them. Provider/runtime values remain opaque data.
 
 ### Run
 
-One concrete attempt to execute work using an agent definition. It binds:
+One concrete attempt to execute work using an agent definition. The implemented
+run binds:
 
 - an agent definition and provider adapter;
 - a runtime driver and runtime handle;
-- zero or one primary task;
-- a checkout and context-packet revision;
-- cost/time/resource budgets;
-- timestamps, heartbeats, result, and termination reason;
-- a provider resume handle when supported.
+- one primary assigned task;
+- one eligible checkout, whether it is a standalone clone or linked worktree;
+- opaque runtime/provider names and handles;
+- an explainable placement decision;
+- a persisted fake-scenario cursor, timestamps, result, and failure diagnosis;
+- normalized progress, blockage, completion evidence, and an accepted handoff.
 
 Run state:
 
 ```text
-requested -> starting -> active -> settling -> completed
-                      \-> blocked
-                      \-> failed
-                      \-> stopping -> stopped
+requested -> starting -> active -> completed
+                         |   |----> blocked -> active
+                         |   |----> review
+                         |   \----> failed
+                         \--------> start_failed
 ```
 
-`blocked` is resumable and not a terminal result. Runtime-observed state and
-Crewfold run state are related but not identical.
+`blocked` and an explicit active checkpoint are resumable. `review` means the
+provider proposed completion but required acceptance evidence was missing; the
+task becomes `changes_requested` and retains its assignment. Runtime-observed
+state and Crewfold run state are related but not identical. Real provider resume
+handles, heartbeats, usage, budgets, settling/stopping, and context packets remain
+planned.
 
 ### Objective
 
@@ -147,11 +154,12 @@ A schedulable unit of work with:
 Task state:
 
 ```text
-draft -> ready -> assigned -> active -> review -> completed
+ready -> assigned -> active -> review -> completed
                     |          |          |
                     +-------> blocked <---+
+                               \-> changes_requested
                     +-------> cancelled
-                    +-------> failed -> ready (explicit retry)
+                    +-------> failed
 ```
 
 A run ending does not automatically complete its task. Completion is a domain

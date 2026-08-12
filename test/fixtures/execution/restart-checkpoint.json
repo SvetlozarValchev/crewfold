@@ -1,0 +1,21 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "restart-checkpoint",
+  "acceptance": {
+    "required_evidence": ["restart_verified"]
+  },
+  "steps": [
+    {
+      "kind": "progress",
+      "message": "checkpoint persisted before restart",
+      "evidence": ["checkpoint_written"],
+      "wait_for_resume": true
+    },
+    {
+      "kind": "completion",
+      "message": "execution resumed after restart",
+      "evidence": ["restart_verified"],
+      "handoff": "The durable run resumed from its persisted cursor."
+    }
+  ]
+}

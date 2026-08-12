@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:run-query-params:v1",
+  "title": "Crewfold local API run query parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "run": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
+    "task": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "status": {"enum": ["requested", "starting", "active", "blocked", "review", "completed", "start_failed", "failed"]}
+  }
+}

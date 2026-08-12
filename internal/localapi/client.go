@@ -300,6 +300,48 @@ func (c *Client) TaskTransition(ctx context.Context, paramsValue TaskTransitionP
 	return result, nil
 }
 
+func (c *Client) TaskTimeline(ctx context.Context, workspace, task string) (TaskTimelineResult, error) {
+	var result TaskTimelineResult
+	if err := c.callParams(ctx, MethodTaskTimeline, TaskTimelineParams{Workspace: workspace, Task: task}, &result); err != nil {
+		return TaskTimelineResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) RunStart(ctx context.Context, paramsValue RunStartParams) (RunMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result RunMutationResult
+	if err := c.callParams(ctx, MethodRunStart, paramsValue, &result); err != nil {
+		return RunMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) RunShow(ctx context.Context, workspace, run string) (RunShowResult, error) {
+	var result RunShowResult
+	if err := c.callParams(ctx, MethodRunShow, RunQueryParams{Workspace: workspace, Run: run}, &result); err != nil {
+		return RunShowResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) RunList(ctx context.Context, workspace, task, status string) (RunListResult, error) {
+	var result RunListResult
+	if err := c.callParams(ctx, MethodRunList, RunQueryParams{Workspace: workspace, Task: task, Status: status}, &result); err != nil {
+		return RunListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) RunResume(ctx context.Context, paramsValue RunResumeParams) (RunMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result RunMutationResult
+	if err := c.callParams(ctx, MethodRunResume, paramsValue, &result); err != nil {
+		return RunMutationResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) CoordinationStatus(ctx context.Context, workspace string) (CoordinationStatusResult, error) {
 	var result CoordinationStatusResult
 	if err := c.callParams(ctx, MethodCoordinationStatus, CoordinationStatusParams{Workspace: workspace}, &result); err != nil {

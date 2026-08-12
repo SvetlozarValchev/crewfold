@@ -137,7 +137,7 @@ test/
 ├─ scenarios/
 │  ├─ daemon-api-spine/
 │  ├─ persistent-workspace/
-│  ├─ m05-fake-agent-loop/
+│  ├─ deterministic-execution/
 │  └─ ...
 └─ live/
    ├─ herdr/

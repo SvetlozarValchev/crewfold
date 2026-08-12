@@ -16,10 +16,11 @@ than forcing the core to understand every terminal UI.
 Crewfold is in its implementation-bootstrap phase. The current binary provides a
 foreground local daemon, an owner-only Unix socket, and durable workspace,
 project, repository, checkout, agent, objective, task, dependency, assignment,
-lease, budget, and event records in SQLite. It can model and inspect coordinated
-work across adjacent standalone clones and linked worktrees without mutating
-source or launching an agent. Runtime execution, messaging, claims, knowledge,
-and the operator TUI are still to come.
+lease, budget, run, placement, timeline, handoff, and event records in SQLite. It
+can execute the complete task-to-run-to-handoff lifecycle with deterministic fake
+runtime/provider adapters across adjacent standalone clones and linked worktrees.
+Real subprocesses and model sessions, messaging, claims, knowledge, and the
+operator TUI are still to come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.
@@ -50,7 +51,8 @@ The first useful version is intentionally personal:
 2. Projects point at existing repositories and checkouts.
 3. Durable agent definitions describe roles such as implementer, reviewer,
    researcher, context curator, and CI watcher.
-4. Runs bind those definitions to real provider sessions.
+4. Runs bind those definitions to provider sessions through independent runtime
+   and provider adapters.
 5. Tasks, claims, messages, meetings, decisions, and knowledge survive session
    restarts.
 6. A supervisor detects blocked work and overlaps, then recommends or performs a

@@ -20,6 +20,7 @@ import (
 
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/domain"
+	"crewfold/internal/execution"
 	"crewfold/internal/gitstate"
 	"crewfold/internal/localapi"
 	"crewfold/internal/store"
@@ -31,12 +32,16 @@ const (
 )
 
 type Config struct {
-	DataDir      string
-	SocketPath   string
-	Version      buildinfo.Info
-	Logger       *slog.Logger
-	StoreOptions store.Options
-	GitInspector gitstate.Inspector
+	DataDir          string
+	SocketPath       string
+	Version          buildinfo.Info
+	Logger           *slog.Logger
+	StoreOptions     store.Options
+	GitInspector     gitstate.Inspector
+	RuntimeDrivers   map[string]execution.RuntimeDriver
+	ProviderAdapters map[string]execution.ProviderAdapter
+	RunWorkerHook    func(string, domain.Run) error
+	DisableRunWorker bool
 }
 
 type server struct {
@@ -51,8 +56,11 @@ type server struct {
 	connectionsMu  sync.Mutex
 	connections    map[net.Conn]struct{}
 	handlers       sync.WaitGroup
+	workers        sync.WaitGroup
 	store          *store.Store
 	gitInspector   gitstate.Inspector
+	runtimes       map[string]execution.RuntimeDriver
+	providers      map[string]execution.ProviderAdapter
 }
 
 // Run owns the daemon lifecycle until the context is cancelled or system.stop is
@@ -107,8 +115,11 @@ func Run(ctx context.Context, config Config) error {
 		connections:  make(map[net.Conn]struct{}),
 		store:        storage,
 		gitInspector: resolved.GitInspector,
+		runtimes:     resolved.RuntimeDrivers,
+		providers:    resolved.ProviderAdapters,
 	}
 	defer instance.cleanupSocket()
+	instance.startRunWorker()
 
 	resolved.Logger.Info("daemon started",
 		"component", "daemon",
@@ -155,6 +166,24 @@ func resolveConfig(config Config) (Config, error) {
 	}
 	if config.GitInspector == nil {
 		config.GitInspector = gitstate.NewInspector()
+	}
+	if config.RuntimeDrivers == nil {
+		fakeRuntime := execution.NewFakeRuntime()
+		config.RuntimeDrivers = map[string]execution.RuntimeDriver{fakeRuntime.Name(): fakeRuntime}
+	}
+	if config.ProviderAdapters == nil {
+		fakeProvider := execution.FakeProvider{}
+		config.ProviderAdapters = map[string]execution.ProviderAdapter{fakeProvider.Name(): fakeProvider}
+	}
+	for name, driver := range config.RuntimeDrivers {
+		if driver == nil || strings.TrimSpace(name) == "" || name != driver.Name() {
+			return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "runtime driver registry contains an invalid entry"}
+		}
+	}
+	for name, adapter := range config.ProviderAdapters {
+		if adapter == nil || strings.TrimSpace(name) == "" || name != adapter.Name() {
+			return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "provider adapter registry contains an invalid entry"}
+		}
 	}
 
 	config.DataDir = dataDir
@@ -235,6 +264,7 @@ func (s *server) serve(ctx context.Context) error {
 			s.requestStop("accept failed")
 			s.closeConnections()
 			s.handlers.Wait()
+			s.workers.Wait()
 			return fmt.Errorf("accept local API connection: %w", err)
 		}
 
@@ -245,6 +275,7 @@ func (s *server) serve(ctx context.Context) error {
 
 	s.closeConnections()
 	s.handlers.Wait()
+	s.workers.Wait()
 	return nil
 }
 
@@ -394,6 +425,16 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleTaskAssign(request), false
 	case localapi.MethodTaskTransition:
 		return s.handleTaskTransition(request), false
+	case localapi.MethodTaskTimeline:
+		return s.handleTaskTimeline(request), false
+	case localapi.MethodRunStart:
+		return s.handleRunStart(request), false
+	case localapi.MethodRunShow:
+		return s.handleRunShow(request), false
+	case localapi.MethodRunList:
+		return s.handleRunList(request), false
+	case localapi.MethodRunResume:
+		return s.handleRunResume(request), false
 	case localapi.MethodCoordinationStatus:
 		return s.handleCoordinationStatus(request), false
 	case localapi.MethodEventsList:

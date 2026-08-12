@@ -21,6 +21,10 @@ func TestCoordinationResultSchemaConstantsMatchPublishedDocuments(t *testing.T) 
 		"schemas/local/v1/task-mutation.result.schema.json":       localapi.TaskMutationSchema,
 		"schemas/local/v1/task-show.result.schema.json":           localapi.TaskShowSchema,
 		"schemas/local/v1/task-list.result.schema.json":           localapi.TaskListSchema,
+		"schemas/local/v1/task-timeline.result.schema.json":       localapi.TaskTimelineSchema,
+		"schemas/local/v1/run-mutation.result.schema.json":        localapi.RunMutationSchema,
+		"schemas/local/v1/run-show.result.schema.json":            localapi.RunShowSchema,
+		"schemas/local/v1/run-list.result.schema.json":            localapi.RunListSchema,
 		"schemas/local/v1/coordination-status.result.schema.json": localapi.CoordinationStatusSchema,
 	} {
 		data, err := os.ReadFile(path)
@@ -58,6 +62,11 @@ func TestCoordinationMethodNamesRemainProviderNeutral(t *testing.T) {
 		localapi.MethodTaskDepend,
 		localapi.MethodTaskAssign,
 		localapi.MethodTaskTransition,
+		localapi.MethodTaskTimeline,
+		localapi.MethodRunStart,
+		localapi.MethodRunShow,
+		localapi.MethodRunList,
+		localapi.MethodRunResume,
 		localapi.MethodCoordinationStatus,
 	}
 	for _, method := range methods {

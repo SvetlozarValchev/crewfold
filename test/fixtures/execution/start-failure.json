@@ -1,0 +1,9 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "runtime-start-failure",
+  "start_failure": "fixture runtime refused to start",
+  "acceptance": {
+    "required_evidence": []
+  },
+  "steps": []
+}

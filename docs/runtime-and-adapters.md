@@ -33,6 +33,36 @@ Examples: Codex, Claude Code, OpenCode, generic terminal agent.
 Any compatible provider adapter should be usable on any runtime driver that
 satisfies its capabilities.
 
+## Implemented deterministic contract
+
+The first executable contract deliberately keeps the two axes separate:
+
+```text
+RuntimeDriver:
+  Name
+  Launch(operation_id, placement, launch_spec) -> runtime_binding
+  Reconcile(operation_id, stored_handle) -> runtime_binding
+
+ProviderAdapter:
+  Name
+  Prepare(run, scenario) -> launch_spec
+  Bind(run, runtime_binding) -> provider_binding
+  Next(run, scenario) -> normalized observation
+```
+
+`Launch` is idempotent for a stable operation ID. The fake runtime records one
+binding per run ID and returns it on replay. The fake provider validates a bounded
+scenario, binds independently of runtime placement, and emits only normalized
+progress, blocked, or completion observations. Acceptance is a Crewfold domain
+decision over evidence; neither adapter can directly complete a task.
+
+The daemon owns a durable SQLite work queue. It commits run intent and explainable
+placement before invoking an adapter, persists an observation cursor after every
+accepted report, and can resume a requested, starting, blocked, or checkpointed
+active run after restart. Runtime/provider registries are injected by name, so a
+future direct or Herdr runtime does not require provider-specific branches in the
+core.
+
 ## Herdr as the preferred interactive runtime
 
 Herdr already provides the terminal concerns Crewfold should not rebuild:
@@ -126,7 +156,10 @@ stop(process_handle, grace_policy)
 reconcile(stored_handle) -> current state
 ```
 
-These are domain contracts, not final language interfaces.
+The wider operations above are the target contract. The smaller implemented
+interface proves launch, binding, normalization, acceptance, and reconciliation;
+probe, delivery, attach, interrupt, stop, checkpoint, and usage arrive with the
+capabilities that exercise them.
 
 ## Lifecycle authority
 

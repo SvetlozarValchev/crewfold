@@ -45,3 +45,6 @@ printf 'Projects and checkouts black-box acceptance\n'
 
 printf 'Durable coordination black-box acceptance\n'
 "$repo_root/test/scenarios/durable-coordination/run.sh"
+
+printf 'Deterministic execution black-box acceptance\n'
+"$repo_root/test/scenarios/deterministic-execution/run.sh"

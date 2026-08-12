@@ -12,7 +12,7 @@
     "objective_id": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
     "title": {"type": "string", "minLength": 1, "maxLength": 256},
     "description": {"type": "string", "maxLength": 4096},
-    "status": {"enum": ["ready", "assigned", "active", "blocked", "completed", "cancelled"]},
+    "status": {"enum": ["ready", "assigned", "active", "blocked", "review", "changes_requested", "completed", "failed", "cancelled"]},
     "blocked_reason": {"type": "string", "maxLength": 1024},
     "priority": {"type": "integer", "minimum": 0, "maximum": 1000},
     "budget": {"$ref": "budget.schema.json"},

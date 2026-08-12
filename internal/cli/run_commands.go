@@ -1,0 +1,243 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"crewfold/internal/domain"
+	"crewfold/internal/execution"
+	"crewfold/internal/localapi"
+)
+
+func (a *App) runRun(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 0 {
+		return a.writeFailure(mode, usageFailure("run requires a subcommand", "run 'crewfold help run' for usage"))
+	}
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, runHelp)
+		return ExitOK
+	}
+	switch args[0] {
+	case "start":
+		return a.runStart(ctx, mode, args[1:])
+	case "show":
+		return a.runShow(ctx, mode, args[1:])
+	case "list":
+		return a.runList(ctx, mode, args[1:])
+	case "watch":
+		return a.runWatch(ctx, mode, args[1:])
+	case "resume":
+		return a.runResume(ctx, mode, args[1:])
+	default:
+		return a.writeFailure(mode, commandFailure{exitCode: ExitUsage, code: "unknown_run_command", message: fmt.Sprintf("unknown run command %q", args[0]), hint: "run 'crewfold help run' for usage"})
+	}
+}
+
+func (a *App) runStart(ctx context.Context, mode outputMode, args []string) int {
+	task, optionArgs, failure := requiredLeadingArgument(args, "task ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "checkout", "runtime", "provider", "scenario", "expected-task-revision", "socket", "idempotency-key")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	runtimeName, failure := requiredOption(options, "runtime")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	providerName, failure := requiredOption(options, "provider")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	scenarioPath, failure := requiredOption(options, "scenario")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	revision, failure := requiredInt64Option(options, "expected-task-revision", 1, 1<<62)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	scenario, err := execution.LoadScenario(scenarioPath)
+	if err != nil {
+		return a.writeFailure(mode, commandFailure{exitCode: ExitUsage, code: "invalid_scenario", message: err.Error(), hint: "use a valid bounded fake-run scenario document"})
+	}
+	result, err := a.newClient(socket).RunStart(ctx, localapi.RunStartParams{Workspace: workspace, Task: task, Checkout: options["checkout"], Runtime: runtimeName, Provider: providerName, Scenario: scenario, ExpectedTaskRevision: revision, IdempotencyKey: options["idempotency-key"]})
+	if err != nil {
+		return a.writeClientFailure(mode, "start run", err)
+	}
+	return a.writeRunMutation(mode, result)
+}
+
+func (a *App) runShow(ctx context.Context, mode outputMode, args []string) int {
+	runID, optionArgs, failure := requiredLeadingArgument(args, "run ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).RunShow(ctx, workspace, runID)
+	if err != nil {
+		return a.writeClientFailure(mode, "show run", err)
+	}
+	return a.writeRunShow(mode, result)
+}
+
+func (a *App) runList(ctx context.Context, mode outputMode, args []string) int {
+	options, failure := parseOptions(args, "workspace", "task", "status", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).RunList(ctx, workspace, options["task"], options["status"])
+	if err != nil {
+		return a.writeClientFailure(mode, "list runs", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write run list", err))
+		}
+	} else {
+		for _, detail := range result.Runs {
+			fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\tstep=%d\n", detail.Run.ID, detail.Run.Status, detail.Run.TaskID, detail.Run.AgentID, detail.Run.StepCursor)
+		}
+	}
+	return ExitOK
+}
+
+func (a *App) runResume(ctx context.Context, mode outputMode, args []string) int {
+	runID, optionArgs, failure := requiredLeadingArgument(args, "run ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "expected-revision", "socket", "idempotency-key")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	revision, failure := requiredInt64Option(options, "expected-revision", 1, 1<<62)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).RunResume(ctx, localapi.RunResumeParams{Workspace: workspace, Run: runID, ExpectedRevision: revision, IdempotencyKey: options["idempotency-key"]})
+	if err != nil {
+		return a.writeClientFailure(mode, "resume run", err)
+	}
+	return a.writeRunMutation(mode, result)
+}
+
+func (a *App) runWatch(ctx context.Context, mode outputMode, args []string) int {
+	runID, optionArgs, failure := requiredLeadingArgument(args, "run ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "wait-seconds", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	waitSeconds, failure := intOption(options, "wait-seconds", 10, 1, 3600)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	deadline := time.NewTimer(time.Duration(waitSeconds) * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	client := a.newClient(socket)
+	for {
+		result, err := client.RunShow(ctx, workspace, runID)
+		if err != nil {
+			return a.writeClientFailure(mode, "watch run", err)
+		}
+		if runWatchSettled(result.Detail.Run.Status) {
+			return a.writeRunShow(mode, result)
+		}
+		select {
+		case <-ctx.Done():
+			return a.writeFailure(mode, commandFailure{exitCode: ExitFailure, code: "watch_cancelled", message: ctx.Err().Error(), hint: "run 'crewfold run show' to inspect the latest state"})
+		case <-deadline.C:
+			return a.writeFailure(mode, commandFailure{exitCode: ExitFailure, code: "watch_timeout", message: fmt.Sprintf("run %s did not settle within %d seconds", runID, waitSeconds), hint: "increase --wait-seconds or inspect the run directly"})
+		case <-ticker.C:
+		}
+	}
+}
+
+func runWatchSettled(status string) bool {
+	switch status {
+	case domain.RunBlocked, domain.RunReview, domain.RunCompleted, domain.RunStartFailed, domain.RunFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) writeRunMutation(mode outputMode, result localapi.RunMutationResult) int {
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write run mutation", err))
+		}
+	} else {
+		writeRunText(a, result.Detail)
+		fmt.Fprintf(a.stdout, "event_sequence: %d\n", result.EventSequence)
+	}
+	return ExitOK
+}
+
+func (a *App) writeRunShow(mode outputMode, result localapi.RunShowResult) int {
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write run output", err))
+		}
+	} else {
+		writeRunText(a, result.Detail)
+	}
+	return ExitOK
+}
+
+func writeRunText(a *App, detail domain.RunDetail) {
+	fmt.Fprintf(a.stdout, "run: %s\nstatus: %s\nrevision: %d\ntask: %s\nagent: %s\ncheckout: %s\nstep: %d\n", detail.Run.ID, detail.Run.Status, detail.Run.Revision, detail.Run.TaskID, detail.Run.AgentID, detail.Checkout.Path, detail.Run.StepCursor)
+	if detail.Run.BlockedQuestion != "" {
+		fmt.Fprintf(a.stdout, "blocked: %s\n", detail.Run.BlockedQuestion)
+	}
+	if detail.Run.ResultSummary != "" {
+		fmt.Fprintf(a.stdout, "result: %s\n", detail.Run.ResultSummary)
+	}
+	if detail.Run.FailureMessage != "" {
+		fmt.Fprintf(a.stdout, "failure: %s: %s\n", detail.Run.FailureCode, detail.Run.FailureMessage)
+	}
+	if detail.Handoff != nil {
+		fmt.Fprintf(a.stdout, "handoff: %s\n", detail.Handoff.Summary)
+	}
+}
+
+const runHelp = `Usage:
+  crewfold run start <task-id> --workspace <scope> --runtime <runtime> --provider <provider> --scenario <file> --expected-task-revision <n> --socket <path> [--checkout <id>]
+  crewfold run show <id> --workspace <scope> --socket <path>
+  crewfold run list --workspace <scope> [--task <id>] [--status <status>] --socket <path>
+  crewfold run watch <id> --workspace <scope> --socket <path> [--wait-seconds <n>]
+  crewfold run resume <id> --workspace <scope> --expected-revision <n> --socket <path>
+
+The fake runtime exercises durable placement, observation, acceptance, blockage,
+handoff, and restart behavior without launching an external coding agent.
+`

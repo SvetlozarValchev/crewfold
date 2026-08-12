@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 3
+	LatestSchemaVersion = 4
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -171,6 +171,36 @@ type TransitionTaskCommand struct {
 	ExpectedRevision    int64
 	IdempotencyKey      string
 	CorrelationID       string
+}
+
+type CreateRunCommand struct {
+	WorkspaceIdentifier  string
+	TaskID               string
+	CheckoutIdentifier   string
+	Runtime              string
+	Provider             string
+	Scenario             domain.FakeScenario
+	ExpectedTaskRevision int64
+	IdempotencyKey       string
+	CorrelationID        string
+}
+
+type ResumeRunCommand struct {
+	WorkspaceIdentifier string
+	RunID               string
+	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type RunMutationResult struct {
+	Detail        domain.RunDetail `json:"detail"`
+	EventSequence int64            `json:"event_sequence"`
+}
+
+type RunWork struct {
+	Run      domain.Run
+	Scenario domain.FakeScenario
 }
 
 type MutationResult[T any] struct {

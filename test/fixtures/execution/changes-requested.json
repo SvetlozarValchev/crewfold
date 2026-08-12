@@ -1,0 +1,15 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "insufficient-evidence",
+  "acceptance": {
+    "required_evidence": ["tests_passed", "security_reviewed"]
+  },
+  "steps": [
+    {
+      "kind": "completion",
+      "message": "implementation proposed for completion",
+      "evidence": ["tests_passed"],
+      "handoff": "The implementation is ready, but security review evidence is absent."
+    }
+  ]
+}

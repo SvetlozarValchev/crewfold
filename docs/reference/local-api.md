@@ -259,6 +259,54 @@ All mutations are idempotent. Updates and transitions use optimistic revisions;
 two writers using the same revision yield exactly one success and one
 `revision_conflict` after serialization.
 
+### Runs, placement, and timelines
+
+`run.start` takes `workspace`, task ID, optional checkout ID, runtime, provider,
+one validated fake scenario, `expected_task_revision`, and `idempotency_key`. It
+requires the task to be `assigned` with a current lease. The assigned agent must
+be enabled, below `max_concurrency`, and configured for the exact opaque
+runtime/provider pair.
+
+Placement is project-scoped and source-layout neutral. An eligible checkout is
+available, writable, and has write-policy capacity. `shared` allows concurrent
+runs; `exclusive` and `claimed` reject another live run. With no explicit
+checkout, selection is deterministic by write-policy preference, normalized path,
+and stable ID. The committed run contains the chosen task, agent, checkout path,
+write mode, adapter pair, and human-readable reasons. Creating a run and its
+pending worker job is one transaction; no adapter call occurs in that transaction.
+
+The daemon worker leases pending jobs and applies this durable lifecycle:
+
+```text
+requested -> starting -> active -> completed
+                         |   |----> blocked -> active (resume)
+                         |   |----> review / task changes_requested
+                         |   \----> failed
+                         \--------> start_failed
+```
+
+The fake provider emits normalized `progress`, `blocked`, or `completion`
+observations from a bounded scenario. Progress advances the persisted cursor.
+Blocked observations require a question and pause the job. Completion records a
+proposal and evaluates required evidence. Accepted completion releases the task
+assignment and creates one durable handoff; rejected completion retains the
+assignment and leaves the run in `review` with the task in `changes_requested`.
+A runtime start failure leaves the task assigned so the owner can retry or
+reassign it.
+
+`run.show` takes `workspace` and run ID. `run.list` accepts optional task and
+status filters. Both return run, current task/agent/checkout projections, the run
+timeline, and an accepted handoff when present. `run.resume` requires the observed
+run revision and resumes a blocked run or an explicitly paused active run from its
+persisted cursor. `task.timeline` returns the task, all its runs, and ordered
+normalized run/timeline facts.
+
+The runtime driver's `Launch` operation is idempotent by stable run ID. A restart
+after committed intent or after runtime launch reclaims the durable job and
+returns/reconciles the same runtime binding rather than inventing a second effect.
+The current implementation ships only deterministic in-memory fake adapters; a
+real subprocess boundary follows separately.
+
 ### `coordination.status`
 
 Takes `workspace` and returns counts for registered/enabled agents plus

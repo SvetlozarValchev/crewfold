@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -206,7 +208,7 @@ func TestInvalidOutputAndCommandArgumentsAreUsageErrors(t *testing.T) {
 func TestHelpTopics(t *testing.T) {
 	t.Parallel()
 
-	for _, topic := range []string{"version", "doctor", "daemon", "status", "workspace", "project", "checkout", "agent", "objective", "task", "events", "help"} {
+	for _, topic := range []string{"version", "doctor", "daemon", "status", "workspace", "project", "checkout", "agent", "objective", "task", "run", "events", "help"} {
 		t.Run(topic, func(t *testing.T) {
 			t.Parallel()
 
@@ -221,6 +223,34 @@ func TestHelpTopics(t *testing.T) {
 				t.Fatalf("stderr = %q, want empty", stderr.String())
 			}
 		})
+	}
+}
+
+func TestRunStartLoadsValidatedScenarioAndPassesPlacementInputs(t *testing.T) {
+	t.Parallel()
+
+	scenarioPath := filepath.Join(t.TempDir(), "successful-handoff.json")
+	scenario := `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"successful-handoff","acceptance":{"required_evidence":["tests_passed"]},"steps":[{"kind":"completion","message":"done","evidence":["tests_passed"],"handoff":"review the work"}]}`
+	if err := os.WriteFile(scenarioPath, []byte(scenario), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(scenario) error = %v", err)
+	}
+	app, stdout, stderr := newTestApp()
+	client := &fakeDaemonClient{runMutation: localapi.RunMutationResult{Schema: localapi.RunMutationSchema, Type: "run_mutation", Detail: domain.RunDetail{Run: domain.Run{ID: "run_00000000000000000000000000000001", Status: domain.RunRequested}}}}
+	app.newClient = func(socketPath string) daemonClient {
+		if socketPath != "/tmp/crewfold.sock" {
+			t.Fatalf("socket path = %q", socketPath)
+		}
+		return client
+	}
+	exitCode := app.Run([]string{"run", "start", "task_00000000000000000000000000000001", "--workspace", "personal", "--checkout", "co_00000000000000000000000000000001", "--runtime", "fake", "--provider", "fake", "--scenario", scenarioPath, "--expected-task-revision", "2", "--socket", "/tmp/crewfold.sock", "--idempotency-key", "start-run", "--output", "json"})
+	if exitCode != ExitOK || stderr.Len() != 0 {
+		t.Fatalf("Run() exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+	if client.runStartParams.Workspace != "personal" || client.runStartParams.Checkout != "co_00000000000000000000000000000001" || client.runStartParams.Scenario.Name != "successful-handoff" || client.runStartParams.ExpectedTaskRevision != 2 {
+		t.Fatalf("RunStart params = %#v", client.runStartParams)
+	}
+	if !strings.Contains(stdout.String(), localapi.RunMutationSchema) {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
 
@@ -737,6 +767,12 @@ type fakeDaemonClient struct {
 	taskMutation          localapi.TaskMutationResult
 	taskShow              localapi.TaskShowResult
 	taskList              localapi.TaskListResult
+	taskTimeline          localapi.TaskTimelineResult
+	runMutation           localapi.RunMutationResult
+	runShow               localapi.RunShowResult
+	runList               localapi.RunListResult
+	runStartParams        localapi.RunStartParams
+	runResumeParams       localapi.RunResumeParams
 	coordination          localapi.CoordinationStatusResult
 	agentCreateParams     localapi.AgentCreateParams
 	objectiveCreateParams localapi.ObjectiveCreateParams
@@ -857,6 +893,28 @@ func (client *fakeDaemonClient) TaskAssign(_ context.Context, params localapi.Ta
 
 func (client *fakeDaemonClient) TaskTransition(context.Context, localapi.TaskTransitionParams) (localapi.TaskMutationResult, error) {
 	return client.taskMutation, nil
+}
+
+func (client *fakeDaemonClient) TaskTimeline(context.Context, string, string) (localapi.TaskTimelineResult, error) {
+	return client.taskTimeline, nil
+}
+
+func (client *fakeDaemonClient) RunStart(_ context.Context, params localapi.RunStartParams) (localapi.RunMutationResult, error) {
+	client.runStartParams = params
+	return client.runMutation, nil
+}
+
+func (client *fakeDaemonClient) RunShow(context.Context, string, string) (localapi.RunShowResult, error) {
+	return client.runShow, nil
+}
+
+func (client *fakeDaemonClient) RunList(context.Context, string, string, string) (localapi.RunListResult, error) {
+	return client.runList, nil
+}
+
+func (client *fakeDaemonClient) RunResume(_ context.Context, params localapi.RunResumeParams) (localapi.RunMutationResult, error) {
+	client.runResumeParams = params
+	return client.runMutation, nil
 }
 
 func (client *fakeDaemonClient) CoordinationStatus(_ context.Context, workspace string) (localapi.CoordinationStatusResult, error) {

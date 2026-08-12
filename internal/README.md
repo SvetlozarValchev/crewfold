@@ -7,14 +7,15 @@ localapi/     implemented local API protocol and client
 daemon/       implemented foreground daemon and socket lifecycle
 cli/          implemented human/machine command surface
 buildinfo/    implemented embedded build metadata
-domain/       implemented storage/transport-neutral workspace and event records
-store/        implemented SQLite migrations, workspace projection, and event journal
+domain/       implemented storage/transport-neutral coordination and run records
+store/        implemented SQLite migrations, projections, event journal, and run queue
+execution/    implemented runtime/provider contracts and deterministic fake adapters
 api/          future domain API and MCP translation
-scheduler/    deterministic placement and dependencies
+scheduler/    future expanded placement and dependency policy
 supervisor/   conditions, recommendations, and policy responses
 knowledge/    curation, retrieval, and context packets
-runtime/      runtime-driver contracts and reconciliation
-provider/     provider-adapter contracts
+runtime/      future concrete runtime drivers and wider reconciliation
+provider/     future concrete provider adapters
 gitstate/     repository identity and checkout observations
 policy/       authorization, approvals, and budgets
 ```

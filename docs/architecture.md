@@ -154,6 +154,13 @@ capacity, and policy. It produces an explainable placement proposal or a blocked
 reason. Process launch happens through a runtime driver after the placement is
 committed.
 
+The implemented deterministic scheduler consumes the task's existing active
+assignment, verifies the agent's enabled state and runtime/provider configuration,
+enforces agent concurrency, and selects a writable checkout in the task's project.
+Checkout eligibility depends on availability and write policy, not Git layout:
+adjacent clones and linked worktrees are equal inputs. The selected placement and
+its reasons are durable before the asynchronous worker sees the job.
+
 ### Supervisor
 
 Consumes task, run, claim, message, and watcher events. It applies deterministic
@@ -223,6 +230,12 @@ Launching an agent is a saga:
 2. Runtime worker attempts the launch with an idempotency token.
 3. Commit `run.started` with the runtime handle, or `run.start_failed`.
 4. Reconciliation checks for orphaned processes after a crash.
+
+The fake runtime currently proves steps 1–3 and replay-safe recovery at the
+post-effect/pre-acknowledgement boundary. Its operation ID is the durable run ID;
+replaying launch returns the same binding. Requested intents, blocked runs, and
+active checkpoints also survive daemon restart through the SQLite worker queue
+and persisted scenario cursor.
 
 The same pattern applies to prompts, stops, meetings, and external actions.
 

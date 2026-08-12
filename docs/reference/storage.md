@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 3.
+Status: implemented through schema version 4.
 
 ## Location and ownership
 
@@ -46,9 +46,9 @@ Names begin with a contiguous three-digit version. Each migration and its
 tracks the current binary schema.
 
 The daemon refuses a database whose version is newer than the binary. Every
-supported starting version has a checked-in fixture under
-`internal/store/testdata/`. Fixtures for versions zero, one, and two prove every
-forward migration while preserving representative records.
+supported starting version has checked-in fixture data under
+`internal/store/testdata/`. Base fixtures plus representative coordination upgrade
+records prove every forward migration while preserving existing records.
 
 ## Schema version 1
 
@@ -108,6 +108,27 @@ inside that write transaction, so concurrent stale writers cannot both succeed.
 Readiness is a deterministic query over task state and incomplete dependencies;
 it is not stored as an independently drifting boolean.
 
+## Schema version 4
+
+The task state constraint expands with `review`, `changes_requested`, and `failed`
+for evidence-driven run outcomes. The migration rebuilds tasks, dependencies, and
+assignments while preserving their IDs, revisions, edges, leases, and audit data;
+upgrade records contain representative completed and actively assigned tasks.
+
+`runs` stores committed execution intent, task/agent/checkout placement, opaque
+runtime/provider names and handles, the validated fake scenario, normalized
+cursor, result/failure state, revisions, and explainable placement reasons.
+`run_jobs` is the durable pending/leased/complete worker queue. `run_timeline`
+stores bounded normalized facts rather than raw provider transcripts.
+`run_handoffs` stores exactly one accepted completion handoff per run.
+
+A partial index permits only one live requested/starting/active/blocked run for a
+task. Additional indexes bound workspace, agent, checkout, queue, and timeline
+queries. Run intent, queue insertion, first timeline fact, event append, and
+idempotency response commit atomically. Worker transitions update run/task state,
+timeline, handoff, assignment release, and events in transactions separate from
+adapter effects.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -132,5 +153,6 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 3 contains agent and task coordination state but
-no message, knowledge, run, provider-session, or runtime-process state.
+without its WAL. Schema version 4 contains agent/task/run coordination and opaque
+fake-adapter bindings but no message, knowledge, real provider-session, or real
+runtime-process state.

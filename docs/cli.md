@@ -4,10 +4,11 @@
 
 The current binary implements `help`, `version`, self/database diagnostics,
 foreground daemon lifecycle, process and workspace status, workspace/event
-queries, project/checkout registration and observation, and durable
-agent/objective/task coordination. It supports text and JSON output. Runs, teams,
-claims, messages, meetings, knowledge, policy, and approval commands in later
-sections are intended future contracts and are not yet available.
+queries, project/checkout registration and observation, durable
+agent/objective/task coordination, and deterministic run execution. It supports
+text and JSON output. Teams, claims, messages, meetings, knowledge, policy, and
+approval commands in later sections are intended future contracts and are not yet
+available.
 
 ## Goals
 
@@ -15,8 +16,9 @@ The CLI is both a human interface and a scriptable client. Commands should provi
 readable output by default and stable structured output with `--output json`.
 Mutations return the durable entity and event cursor they created.
 
-The daemon/workspace examples below are implemented. Later sections define
-intended behavior, not an implemented interface.
+The daemon, workspace, source, agent/task, and fake-run examples below are
+implemented. Later sections define intended behavior, not an implemented
+interface.
 
 ## Daemon and workspace
 
@@ -122,22 +124,35 @@ active assignment, and every dependency is completed. The list/show result
 includes a stable human-readable reason. Assignment leases expire during task or
 status queries; the assignment record and expiry event remain durable.
 
-`task start` changes coordination state only. Runtime launch begins in the next
-capability and will use a separate `run` command.
+`task start` remains a manual coordination transition. Normal execution uses
+`run start`, which consumes an existing leased assignment and lets the daemon
+advance the task as normalized run observations arrive.
 
 ## Runs
 
 ```sh
-crewfold run start --task TASK_A
-crewfold run list --active
-crewfold run attach RUN_ID
-crewfold run interrupt RUN_ID
-crewfold run stop RUN_ID --graceful
-crewfold run resume --task TASK_A --agent engine-impl
+crewfold run start TASK_A --workspace personal --runtime fake --provider fake \
+  --scenario ./scenario.json --expected-task-revision 2 --socket /path/to/crewfold.sock
+crewfold run show RUN_ID --workspace personal --socket /path/to/crewfold.sock
+crewfold run list --workspace personal --task TASK_A --socket /path/to/crewfold.sock
+crewfold run watch RUN_ID --workspace personal --wait-seconds 30 --socket /path/to/crewfold.sock
+crewfold run resume RUN_ID --workspace personal --expected-revision 4 \
+  --socket /path/to/crewfold.sock
+crewfold task timeline TASK_A --workspace personal --socket /path/to/crewfold.sock
 ```
 
-`run start` prints the placement decision before launch when interactive. A
-`--dry-run` option returns the placement and context packet without creating a run.
+`run start` requires a task with an active assignment. The assigned agent must be
+enabled and configured for the requested runtime/provider pair. The scheduler
+selects an available writable checkout within the task's project, or validates an
+explicit `--checkout` ID. It treats adjacent standalone clones and linked
+worktrees identically and persists the reasons for its decision before any launch.
+
+The current built-in `fake` adapters read a bounded JSON scenario. The daemon
+persists intent, starts asynchronously, records normalized progress, pauses on a
+block or explicit checkpoint, evaluates completion evidence, and creates a handoff
+only when acceptance passes. `run watch` returns when a run is blocked, needs
+review, completes, or fails. Attach, interrupt, stop, dry-run, real providers, and
+real runtime processes remain deferred.
 
 ## Claims and overlaps
 

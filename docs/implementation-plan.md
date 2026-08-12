@@ -283,9 +283,10 @@ without a real process or model obscuring failures?
 **Visible result**
 
 ```sh
-crewfold run start --task TASK_ID --runtime fake --provider fake
-crewfold run watch RUN_ID
-crewfold task inspect TASK_ID
+crewfold run start TASK_ID --workspace personal --runtime fake --provider fake \
+  --scenario ./scenario.json --expected-task-revision 2 --socket ./crewfold.sock
+crewfold run watch RUN_ID --workspace personal --socket ./crewfold.sock
+crewfold task timeline TASK_ID --workspace personal --socket ./crewfold.sock
 ```
 
 **Deliverables**
@@ -304,8 +305,9 @@ crewfold task inspect TASK_ID
 - Scenario C fails during start and releases reserved capacity.
 - Scenario D reports completion but fails an acceptance rule, leaving the task in
   review or changes-requested state.
-- Daemon restart at each run state reconciles to one correct result without
-  duplicate launches.
+- Daemon restart with requested intent, after launch/before acknowledgement,
+  while blocked, and at an active checkpoint reconciles to one correct result
+  without duplicate launches.
 
 **Failure injection**
 
@@ -325,7 +327,7 @@ keeping the deterministic domain behavior from M5?
 **Visible result**
 
 ```sh
-crewfold run start --task TASK_ID --runtime direct --provider fixture
+crewfold run start TASK_ID --runtime direct --provider fixture
 crewfold run logs RUN_ID --tail 50
 crewfold run stop RUN_ID --graceful
 ```
@@ -367,7 +369,7 @@ least-authority interface?
 
 ```sh
 crewfold context build --task TASK_ID --agent implementer
-crewfold run start --task TASK_ID --provider fixture-mcp
+crewfold run start TASK_ID --provider fixture-mcp
 crewfold context explain CONTEXT_PACKET_ID
 ```
 
@@ -448,7 +450,7 @@ without provider-specific behavior confusing the result?
 
 ```sh
 crewfold doctor --runtime herdr
-crewfold run start --task TASK_ID --runtime herdr --provider fixture-terminal
+crewfold run start TASK_ID --runtime herdr --provider fixture-terminal
 crewfold run attach RUN_ID
 ```
 
@@ -488,7 +490,7 @@ work loop in a disposable repository?
 
 ```sh
 crewfold doctor --provider codex
-crewfold run start --task CANARY_TASK --runtime herdr --provider codex
+crewfold run start CANARY_TASK --runtime herdr --provider codex
 crewfold run attach RUN_ID
 ```
 
@@ -527,7 +529,7 @@ tools without core changes?
 
 ```sh
 crewfold doctor --provider claude
-crewfold run start --task CANARY_TASK --runtime herdr --provider claude
+crewfold run start CANARY_TASK --runtime herdr --provider claude
 ```
 
 **Deliverables**

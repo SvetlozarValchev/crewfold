@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:run-detail:v1",
+  "title": "Crewfold run detail v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run", "task", "agent", "checkout", "timeline"],
+  "properties": {
+    "run": {"$ref": "run.schema.json"},
+    "task": {"$ref": "task.schema.json"},
+    "agent": {"$ref": "agent.schema.json"},
+    "checkout": {"$ref": "checkout.schema.json"},
+    "timeline": {"type": "array", "items": {"$ref": "run-timeline-entry.schema.json"}},
+    "handoff": {"$ref": "handoff.schema.json"}
+  }
+}

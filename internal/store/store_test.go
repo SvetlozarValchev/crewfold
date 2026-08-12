@@ -179,6 +179,55 @@ func TestMigrationUpgradesCheckedInVersionTwoFixture(t *testing.T) {
 	}
 }
 
+func TestRunSchemaUpgradePreservesCoordinationRecords(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	base, err := os.ReadFile("testdata/schema-v002.sql")
+	if err != nil {
+		t.Fatalf("os.ReadFile(base fixture) error = %v", err)
+	}
+	coordinationSchema, err := os.ReadFile("migrations/003_agents_objectives_tasks.sql")
+	if err != nil {
+		t.Fatalf("os.ReadFile(coordination schema) error = %v", err)
+	}
+	coordinationRecords, err := os.ReadFile("testdata/coordination-upgrade.sql")
+	if err != nil {
+		t.Fatalf("os.ReadFile(coordination records) error = %v", err)
+	}
+	database, err := sql.Open("sqlite3", filepath.Join(dataDir, databaseFilename))
+	if err != nil {
+		t.Fatalf("sql.Open(fixture) error = %v", err)
+	}
+	for _, fixturePart := range []struct {
+		name   string
+		script []byte
+	}{{"base", base}, {"coordination schema", coordinationSchema}, {"coordination records", coordinationRecords}} {
+		if _, err := database.Exec(string(fixturePart.script)); err != nil {
+			_ = database.Close()
+			t.Fatalf("apply %s: %v", fixturePart.name, err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("close fixture database: %v", err)
+	}
+
+	storage := openTestStore(t, dataDir, Options{})
+	detail, err := storage.TaskDetail(context.Background(), "upgrade-fixture", "task_00000000000000000000000000000032", "inspect-upgraded-task")
+	if err != nil {
+		t.Fatalf("TaskDetail(upgraded fixture) error = %v", err)
+	}
+	if detail.Task.Status != "assigned" || detail.Task.Revision != 2 || detail.Assignment == nil || detail.Assignment.ID != "asg_00000000000000000000000000000003" || len(detail.Dependencies) != 1 {
+		t.Fatalf("upgraded task detail = %#v", detail)
+	}
+	for _, table := range []string{"runs", "run_jobs", "run_timeline", "run_handoffs"} {
+		var count int
+		if err := storage.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("new table %s count = %d, %v, want 0", table, count, err)
+		}
+	}
+}
+
 func TestWorkspaceInitIsAtomicIdempotentAndPersistent(t *testing.T) {
 	t.Parallel()
 
