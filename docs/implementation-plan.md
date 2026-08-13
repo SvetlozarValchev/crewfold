@@ -867,11 +867,12 @@ and disabled.
 **Question answered:** Can a manager propose work and can Crewfold advance routine
 dependencies while keeping deterministic constraints and human authority?
 
-**Implementation status:** Active. The schema, store, local surfaces, fixtures,
-and acceptance support are landing against the frozen proposal/approval boundary,
-deterministic scheduler policy, concurrency limits, and recovery semantics. The
-milestone remains incomplete until the full restart, race, fault, and authority
-matrix passes.
+**Implementation status:** Complete. Implementation commit
+`3c7639a3ef54f68030e999015b61a45c32825f72` and the
+[passed milestone review](reviews/manager-supervisor.md) record the frozen
+proposal/approval boundary, deterministic scheduler policy, concurrency limits,
+recovery semantics, full race/scenario gate, and independent zero-defect final
+audit.
 
 **Visible result**
 

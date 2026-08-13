@@ -3,8 +3,8 @@
 ## Identity
 
 - Milestone: `M16 — Manager proposals and deterministic supervision`
-- Review status: `pending final acceptance gate`
-- Final implementation commit: `pending`
+- Review status: `passed`
+- Final implementation commit: `3c7639a3ef54f68030e999015b61a45c32825f72`
 - Reviewer: `automated acceptance and independent adversarial review`
 - Date: `2026-08-13`
 
@@ -149,16 +149,19 @@ Focused executable coverage now includes:
 - packet/schema field parity, typed proposal identity, manager tool scope, retry
   prior/fresh-run distinction, and typed escalation provenance.
 
-This evidence keeps the review at `pending final acceptance gate`; it does not
-substitute for one clean stable-tree gate run and independent severity audit.
-
-Before this review changes to `passed`, the stable tree must pass:
+The exact implementation tree passed:
 
 - generated database source/output consistency and protocol schema validation;
 - formatting, `go vet ./...`, `go test ./...`, and `go test -race ./...`;
 - every M0–M16 black-box scenario through `scripts/check.sh`; and
 - independent final audit with no unresolved high- or medium-severity authority,
   transaction, recovery, or compatibility defect.
+
+The independent final audit reported zero unresolved high-, medium-, or
+low-severity functional defects. The uncached focused compatibility, queue,
+authority, recovery, and protocol matrices also passed after the full gate, so
+this review records M16 as complete rather than treating earlier partial evidence
+as a completion mark.
 
 ## Compatibility and deferrals
 

@@ -7,7 +7,7 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M15 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M16 are complete**. Evidence is recorded in the [M0
 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -59,13 +59,13 @@ retrieval, participant-bound cross-project mail, bounded curation, exact
 contradictions, portable project knowledge, and packet-v4 live context deltas.
 Its final implementation commit is `c975ba4b17856b25c16dc5976d248e09a865d178`.
 
-M16 remains active (`◐`). Its [pending manager/supervisor
-review](reviews/manager-supervisor.md) records executable public restart/background
-scheduling, exact arbitrary-role authority separation, proposal and approval
-matrices, readiness/backoff and capacity boundaries, intent lifecycle, frozen
-worker authority, fault/raw-SQL defenses, and protocol coverage. These are
-acceptance inputs, not a completion mark; M16 still requires one clean final gate
-and independent severity audit before this roadmap may show `✓`.
+M16's [passed manager/supervisor review](reviews/manager-supervisor.md) records
+executable public restart/background scheduling, exact arbitrary-role authority
+separation, proposal and approval matrices, readiness/backoff and capacity
+boundaries, intent lifecycle, frozen worker authority, fault/raw-SQL defenses,
+protocol coverage, the complete stable-tree race/scenario gate, and an independent
+final audit with zero unresolved defects. Its implementation commit is
+`3c7639a3ef54f68030e999015b61a45c32825f72`.
 
 ## Sequence
 
@@ -87,8 +87,8 @@ and independent severity audit before this roadmap may show `✓`.
 | M13 ✓ | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
 | M14 ✓ | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
 | M15 ✓ | Curator/retrieval | Retrieve, curate, exchange, export, dispute, and incrementally deliver canonical context under bounded authority | M14 |
-| M16 ◐ | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
-| M17 | Local checks/check-watch capability | Route fresh check evidence without granting merge authority | M16 |
+| M16 ✓ | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
+| M17 ◐ | Local checks/check-watch capability | Route fresh check evidence without granting merge authority | M16 |
 | M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
 | M19 | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
 | M20 | Personal beta | Back up, recover, upgrade, and load-test 100 registered agent definitions | M19 |
@@ -233,9 +233,16 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M16 is active. It adds manager-authored proposals and a deterministic supervisor
-that can explain dependency-ready scheduling and policy decisions without giving
-an agent owner authority. M15 is complete: its first independently testable slice
+M17 is active. It adds allowlisted local checks, exact mechanical evidence and
+freshness, and an owner-granted check-watch capability attachable to any eligible
+agent without inventing a `CI watcher` role or granting merge authority. M16 is
+complete at implementation commit
+`3c7639a3ef54f68030e999015b61a45c32825f72`; its
+[passed review](reviews/manager-supervisor.md) records the exact owner grant,
+inert proposal, deterministic supervision, recovery, race, and public scenario
+proofs.
+
+M15 is complete: its first independently testable slice
 adds scoped FTS5 search on
 top of canonical records without allowing retrieval to grant authority: hard
 workspace/project/optional-task/authority/freshness filters, versioned
