@@ -48,6 +48,10 @@ explicitly rather than silently treating either as authoritative.
 - [Herdr runtime milestone review](reviews/herdr-runtime.md)
 - [Codex canary implementation audit](reviews/codex-canary.md)
 - [Claude canary and provider-switch implementation audit](reviews/claude-canary.md)
+- [Claims and overlap milestone review](reviews/claims-overlap.md)
+- [Structured meetings milestone review](reviews/structured-meetings.md)
+- [Canonical knowledge milestone review](reviews/canonical-knowledge.md)
+- [Curation, retrieval, collaboration, and live-context milestone review](reviews/curation-retrieval-live-context.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 

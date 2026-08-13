@@ -7,7 +7,7 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M14 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M15 are complete**. Evidence is recorded in the [M0
 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -53,6 +53,12 @@ agent proposals, exact-link context packet v3, restart and rollback evidence, an
 recorded Codex-to-Claude replacement without transcript ingestion. Its
 implementation commit is `e37fdcf32b2e5f69766405d6585ff24277a1ab3c`.
 
+M15's [curation, retrieval, collaboration, and live-context
+review](reviews/curation-retrieval-live-context.md) covers deterministic scoped
+retrieval, participant-bound cross-project mail, bounded curation, exact
+contradictions, portable project knowledge, and packet-v4 live context deltas.
+Its final implementation commit is `c975ba4b17856b25c16dc5976d248e09a865d178`.
+
 ## Sequence
 
 | Milestone | Increment | Demonstrable outcome | Depends on |
@@ -72,8 +78,8 @@ implementation commit is `e37fdcf32b2e5f69766405d6585ff24277a1ab3c`.
 | M12 ✓ | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
 | M13 ✓ | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
 | M14 ✓ | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
-| M15 ◐ | Curator/retrieval | Scoped retrieval, participant-bound cross-project mail, one bounded deterministic curator rule, exact contradictions, and portable project knowledge are implemented; packet-v4 live deltas are in final acceptance | M14 |
-| M16 | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
+| M15 ✓ | Curator/retrieval | Retrieve, curate, exchange, export, dispute, and incrementally deliver canonical context under bounded authority | M14 |
+| M16 ◐ | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
 | M17 | Local checks/CI watcher | Route fresh check evidence without granting merge authority | M16 |
 | M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
 | M19 | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
@@ -218,7 +224,10 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M15 is active. Its first independently testable slice adds scoped FTS5 search on
+M16 is active. It adds manager-authored proposals and a deterministic supervisor
+that can explain dependency-ready scheduling and policy decisions without giving
+an agent owner authority. M15 is complete: its first independently testable slice
+adds scoped FTS5 search on
 top of canonical records without allowing retrieval to grant authority: hard
 workspace/project/optional-task/authority/freshness filters, versioned
 deterministic ranking and explanations, retrieval diagnostics, and an explicitly
@@ -251,7 +260,7 @@ preserves task-only applicability without ghost tasks and remains independent of
 provider state and FTS. The accepted contract is
 [ADR-0013](decisions/0013-portable-project-knowledge-snapshots.md).
 
-The final active M15 slice adds packet-v4 explicit context deltas under
+The final M15 slice adds packet-v4 explicit context deltas under
 [ADR-0014](decisions/0014-explicit-bounded-live-context-deltas.md). The immutable
 base freezes a journal cursor, bounded reverse dependents and exact participant
 rosters, and a live policy. Owner refresh constructs at most one pending whole

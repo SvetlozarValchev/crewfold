@@ -751,14 +751,16 @@ context deltas remain out of scope for M14.
 **Question answered:** Can Crewfold find and maintain relevant knowledge at larger
 volume without making retrieval the source of truth?
 
-**Implementation status:** Active. Independently testable slices now implement
+**Implementation status:** Complete. Independently testable slices implement
 deterministic scoped search, explanation, retrieval health, explicit search-index
 rebuild, participant-bound cross-project collaboration through the existing
 mailbox tools, and a provider-free bounded curator with one exact deterministic
 meeting-resolution rule, plus owner-confirmed exact-revision contradictions with
 agent-run reporting and fail-closed search/context behavior, and deterministic
 project knowledge export/import with exact applicability and contradiction
-snapshots. Context deltas remain required before M15 is complete.
+snapshots, plus packet-v4 bounded live context deltas with explicit owner refresh
+and exact-run acknowledgement. The milestone review and complete repository gate
+pass.
 
 **Visible result**
 
@@ -863,6 +865,10 @@ and disabled.
 
 **Question answered:** Can a manager propose work and can Crewfold advance routine
 dependencies while keeping deterministic constraints and human authority?
+
+**Implementation status:** Active. Contract and acceptance work is defining the
+proposal/approval boundary, deterministic scheduler policy, concurrency limits,
+and recovery semantics before the first stateful slice lands.
 
 **Visible result**
 
