@@ -43,6 +43,10 @@ const (
 	MethodContextBuild          = "context.build"
 	MethodContextShow           = "context.show"
 	MethodContextExplain        = "context.explain"
+	MethodContextRefresh        = "context.refresh"
+	MethodContextDeltaList      = "context.delta.list"
+	MethodContextDeltaShow      = "context.delta.show"
+	MethodContextDeltaExplain   = "context.delta.explain"
 	MethodKnowledgePropose      = "knowledge.propose"
 	MethodKnowledgeShow         = "knowledge.show"
 	MethodKnowledgeList         = "knowledge.list"
@@ -112,9 +116,13 @@ const (
 	TaskShowSchema                  = "urn:crewfold:schema:local-api:task-show-result:v1"
 	TaskListSchema                  = "urn:crewfold:schema:local-api:task-list-result:v1"
 	TaskTimelineSchema              = "urn:crewfold:schema:local-api:task-timeline-result:v1"
-	ContextBuildSchema              = "urn:crewfold:schema:local-api:context-build-result:v3"
-	ContextShowSchema               = "urn:crewfold:schema:local-api:context-show-result:v3"
-	ContextExplainSchema            = "urn:crewfold:schema:local-api:context-explain-result:v2"
+	ContextBuildSchema              = "urn:crewfold:schema:local-api:context-build-result:v4"
+	ContextShowSchema               = "urn:crewfold:schema:local-api:context-show-result:v4"
+	ContextExplainSchema            = "urn:crewfold:schema:local-api:context-explain-result:v3"
+	ContextRefreshSchema            = "urn:crewfold:schema:local-api:context-refresh-result:v1"
+	ContextDeltaListSchema          = "urn:crewfold:schema:local-api:context-delta-list-result:v1"
+	ContextDeltaShowSchema          = "urn:crewfold:schema:local-api:context-delta-show-result:v1"
+	ContextDeltaExplainSchema       = "urn:crewfold:schema:local-api:context-delta-explain-result:v1"
 	KnowledgeMutationSchema         = "urn:crewfold:schema:local-api:knowledge-mutation-result:v1"
 	KnowledgeShowSchema             = "urn:crewfold:schema:local-api:knowledge-show-result:v1"
 	KnowledgeListSchema             = "urn:crewfold:schema:local-api:knowledge-list-result:v1"
@@ -646,6 +654,50 @@ type ContextExplainResult struct {
 	Schema      string                    `json:"schema"`
 	Type        string                    `json:"type"`
 	Explanation domain.ContextExplanation `json:"explanation"`
+}
+
+type ContextRefreshParams struct {
+	Workspace      string `json:"workspace"`
+	Run            string `json:"run"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type ContextDeltaListParams struct {
+	Workspace     string `json:"workspace"`
+	Run           string `json:"run"`
+	AfterSequence *int64 `json:"after_sequence"`
+	Limit         int    `json:"limit"`
+}
+
+type ContextDeltaQueryParams struct {
+	Workspace string `json:"workspace"`
+	Delta     string `json:"delta"`
+}
+
+// ContextRefreshResult intentionally promotes the stable domain fields. The
+// local envelope adds only transport schema/type discriminators.
+type ContextRefreshResult struct {
+	Schema string `json:"schema"`
+	Type   string `json:"type"`
+	domain.ContextRefreshResult
+}
+
+type ContextDeltaListResult struct {
+	Schema string `json:"schema"`
+	Type   string `json:"type"`
+	domain.ContextDeltaList
+}
+
+type ContextDeltaShowResult struct {
+	Schema string              `json:"schema"`
+	Type   string              `json:"type"`
+	Delta  domain.ContextDelta `json:"delta"`
+}
+
+type ContextDeltaExplainResult struct {
+	Schema      string                         `json:"schema"`
+	Type        string                         `json:"type"`
+	Explanation domain.ContextDeltaExplanation `json:"explanation"`
 }
 
 type KnowledgeProposeParams struct {

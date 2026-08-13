@@ -1158,6 +1158,13 @@ type fakeDaemonClient struct {
 	taskCreateParams        localapi.TaskCreateParams
 	taskAssignParams        localapi.TaskAssignParams
 	contextBuildParams      localapi.ContextBuildParams
+	contextRefresh          localapi.ContextRefreshResult
+	contextRefreshParams    localapi.ContextRefreshParams
+	contextDeltaList        localapi.ContextDeltaListResult
+	contextDeltaListParams  localapi.ContextDeltaListParams
+	contextDeltaShow        localapi.ContextDeltaShowResult
+	contextDeltaExplain     localapi.ContextDeltaExplainResult
+	contextDeltaQueryArgs   []string
 	knowledgeMutation       localapi.KnowledgeMutationResult
 	knowledgeShow           localapi.KnowledgeShowResult
 	knowledgeList           localapi.KnowledgeListResult
@@ -1320,6 +1327,26 @@ func (client *fakeDaemonClient) ContextShow(context.Context, string, string) (lo
 
 func (client *fakeDaemonClient) ContextExplain(context.Context, string, string) (localapi.ContextExplainResult, error) {
 	return localapi.ContextExplainResult{}, nil
+}
+
+func (client *fakeDaemonClient) ContextRefresh(_ context.Context, params localapi.ContextRefreshParams) (localapi.ContextRefreshResult, error) {
+	client.contextRefreshParams = params
+	return client.contextRefresh, nil
+}
+
+func (client *fakeDaemonClient) ContextDeltaList(_ context.Context, params localapi.ContextDeltaListParams) (localapi.ContextDeltaListResult, error) {
+	client.contextDeltaListParams = params
+	return client.contextDeltaList, nil
+}
+
+func (client *fakeDaemonClient) ContextDeltaShow(_ context.Context, workspace, delta string) (localapi.ContextDeltaShowResult, error) {
+	client.contextDeltaQueryArgs = []string{workspace, delta}
+	return client.contextDeltaShow, nil
+}
+
+func (client *fakeDaemonClient) ContextDeltaExplain(_ context.Context, workspace, delta string) (localapi.ContextDeltaExplainResult, error) {
+	client.contextDeltaQueryArgs = []string{workspace, delta}
+	return client.contextDeltaExplain, nil
 }
 
 func (client *fakeDaemonClient) KnowledgePropose(_ context.Context, params localapi.KnowledgeProposeParams) (localapi.KnowledgeMutationResult, error) {

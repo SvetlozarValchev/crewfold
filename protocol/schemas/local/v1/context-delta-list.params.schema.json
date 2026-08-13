@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:context-delta-list-params:v1",
+  "title": "Crewfold local API context delta list parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "run", "after_sequence", "limit"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "run": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
+    "after_sequence": {"type": "integer", "minimum": 0},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+  }
+}

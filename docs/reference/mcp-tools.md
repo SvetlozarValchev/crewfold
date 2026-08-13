@@ -1,8 +1,9 @@
 # MCP tool contract
 
-Status: implemented run-scoped briefing, reporting, artifact, durable mailbox, and
-canonical-knowledge proposal subset. Claims, meetings, and manager/outcome tools
-remain planned.
+Status: implemented run-scoped briefing, reporting, artifact, durable mailbox,
+canonical-knowledge proposal, contradiction report, and live-context
+fetch/acknowledgement subset. Claims, meetings, and manager/outcome tools remain
+planned.
 
 ## Transport and authentication
 
@@ -27,8 +28,9 @@ containment is a separate boundary.
 Tool discovery and invocation are both intersected with the immutable packet's
 `allowed_tools`. A run created with an older packet therefore does not gain
 mailbox or knowledge-proposal authority merely because the daemon binary was
-upgraded. New v3 packets record both tool sets, the bounded inbox snapshot, and
-any explicitly selected accepted knowledge.
+upgraded. New v4 packets record both tool sets, the bounded inbox/participant
+snapshot, live bounds, source event cursor, and any explicitly selected accepted
+knowledge. Preserved v1–v3 packets do not gain the live-context tools.
 
 ## Implemented resources
 
@@ -51,8 +53,43 @@ expiry, and briefing resource URI.
 
 ### `crewfold_get_status`
 
-Input is `{}`. It returns run/task IDs, states, revisions, current budget, and any
-blocked question. It does not mutate coordination state.
+Input is `{}`. It returns run/task IDs, states, revisions, current budget, any
+blocked question, and a `context` object. The context state reports base packet
+ID/schema/cursor, durable state revision, inspected-through cursor, status,
+optional pending delta ID/sequence, and optional rebase reason. It does not mutate
+coordination state.
+
+### `crewfold_get_context_delta`
+
+Input is exactly `{}`. It fetches the sole owner-built pending delta for the
+authenticated run, or returns `none_pending`/`rebase_required` state. It cannot
+scan events, construct a delta, select another scope, or supply a cursor. The
+result includes the exact run/base, durable chain state, optional immutable delta,
+and optional rebase reason.
+
+The delta contains whole typed changes and carries its own workspace/project/task/
+agent scope, base packet/schema, run-local sequence/parent, exclusive `from` and
+inclusive `through` journal cursors, evaluation time, inclusion/exclusion
+explanations, total/chain byte budgets, content hash, and byte size. Message
+changes contain only `InboxSummaryItem.body_preview`; the full body remains behind
+`crewfold_read_message`.
+
+### `crewfold_acknowledge_context_delta`
+
+```json
+{
+  "delta_id": "cdelta_0123456789abcdef0123456789abcdef",
+  "expected_sequence": 1,
+  "idempotency_key": "incorporated-context-1"
+}
+```
+
+The server derives the run from the capability and accepts only that live run's
+exact sole pending delta and sequence. A success returns one immutable
+`cdack_...` receipt. An exact retry returns the same receipt and appends no second
+acknowledgement event; key reuse with different input fails. An owner cannot call
+this operation through the local API, and fetching alone does not attest
+consumption.
 
 ### `crewfold_report_progress`
 
@@ -177,11 +214,12 @@ Acknowledges one visible recipient message, including one authorized by an exact
 participant-thread binding. Acknowledging also establishes any missing
 delivered/read timestamps; it never changes the immutable message body.
 
-No roster tool is exposed to runs in this slice. The owner can inspect bindings
-through the local API/CLI. Context packet v3 keeps its existing bounded inbox
-summary shape and may include authorized participant messages; full bodies and
-state transitions remain explicit mailbox tool calls. Roster snapshots and live
-context refresh are deferred to packet v4/context deltas.
+No independent roster tool is exposed to runs. The owner can inspect bindings
+through the local API/CLI. Context packet v4 includes bounded whole authorized
+rosters; later thread creation/invitation can arrive as a whole
+`participant_roster_updated` delta. Full message bodies and mailbox state
+transitions remain explicit mailbox tool calls, and the roster grants no authority
+to a different task for the same agent.
 
 ### `crewfold_propose_knowledge`
 
@@ -235,8 +273,9 @@ outside the base packet and are retrieved explicitly through the mailbox tools.
 
 ## Idempotency and audit
 
-Report, artifact, message-send, read, acknowledgement, knowledge-proposal, and
-contradiction-report idempotency is local to the authenticated actor/run.
+Report, artifact, message-send, read, acknowledgement, knowledge-proposal,
+contradiction-report, and context-delta acknowledgement idempotency is local to
+the authenticated actor/run.
 Repeating the same key and
 content returns the same durable record while the capability remains active,
 including after the worker has applied a progress report. Reusing a key with
@@ -252,6 +291,9 @@ request bodies. A successful fresh contradiction report also appends
 `contradiction.detected`; its canonical reversed-pair retry appends neither a
 second contradiction nor a second `contradiction.detected` fact. The retry's
 tool invocation still has its own `run.tool_called` audit.
+A fresh delta acknowledgement also appends `context_delta.acknowledged`; an exact
+receipt replay appends only its separately audited tool invocation. Delta build
+and rebase events are owner-refresh facts rather than MCP effects.
 
 Codex connects through Crewfold's local STDIO bridge. Codex receives only the
 socket path and private capability-file path as forwarded environment variables;

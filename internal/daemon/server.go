@@ -554,6 +554,14 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleContextShow(request), false
 	case localapi.MethodContextExplain:
 		return s.handleContextExplain(request), false
+	case localapi.MethodContextRefresh:
+		return s.handleContextRefresh(request), false
+	case localapi.MethodContextDeltaList:
+		return s.handleContextDeltaList(request), false
+	case localapi.MethodContextDeltaShow:
+		return s.handleContextDeltaShow(request), false
+	case localapi.MethodContextDeltaExplain:
+		return s.handleContextDeltaExplain(request), false
 	case localapi.MethodKnowledgePropose:
 		return s.handleKnowledgePropose(request), false
 	case localapi.MethodKnowledgeShow:

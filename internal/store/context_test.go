@@ -333,8 +333,8 @@ func TestContextPacketBindingReportsArtifactsAndScopeAreDurable(t *testing.T) {
 	secondCommand.IdempotencyKey = "build-equivalent-scoped-context"
 	secondCommand.CorrelationID = "request-build-equivalent-scoped-context"
 	equivalent, err := storage.BuildContextPacket(context.Background(), secondCommand)
-	if err != nil || equivalent.Value.ID == packet.ID || equivalent.Value.ContentHash != packet.ContentHash || !reflect.DeepEqual(equivalent.Value.Included, packet.Included) || !reflect.DeepEqual(equivalent.Value.Excluded, packet.Excluded) {
-		t.Fatalf("BuildContextPacket(equivalent) = %#v, %v; want different identity and stable semantic selection/hash", equivalent, err)
+	if err != nil || equivalent.Value.ID == packet.ID || equivalent.Value.AsOfEventSequence <= packet.AsOfEventSequence || !reflect.DeepEqual(equivalent.Value.Included, packet.Included) || !reflect.DeepEqual(equivalent.Value.Excluded, packet.Excluded) {
+		t.Fatalf("BuildContextPacket(equivalent) = %#v, %v; want different identity, later cursor, and stable selection", equivalent, err)
 	}
 	explanation, err := storage.ExplainContextPacket(context.Background(), workspace.ID, packet.ID)
 	if err != nil || explanation.ContentHash != packet.ContentHash || explanation.ByteSize != packet.ByteSize || !reflect.DeepEqual(explanation.Included, packet.Included) || !reflect.DeepEqual(explanation.Excluded, packet.Excluded) || !reflect.DeepEqual(explanation.Budget, packet.Budget) {

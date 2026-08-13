@@ -323,6 +323,37 @@ fingerprints as well as journal bytes around those failures. Store mutation hook
 cover transaction rollback and restart recovery. The scenario uses no provider,
 model, credential, network, or `jq`.
 
+### Live context delta fixture
+
+The provider-free `live-context-deltas` scenario builds the binary, isolated
+SQLite state, temporary Git projects, and `fixture-mcp` runs. It makes no model,
+credential, live provider, remote, or network call. Its dynamic scenario JSON may
+name IDs created through the public CLI, but it exposes no workspace/project/task/
+run/cursor authority to MCP. The hidden fixture can only fetch its own pending
+delta, inspect typed fields, acknowledge the exact ID/sequence, repeat the same
+acknowledgement, or assert immutable-policy denial.
+
+The acceptance matrix is split at observable boundaries:
+
+| Contract | Provider-neutral proof |
+| --- | --- |
+| Packet v4 base | CLI JSON freezes nonzero `as_of_event_sequence`, direct dependencies, bounded reverse dependents, exact participant rosters, collaboration budget, live policy, and the two live MCP tool names |
+| Explicit creation | accepting an applicable decision alone creates no delta; one owner `context refresh` creates exactly one `knowledge_accepted` change |
+| Pending/idempotency | a second refresh key before acknowledgement returns the same delta/sequence/hash and appends no second build event |
+| Restart | stop/restart the daemon while pending; local show/list and the exact run fetch return the byte-identical delta |
+| Consumption authority | `fixture-mcp` fetches with `{}`, acknowledges exact ID/sequence, and replays the same receipt; another run/task sees `none_pending` and cannot acknowledge the target ID |
+| No-op cursor | after acknowledgement, a refresh with no eligible change returns `up_to_date`, advances inspected-through to the current cutoff, and appends no delta or journal event |
+| Message and roster scope | owner-created/invited participant state produces a whole roster and bounded message preview for the exact participant task; no full body is in the delta and another task of the same agent remains unaffected |
+| Contradiction/withdrawal/re-offer | owner confirmation produces open/quarantine plus withdrawal of delivered participants; an accepted applicable decision hidden before delivery receives a no-body disputed suppression tombstone; after final closure, eligible decisions from either exact category are re-offered with cause `contradiction_closed_reoffer`, while an open contradiction snapshot alone grants no re-offer and findings/otherwise-ineligible decisions remain absent |
+| Reverse dependent | a legal new same-project task depending on the run task appears as one whole `dependent_added`; it grants no task/cross-project authority |
+| Legacy compatibility | a checked-in upgrade fixture binds a v3 packet; owner refresh returns `rebase_required/unsupported_packet`, both live MCP tool probes are denied by packet policy, no live state/delta/event is invented, and the fixture restores and verifies the immutable SQLite triggers it temporarily bypasses |
+| Bounds/failures | store/protocol tests prove the 1,000-event, 16 KiB delta, 64 KiB chain, one-pending, strict-shape, unsupported-event, direct-dependency drift, rollback, event-link, and cross-run trigger gates; the black box asserts at least one public rebase/failure result |
+
+The fixture waits on public status/delta observations rather than assuming daemon
+or provider timing. Any shell delay exists only as a bounded startup barrier and
+is paired with observable polling. Failure diagnostics retain exact JSON/event
+files inside the owned temporary directory until cleanup prints them.
+
 The real Claude canary has an independent two-flag acknowledgement gate:
 
 ```sh
@@ -420,7 +451,7 @@ The suite grows this matrix milestone by milestone:
 | Git | missing checkout, changed HEAD, dirty drift, command failure |
 | Messaging | recipient offline, wake failure, duplicate ack, forbidden recipient |
 | Meeting | participant timeout, facilitator crash, stale frozen context |
-| Knowledge | contradiction, stale item, missing/corrupt search index, curator rollback, oversized safe-copy source, budget overflow |
+| Knowledge/context | contradiction, stale item, missing/corrupt search index, curator rollback, oversized safe-copy source, packet/delta/chain/event-window overflow, old base, unsupported change, pending replay |
 | Scheduler | capacity saturation, dependency cycle, claim race, restart mid-launch |
 
 Fault injection should happen at named seams rather than through arbitrary sleeps.

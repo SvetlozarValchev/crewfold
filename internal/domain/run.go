@@ -51,6 +51,7 @@ type FakeScenario struct {
 	Mailbox       FixtureMailbox       `json:"mailbox,omitempty"`
 	Knowledge     FixtureKnowledge     `json:"knowledge,omitempty"`
 	Contradiction FixtureContradiction `json:"contradiction,omitempty"`
+	ContextDelta  FixtureContextDelta  `json:"context_delta,omitempty"`
 }
 
 // FixtureProcess describes deterministic operating-system behavior for the
@@ -118,6 +119,32 @@ type FixtureContradictionReport struct {
 	LeftRevision  string `json:"left_revision"`
 	RightRevision string `json:"right_revision"`
 	Reason        string `json:"reason"`
+}
+
+// FixtureContextDelta lets the provider-free scoped-MCP fixture prove live
+// delivery and exact-run acknowledgement without a model, terminal prompt, or
+// network call. It cannot trigger owner refresh or select another run's scope.
+type FixtureContextDelta struct {
+	Expectations           []FixtureContextDeltaExpectation `json:"expectations,omitempty"`
+	InitialDelayMillis     int                              `json:"initial_delay_millis,omitempty"`
+	WaitTimeoutMillis      int                              `json:"wait_timeout_millis,omitempty"`
+	DuplicateAcknowledge   bool                             `json:"duplicate_acknowledge,omitempty"`
+	ExpectNoPending        bool                             `json:"expect_no_pending,omitempty"`
+	DeniedDeltaID          string                           `json:"denied_delta_id,omitempty"`
+	DeniedExpectedSequence int64                            `json:"denied_expected_sequence,omitempty"`
+	ExpectToolsDenied      bool                             `json:"expect_tools_denied,omitempty"`
+}
+
+// FixtureContextDeltaExpectation describes only assertions over a delta the
+// owner has already built. Empty entity assertions are ignored.
+type FixtureContextDeltaExpectation struct {
+	RequiredKinds         []string `json:"required_kinds"`
+	MessagePreview        string   `json:"message_preview,omitempty"`
+	ParticipantThreadID   string   `json:"participant_thread_id,omitempty"`
+	KnowledgeRevisionIDs  []string `json:"knowledge_revision_ids,omitempty"`
+	WithdrawalRevisionIDs []string `json:"withdrawal_revision_ids,omitempty"`
+	ContradictionID       string   `json:"contradiction_id,omitempty"`
+	DependentTaskID       string   `json:"dependent_task_id,omitempty"`
 }
 
 type Run struct {

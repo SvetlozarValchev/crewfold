@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:context-delta-fetch-result:v1",
+  "title": "Crewfold run-scoped context delta fetch result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "run_id", "context_packet_id", "state_revision", "scanned_through_event_sequence", "chain"],
+  "properties": {
+    "status": {"enum": ["pending", "none_pending", "rebase_required"]},
+    "run_id": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
+    "context_packet_id": {"type": "string", "pattern": "^ctx_[0-9a-f]{32}$"},
+    "state_revision": {"type": "integer", "minimum": 0},
+    "scanned_through_event_sequence": {"type": "integer", "minimum": 0},
+    "chain": {"$ref": "context-delta-chain.schema.json"},
+    "delta": {"$ref": "context-delta.schema.json"},
+    "rebase_reason": {"enum": ["unsupported_packet", "base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]}
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "pending"}}}, "then": {"$ref": "context-refresh-result.schema.json#/$defs/pending_chain", "required": ["delta"], "not": {"required": ["rebase_reason"]}}},
+    {"if": {"properties": {"status": {"const": "rebase_required"}}}, "then": {"$ref": "context-refresh-result.schema.json#/$defs/rebase_union", "required": ["rebase_reason"], "not": {"required": ["delta"]}}},
+    {"if": {"properties": {"status": {"const": "none_pending"}}}, "then": {"$ref": "context-refresh-result.schema.json#/$defs/clear_chain", "not": {"anyOf": [{"required": ["delta"]}, {"required": ["rebase_reason"]}]}}}
+  ]
+}

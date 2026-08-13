@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -8,11 +9,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"crewfold/internal/domain"
+	"crewfold/internal/store/dbgen"
 )
 
 const (
@@ -24,13 +28,21 @@ const (
 	maximumContextBytes          = 32 * 1024
 	maximumContextKnowledgeBytes = 12 * 1024
 	maximumContextKnowledgeItems = 16
+	maximumContextDependents     = 32
+	maximumContextThreads        = 8
+	maximumContextThreadBytes    = 8 * 1024
+	maximumContextDeltaBytes     = 16 * 1024
+	maximumContextDeltaTotal     = 64 * 1024
+	maximumContextDeltaEvents    = 1000
 	maximumArtifactBytes         = 32 * 1024
 )
 
 var runScopedTools = []string{
-	"crewfold_get_briefing",
-	"crewfold_get_status",
+	"crewfold_acknowledge_context_delta",
 	"crewfold_acknowledge_message",
+	"crewfold_get_briefing",
+	"crewfold_get_context_delta",
+	"crewfold_get_status",
 	"crewfold_list_inbox",
 	"crewfold_propose_knowledge",
 	"crewfold_propose_completion",
@@ -127,16 +139,29 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 		return domain.ContextPacket{}, 0, err
 	}
 	var repositoryFingerprint string
-	if err := tx.QueryRowContext(ctx, "SELECT fingerprint FROM repositories WHERE id = ? AND workspace_id = ?", checkout.RepositoryID, workspaceID).Scan(&repositoryFingerprint); err != nil {
+	repositoryFingerprint, err = dbgen.New(tx).GetContextRepositoryFingerprint(ctx, dbgen.GetContextRepositoryFingerprintParams{ID: checkout.RepositoryID, WorkspaceID: workspaceID})
+	if err != nil {
 		return domain.ContextPacket{}, 0, storageFailure("query context repository", err)
 	}
 	dependencies, err := contextDependencies(ctx, tx, task.ID)
 	if err != nil {
 		return domain.ContextPacket{}, 0, err
 	}
+	dependents, dependentCount, err := contextDependents(ctx, tx, task.ID)
+	if err != nil {
+		return domain.ContextPacket{}, 0, err
+	}
 	inbox, err := inboxSummaryInTransaction(ctx, tx, agent.ID, task.ProjectID, task.ID)
 	if err != nil {
 		return domain.ContextPacket{}, 0, err
+	}
+	participantThreads, collaborationSelections, collaborationExclusions, collaborationUsedBytes, err := contextParticipantThreads(ctx, tx, workspaceID, agent.ID, task.ProjectID, task.ID)
+	if err != nil {
+		return domain.ContextPacket{}, 0, err
+	}
+	var asOfEventSequence int64
+	if asOfEventSequence, err = dbgen.New(tx).GetContextEventCursor(ctx); err != nil {
+		return domain.ContextPacket{}, 0, storageFailure("read context packet event cursor", err)
 	}
 	acceptedKnowledge, knowledgeSelections, knowledgeExclusions, knowledgeUsedBytes, err := s.selectContextKnowledgeInTransaction(ctx, tx, workspaceID, task, knowledgeRevisionIDs, now)
 	if err != nil {
@@ -150,20 +175,27 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 		Schema: domain.ContextPacketSchema, ID: packetID, WorkspaceID: workspaceID,
 		ProjectID: task.ProjectID, TaskID: task.ID, AgentID: agent.ID, CheckoutID: checkout.ID,
 		Role: domain.ContextRole{AgentID: agent.ID, Name: agent.Name, Role: agent.Role, Provider: agent.Provider, Runtime: agent.Runtime, Revision: agent.Revision},
-		Task: domain.ContextTask{TaskID: task.ID, ObjectiveID: task.ObjectiveID, Title: task.Title, Description: task.Description, Priority: task.Priority, Budget: task.Budget, Revision: task.Revision},
+		Task: domain.ContextTask{TaskID: task.ID, AssignmentID: task.AssignmentID, ObjectiveID: task.ObjectiveID, Title: task.Title, Description: task.Description, Priority: task.Priority, Budget: task.Budget, Revision: task.Revision},
 		Checkout: domain.ContextCheckout{
 			CheckoutID: checkout.ID, ProjectID: project.ID, ProjectName: project.Name,
 			RepositoryID: checkout.RepositoryID, RepositoryFingerprint: repositoryFingerprint,
 			Path: checkout.Path, WriteMode: checkout.WriteMode, CheckoutKind: checkout.CheckoutKind,
 			Branch: checkout.Branch, HeadCommit: checkout.HeadCommit, Dirty: checkout.Dirty, Revision: checkout.Revision,
 		},
-		Dependencies: dependencies, Inbox: inbox,
+		Dependencies: dependencies, Dependents: dependents, DependentTaskCount: dependentCount,
+		Inbox: inbox, ParticipantThreads: participantThreads,
 		RequestedKnowledgeRevisionIDs: append(make([]string, 0, len(knowledgeRevisionIDs)), knowledgeRevisionIDs...),
 		AcceptedKnowledge:             acceptedKnowledge,
 		Policy: domain.ContextPolicy{
 			AllowedTools:     append([]string(nil), runScopedTools...),
 			DeniedOperations: []string{"change another run or task", "push or merge source", "deploy", "message a person or broadcast", "read unscoped context"},
 			ApprovalRequired: []string{"shared repository mutation", "external side effect", "destructive operation"},
+		},
+		LiveContext: domain.ContextLivePolicy{
+			Schema: domain.ContextLivePolicySchema, Delivery: domain.ContextLiveDeliveryExplicitPull,
+			AckAuthority: domain.ContextLiveAckBoundRun, MaxPending: 1,
+			MaxRelevantEvents: maximumContextDeltaEvents, PerDeltaLimitBytes: maximumContextDeltaBytes,
+			CumulativeDeltaLimitBytes: maximumContextDeltaTotal,
 		},
 		Reporting: domain.ContextReporting{
 			Progress:   "Report concise completed work, next work, risks, and evidence through crewfold_report_progress.",
@@ -187,8 +219,13 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 				LimitBytes: maximumContextKnowledgeBytes, UsedBytes: knowledgeUsedBytes,
 				RemainingBytes: maximumContextKnowledgeBytes - knowledgeUsedBytes,
 			},
+			Collaboration: domain.ContextBudgetUsage{
+				LimitBytes: maximumContextThreadBytes, UsedBytes: collaborationUsedBytes,
+				RemainingBytes: maximumContextThreadBytes - collaborationUsedBytes,
+			},
 		},
-		CreatedAt: now, CreatedBy: localOwnerActorID,
+		AsOfEventSequence: asOfEventSequence,
+		CreatedAt:         now, CreatedBy: localOwnerActorID,
 	}
 	if len(knowledgeRevisionIDs) == 0 {
 		packet.Excluded = append([]domain.ContextExclusion{{Section: "accepted_knowledge", Reason: "no explicit knowledge revision links were requested"}}, packet.Excluded...)
@@ -196,12 +233,26 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 	for _, dependency := range dependencies {
 		packet.Included = append(packet.Included, domain.ContextSelection{Section: "dependencies", EntityType: "task", EntityID: dependency.TaskID, Revision: dependency.Revision, Reason: "direct task dependency"})
 	}
+	for _, dependent := range dependents {
+		packet.Included = append(packet.Included, domain.ContextSelection{Section: "dependents", EntityType: "task", EntityID: dependent.TaskID, Revision: dependent.Revision, Reason: "task directly depends on this run's task"})
+	}
+	if dependentCount > len(dependents) {
+		packet.Excluded = append(packet.Excluded, domain.ContextExclusion{Section: "dependents", EntityType: "task", ReasonCode: "over_item_limit",
+			Reason: fmt.Sprintf("%d additional direct reverse dependents are omitted by the %d-item limit", dependentCount-len(dependents), maximumContextDependents)})
+	}
+	packet.Included = append(packet.Included, collaborationSelections...)
+	packet.Excluded = append(packet.Excluded, collaborationExclusions...)
 	for _, item := range inbox.Items {
 		packet.Included = append(packet.Included, domain.ContextSelection{Section: "inbox", EntityType: "message", EntityID: item.MessageID, Revision: 1, Reason: "unseen message addressed to the assigned agent"})
 	}
 	packet.Included = append(packet.Included, knowledgeSelections...)
 	baseExclusionCount := len(packet.Excluded)
-	packet.Excluded = append(packet.Excluded, orderedContextKnowledgeExclusions(knowledgeRevisionIDs, knowledgeExclusions)...)
+	totalBudgetRosterExclusions := make([]domain.ContextExclusion, 0)
+	rebuildBoundedExclusions := func() {
+		packet.Excluded = append(packet.Excluded[:baseExclusionCount], totalBudgetRosterExclusions...)
+		packet.Excluded = append(packet.Excluded, orderedContextKnowledgeExclusions(knowledgeRevisionIDs, knowledgeExclusions)...)
+	}
+	rebuildBoundedExclusions()
 
 	var packetJSON []byte
 	for {
@@ -211,6 +262,26 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 		}
 		if packet.ByteSize <= maximumContextBytes {
 			break
+		}
+		if len(packet.ParticipantThreads) > 0 {
+			evicted := packet.ParticipantThreads[len(packet.ParticipantThreads)-1]
+			packet.ParticipantThreads = packet.ParticipantThreads[:len(packet.ParticipantThreads)-1]
+			for index := len(packet.Included) - 1; index >= 0; index-- {
+				if packet.Included[index].Section == "participant_threads" && packet.Included[index].EntityID == evicted.Thread.ID {
+					packet.Included = append(packet.Included[:index], packet.Included[index+1:]...)
+					break
+				}
+			}
+			encoded, marshalErr := json.Marshal(evicted)
+			if marshalErr != nil {
+				return domain.ContextPacket{}, 0, storageFailure("encode over-budget context participant roster", marshalErr)
+			}
+			totalBudgetRosterExclusions = append(totalBudgetRosterExclusions, domain.ContextExclusion{Section: "participant_threads", EntityType: "thread", EntityID: evicted.Thread.ID, Revision: evicted.ParticipantRevision, ReasonCode: "over_budget", Reason: "the complete participant roster would exceed the context packet byte budget", ByteSize: len(encoded)})
+			rebuildBoundedExclusions()
+			collaborationUsedBytes -= len(encoded)
+			packet.Budget.Collaboration.UsedBytes = collaborationUsedBytes
+			packet.Budget.Collaboration.RemainingBytes = maximumContextThreadBytes - collaborationUsedBytes
+			continue
 		}
 		if len(packet.AcceptedKnowledge) == 0 {
 			return domain.ContextPacket{}, 0, &Error{Code: CodeInvalidContext, Message: "context packet base content exceeds its bounded size"}
@@ -228,7 +299,7 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 			return domain.ContextPacket{}, 0, storageFailure("encode over-budget context knowledge", marshalErr)
 		}
 		knowledgeExclusions[evicted.ID] = contextKnowledgeExclusion(evicted, "over_budget", "the complete revision would exceed the context packet byte budget", len(encoded))
-		packet.Excluded = append(packet.Excluded[:baseExclusionCount], orderedContextKnowledgeExclusions(knowledgeRevisionIDs, knowledgeExclusions)...)
+		rebuildBoundedExclusions()
 		knowledgeUsedBytes, err = contextKnowledgeEncodedBytes(packet.AcceptedKnowledge)
 		if err != nil {
 			return domain.ContextPacket{}, 0, err
@@ -236,15 +307,16 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 		packet.Budget.Knowledge.UsedBytes = knowledgeUsedBytes
 		packet.Budget.Knowledge.RemainingBytes = maximumContextKnowledgeBytes - knowledgeUsedBytes
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO context_packets(
-id, workspace_id, project_id, task_id, agent_id, checkout_id, packet_json,
-content_hash, byte_size, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		packet.ID, packet.WorkspaceID, packet.ProjectID, packet.TaskID, packet.AgentID, packet.CheckoutID,
-		string(packetJSON), packet.ContentHash, packet.ByteSize, packet.CreatedAt, packet.CreatedBy); err != nil {
+	if err := dbgen.New(tx).InsertContextPacket(ctx, dbgen.InsertContextPacketParams{
+		ID: packet.ID, WorkspaceID: packet.WorkspaceID, ProjectID: packet.ProjectID, TaskID: packet.TaskID,
+		AgentID: packet.AgentID, CheckoutID: packet.CheckoutID, PacketJson: string(packetJSON),
+		ContentHash: packet.ContentHash, ByteSize: int64(packet.ByteSize), CreatedAt: packet.CreatedAt, CreatedBy: packet.CreatedBy,
+	}); err != nil {
 		return domain.ContextPacket{}, 0, storageFailure("insert context packet", err)
 	}
 	sequence, err := appendEvent(ctx, tx, workspaceID, "context_packet", packet.ID, 1, contextPacketBuiltEvent, correlationID, now, map[string]any{
 		"task_id": task.ID, "agent_id": agent.ID, "checkout_id": checkout.ID,
+		"packet_schema": packet.Schema, "as_of_event_sequence": packet.AsOfEventSequence,
 		"content_hash": packet.ContentHash, "byte_size": packet.ByteSize,
 	})
 	if err != nil {
@@ -443,17 +515,11 @@ func finalizeContextPacket(packet *domain.ContextPacket) ([]byte, error) {
 		return nil, storageFailure("encode context packet", errors.New("packet byte accounting did not converge"))
 	}
 
-	semantic := *packet
-	semantic.ID, semantic.ContentHash, semantic.CreatedAt, semantic.CreatedBy = "", "", "", ""
-	semantic.ByteSize = 0
-	semantic.Budget.Total.UsedBytes = 0
-	semantic.Budget.Total.RemainingBytes = maximumContextBytes
-	semanticJSON, err := json.Marshal(semantic)
+	var err error
+	packet.ContentHash, err = contextPacketSemanticHash(*packet)
 	if err != nil {
-		return nil, storageFailure("encode context packet semantic content", err)
+		return nil, err
 	}
-	digest := sha256.Sum256(semanticJSON)
-	packet.ContentHash = "sha256:" + hex.EncodeToString(digest[:])
 	packetJSON, err := json.Marshal(packet)
 	if err != nil {
 		return nil, storageFailure("encode final context packet", err)
@@ -465,22 +531,88 @@ func finalizeContextPacket(packet *domain.ContextPacket) ([]byte, error) {
 }
 
 func contextDependencies(ctx context.Context, tx *sql.Tx, taskID string) ([]domain.ContextDependency, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT t.id, t.title, t.status, t.revision
-FROM task_dependencies d JOIN tasks t ON t.id = d.depends_on_task_id
-WHERE d.task_id = ? ORDER BY t.id`, taskID)
+	queries := dbgen.New(tx)
+	count, err := queries.CountContextDependencies(ctx, taskID)
+	if err != nil {
+		return nil, storageFailure("count context dependencies", err)
+	}
+	if count > int64(maximumContextDependents) {
+		return nil, &Error{Code: CodeInvalidContext, Message: fmt.Sprintf("context task has %d direct dependencies; maximum is %d", count, maximumContextDependents)}
+	}
+	rows, err := queries.ListContextDependencies(ctx, taskID)
 	if err != nil {
 		return nil, storageFailure("query context dependencies", err)
 	}
-	defer rows.Close()
-	result := make([]domain.ContextDependency, 0)
-	for rows.Next() {
-		var dependency domain.ContextDependency
-		if err := rows.Scan(&dependency.TaskID, &dependency.Title, &dependency.Status, &dependency.Revision); err != nil {
-			return nil, storageFailure("scan context dependency", err)
-		}
-		result = append(result, dependency)
+	result := make([]domain.ContextDependency, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, domain.ContextDependency{TaskID: row.ID, Title: row.Title, Status: row.Status, Revision: row.Revision})
 	}
-	return result, rows.Err()
+	return result, nil
+}
+
+func contextDependents(ctx context.Context, tx *sql.Tx, taskID string) ([]domain.ContextDependency, int, error) {
+	queries := dbgen.New(tx)
+	count, err := queries.CountContextDependents(ctx, taskID)
+	if err != nil {
+		return nil, 0, storageFailure("count context dependent tasks", err)
+	}
+	rows, err := queries.ListContextDependents(ctx, dbgen.ListContextDependentsParams{DependsOnTaskID: taskID, Limit: maximumContextDependents})
+	if err != nil {
+		return nil, 0, storageFailure("query context dependent tasks", err)
+	}
+	result := make([]domain.ContextDependency, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, domain.ContextDependency{TaskID: row.ID, Title: row.Title, Status: row.Status, Revision: row.Revision})
+	}
+	return result, int(count), nil
+}
+
+func contextParticipantThreads(ctx context.Context, tx *sql.Tx, workspaceID, agentID, projectID, taskID string) ([]domain.ParticipantThread, []domain.ContextSelection, []domain.ContextExclusion, int, error) {
+	queries := dbgen.New(tx)
+	totalCount64, err := queries.CountContextParticipantThreads(ctx, dbgen.CountContextParticipantThreadsParams{
+		WorkspaceID: workspaceID, AgentID: agentID, ProjectID: projectID, TaskID: taskID,
+	})
+	if err != nil {
+		return nil, nil, nil, 0, storageFailure("count context participant threads", err)
+	}
+	totalCount := int(totalCount64)
+	const maximumContextThreadCandidates = 32
+	threadIDs, err := queries.ListContextParticipantThreadIDs(ctx, dbgen.ListContextParticipantThreadIDsParams{
+		WorkspaceID: workspaceID, AgentID: agentID, ProjectID: projectID, TaskID: taskID, Limit: maximumContextThreadCandidates,
+	})
+	if err != nil {
+		return nil, nil, nil, 0, storageFailure("query context participant threads", err)
+	}
+	threads := make([]domain.ParticipantThread, 0)
+	selections := make([]domain.ContextSelection, 0)
+	exclusions := make([]domain.ContextExclusion, 0)
+	usedBytes := 0
+	for _, threadID := range threadIDs {
+		thread, err := participantThreadInTransaction(ctx, queries, workspaceID, threadID)
+		if err != nil {
+			return nil, nil, nil, 0, err
+		}
+		encoded, err := json.Marshal(thread)
+		if err != nil {
+			return nil, nil, nil, 0, storageFailure("encode context participant thread", err)
+		}
+		if len(threads) >= maximumContextThreads || usedBytes+len(encoded) > maximumContextThreadBytes {
+			reasonCode, reason := "over_budget", "the complete participant roster exceeds the bounded collaboration context"
+			if len(threads) >= maximumContextThreads {
+				reasonCode, reason = "over_item_limit", "the participant thread count exceeds the bounded collaboration context"
+			}
+			exclusions = append(exclusions, domain.ContextExclusion{Section: "participant_threads", EntityType: "thread", EntityID: thread.Thread.ID, Revision: thread.ParticipantRevision, ReasonCode: reasonCode, Reason: reason, ByteSize: len(encoded)})
+			continue
+		}
+		threads = append(threads, thread)
+		usedBytes += len(encoded)
+		selections = append(selections, domain.ContextSelection{Section: "participant_threads", EntityType: "thread", EntityID: thread.Thread.ID, Revision: thread.ParticipantRevision, Reason: "exact participant binding for this run's agent, project, and task"})
+	}
+	if totalCount > len(threadIDs) {
+		exclusions = append(exclusions, domain.ContextExclusion{Section: "participant_threads", EntityType: "thread", ReasonCode: "over_item_limit",
+			Reason: fmt.Sprintf("%d additional authorized participant threads were not inspected beyond the bounded %d-candidate lookahead", totalCount-len(threadIDs), maximumContextThreadCandidates)})
+	}
+	return threads, selections, exclusions, usedBytes, nil
 }
 
 func (s *Store) ContextPacket(ctx context.Context, workspaceIdentifier, packetID string) (domain.ContextPacket, error) {
@@ -510,9 +642,8 @@ func (s *Store) ExplainContextPacket(ctx context.Context, workspaceIdentifier, p
 	return domain.ContextExplanation{PacketID: packet.ID, ContentHash: packet.ContentHash, ByteSize: packet.ByteSize, Included: packet.Included, Excluded: packet.Excluded, Budget: budget}, nil
 }
 
-func queryContextPacket(ctx context.Context, database queryRower, workspaceID, packetID string) (domain.ContextPacket, error) {
-	var packetJSON string
-	err := database.QueryRowContext(ctx, "SELECT packet_json FROM context_packets WHERE id = ? AND workspace_id = ?", packetID, workspaceID).Scan(&packetJSON)
+func queryContextPacket(ctx context.Context, database dbgen.DBTX, workspaceID, packetID string) (domain.ContextPacket, error) {
+	row, err := dbgen.New(database).GetWorkspaceContextPacket(ctx, dbgen.GetWorkspaceContextPacketParams{ID: packetID, WorkspaceID: workspaceID})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.ContextPacket{}, &Error{Code: CodeContextNotFound, Message: fmt.Sprintf("context packet %q was not found", packetID)}
 	}
@@ -520,13 +651,343 @@ func queryContextPacket(ctx context.Context, database queryRower, workspaceID, p
 		return domain.ContextPacket{}, storageFailure("query context packet", err)
 	}
 	var packet domain.ContextPacket
-	if err := json.Unmarshal([]byte(packetJSON), &packet); err != nil {
+	if err := json.Unmarshal([]byte(row.PacketJson), &packet); err != nil {
 		return domain.ContextPacket{}, storageFailure("decode context packet", err)
 	}
-	if (packet.Schema != domain.ContextPacketSchemaV1 && packet.Schema != domain.ContextPacketSchemaV2 && packet.Schema != domain.ContextPacketSchema) || packet.ID != packetID || packet.WorkspaceID != workspaceID || packet.ByteSize != len(packetJSON) {
+	if packet.Schema == domain.ContextPacketSchema {
+		decoder := json.NewDecoder(bytes.NewBufferString(row.PacketJson))
+		decoder.DisallowUnknownFields()
+		var strict domain.ContextPacket
+		if err := decoder.Decode(&strict); err != nil {
+			return domain.ContextPacket{}, storageFailure("strictly decode context packet", err)
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			return domain.ContextPacket{}, storageFailure("strictly decode context packet", errors.New("packet has trailing JSON content"))
+		}
+		packet = strict
+	}
+	if (packet.Schema != domain.ContextPacketSchemaV1 && packet.Schema != domain.ContextPacketSchemaV2 && packet.Schema != domain.ContextPacketSchemaV3 && packet.Schema != domain.ContextPacketSchema) ||
+		packet.ID != packetID || packet.WorkspaceID != workspaceID || packet.ProjectID != row.ProjectID || packet.TaskID != row.TaskID ||
+		packet.AgentID != row.AgentID || packet.CheckoutID != row.CheckoutID || packet.ContentHash != row.ContentHash ||
+		packet.ByteSize != int(row.ByteSize) || packet.ByteSize != len([]byte(row.PacketJson)) {
 		return domain.ContextPacket{}, storageFailure("validate context packet", errors.New("stored packet identity or size is invalid"))
 	}
+	if packet.Schema == domain.ContextPacketSchema {
+		if packet.AsOfEventSequence < 0 || packet.LiveContext != (domain.ContextLivePolicy{
+			Schema: domain.ContextLivePolicySchema, Delivery: domain.ContextLiveDeliveryExplicitPull,
+			AckAuthority: domain.ContextLiveAckBoundRun, MaxPending: 1,
+			MaxRelevantEvents: maximumContextDeltaEvents, PerDeltaLimitBytes: maximumContextDeltaBytes,
+			CumulativeDeltaLimitBytes: maximumContextDeltaTotal,
+		}) {
+			return domain.ContextPacket{}, storageFailure("validate context packet live policy", errors.New("stored version-four policy is invalid"))
+		}
+		semanticHash, err := contextPacketSemanticHash(packet)
+		if err != nil || semanticHash != packet.ContentHash {
+			if err == nil {
+				err = errors.New("stored packet semantic hash differs")
+			}
+			return domain.ContextPacket{}, storageFailure("validate context packet semantic hash", err)
+		}
+		if err := validateVersionFourContextPacket(packet); err != nil {
+			return domain.ContextPacket{}, storageFailure("validate version-four context packet", err)
+		}
+	}
 	return packet, nil
+}
+
+func validateVersionFourContextPacket(packet domain.ContextPacket) error {
+	if packet.Role.AgentID != packet.AgentID || packet.Task.TaskID != packet.TaskID || packet.Task.AssignmentID == "" ||
+		packet.Checkout.CheckoutID != packet.CheckoutID || packet.Checkout.ProjectID != packet.ProjectID ||
+		len(packet.Dependencies) > maximumContextDependents || len(packet.Dependents) > maximumContextDependents ||
+		packet.DependentTaskCount < len(packet.Dependents) || len(packet.ParticipantThreads) > maximumContextThreads ||
+		len(packet.Inbox.Items) > 10 || len(packet.RequestedKnowledgeRevisionIDs) > maximumContextKnowledgeItems ||
+		len(packet.AcceptedKnowledge) > maximumContextKnowledgeItems || len(packet.Included) > 128 || len(packet.Excluded) > 128 ||
+		packet.ByteSize <= 0 || packet.ByteSize > maximumContextBytes || !reflect.DeepEqual(packet.Policy.AllowedTools, runScopedTools) ||
+		!reflect.DeepEqual(packet.Policy.DeniedOperations, []string{"change another run or task", "push or merge source", "deploy", "message a person or broadcast", "read unscoped context"}) ||
+		!reflect.DeepEqual(packet.Policy.ApprovalRequired, []string{"shared repository mutation", "external side effect", "destructive operation"}) ||
+		packet.Reporting != (domain.ContextReporting{
+			Progress:   "Report concise completed work, next work, risks, and evidence through crewfold_report_progress.",
+			Blocked:    "Stop unsafe work and report the blocking reason and requested resolution through crewfold_report_blocked.",
+			Artifact:   "Publish only bounded evidence needed by this run through crewfold_publish_artifact.",
+			Completion: "Propose completion with a concise handoff and evidence; Crewfold decides acceptance.",
+		}) {
+		return errors.New("packet binding, relation bounds, or immutable tool policy is invalid")
+	}
+	for _, relations := range [][]domain.ContextDependency{packet.Dependencies, packet.Dependents} {
+		for index, relation := range relations {
+			if relation.TaskID == "" || relation.Revision < 1 || index > 0 && relations[index-1].TaskID >= relation.TaskID {
+				return errors.New("packet task relations are not unique and deterministically sorted")
+			}
+		}
+	}
+	requested := make(map[string]bool, len(packet.RequestedKnowledgeRevisionIDs))
+	for _, revisionID := range packet.RequestedKnowledgeRevisionIDs {
+		if !validContextKnowledgeRevisionID(revisionID) || requested[revisionID] {
+			return errors.New("packet requested knowledge IDs are invalid")
+		}
+		requested[revisionID] = true
+	}
+	accepted := make(map[string]bool, len(packet.AcceptedKnowledge))
+	for _, revision := range packet.AcceptedKnowledge {
+		if !requested[revision.ID] || accepted[revision.ID] || revision.WorkspaceID != packet.WorkspaceID || revision.ProjectID != packet.ProjectID ||
+			(revision.TaskScopeID != "" && revision.TaskScopeID != packet.TaskID) || revision.ReviewStatus != domain.KnowledgeReviewAccepted ||
+			revision.CurrencyStatus != domain.KnowledgeCurrencyCurrent || !domain.ValidKnowledgeFreshnessPolicy(revision.FreshnessPolicy) {
+			return errors.New("packet accepted knowledge scope is invalid")
+		}
+		if revision.FreshnessPolicy == domain.KnowledgeFreshExpiresAt {
+			freshUntil, freshErr := time.Parse(time.RFC3339Nano, revision.FreshUntil)
+			createdAt, createdErr := time.Parse(time.RFC3339Nano, packet.CreatedAt)
+			if freshErr != nil || createdErr != nil || !createdAt.Before(freshUntil) {
+				return errors.New("packet accepted knowledge is expired")
+			}
+		}
+		accepted[revision.ID] = true
+	}
+	knowledgeBytes, err := contextKnowledgeEncodedBytes(packet.AcceptedKnowledge)
+	if err != nil {
+		return err
+	}
+	if packet.Budget.Knowledge != (domain.ContextBudgetUsage{LimitBytes: maximumContextKnowledgeBytes, UsedBytes: knowledgeBytes, RemainingBytes: maximumContextKnowledgeBytes - knowledgeBytes}) {
+		return errors.New("packet knowledge budget is invalid")
+	}
+	selectionKeys := make(map[string]bool, len(packet.Included))
+	for _, selection := range packet.Included {
+		key := selection.Section + "\x00" + selection.EntityType + "\x00" + selection.EntityID
+		if selection.Section == "" || selection.EntityID == "" || selection.Revision < 1 || selectionKeys[key] {
+			return errors.New("packet inclusion evidence is invalid")
+		}
+		selectionKeys[key] = true
+	}
+	requireSelection := func(section, entityType, entityID string, revision int64) error {
+		key := section + "\x00" + entityType + "\x00" + entityID
+		if !selectionKeys[key] {
+			return fmt.Errorf("packet is missing %s selection for %s", section, entityID)
+		}
+		for _, selection := range packet.Included {
+			if selection.Section == section && selection.EntityType == entityType && selection.EntityID == entityID && selection.Revision != revision {
+				return fmt.Errorf("packet selection revision differs for %s", entityID)
+			}
+		}
+		return nil
+	}
+	for _, required := range []struct {
+		section, entityType, id string
+		revision                int64
+	}{
+		{"role", "agent", packet.AgentID, packet.Role.Revision}, {"task", "task", packet.TaskID, packet.Task.Revision}, {"checkout", "checkout", packet.CheckoutID, packet.Checkout.Revision},
+	} {
+		if err := requireSelection(required.section, required.entityType, required.id, required.revision); err != nil {
+			return err
+		}
+	}
+	for _, relation := range packet.Dependencies {
+		if err := requireSelection("dependencies", "task", relation.TaskID, relation.Revision); err != nil {
+			return err
+		}
+	}
+	for _, relation := range packet.Dependents {
+		if err := requireSelection("dependents", "task", relation.TaskID, relation.Revision); err != nil {
+			return err
+		}
+	}
+	for _, message := range packet.Inbox.Items {
+		if err := requireSelection("inbox", "message", message.MessageID, 1); err != nil {
+			return err
+		}
+	}
+	for _, thread := range packet.ParticipantThreads {
+		if err := requireSelection("participant_threads", "thread", thread.Thread.ID, thread.ParticipantRevision); err != nil {
+			return err
+		}
+	}
+	for _, revision := range packet.AcceptedKnowledge {
+		if err := requireSelection("accepted_knowledge", "knowledge_revision", revision.ID, revision.RevisionNumber); err != nil {
+			return err
+		}
+	}
+	collaborationBytes := 0
+	for _, thread := range packet.ParticipantThreads {
+		if err := validateContextParticipantThread(thread, packet.WorkspaceID, packet.ProjectID, packet.TaskID, packet.AgentID); err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(thread)
+		if err != nil {
+			return err
+		}
+		collaborationBytes += len(encoded)
+	}
+	if collaborationBytes > maximumContextThreadBytes || packet.Budget.Collaboration != (domain.ContextBudgetUsage{
+		LimitBytes: maximumContextThreadBytes, UsedBytes: collaborationBytes, RemainingBytes: maximumContextThreadBytes - collaborationBytes,
+	}) || packet.Budget.Total.LimitBytes != maximumContextBytes || packet.Budget.Total.UsedBytes != packet.ByteSize ||
+		packet.Budget.Total.RemainingBytes != maximumContextBytes-packet.ByteSize {
+		return errors.New("packet collaboration or total budget is invalid")
+	}
+	return nil
+}
+
+func validateContextParticipantThread(thread domain.ParticipantThread, workspaceID, projectID, taskID, agentID string) error {
+	if thread.Kind != domain.ThreadKindParticipantBound || thread.Thread.ID == "" || thread.Thread.WorkspaceID != workspaceID ||
+		thread.Thread.ProjectID != "" || thread.Thread.TaskID != "" || thread.Thread.Status != domain.ThreadOpen ||
+		thread.ParticipantRevision < 1 || len(thread.Participants) < 2 || len(thread.Participants) > 8 {
+		return errors.New("context participant thread header is invalid")
+	}
+	participantIDs, agentIDs, projects, ordinals := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[int]bool{}
+	exactBindings := 0
+	for _, participant := range thread.Participants {
+		if participant.ID == "" || participant.ThreadID != thread.Thread.ID || participant.WorkspaceID != workspaceID || participant.AgentID == "" ||
+			participant.TaskID == "" || participant.ProjectID == "" || participant.AssignmentID == "" || participant.Ordinal < 1 ||
+			participant.Status != domain.ThreadParticipantActive || participant.AssignmentRevision < 1 || participant.AgentRevision < 1 || participant.TaskRevision < 1 ||
+			participantIDs[participant.ID] || agentIDs[participant.AgentID] || ordinals[participant.Ordinal] {
+			return errors.New("context participant roster member is invalid or duplicated")
+		}
+		participantIDs[participant.ID], agentIDs[participant.AgentID], ordinals[participant.Ordinal], projects[participant.ProjectID] = true, true, true, true
+		if participant.AgentID == agentID && participant.ProjectID == projectID && participant.TaskID == taskID {
+			exactBindings++
+		}
+	}
+	for ordinal := 1; ordinal <= len(thread.Participants); ordinal++ {
+		if !ordinals[ordinal] {
+			return errors.New("context participant roster ordinals are not contiguous")
+		}
+	}
+	if len(projects) < 2 || exactBindings != 1 {
+		return errors.New("context participant roster project diversity or exact run binding is invalid")
+	}
+	return nil
+}
+
+func (s *Store) validateVersionFourContextPacketAgainstCanonical(ctx context.Context, tx *sql.Tx, packet domain.ContextPacket) error {
+	task, err := queryTask(ctx, tx, packet.WorkspaceID, packet.TaskID)
+	if err != nil {
+		return err
+	}
+	agent, err := queryAgent(ctx, tx, packet.WorkspaceID, packet.AgentID)
+	if err != nil {
+		return err
+	}
+	checkout, err := queryCheckoutByID(ctx, tx, packet.CheckoutID)
+	if err != nil {
+		return err
+	}
+	project, err := queryProject(ctx, tx, packet.WorkspaceID, packet.ProjectID)
+	if err != nil {
+		return err
+	}
+	fingerprint, err := dbgen.New(tx).GetContextRepositoryFingerprint(ctx, dbgen.GetContextRepositoryFingerprintParams{ID: checkout.RepositoryID, WorkspaceID: packet.WorkspaceID})
+	if err != nil {
+		return storageFailure("query canonical context repository", err)
+	}
+	expectedRole := domain.ContextRole{AgentID: agent.ID, Name: agent.Name, Role: agent.Role, Provider: agent.Provider, Runtime: agent.Runtime, Revision: agent.Revision}
+	expectedTask := domain.ContextTask{TaskID: task.ID, AssignmentID: task.AssignmentID, ObjectiveID: task.ObjectiveID, Title: task.Title,
+		Description: task.Description, Priority: task.Priority, Budget: task.Budget, Revision: task.Revision}
+	expectedCheckout := domain.ContextCheckout{CheckoutID: checkout.ID, ProjectID: project.ID, ProjectName: project.Name,
+		RepositoryID: checkout.RepositoryID, RepositoryFingerprint: fingerprint, Path: checkout.Path, WriteMode: checkout.WriteMode,
+		CheckoutKind: checkout.CheckoutKind, Branch: checkout.Branch, HeadCommit: checkout.HeadCommit, Dirty: checkout.Dirty, Revision: checkout.Revision}
+	packetCheckout, currentCheckout := packet.Checkout, expectedCheckout
+	packetCheckout.Branch, packetCheckout.HeadCommit, packetCheckout.Dirty, packetCheckout.Revision = "", "", false, 0
+	currentCheckout.Branch, currentCheckout.HeadCommit, currentCheckout.Dirty, currentCheckout.Revision = "", "", false, 0
+	if packet.Role != expectedRole || packet.Task != expectedTask || packetCheckout != currentCheckout || !agent.Enabled || checkout.Availability != domain.CheckoutAvailable {
+		return &Error{Code: CodeInvalidContext, Message: "version-four context packet snapshots differ from canonical run authority"}
+	}
+	dependencies, err := contextDependencies(ctx, tx, task.ID)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(packet.Dependencies, dependencies) {
+		return &Error{Code: CodeInvalidContext, Message: "version-four context packet upstream dependencies differ from canonical authority"}
+	}
+	for _, dependent := range packet.Dependents {
+		var projectID, title, status string
+		var revision int64
+		if err := tx.QueryRowContext(ctx, `SELECT task.project_id, task.title, task.status, task.revision
+FROM task_dependencies dependency JOIN tasks task ON task.id = dependency.task_id
+WHERE dependency.task_id = ? AND dependency.depends_on_task_id = ?`, dependent.TaskID, task.ID).Scan(&projectID, &title, &status, &revision); err != nil || projectID != packet.ProjectID || revision < dependent.Revision {
+			return &Error{Code: CodeInvalidContext, Message: "version-four packet reverse dependent lacks canonical provenance", Cause: err}
+		}
+		if revision == dependent.Revision && (title != dependent.Title || status != dependent.Status) {
+			return &Error{Code: CodeInvalidContext, Message: "version-four packet reverse dependent snapshot differs"}
+		}
+	}
+	for _, item := range packet.Inbox.Items {
+		canonical, err := queryInboxItem(ctx, tx, item.MessageID, packet.AgentID)
+		if err != nil || canonical.Message.ThreadID != item.ThreadID || canonical.Message.Kind != item.Kind ||
+			canonical.Message.SenderAgentID != item.SenderAgentID || canonical.Message.SenderAgentName != item.SenderAgentName ||
+			messagePreview(canonical.Message.Body, 160) != item.BodyPreview || canonical.Message.CreatedAt != item.CreatedAt || canonical.Delivery.Status != item.Status {
+			return &Error{Code: CodeInvalidContext, Message: "version-four packet inbox item lacks canonical provenance", Cause: err}
+		}
+		var authorized int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages message JOIN message_threads thread ON thread.id = message.thread_id
+JOIN message_recipients recipient ON recipient.message_id = message.id
+WHERE message.id = ? AND recipient.recipient_agent_id = ? AND recipient.status IN ('queued','delivered') AND (
+ (thread.kind = 'direct' AND (message.project_id IS NULL OR message.project_id = ?)) OR
+ (thread.kind = 'participant_bound' AND EXISTS (SELECT 1 FROM thread_participants participant
+   WHERE participant.id = recipient.recipient_participant_id AND participant.status = 'active'
+     AND participant.agent_id = ? AND participant.project_id = ? AND participant.task_id = ?))))`,
+			item.MessageID, packet.AgentID, packet.ProjectID, packet.AgentID, packet.ProjectID, packet.TaskID).Scan(&authorized); err != nil || authorized != 1 {
+			return &Error{Code: CodeInvalidContext, Message: "version-four packet inbox item is outside exact run authority", Cause: err}
+		}
+		var sentSequence int64
+		if err := tx.QueryRowContext(ctx, "SELECT sequence FROM events WHERE type = 'message.sent' AND entity_id = ?", item.MessageID).Scan(&sentSequence); err != nil || sentSequence > packet.AsOfEventSequence {
+			return &Error{Code: CodeInvalidContext, Message: "version-four packet inbox item postdates its cursor", Cause: err}
+		}
+	}
+	for _, revision := range packet.AcceptedKnowledge {
+		canonical, err := s.KnowledgeRevisionInTransaction(ctx, tx, packet.WorkspaceID, revision.ID)
+		if err != nil {
+			return &Error{Code: CodeInvalidContext, Message: "version-four packet knowledge is not canonical", Cause: err}
+		}
+		immutableRevision, immutableCanonical := revision, canonical
+		immutableRevision.ReviewStatus, immutableRevision.CurrencyStatus, immutableRevision.StateRevision = "", "", 0
+		immutableCanonical.ReviewStatus, immutableCanonical.CurrencyStatus, immutableCanonical.StateRevision = "", "", 0
+		if !reflect.DeepEqual(immutableRevision, immutableCanonical) {
+			return &Error{Code: CodeInvalidContext, Message: "version-four packet knowledge snapshot differs from canonical authority"}
+		}
+		if code, _, err := contextKnowledgeIneligibility(canonical, packet.WorkspaceID, task, s.nowText()); err != nil {
+			return err
+		} else if code != "" {
+			return &Error{Code: CodeInvalidContext, Message: "version-four packet knowledge is no longer eligible at run binding"}
+		}
+		_, openCount, err := openKnowledgeContradictions(ctx, tx, packet.WorkspaceID, revision.ID)
+		if err != nil {
+			return err
+		}
+		if openCount != 0 {
+			return &Error{Code: CodeInvalidContext, Message: "version-four packet knowledge is disputed at run binding"}
+		}
+	}
+	for _, thread := range packet.ParticipantThreads {
+		canonical, err := participantThreadInTransaction(ctx, dbgen.New(tx), packet.WorkspaceID, thread.Thread.ID)
+		if err != nil {
+			return err
+		}
+		frozenHeader, currentHeader := thread.Thread, canonical.Thread
+		frozenHeader.Revision, frozenHeader.UpdatedAt, frozenHeader.UpdatedBy = 0, "", ""
+		currentHeader.Revision, currentHeader.UpdatedAt, currentHeader.UpdatedBy = 0, "", ""
+		if canonical.ParticipantRevision < thread.ParticipantRevision || len(canonical.Participants) < len(thread.Participants) || !reflect.DeepEqual(frozenHeader, currentHeader) {
+			return &Error{Code: CodeInvalidContext, Message: "version-four packet participant roster differs from canonical authority"}
+		}
+		for index := range thread.Participants {
+			if !reflect.DeepEqual(thread.Participants[index], canonical.Participants[index]) {
+				return &Error{Code: CodeInvalidContext, Message: "version-four packet participant lacks canonical provenance"}
+			}
+		}
+	}
+	return nil
+}
+
+func contextPacketSemanticHash(packet domain.ContextPacket) (string, error) {
+	semantic := packet
+	semantic.ID, semantic.ContentHash, semantic.CreatedAt, semantic.CreatedBy = "", "", "", ""
+	semantic.ByteSize = 0
+	semantic.Budget.Total.UsedBytes = 0
+	semantic.Budget.Total.RemainingBytes = maximumContextBytes
+	semanticJSON, err := json.Marshal(semantic)
+	if err != nil {
+		return "", storageFailure("encode context packet semantic content", err)
+	}
+	digest := sha256.Sum256(semanticJSON)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 func (s *Store) AuthorizeRunCapability(ctx context.Context, runID string) (domain.RunBriefing, error) {

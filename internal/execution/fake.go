@@ -192,6 +192,9 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 	if scenario.StartFailure != "" && scenario.Contradiction != (domain.FixtureContradiction{}) {
 		return errors.New("start-failure scenarios cannot contain contradiction controls")
 	}
+	if scenario.StartFailure != "" && !emptyFixtureContextDelta(scenario.ContextDelta) {
+		return errors.New("start-failure scenarios cannot contain context delta controls")
+	}
 	if err := validateFixtureMailbox(scenario.Mailbox); err != nil {
 		return err
 	}
@@ -199,6 +202,9 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 		return err
 	}
 	if err := validateFixtureContradiction(scenario.Contradiction); err != nil {
+		return err
+	}
+	if err := validateFixtureContextDelta(scenario.ContextDelta); err != nil {
 		return err
 	}
 	for index, step := range scenario.Steps {
@@ -227,6 +233,114 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 		}
 	}
 	return nil
+}
+
+func emptyFixtureContextDelta(plan domain.FixtureContextDelta) bool {
+	return len(plan.Expectations) == 0 && plan.InitialDelayMillis == 0 && plan.WaitTimeoutMillis == 0 &&
+		!plan.DuplicateAcknowledge && !plan.ExpectNoPending && plan.DeniedDeltaID == "" &&
+		plan.DeniedExpectedSequence == 0 && !plan.ExpectToolsDenied
+}
+
+func validateFixtureContextDelta(plan domain.FixtureContextDelta) error {
+	if emptyFixtureContextDelta(plan) {
+		return nil
+	}
+	if plan.InitialDelayMillis < 0 || plan.InitialDelayMillis > 30000 || plan.WaitTimeoutMillis < 0 || plan.WaitTimeoutMillis > 30000 {
+		return errors.New("fixture context delta waits must not exceed 30 seconds")
+	}
+	modeCount := 0
+	if len(plan.Expectations) > 0 {
+		modeCount++
+	}
+	if plan.ExpectNoPending {
+		modeCount++
+	}
+	if plan.ExpectToolsDenied {
+		modeCount++
+	}
+	if modeCount != 1 {
+		return errors.New("fixture context delta requires exactly one of expectations, expect_no_pending, or expect_tools_denied")
+	}
+	if len(plan.Expectations) > 16 {
+		return errors.New("fixture context delta accepts at most 16 expectations")
+	}
+	if plan.DuplicateAcknowledge && len(plan.Expectations) == 0 {
+		return errors.New("fixture context delta duplicate acknowledgement requires expectations")
+	}
+	if (plan.DeniedDeltaID == "") != (plan.DeniedExpectedSequence == 0) || (plan.DeniedDeltaID != "" && !validFixtureOpaqueID(plan.DeniedDeltaID, "cdelta_")) {
+		return errors.New("fixture denied context delta probe requires an exact delta ID and positive sequence")
+	}
+	if plan.DeniedDeltaID != "" && !plan.ExpectNoPending {
+		return errors.New("fixture denied context delta probe requires expect_no_pending")
+	}
+	for index, expectation := range plan.Expectations {
+		if len(expectation.RequiredKinds) == 0 || len(expectation.RequiredKinds) > 16 {
+			return fmt.Errorf("fixture context delta expectation %d requires 1 to 16 change kinds", index)
+		}
+		seen := make(map[string]struct{}, len(expectation.RequiredKinds))
+		for _, kind := range expectation.RequiredKinds {
+			if !supportedFixtureContextDeltaKind(kind) {
+				return fmt.Errorf("fixture context delta expectation %d has unsupported kind %q", index, kind)
+			}
+			if _, exists := seen[kind]; exists {
+				return fmt.Errorf("fixture context delta expectation %d repeats kind %q", index, kind)
+			}
+			seen[kind] = struct{}{}
+		}
+		if len(expectation.MessagePreview) > 512 || strings.ContainsRune(expectation.MessagePreview, '\x00') ||
+			(expectation.ParticipantThreadID != "" && !validFixtureOpaqueID(expectation.ParticipantThreadID, "thread_")) ||
+			(expectation.ContradictionID != "" && !validFixtureOpaqueID(expectation.ContradictionID, "kcon_")) ||
+			(expectation.DependentTaskID != "" && !validFixtureOpaqueID(expectation.DependentTaskID, "task_")) {
+			return fmt.Errorf("fixture context delta expectation %d contains an invalid entity assertion", index)
+		}
+		if !validFixtureOpaqueIDs(expectation.KnowledgeRevisionIDs, "krev_", 16) ||
+			!validFixtureOpaqueIDs(expectation.WithdrawalRevisionIDs, "krev_", 16) {
+			return fmt.Errorf("fixture context delta expectation %d contains invalid or repeated knowledge assertions", index)
+		}
+	}
+	return nil
+}
+
+func supportedFixtureContextDeltaKind(kind string) bool {
+	switch kind {
+	case domain.ContextDeltaMessageReceived, domain.ContextDeltaKnowledgeAccepted,
+		domain.ContextDeltaKnowledgeWithdrawn, domain.ContextDeltaContradictionOpened,
+		domain.ContextDeltaContradictionClosed, domain.ContextDeltaDependentAdded,
+		domain.ContextDeltaDependentUpdated,
+		domain.ContextDeltaParticipantRosterUpdated:
+		return true
+	default:
+		return false
+	}
+}
+
+func validFixtureOpaqueID(value, prefix string) bool {
+	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	for _, character := range value[len(prefix):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validFixtureOpaqueIDs(values []string, prefix string, maximum int) bool {
+	if len(values) > maximum {
+		return false
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if !validFixtureOpaqueID(value, prefix) {
+			return false
+		}
+		if _, exists := seen[value]; exists {
+			return false
+		}
+		seen[value] = struct{}{}
+	}
+	return true
 }
 
 func validateFixtureContradiction(plan domain.FixtureContradiction) error {

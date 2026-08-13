@@ -90,6 +90,25 @@
         "report_received": {"const": true},
         "confirm_denied": {"const": true}
       }
+    },
+    "context_delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expectations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/context_delta_expectation"}
+        },
+        "initial_delay_millis": {"type": "integer", "minimum": 0, "maximum": 30000},
+        "wait_timeout_millis": {"type": "integer", "minimum": 0, "maximum": 30000},
+        "duplicate_acknowledge": {"type": "boolean"},
+        "expect_no_pending": {"type": "boolean"},
+        "denied_delta_id": {"type": "string", "pattern": "^cdelta_[0-9a-f]{32}$"},
+        "denied_expected_sequence": {"type": "integer", "minimum": 1},
+        "expect_tools_denied": {"type": "boolean"}
+      }
     }
   },
   "$defs": {
@@ -127,6 +146,49 @@
         "left_revision": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
         "right_revision": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
         "reason": {"type": "string", "minLength": 1, "maxLength": 2048, "description": "The semantic fixture loader enforces 1–2048 encoded UTF-8 bytes, nonblank text, and no NUL."}
+      }
+    },
+    "context_delta_expectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_kinds"],
+      "properties": {
+        "required_kinds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "message_received",
+              "knowledge_accepted",
+              "knowledge_withdrawn",
+              "contradiction_opened",
+              "contradiction_closed",
+              "dependent_added",
+              "dependent_updated",
+              "participant_roster_updated"
+            ]
+          }
+        },
+        "message_preview": {"type": "string", "minLength": 1, "maxLength": 512},
+        "participant_thread_id": {"type": "string", "pattern": "^thread_[0-9a-f]{32}$"},
+        "knowledge_revision_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"}
+        },
+        "withdrawal_revision_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"}
+        },
+        "contradiction_id": {"type": "string", "pattern": "^kcon_[0-9a-f]{32}$"},
+        "dependent_task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"}
       }
     }
   },

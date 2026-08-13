@@ -15,6 +15,11 @@ func TestLegacyContextPacketsOmitLaterSections(t *testing.T) {
 	if bytes.Contains(legacy, []byte(`"inbox"`)) {
 		t.Fatalf("legacy packet unexpectedly gained version-two inbox: %s", legacy)
 	}
+	for _, field := range [][]byte{[]byte(`"dependents"`), []byte(`"dependent_task_count"`), []byte(`"participant_threads"`), []byte(`"live_context"`), []byte(`"as_of_event_sequence"`), []byte(`"assignment_id"`), []byte(`"collaboration"`)} {
+		if bytes.Contains(legacy, field) {
+			t.Fatalf("legacy packet unexpectedly gained v4 field %s: %s", field, legacy)
+		}
+	}
 	versionTwo, err := json.Marshal(ContextPacket{Schema: ContextPacketSchemaV2, Inbox: InboxSummary{Items: []InboxSummaryItem{}}})
 	if err != nil {
 		t.Fatalf("json.Marshal(version-two packet) error = %v", err)
@@ -35,5 +40,10 @@ func TestLegacyContextPacketsOmitLaterSections(t *testing.T) {
 	}
 	if !bytes.Contains(current, []byte(`"requested_knowledge_revision_ids":[]`)) || !bytes.Contains(current, []byte(`"accepted_knowledge":[]`)) || !bytes.Contains(current, []byte(`"budget":{"total"`)) {
 		t.Fatalf("current packet omitted version-three sections: %s", current)
+	}
+	for _, field := range [][]byte{[]byte(`"dependencies":[]`), []byte(`"dependents":[]`), []byte(`"dependent_task_count":0`), []byte(`"participant_threads":[]`), []byte(`"live_context"`), []byte(`"as_of_event_sequence":0`), []byte(`"assignment_id":""`), []byte(`"collaboration"`)} {
+		if !bytes.Contains(current, field) {
+			t.Fatalf("version-four packet omitted required field %s: %s", field, current)
+		}
 	}
 }

@@ -10,7 +10,12 @@ import (
 
 type Querier interface {
 	AcceptKnowledgeRevision(ctx context.Context, arg AcceptKnowledgeRevisionParams) (int64, error)
+	AcknowledgeRunContextDelta(ctx context.Context, arg AcknowledgeRunContextDeltaParams) (int64, error)
+	AdvanceRunContextDeltaScan(ctx context.Context, arg AdvanceRunContextDeltaScanParams) (int64, error)
 	ConfirmKnowledgeContradiction(ctx context.Context, arg ConfirmKnowledgeContradictionParams) (int64, error)
+	CountContextDependencies(ctx context.Context, taskID string) (int64, error)
+	CountContextDependents(ctx context.Context, dependsOnTaskID string) (int64, error)
+	CountContextParticipantThreads(ctx context.Context, arg CountContextParticipantThreadsParams) (int64, error)
 	CountKnowledgeContradictionAuthorityChecks(ctx context.Context, arg CountKnowledgeContradictionAuthorityChecksParams) (int64, error)
 	CountOpenKnowledgeContradictionsForRevision(ctx context.Context, arg CountOpenKnowledgeContradictionsForRevisionParams) (int64, error)
 	CountPortableKnowledgeContradictionIdentity(ctx context.Context, arg CountPortableKnowledgeContradictionIdentityParams) (int64, error)
@@ -23,6 +28,10 @@ type Querier interface {
 	FindActiveMeetingForOverlap(ctx context.Context, overlapID string) (string, error)
 	FindLiveKnowledgeSuccessor(ctx context.Context, supersedesRevisionID *string) (string, error)
 	FindThreadParticipantByBinding(ctx context.Context, arg FindThreadParticipantByBindingParams) (ThreadParticipant, error)
+	GetContextDeltaAcknowledgement(ctx context.Context, arg GetContextDeltaAcknowledgementParams) (ContextDeltaAcknowledgement, error)
+	GetContextDeltaByID(ctx context.Context, id string) (ContextDelta, error)
+	GetContextEventCursor(ctx context.Context) (int64, error)
+	GetContextRepositoryFingerprint(ctx context.Context, arg GetContextRepositoryFingerprintParams) (string, error)
 	GetContradictionReporterRunScope(ctx context.Context, runID string) (GetContradictionReporterRunScopeRow, error)
 	GetCuratorAutoAcceptanceByKnowledge(ctx context.Context, arg GetCuratorAutoAcceptanceByKnowledgeParams) (CuratorAutoAcceptance, error)
 	GetCuratorDerivationByKnowledge(ctx context.Context, arg GetCuratorDerivationByKnowledgeParams) (CuratorDerivation, error)
@@ -46,7 +55,14 @@ type Querier interface {
 	GetPortableKnowledgeAnchorIdentity(ctx context.Context, taskID string) (GetPortableKnowledgeAnchorIdentityRow, error)
 	GetPortableKnowledgeImportReceipt(ctx context.Context, arg GetPortableKnowledgeImportReceiptParams) (KnowledgeImport, error)
 	GetPortableTaskIdentity(ctx context.Context, id string) (GetPortableTaskIdentityRow, error)
+	GetRunContextDeltaByID(ctx context.Context, arg GetRunContextDeltaByIDParams) (ContextDelta, error)
+	GetRunContextDeltaState(ctx context.Context, runID string) (RunContextDeltaState, error)
+	GetWorkspaceContextDeltaByID(ctx context.Context, arg GetWorkspaceContextDeltaByIDParams) (ContextDelta, error)
+	GetWorkspaceContextPacket(ctx context.Context, arg GetWorkspaceContextPacketParams) (GetWorkspaceContextPacketRow, error)
 	HasLiveTaskRun(ctx context.Context, taskID string) (bool, error)
+	InsertContextDelta(ctx context.Context, arg InsertContextDeltaParams) error
+	InsertContextDeltaAcknowledgement(ctx context.Context, arg InsertContextDeltaAcknowledgementParams) error
+	InsertContextPacket(ctx context.Context, arg InsertContextPacketParams) error
 	InsertCuratorAutoAcceptance(ctx context.Context, arg InsertCuratorAutoAcceptanceParams) error
 	InsertCuratorDerivation(ctx context.Context, arg InsertCuratorDerivationParams) error
 	InsertCuratorRule(ctx context.Context, arg InsertCuratorRuleParams) error
@@ -74,9 +90,14 @@ type Querier interface {
 	InsertPortableKnowledgeRevision(ctx context.Context, arg InsertPortableKnowledgeRevisionParams) error
 	InsertPortableProject(ctx context.Context, arg InsertPortableProjectParams) error
 	InsertPortableWorkspace(ctx context.Context, arg InsertPortableWorkspaceParams) error
+	InsertRunContextDeltaState(ctx context.Context, arg InsertRunContextDeltaStateParams) error
 	InsertSplitTask(ctx context.Context, arg InsertSplitTaskParams) error
 	InsertThreadParticipant(ctx context.Context, arg InsertThreadParticipantParams) error
 	ListAllOpenKnowledgeContradictionsForRevision(ctx context.Context, arg ListAllOpenKnowledgeContradictionsForRevisionParams) ([]KnowledgeContradiction, error)
+	ListAllRunContextDeltas(ctx context.Context, runID string) ([]ContextDelta, error)
+	ListContextDependencies(ctx context.Context, taskID string) ([]ListContextDependenciesRow, error)
+	ListContextDependents(ctx context.Context, arg ListContextDependentsParams) ([]ListContextDependentsRow, error)
+	ListContextParticipantThreadIDs(ctx context.Context, arg ListContextParticipantThreadIDsParams) ([]string, error)
 	ListCuratorEligibleRevisionIDs(ctx context.Context, arg ListCuratorEligibleRevisionIDsParams) ([]string, error)
 	ListCuratorMeetingProposalCandidates(ctx context.Context, arg ListCuratorMeetingProposalCandidatesParams) ([]ListCuratorMeetingProposalCandidatesRow, error)
 	ListCuratorQueueRevisionIDs(ctx context.Context, arg ListCuratorQueueRevisionIDsParams) ([]string, error)
@@ -94,10 +115,13 @@ type Querier interface {
 	ListPortableKnowledgeRevisionIDsForItem(ctx context.Context, itemID string) ([]string, error)
 	ListPortableKnowledgeTargetAnchors(ctx context.Context, arg ListPortableKnowledgeTargetAnchorsParams) ([]KnowledgeTaskScopeAnchor, error)
 	ListPortableKnowledgeTaskScopeAnchors(ctx context.Context, arg ListPortableKnowledgeTaskScopeAnchorsParams) ([]KnowledgeTaskScopeAnchor, error)
+	ListRunContextDeltas(ctx context.Context, arg ListRunContextDeltasParams) ([]ContextDelta, error)
 	ListThreadParticipants(ctx context.Context, threadID string) ([]ThreadParticipant, error)
 	ListThreadParticipantsByAgent(ctx context.Context, arg ListThreadParticipantsByAgentParams) ([]ThreadParticipant, error)
 	MarkKnowledgeRevisionStale(ctx context.Context, arg MarkKnowledgeRevisionStaleParams) (int64, error)
 	MarkMeetingActionApplied(ctx context.Context, arg MarkMeetingActionAppliedParams) error
+	MarkRunContextDeltaPending(ctx context.Context, arg MarkRunContextDeltaPendingParams) (int64, error)
+	MarkRunContextRebaseRequired(ctx context.Context, arg MarkRunContextRebaseRequiredParams) (int64, error)
 	MaxEventSequence(ctx context.Context) (int64, error)
 	MaxKnowledgeRevisionNumber(ctx context.Context, itemID string) (int64, error)
 	MeetingDependencyExists(ctx context.Context, arg MeetingDependencyExistsParams) (bool, error)

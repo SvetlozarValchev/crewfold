@@ -16,6 +16,8 @@ import (
 const (
 	toolBriefing            = "crewfold_get_briefing"
 	toolStatus              = "crewfold_get_status"
+	toolContextDelta        = "crewfold_get_context_delta"
+	toolContextDeltaAck     = "crewfold_acknowledge_context_delta"
 	toolInbox               = "crewfold_list_inbox"
 	toolRead                = "crewfold_read_message"
 	toolSend                = "crewfold_send_message"
@@ -156,10 +158,39 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 		value = briefing
 	case toolStatus:
 		err = decodeEmptyToolArguments(params.Arguments)
-		value = map[string]any{
-			"run_id": briefing.Run.ID, "run_status": briefing.Run.Status, "run_revision": briefing.Run.Revision,
-			"task_id": briefing.Task.ID, "task_status": briefing.Task.Status, "task_revision": briefing.Task.Revision,
-			"budget": briefing.Task.Budget, "blocked_question": briefing.Run.BlockedQuestion,
+		if err == nil {
+			contextStatus := legacyContextStatus(briefing.Packet)
+			if briefing.Packet.Schema == domain.ContextPacketSchema {
+				var contextState domain.ContextDeltaFetchResult
+				contextState, err = s.store.FetchRunContextDelta(context.Background(), briefing.Run.ID)
+				if err == nil {
+					contextStatus = liveContextStatus(briefing.Packet, contextState)
+				}
+			}
+			if err == nil {
+				value = map[string]any{
+					"run_id": briefing.Run.ID, "run_status": briefing.Run.Status, "run_revision": briefing.Run.Revision,
+					"task_id": briefing.Task.ID, "task_status": briefing.Task.Status, "task_revision": briefing.Task.Revision,
+					"budget": briefing.Task.Budget, "blocked_question": briefing.Run.BlockedQuestion, "context": contextStatus,
+				}
+			}
+		}
+	case toolContextDelta:
+		err = decodeEmptyToolArguments(params.Arguments)
+		if err == nil {
+			value, err = s.store.FetchRunContextDelta(context.Background(), briefing.Run.ID)
+		}
+	case toolContextDeltaAck:
+		var arguments acknowledgeContextDeltaArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			err = arguments.validate()
+		}
+		if err == nil {
+			value, err = s.store.AcknowledgeRunContextDelta(context.Background(), store.AcknowledgeContextDeltaCommand{
+				RunID: briefing.Run.ID, DeltaID: arguments.DeltaID, ExpectedSequence: arguments.ExpectedSequence,
+				IdempotencyKey: arguments.IdempotencyKey,
+			})
 		}
 	case toolInbox:
 		var arguments inboxArguments
@@ -308,9 +339,57 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 	if _, err := s.store.RecordRunToolCall(context.Background(), briefing.Run.ID, mcpRequestID(request.ID), name, briefing.Run.ID, "allowed", ""); err != nil {
 		return mcp.Failure(request.ID, -32603, "record tool audit failed", nil)
 	}
+	message := "Crewfold accepted the scoped operation."
+	if name == toolContextDelta {
+		message = "Crewfold returned this run's pending context state."
+	} else if name == toolContextDeltaAck {
+		message = "Crewfold recorded this run's exact context delta acknowledgement."
+	}
 	return mcp.Success(request.ID, mcp.ToolCallResult{
-		Content: []mcp.Content{{Type: "text", Text: "Crewfold accepted the scoped operation."}}, StructuredContent: structured,
+		Content: []mcp.Content{{Type: "text", Text: message}}, StructuredContent: structured,
 	})
+}
+
+func legacyContextStatus(packet domain.ContextPacket) map[string]any {
+	return map[string]any{
+		"base_packet_id": packet.ID, "base_schema": packet.Schema,
+		"base_as_of_event_sequence": packet.AsOfEventSequence,
+		"state_revision":            0, "scanned_through_event_sequence": 0,
+		"latest_delta_sequence": 0, "acknowledged_delta_sequence": 0,
+		"delta_count": 0, "cumulative_byte_size": 0,
+		"status": domain.ContextDeltaRebaseRequired, "rebase_required": true,
+		"rebase_reason": domain.ContextRebaseUnsupportedPacket,
+	}
+}
+
+func liveContextStatus(packet domain.ContextPacket, state domain.ContextDeltaFetchResult) map[string]any {
+	chain := state.Chain
+	status := map[string]any{
+		"base_packet_id": packet.ID, "base_schema": packet.Schema,
+		"base_as_of_event_sequence":      packet.AsOfEventSequence,
+		"state_revision":                 state.StateRevision,
+		"scanned_through_event_sequence": state.ScannedThroughEventSequence,
+		"latest_delta_sequence":          chain.LatestSequence,
+		"acknowledged_delta_sequence":    chain.LastAcknowledgedSequence,
+		"delta_count":                    chain.DeltaCount,
+		"cumulative_byte_size":           chain.CumulativeByteSize,
+		"status":                         state.Status,
+		"rebase_required":                state.Status == domain.ContextDeltaRebaseRequired,
+	}
+	if chain.LatestDeltaID != "" {
+		status["latest_delta_id"] = chain.LatestDeltaID
+	}
+	if chain.PendingDeltaID != "" {
+		status["pending_delta_id"] = chain.PendingDeltaID
+		status["pending_delta_sequence"] = chain.PendingSequence
+	}
+	if chain.LastAcknowledgedDeltaID != "" {
+		status["acknowledged_delta_id"] = chain.LastAcknowledgedDeltaID
+	}
+	if state.RebaseReason != "" {
+		status["rebase_reason"] = state.RebaseReason
+	}
+	return status
 }
 
 func (s *server) mcpDenied(request mcp.Request, runID, targetID, code, message, outcome string) mcp.Response {
@@ -375,6 +454,8 @@ func scopedMCPTools() []mcp.Tool {
 	return []mcp.Tool{
 		{Name: toolBriefing, Description: "Read this run's briefing and immutable context packet.", InputSchema: empty},
 		{Name: toolStatus, Description: "Read current status and revisions for this run and task.", InputSchema: empty},
+		{Name: toolContextDelta, Description: "Fetch this run's sole owner-built pending context delta. This tool never scans events or expands the run's authority.", InputSchema: empty},
+		{Name: toolContextDeltaAck, Description: "Acknowledge the exact pending context delta after incorporating it into this run's work.", InputSchema: objectSchema([]string{"delta_id", "expected_sequence", "idempotency_key"}, map[string]any{"delta_id": contextDeltaIDSchema(), "expected_sequence": map[string]any{"type": "integer", "minimum": 1}, "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolInbox, Description: "List this agent's bounded durable inbox. Visibility is normally project-scoped; an owner-created thread may additionally authorize this exact agent, project, and task as a cross-project participant. Listing marks queued items delivered to this run.", InputSchema: objectSchema([]string{"limit"}, map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 50}})},
 		{Name: toolRead, Description: "Read one message visible to this run's exact agent, project, and task, including an authorized cross-project participant-thread message.", InputSchema: objectSchema([]string{"message_id", "idempotency_key"}, map[string]any{"message_id": stringSchema(1, 128), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolSend, Description: "Send one bounded durable project-scoped message to an enabled workspace agent, or send within an owner-created thread that binds both agents to their exact projects and tasks. Runs cannot create a cross-project thread or invite participants.", InputSchema: objectSchema([]string{"recipient_agent", "kind", "body", "artifact_ids", "idempotency_key"}, map[string]any{"recipient_agent": stringSchema(1, 128), "thread_id": stringSchema(1, 128), "subject": stringSchema(1, 160), "kind": map[string]any{"type": "string", "enum": []string{"inform", "question", "request", "review_request", "handoff", "decision_notice", "risk", "conflict", "approval_request"}}, "body": stringSchema(1, 4096), "artifact_ids": boundedStringArraySchema(16), "reply_to_message_id": stringSchema(1, 128), "idempotency_key": stringSchema(1, 128)})},
@@ -434,6 +515,10 @@ func knowledgeRevisionIDSchema() map[string]any {
 	return map[string]any{"type": "string", "pattern": `^krev_[0-9a-f]{32}$`}
 }
 
+func contextDeltaIDSchema() map[string]any {
+	return map[string]any{"type": "string", "pattern": `^cdelta_[0-9a-f]{32}$`}
+}
+
 func stringArraySchema() map[string]any {
 	return boundedStringArraySchema(32)
 }
@@ -456,6 +541,33 @@ func (arguments inboxArguments) validate() error {
 type messageTransitionArguments struct {
 	MessageID      string `json:"message_id"`
 	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type acknowledgeContextDeltaArguments struct {
+	DeltaID          string `json:"delta_id"`
+	ExpectedSequence int64  `json:"expected_sequence"`
+	IdempotencyKey   string `json:"idempotency_key"`
+}
+
+func (arguments acknowledgeContextDeltaArguments) validate() error {
+	if arguments.DeltaID != strings.TrimSpace(arguments.DeltaID) || !validMCPContextDeltaID(arguments.DeltaID) || arguments.ExpectedSequence < 1 ||
+		strings.TrimSpace(arguments.IdempotencyKey) == "" || len(arguments.IdempotencyKey) > 128 ||
+		!utf8.ValidString(arguments.IdempotencyKey) || strings.ContainsRune(arguments.IdempotencyKey, '\x00') {
+		return errors.New("context delta acknowledgement requires an exact delta ID, positive expected_sequence, and bounded idempotency key")
+	}
+	return nil
+}
+
+func validMCPContextDeltaID(value string) bool {
+	if len(value) != len("cdelta_")+32 || !strings.HasPrefix(value, "cdelta_") {
+		return false
+	}
+	for _, character := range value[len("cdelta_"):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 type sendMessageArguments struct {
@@ -614,10 +726,10 @@ func mcpErrorFromStore(err error) mcp.ToolError {
 	code := store.ErrorCode(err)
 	result := mcp.ToolError{Message: err.Error()}
 	switch code {
-	case store.CodeInvalidContext, store.CodeInvalidReport, store.CodeInvalidRun, store.CodeInvalidMessage, store.CodeInvalidKnowledge,
+	case store.CodeInvalidContext, store.CodeInvalidContextDelta, store.CodeInvalidReport, store.CodeInvalidRun, store.CodeInvalidMessage, store.CodeInvalidKnowledge,
 		store.CodeKnowledgeConflict, store.CodeContradictionConflict, store.CodeIdempotencyConflict:
 		result.Code = "invalid_input"
-	case store.CodeContextNotFound, store.CodeRunNotFound, store.CodeMessageNotFound, store.CodeKnowledgeNotFound, store.CodeContradictionNotFound:
+	case store.CodeContextNotFound, store.CodeContextDeltaNotFound, store.CodeRunNotFound, store.CodeMessageNotFound, store.CodeKnowledgeNotFound, store.CodeContradictionNotFound:
 		result.Code = "out_of_scope"
 	case store.CodeCapabilityExpired, store.CodeCapabilityInactive, store.CodeRunConflict, store.CodeMessageDenied, store.CodeKnowledgeDenied, store.CodeContradictionDenied:
 		result.Code = "denied_by_policy"

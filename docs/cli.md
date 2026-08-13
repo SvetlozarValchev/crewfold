@@ -440,6 +440,15 @@ crewfold context show CONTEXT_PACKET_ID --workspace personal \
   --socket /path/to/crewfold.sock --output json
 crewfold context explain CONTEXT_PACKET_ID --workspace personal \
   --socket /path/to/crewfold.sock --output json
+crewfold context refresh RUN_ID --workspace personal \
+  --idempotency-key refresh-after-decision \
+  --socket /path/to/crewfold.sock --output json
+crewfold context delta list RUN_ID --workspace personal \
+  --after-sequence 0 --limit 20 --socket /path/to/crewfold.sock
+crewfold context delta show CONTEXT_DELTA_ID --workspace personal \
+  --socket /path/to/crewfold.sock --output json
+crewfold context delta explain CONTEXT_DELTA_ID --workspace personal \
+  --socket /path/to/crewfold.sock --output json
 ```
 
 The proposal file is UTF-8 Markdown beginning with one `# ` title and a non-empty
@@ -460,7 +469,7 @@ may propose task-sourced knowledge through `crewfold_propose_knowledge`, but onl
 the local owner may govern it.
 
 `--include` is repeatable and accepts at most 16 unique exact knowledge revision
-IDs in caller order. Context packet v3 includes a complete snapshot only when the
+IDs in caller order. Context packet v4 includes a complete snapshot only when the
 requested revision is accepted, current, fresh, and applicable to `NEXT_TASK`.
 Proposed, rejected, stale, superseded, out-of-scope, and over-budget revisions are
 excluded with reasons. An unknown ID fails the build. A superseded pin is never
@@ -532,7 +541,7 @@ otherwise apply, without changing accepted/current currency. Search excludes it
 before ranking/limit; an otherwise eligible explicit context pin fails the whole
 new build with `knowledge_conflict`. `knowledge dispute` derives total incident
 open records and the first 200 sorted IDs. Owner dismissal, or a participant
-becoming stale/superseded, clears that record's effect. Existing packet-v3 bytes
+becoming stale/superseded, clears that record's effect. Existing packet bytes
 never change.
 
 `knowledge export DIR` writes a new private directory containing exactly
@@ -577,16 +586,42 @@ bundles do not contain or replay the origin event journal, authority checks,
 curator proof rows, or command idempotency. See
 [ADR-0013](decisions/0013-portable-project-knowledge-snapshots.md).
 
-The fixed packet budget is 32 KiB with a 12 KiB whole-knowledge sub-budget.
+The fixed packet budget is 32 KiB with a 12 KiB whole-knowledge sub-budget and an
+8 KiB whole participant-roster sub-budget. Packet v4 also freezes the journal
+high-water, up to 32 same-project reverse dependents, up to eight authorized
+participant-thread snapshots, and the live delivery policy.
 `context show --output json` preserves the exact ordered request list and embedded
 snapshots; `context explain --output json` shows included and excluded revisions
-plus total and knowledge byte accounting. Eligibility is frozen at build, so later
-governance never rewrites an existing packet. There is no transcript ingestion,
-implicit project retrieval or context delta. Search remains a separate explicit
-M15 query; curator processing never inserts search results into a packet.
+plus total, knowledge, and collaboration byte accounting. Eligibility is frozen
+at build, so later governance never rewrites an existing packet. There is no
+transcript ingestion or implicit project retrieval. Search remains a separate
+explicit query; curator processing never inserts search results into a packet.
 To give a run explicit knowledge, build this packet first and pass its ID to
 `run start --context`; an atomically generated default run packet has no
 caller-supplied knowledge links.
+
+`context refresh RUN_ID` is the only operation that scans and constructs live
+context. It requires the exact workspace/run and an idempotency key; it accepts no
+caller cursor. JSON status is `created`, `pending`, `up_to_date`, or
+`rebase_required`. A created/pending result includes the immutable delta. A
+pending delta is returned unchanged under another key and blocks scanning until
+the exact run acknowledges it. An up-to-date result advances Crewfold's inspected
+cursor without creating an empty delta or event.
+
+`context delta list` paginates immutable historical objects by run-local sequence;
+the default page is 20 and the maximum is 100. `show` returns the exact typed
+object. `explain` returns its identity, base, event interval, change kinds, hash,
+and size. These owner queries never mark delivery or consumption, and the CLI
+intentionally has no delta-acknowledge command.
+
+The run receives an owner-built pending delta through argument-free
+`crewfold_get_context_delta` and acknowledges only its exact ID and sequence with
+`crewfold_acknowledge_context_delta`. One delta is capped at 16 KiB, the chain at
+64 KiB, and one refresh scans at most 1,000 potentially applicable events. An old
+packet or an unsafe/oversized incremental change returns status
+`rebase_required` with a stable reason; it is not an error response. Stop or hand
+off that run and start a replacement with a new packet-v4 base. See [Context
+packets and live deltas](context.md).
 
 ## Outcomes and management briefings
 

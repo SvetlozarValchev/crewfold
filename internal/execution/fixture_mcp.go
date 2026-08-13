@@ -119,9 +119,13 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 		fmt.Fprintln(diagnostics, "get scoped briefing failed")
 		return 1
 	}
+	var briefing domain.RunBriefing
+	if err := json.Unmarshal(briefingResult.StructuredContent, &briefing); err != nil || !fixtureBriefingHasExactScope(briefing) {
+		fmt.Fprintln(diagnostics, "decode scoped briefing failed")
+		return 1
+	}
 	if scenario.Mailbox.RequireInboxSummary {
-		var briefing domain.RunBriefing
-		if err := json.Unmarshal(briefingResult.StructuredContent, &briefing); err != nil || briefing.Packet.Inbox.UnseenCount < 1 || len(briefing.Packet.Inbox.Items) < 1 {
+		if briefing.Packet.Inbox.UnseenCount < 1 || len(briefing.Packet.Inbox.Items) < 1 {
 			fmt.Fprintln(diagnostics, "scoped briefing omitted required inbox summary")
 			return 1
 		}
@@ -155,6 +159,10 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 		fmt.Fprintln(diagnostics, err)
 		return 1
 	}
+	if err := runFixtureContextDelta(ctx, client, scenario.ContextDelta, briefing); err != nil {
+		fmt.Fprintln(diagnostics, err)
+		return 1
+	}
 	for index, step := range scenario.Steps {
 		result, err := reportFixtureStep(ctx, client, index, step)
 		if err != nil || result.IsError {
@@ -183,6 +191,18 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 		}
 	}
 	return scenario.Process.ExitCode
+}
+
+func fixtureBriefingHasExactScope(briefing domain.RunBriefing) bool {
+	return briefing.Run.ID != "" && briefing.Packet.ID != "" && briefing.Run.ContextPacketID == briefing.Packet.ID &&
+		briefing.Run.WorkspaceID != "" && briefing.Run.WorkspaceID == briefing.Packet.WorkspaceID &&
+		briefing.Run.ProjectID != "" && briefing.Run.ProjectID == briefing.Packet.ProjectID &&
+		briefing.Run.TaskID != "" && briefing.Run.TaskID == briefing.Task.ID && briefing.Run.TaskID == briefing.Packet.TaskID &&
+		briefing.Run.AgentID != "" && briefing.Run.AgentID == briefing.Packet.AgentID &&
+		briefing.Run.CheckoutID != "" && briefing.Run.CheckoutID == briefing.Packet.CheckoutID &&
+		briefing.Task.WorkspaceID == briefing.Run.WorkspaceID && briefing.Task.ProjectID == briefing.Run.ProjectID &&
+		briefing.Packet.Role.AgentID == briefing.Run.AgentID && briefing.Packet.Task.TaskID == briefing.Run.TaskID &&
+		briefing.Packet.Checkout.CheckoutID == briefing.Run.CheckoutID && briefing.Packet.Checkout.ProjectID == briefing.Run.ProjectID
 }
 
 func runFixtureKnowledge(ctx context.Context, client fixtureToolClient, plan domain.FixtureKnowledge) error {
@@ -256,6 +276,195 @@ func runFixtureContradiction(ctx context.Context, client fixtureToolClient, plan
 	})
 	if err != nil || !denied.IsError || fixtureToolErrorCode(denied) != "denied_by_policy" {
 		return errors.New("reserved fixture contradiction confirmation probe was not denied")
+	}
+	return nil
+}
+
+func runFixtureContextDelta(ctx context.Context, client fixtureToolClient, plan domain.FixtureContextDelta, briefing domain.RunBriefing) error {
+	if emptyFixtureContextDelta(plan) {
+		return nil
+	}
+	if plan.InitialDelayMillis > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(plan.InitialDelayMillis) * time.Millisecond):
+		}
+	}
+	if plan.ExpectToolsDenied {
+		result, err := client.CallTool(ctx, "crewfold_get_context_delta", map[string]any{})
+		if err != nil || !result.IsError || fixtureToolErrorCode(result) != "denied_by_policy" {
+			return errors.New("legacy fixture context delta fetch was not denied by immutable policy")
+		}
+		result, err = client.CallTool(ctx, "crewfold_acknowledge_context_delta", map[string]any{
+			"delta_id": "cdelta_00000000000000000000000000000000", "expected_sequence": 1,
+			"idempotency_key": "fixture-legacy-context-delta-ack",
+		})
+		if err != nil || !result.IsError || fixtureToolErrorCode(result) != "denied_by_policy" {
+			return errors.New("legacy fixture context delta acknowledgement was not denied by immutable policy")
+		}
+		return nil
+	}
+	if plan.ExpectNoPending {
+		result, err := client.CallTool(ctx, "crewfold_get_context_delta", map[string]any{})
+		if err != nil || result.IsError {
+			return errors.New("fetch fixture empty context delta state failed")
+		}
+		var state domain.ContextDeltaFetchResult
+		if err := json.Unmarshal(result.StructuredContent, &state); err != nil || state.Status != domain.ContextDeltaNonePending || state.Delta != nil ||
+			!fixtureContextStateMatchesBriefing(state, briefing) {
+			return errors.New("fixture run unexpectedly received another run or task's context delta")
+		}
+		if plan.DeniedDeltaID != "" {
+			denied, err := client.CallTool(ctx, "crewfold_acknowledge_context_delta", map[string]any{
+				"delta_id": plan.DeniedDeltaID, "expected_sequence": plan.DeniedExpectedSequence,
+				"idempotency_key": "fixture-cross-run-context-delta-ack",
+			})
+			var deniedBody mcp.ToolError
+			decodeErr := json.Unmarshal(denied.StructuredContent, &deniedBody)
+			if err != nil || !denied.IsError || decodeErr != nil || deniedBody.Code != "invalid_input" || deniedBody.Retryable {
+				return errors.New("fixture cross-run context delta acknowledgement was not denied")
+			}
+		}
+		return nil
+	}
+
+	wait := time.Duration(plan.WaitTimeoutMillis) * time.Millisecond
+	if wait == 0 {
+		wait = 20 * time.Second
+	}
+	var previousSequence int64
+	for index, expectation := range plan.Expectations {
+		deadline := time.Now().Add(wait)
+		var delta domain.ContextDelta
+		for time.Now().Before(deadline) {
+			result, err := client.CallTool(ctx, "crewfold_get_context_delta", map[string]any{})
+			if err != nil || result.IsError {
+				return fmt.Errorf("fetch fixture context delta %d failed", index+1)
+			}
+			var state domain.ContextDeltaFetchResult
+			if err := json.Unmarshal(result.StructuredContent, &state); err != nil {
+				return fmt.Errorf("decode fixture context delta %d: %w", index+1, err)
+			}
+			if !fixtureContextStateMatchesBriefing(state, briefing) {
+				return fmt.Errorf("fixture context delta %d state escaped the scoped briefing", index+1)
+			}
+			if state.Status == domain.ContextDeltaRebaseRequired {
+				return fmt.Errorf("fixture context delta %d unexpectedly requires rebase: %s", index+1, state.RebaseReason)
+			}
+			if state.Status == domain.ContextDeltaPending && state.Delta != nil {
+				delta = *state.Delta
+				if !fixtureContextDeltaMatchesBriefing(delta, briefing) || state.Chain.PendingDeltaID != delta.ID ||
+					state.Chain.PendingSequence != delta.Sequence || state.Chain.LatestDeltaID != delta.ID ||
+					state.Chain.LatestSequence != delta.Sequence {
+					return fmt.Errorf("fixture context delta %d escaped its exact run or chain binding", index+1)
+				}
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(25 * time.Millisecond):
+			}
+		}
+		if delta.ID == "" {
+			return fmt.Errorf("timed out waiting for fixture context delta %d", index+1)
+		}
+		if delta.Sequence <= previousSequence {
+			return fmt.Errorf("fixture context delta sequence %d did not advance after %d", delta.Sequence, previousSequence)
+		}
+		if err := assertFixtureContextDelta(delta, expectation); err != nil {
+			return fmt.Errorf("fixture context delta %d: %w", index+1, err)
+		}
+		arguments := map[string]any{
+			"delta_id": delta.ID, "expected_sequence": delta.Sequence,
+			"idempotency_key": fmt.Sprintf("fixture-context-delta-ack-%d", delta.Sequence),
+		}
+		acknowledged, err := client.CallTool(ctx, "crewfold_acknowledge_context_delta", arguments)
+		if err != nil || acknowledged.IsError {
+			return fmt.Errorf("acknowledge fixture context delta %d failed", index+1)
+		}
+		var receipt domain.ContextDeltaAcknowledgement
+		if err := json.Unmarshal(acknowledged.StructuredContent, &receipt); err != nil ||
+			!validFixtureOpaqueID(receipt.ID, "cdack_") || receipt.RunID != briefing.Run.ID ||
+			receipt.ContextPacketID != briefing.Packet.ID || receipt.DeltaID != delta.ID ||
+			receipt.Sequence != delta.Sequence || receipt.AcknowledgedBy != briefing.Run.ID || receipt.EventSequence < 1 {
+			return fmt.Errorf("decode fixture context delta acknowledgement %d failed", index+1)
+		}
+		if plan.DuplicateAcknowledge {
+			replayed, err := client.CallTool(ctx, "crewfold_acknowledge_context_delta", arguments)
+			if err != nil || replayed.IsError || !bytes.Equal(replayed.StructuredContent, acknowledged.StructuredContent) {
+				return fmt.Errorf("fixture context delta acknowledgement %d was not idempotent", index+1)
+			}
+		}
+		previousSequence = delta.Sequence
+	}
+	return nil
+}
+
+func fixtureContextStateMatchesBriefing(state domain.ContextDeltaFetchResult, briefing domain.RunBriefing) bool {
+	return state.RunID == briefing.Run.ID && state.ContextPacketID == briefing.Packet.ID &&
+		state.Chain.RunID == briefing.Run.ID && state.Chain.ContextPacketID == briefing.Packet.ID
+}
+
+func fixtureContextDeltaMatchesBriefing(delta domain.ContextDelta, briefing domain.RunBriefing) bool {
+	return delta.RunID == briefing.Run.ID && delta.ContextPacketID == briefing.Packet.ID &&
+		delta.WorkspaceID == briefing.Run.WorkspaceID && delta.ProjectID == briefing.Run.ProjectID &&
+		delta.TaskID == briefing.Run.TaskID && delta.AgentID == briefing.Run.AgentID
+}
+
+func assertFixtureContextDelta(delta domain.ContextDelta, expectation domain.FixtureContextDeltaExpectation) error {
+	kinds := make(map[string]struct{}, len(delta.Changes))
+	knowledgeRevisions := make(map[string]struct{})
+	withdrawalRevisions := make(map[string]struct{})
+	messagePreview, participantThread, contradiction, dependent := false, false, false, false
+	for _, change := range delta.Changes {
+		kinds[change.Kind] = struct{}{}
+		if change.Message != nil && expectation.MessagePreview != "" && change.Message.BodyPreview == expectation.MessagePreview {
+			messagePreview = true
+		}
+		if change.ParticipantThread != nil && expectation.ParticipantThreadID != "" && change.ParticipantThread.Thread.ID == expectation.ParticipantThreadID {
+			participantThread = true
+		}
+		if change.Knowledge != nil {
+			knowledgeRevisions[change.Knowledge.ID] = struct{}{}
+		}
+		if change.Withdrawal != nil {
+			withdrawalRevisions[change.Withdrawal.RevisionID] = struct{}{}
+		}
+		if change.Contradiction != nil && expectation.ContradictionID != "" && change.Contradiction.Contradiction.ID == expectation.ContradictionID {
+			contradiction = true
+		}
+		if change.Dependency != nil && expectation.DependentTaskID != "" && change.Dependency.TaskID == expectation.DependentTaskID {
+			dependent = true
+		}
+	}
+	for _, required := range expectation.RequiredKinds {
+		if _, exists := kinds[required]; !exists {
+			return fmt.Errorf("required change kind %q is absent", required)
+		}
+	}
+	if expectation.MessagePreview != "" && !messagePreview {
+		return errors.New("required bounded message preview is absent")
+	}
+	if expectation.ParticipantThreadID != "" && !participantThread {
+		return errors.New("required participant roster is absent")
+	}
+	for _, revisionID := range expectation.KnowledgeRevisionIDs {
+		if _, exists := knowledgeRevisions[revisionID]; !exists {
+			return fmt.Errorf("required accepted knowledge revision %q is absent", revisionID)
+		}
+	}
+	for _, revisionID := range expectation.WithdrawalRevisionIDs {
+		if _, exists := withdrawalRevisions[revisionID]; !exists {
+			return fmt.Errorf("required withdrawn knowledge revision %q is absent", revisionID)
+		}
+	}
+	if expectation.ContradictionID != "" && !contradiction {
+		return errors.New("required contradiction snapshot is absent")
+	}
+	if expectation.DependentTaskID != "" && !dependent {
+		return errors.New("required reverse dependent snapshot is absent")
 	}
 	return nil
 }

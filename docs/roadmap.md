@@ -72,7 +72,7 @@ implementation commit is `e37fdcf32b2e5f69766405d6585ff24277a1ab3c`.
 | M12 ✓ | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
 | M13 ✓ | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
 | M14 ✓ | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
-| M15 ◐ | Curator/retrieval | Scoped retrieval, participant-bound cross-project mail, one bounded deterministic curator rule, exact contradictions, and portable project knowledge are implemented; context refresh/deltas remain | M14 |
+| M15 ◐ | Curator/retrieval | Scoped retrieval, participant-bound cross-project mail, one bounded deterministic curator rule, exact contradictions, and portable project knowledge are implemented; packet-v4 live deltas are in final acceptance | M14 |
 | M16 | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
 | M17 | Local checks/CI watcher | Route fresh check evidence without granting merge authority | M16 |
 | M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
@@ -251,12 +251,20 @@ preserves task-only applicability without ghost tasks and remains independent of
 provider state and FTS. The accepted contract is
 [ADR-0013](decisions/0013-portable-project-knowledge-snapshots.md).
 
-The remaining M15 slice adds explicit context deltas. Portable v1 moves exact
-project knowledge/applicability/contradiction snapshots under a new local-owner
-attestation; it deliberately does not replay origin authority or operational
-entities. Participant rosters in context are deferred to packet v4/deltas;
-packet v3 only keeps its bounded authorized inbox summary.
-Native provider resume, active-turn steering,
+The final active M15 slice adds packet-v4 explicit context deltas under
+[ADR-0014](decisions/0014-explicit-bounded-live-context-deltas.md). The immutable
+base freezes a journal cursor, bounded reverse dependents and exact participant
+rosters, and a live policy. Owner refresh constructs at most one pending whole
+delta; the exact run fetches and acknowledges it through MCP. Old packets and
+unsafe or oversized incremental changes require a visible rebase. Acceptance must
+prove pending/replay/restart, no-op cursors, messages/rosters with wrong-task
+isolation, accepted/withdrawn/disputed knowledge and eligible closure re-offer,
+reverse dependents, legacy tool denial/no-state compatibility, and byte/event
+bounds without a provider or network.
+
+Portable v1 moves exact project knowledge/applicability/contradiction snapshots
+under a new local-owner attestation; it deliberately does not replay origin
+authority or operational entities. Native provider resume, active-turn steering,
 app-server ownership, remote users, and broader organizational authority remain
 outside this milestone. Every completed capability scenario remains required.
 

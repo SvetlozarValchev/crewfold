@@ -4,6 +4,35 @@
 
 package dbgen
 
+type ContextDelta struct {
+	ID                   string  `json:"id"`
+	RunID                string  `json:"run_id"`
+	ContextPacketID      string  `json:"context_packet_id"`
+	Sequence             int64   `json:"sequence"`
+	ParentDeltaID        *string `json:"parent_delta_id"`
+	FromEventSequence    int64   `json:"from_event_sequence"`
+	ThroughEventSequence int64   `json:"through_event_sequence"`
+	DeltaJson            string  `json:"delta_json"`
+	ContentHash          string  `json:"content_hash"`
+	ByteSize             int64   `json:"byte_size"`
+	BuiltEventSequence   int64   `json:"built_event_sequence"`
+	CreatedAt            string  `json:"created_at"`
+	CreatedBy            string  `json:"created_by"`
+}
+
+type ContextDeltaAcknowledgement struct {
+	ID              string `json:"id"`
+	RunID           string `json:"run_id"`
+	ContextPacketID string `json:"context_packet_id"`
+	DeltaID         string `json:"delta_id"`
+	Sequence        int64  `json:"sequence"`
+	AcknowledgedAt  string `json:"acknowledged_at"`
+	AcknowledgedBy  string `json:"acknowledged_by"`
+	IdempotencyKey  string `json:"idempotency_key"`
+	RequestHash     string `json:"request_hash"`
+	EventSequence   int64  `json:"event_sequence"`
+}
+
 type CuratorAutoAcceptance struct {
 	ID                     string `json:"id"`
 	WorkspaceID            string `json:"workspace_id"`
@@ -213,6 +242,24 @@ type MeetingProposal struct {
 	ProposedAt   string  `json:"proposed_at"`
 	DecidedAt    *string `json:"decided_at"`
 	DecisionNote *string `json:"decision_note"`
+}
+
+type RunContextDeltaState struct {
+	RunID                   string  `json:"run_id"`
+	ContextPacketID         string  `json:"context_packet_id"`
+	Status                  string  `json:"status"`
+	Revision                int64   `json:"revision"`
+	ScanEventSequence       int64   `json:"scan_event_sequence"`
+	LastSequence            int64   `json:"last_sequence"`
+	LastDeltaID             *string `json:"last_delta_id"`
+	PendingDeltaID          *string `json:"pending_delta_id"`
+	LastAcknowledgedDeltaID *string `json:"last_acknowledged_delta_id"`
+	DeltaCount              int64   `json:"delta_count"`
+	CumulativeByteSize      int64   `json:"cumulative_byte_size"`
+	RebaseReason            *string `json:"rebase_reason"`
+	RebaseEventSequence     *int64  `json:"rebase_event_sequence"`
+	CreatedAt               string  `json:"created_at"`
+	UpdatedAt               string  `json:"updated_at"`
 }
 
 type ThreadParticipant struct {

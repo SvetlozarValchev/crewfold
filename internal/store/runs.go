@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"crewfold/internal/domain"
+	"crewfold/internal/store/dbgen"
 )
 
 const (
@@ -146,6 +147,11 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 		if packet.ProjectID != task.ProjectID || packet.TaskID != task.ID || packet.AgentID != agent.ID || packet.Task.Revision != task.Revision || packet.Role.Revision != agent.Revision {
 			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "context packet no longer matches the task assignment or its revisions"}
 		}
+		if packet.Schema == domain.ContextPacketSchema {
+			if err := s.validateVersionFourContextPacketAgainstCanonical(ctx, tx, packet); err != nil {
+				return RunMutationResult{}, err
+			}
+		}
 		if checkoutIdentifier != "" && checkoutIdentifier != packet.CheckoutID {
 			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "requested checkout differs from the context packet checkout"}
 		}
@@ -213,6 +219,14 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?)`,
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO run_context_bindings(run_id, context_packet_id, bound_at) VALUES (?, ?, ?)", run.ID, contextPacketID, now); err != nil {
 		return RunMutationResult{}, storageFailure("bind run context packet", err)
+	}
+	if packet.Schema == domain.ContextPacketSchema {
+		if err := dbgen.New(tx).InsertRunContextDeltaState(ctx, dbgen.InsertRunContextDeltaStateParams{
+			RunID: run.ID, ContextPacketID: contextPacketID, ScanEventSequence: packet.AsOfEventSequence,
+			CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			return RunMutationResult{}, storageFailure("initialize run context delta state", err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO run_capabilities(run_id, expires_at, created_at) VALUES (?, ?, ?)", run.ID, s.clock().UTC().Add(capabilityTTL).Format(time.RFC3339Nano), now); err != nil {
 		return RunMutationResult{}, storageFailure("create run capability", err)

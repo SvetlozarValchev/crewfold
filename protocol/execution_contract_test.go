@@ -259,3 +259,77 @@ func TestFixtureContradictionSchemaIsStrictAndCannotSelectAuthority(t *testing.T
 		}
 	}
 }
+
+func TestLiveContextDeltaScenarioTemplateRendersTypedKnowledgeTransitions(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../test/fixtures/live-context-deltas/main.json.in")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := strings.NewReplacer(
+		"@DELTA_THREAD@", "thread_00000000000000000000000000000001",
+		"@MESSAGE_PREVIEW@", "bounded preview",
+		"@NEW_REVISION@", "krev_00000000000000000000000000000001",
+		"@REVISION_A@", "krev_00000000000000000000000000000002",
+		"@REVISION_B@", "krev_00000000000000000000000000000003",
+		"@LIVE_DEPENDENT@", "task_00000000000000000000000000000001",
+		"@CONTRADICTION@", "kcon_00000000000000000000000000000001",
+	).Replace(string(data))
+	path := filepath.Join(t.TempDir(), "live-context.json")
+	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scenario, err := execution.LoadScenario(path)
+	if err != nil {
+		t.Fatalf("execution.LoadScenario(live context fixture) error = %v", err)
+	}
+	if len(scenario.ContextDelta.Expectations) != 3 {
+		t.Fatalf("live context expectations = %d, want 3", len(scenario.ContextDelta.Expectations))
+	}
+	withdrawal := scenario.ContextDelta.Expectations[1]
+	reoffer := scenario.ContextDelta.Expectations[2]
+	if len(withdrawal.WithdrawalRevisionIDs) != 2 || len(reoffer.KnowledgeRevisionIDs) != 2 {
+		t.Fatalf("withdrawal IDs=%v reoffer IDs=%v, want two exact revisions each", withdrawal.WithdrawalRevisionIDs, reoffer.KnowledgeRevisionIDs)
+	}
+}
+
+func TestFixtureContextDeltaSchemaIsStrictAndCannotSelectAuthority(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("schemas/fixture/v1/fake-run-scenario.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties  map[string]json.RawMessage `json:"properties"`
+		Definitions map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	type strictObject struct {
+		AdditionalProperties *bool                      `json:"additionalProperties"`
+		Properties           map[string]json.RawMessage `json:"properties"`
+	}
+	var plan, expectation strictObject
+	if err := json.Unmarshal(schema.Properties["context_delta"], &plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(schema.Definitions["context_delta_expectation"], &expectation); err != nil {
+		t.Fatal(err)
+	}
+	for name, object := range map[string]strictObject{"context_delta": plan, "context_delta_expectation": expectation} {
+		if object.AdditionalProperties == nil || *object.AdditionalProperties {
+			t.Errorf("fixture %s permits unknown authority fields", name)
+		}
+		for _, forbidden := range []string{"actor", "workspace", "project", "task", "run", "agent", "cursor"} {
+			if _, exists := object.Properties[forbidden]; exists {
+				t.Errorf("fixture %s exposes authority field %q", name, forbidden)
+			}
+		}
+	}
+	for _, field := range []string{"knowledge_revision_ids", "withdrawal_revision_ids"} {
+		if _, exists := expectation.Properties[field]; !exists {
+			t.Errorf("fixture delta expectation omits typed field %q", field)
+		}
+	}
+}

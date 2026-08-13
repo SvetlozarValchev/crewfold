@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:context-delta-list:v1",
+  "title": "Crewfold paginated context delta list v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["chain", "after_sequence", "next_sequence", "has_more", "deltas"],
+  "properties": {
+    "chain": {"$ref": "context-delta-chain.schema.json"},
+    "after_sequence": {"type": "integer", "minimum": 0},
+    "next_sequence": {"type": "integer", "minimum": 0},
+    "has_more": {"type": "boolean"},
+    "deltas": {"type": "array", "maxItems": 100, "items": {"$ref": "context-delta.schema.json"}}
+  }
+}

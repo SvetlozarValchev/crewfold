@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:context-explain-result:v3",
+  "title": "Crewfold local API context explanation result v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "explanation"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:context-explain-result:v3"},
+    "type": {"const": "context_explanation"},
+    "explanation": {
+      "oneOf": [
+        {"$ref": "../../domain/v1/context-explanation-v2.schema.json"},
+        {"$ref": "../../domain/v1/context-explanation-v3.schema.json"}
+      ]
+    }
+  }
+}

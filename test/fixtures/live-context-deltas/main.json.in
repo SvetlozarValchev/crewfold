@@ -1,0 +1,33 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "live-context-delta-consumer",
+  "acceptance": {"required_evidence": []},
+  "process": {"hang_after_steps": true},
+  "context_delta": {
+    "initial_delay_millis": 8000,
+    "wait_timeout_millis": 30000,
+    "duplicate_acknowledge": true,
+    "expectations": [
+      {
+        "required_kinds": ["message_received", "knowledge_accepted", "dependent_added", "participant_roster_updated"],
+        "message_preview": "@MESSAGE_PREVIEW@",
+        "participant_thread_id": "@DELTA_THREAD@",
+        "knowledge_revision_ids": ["@NEW_REVISION@"],
+        "dependent_task_id": "@LIVE_DEPENDENT@"
+      },
+      {
+        "required_kinds": ["contradiction_opened", "knowledge_withdrawn"],
+        "withdrawal_revision_ids": ["@REVISION_A@", "@REVISION_B@"],
+        "contradiction_id": "@CONTRADICTION@"
+      },
+      {
+        "required_kinds": ["contradiction_closed", "knowledge_accepted"],
+        "knowledge_revision_ids": ["@REVISION_A@", "@REVISION_B@"],
+        "contradiction_id": "@CONTRADICTION@"
+      }
+    ]
+  },
+  "steps": [
+    {"kind": "progress", "message": "live context sequence consumed"}
+  ]
+}

@@ -59,9 +59,13 @@ frozen inputs, explicit authority, restart-safe positions, and atomic task/claim
 actions. The canonical knowledge core now preserves task/meeting-provenanced
 decisions and findings as immutable revisions: authenticated runs may propose,
 while the local owner accepts, rejects, marks stale, or accepts an explicit
-successor. Context packet v3 can deliver exact accepted/current revision snapshots
+successor. Context packet v4 can deliver exact accepted/current revision snapshots
 to a replacement run under fixed byte budgets without reading provider
-transcripts. Crewfold can now discover eligible canonical revisions through
+transcripts. It also freezes an event cursor, bounded reverse dependents, exact
+participant rosters, and explicit live-delivery policy. Owner-triggered refresh
+builds at most one immutable bounded delta; only the exact run can fetch and
+acknowledge it through MCP, while unsafe incremental drift requires visible
+rebase. Crewfold can now discover eligible canonical revisions through
 deterministic scoped FTS5 search, explain the exact rank tuple and derived-index
 generation, diagnose degraded retrieval, and explicitly rebuild the index without
 changing canonical state. Agents assigned to different registered projects can
@@ -72,8 +76,8 @@ deterministic curator rule now safely copies accepted meeting resolutions under
 explicit owner configuration. Exact-revision contradiction reports remain inert
 until owner confirmation; an open record then quarantines both exact participants
 from search and new explicit context without changing currency or historical
-packets. Model-assisted curation, semantic conflict detection, context deltas,
-broader knowledge types, and the operator TUI remain to come. A deterministic
+packets. Model-assisted curation, semantic conflict detection, broader knowledge
+types, and the operator TUI remain to come. A deterministic
 project knowledge bundle now exports and owner-imports complete canonical
 item/revision/source/applicability and contradiction snapshots without provider
 state, operational ghost tasks, or reliance on FTS.

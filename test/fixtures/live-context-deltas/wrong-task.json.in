@@ -1,0 +1,16 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "live-context-wrong-task",
+  "acceptance": {"required_evidence": []},
+  "process": {"hang_after_steps": true},
+  "context_delta": {
+    "initial_delay_millis": 5000,
+    "wait_timeout_millis": 20000,
+    "expect_no_pending": true,
+    "denied_delta_id": "@OTHER_DELTA@",
+    "denied_expected_sequence": 1
+  },
+  "steps": [
+    {"kind": "progress", "message": "wrong task remained isolated"}
+  ]
+}

@@ -20,3 +20,8 @@ Use four sections:
 Not every implementation detail needs an ADR. Use one for decisions that change
 product boundaries, persisted data, public protocols, security authority,
 deployment shape, or difficult-to-reverse dependencies.
+
+Current decisions:
+
+- [ADR-0014: Explicit bounded live context deltas](0014-explicit-bounded-live-context-deltas.md)
+- [ADR-0013: Portable project knowledge snapshots](0013-portable-project-knowledge-snapshots.md)

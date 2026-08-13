@@ -343,6 +343,51 @@ func (c *Client) ContextExplain(ctx context.Context, workspace, contextID string
 	return result, nil
 }
 
+func (c *Client) ContextRefresh(ctx context.Context, params ContextRefreshParams) (ContextRefreshResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result ContextRefreshResult
+	if err := c.callParamsStrict(ctx, MethodContextRefresh, params, &result); err != nil {
+		return ContextRefreshResult{}, err
+	}
+	if result.Schema != ContextRefreshSchema || result.Type != "context_refresh" {
+		return ContextRefreshResult{}, fmt.Errorf("context.refresh returned unexpected result schema %q or type %q", result.Schema, result.Type)
+	}
+	return result, nil
+}
+
+func (c *Client) ContextDeltaList(ctx context.Context, params ContextDeltaListParams) (ContextDeltaListResult, error) {
+	var result ContextDeltaListResult
+	if err := c.callParamsStrict(ctx, MethodContextDeltaList, params, &result); err != nil {
+		return ContextDeltaListResult{}, err
+	}
+	if result.Schema != ContextDeltaListSchema || result.Type != "context_delta_list" {
+		return ContextDeltaListResult{}, fmt.Errorf("context.delta.list returned unexpected result schema %q or type %q", result.Schema, result.Type)
+	}
+	return result, nil
+}
+
+func (c *Client) ContextDeltaShow(ctx context.Context, workspace, deltaID string) (ContextDeltaShowResult, error) {
+	var result ContextDeltaShowResult
+	if err := c.callParamsStrict(ctx, MethodContextDeltaShow, ContextDeltaQueryParams{Workspace: workspace, Delta: deltaID}, &result); err != nil {
+		return ContextDeltaShowResult{}, err
+	}
+	if result.Schema != ContextDeltaShowSchema || result.Type != "context_delta" {
+		return ContextDeltaShowResult{}, fmt.Errorf("context.delta.show returned unexpected result schema %q or type %q", result.Schema, result.Type)
+	}
+	return result, nil
+}
+
+func (c *Client) ContextDeltaExplain(ctx context.Context, workspace, deltaID string) (ContextDeltaExplainResult, error) {
+	var result ContextDeltaExplainResult
+	if err := c.callParamsStrict(ctx, MethodContextDeltaExplain, ContextDeltaQueryParams{Workspace: workspace, Delta: deltaID}, &result); err != nil {
+		return ContextDeltaExplainResult{}, err
+	}
+	if result.Schema != ContextDeltaExplainSchema || result.Type != "context_delta_explanation" {
+		return ContextDeltaExplainResult{}, fmt.Errorf("context.delta.explain returned unexpected result schema %q or type %q", result.Schema, result.Type)
+	}
+	return result, nil
+}
+
 func (c *Client) KnowledgePropose(ctx context.Context, params KnowledgeProposeParams) (KnowledgeMutationResult, error) {
 	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
 	if params.Sources == nil {
@@ -818,6 +863,14 @@ func (c *Client) callParams(ctx context.Context, method string, paramsValue, res
 		return fmt.Errorf("marshal %s parameters: %w", method, err)
 	}
 	return c.call(ctx, method, params, result)
+}
+
+func (c *Client) callParamsStrict(ctx context.Context, method string, paramsValue, result any) error {
+	params, err := json.Marshal(paramsValue)
+	if err != nil {
+		return fmt.Errorf("marshal %s parameters: %w", method, err)
+	}
+	return c.callStrict(ctx, method, params, result)
 }
 
 func (c *Client) callParamsStrictWithTimeout(ctx context.Context, timeout time.Duration, method string, paramsValue, result any) error {

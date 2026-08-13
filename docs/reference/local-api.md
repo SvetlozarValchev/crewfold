@@ -7,7 +7,8 @@ overlap/drift inspection, structured overlap-resolution meetings, canonical
 knowledge, and deterministic derived retrieval. Subscriptions arrive later.
 The owner-local surface also exposes the bounded deterministic curator queue,
 rule configuration, explicit processing pass, and exact knowledge-contradiction
-governance.
+governance, portable project knowledge snapshots, and explicit bounded live
+context refresh and inspection.
 
 ## Transport
 
@@ -273,13 +274,44 @@ two writers using the same revision yield exactly one success and one
 `context.build` takes workspace, assigned task, its assigned agent, optional
 checkout, expected task revision, and idempotency key. It creates a bounded
 immutable packet that fixes role/task/checkout revisions, direct dependencies,
-policy, reporting instructions, and explicit included/excluded explanations.
+bounded reverse dependents, authorized participant-thread snapshots, policy,
+reporting instructions, the source event high-water, live policy, and explicit
+included/excluded explanations.
 `context.show` returns that exact packet; `context.explain` returns its stable
 selection reasons, semantic hash, and byte size.
 
-New builds return context-packet/result schema v2 with a bounded inbox snapshot.
-`context.show` result v2 can carry a preserved v1 packet created before mailbox
-support or a current v2 packet; it never upgrades the stored packet in place.
+New builds return context-packet/result schema v4. `context.show` can carry a
+preserved v1, v2, or v3 packet; it never upgrades the stored packet in place. Old
+packets do not advertise live MCP tools and require rebase for refresh.
+
+`context.refresh` is the owner-only live mutation. Its strict params are
+`workspace`, `run`, and `idempotency_key`; it accepts no caller cursor, task,
+agent, or packet. It returns
+`urn:crewfold:schema:local-api:context-refresh-result:v1`, type
+`context_refresh`, and status `created|pending|up_to_date|rebase_required` plus
+the exact run/base packet, durable state revision, inspected event interval,
+chain state, optional immutable delta, optional rebase reason, and
+`event_sequence`. The event sequence identifies the built/rebase fact and is zero
+for pending, up-to-date, and unsupported-old-packet compatibility results. A
+matching key replays. Any key while one delta is pending returns that same object
+without scanning. A no-change refresh durably advances the inspected cursor but
+emits no empty delta or event.
+
+`context.delta.list` takes `workspace`, `run`, `after_sequence` (zero or greater),
+and `limit` from 1 through 100. It returns
+`urn:crewfold:schema:local-api:context-delta-list-result:v1`, type
+`context_delta_list`, with the current durable chain state and a run-local
+sequence page. `context.delta.show` and `context.delta.explain` each take
+`workspace` and exact `delta`; their result types are `context_delta` and
+`context_delta_explanation`. These are owner inspection queries and do not fetch
+or acknowledge for the run. No owner/local acknowledgement method exists.
+
+Each delta is immutable, based on packet v4, and capped at 16 KiB; the chain is
+capped at 64 KiB and one refresh examines at most 1,000 potentially applicable
+events. Stable failures are `invalid_context_delta` and
+`context_delta_not_found`; rebase crosses refresh/fetch as a typed result rather
+than an error. It requires a replacement run and cannot be bypassed with a
+supplied cursor.
 
 `run.start` takes `workspace`, task ID, optional checkout ID, optional context
 packet ID, runtime, provider, one validated deterministic scenario,
@@ -298,7 +330,12 @@ write mode, adapter pair, and human-readable reasons. Creating a run and its
 pending worker job, context binding, and expiring capability is one transaction;
 no adapter call occurs in that transaction. Without an explicit packet, the same
 transaction creates one. An explicit packet must match current task, agent, and
-checkout revisions and cannot be reused by another run.
+checkout revisions and cannot be reused by another run. A prebuilt v4 packet also
+undergoes one bind-time canonical revalidation: its frozen run authority must
+still match, and every embedded knowledge revision must remain accepted, current,
+fresh, applicable, and undisputed. Failure requires a new packet without changing
+the old bytes. After successful binding, reads preserve the historical base and
+later drift is exposed only through explicit context refresh or rebase.
 
 The daemon worker leases pending jobs and applies this durable lifecycle:
 

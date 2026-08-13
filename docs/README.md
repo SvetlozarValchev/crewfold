@@ -15,17 +15,19 @@ explicitly rather than silently treating either as authoritative.
    overlap handling, and supervision.
 6. [Knowledge system](knowledge.md) — curation, retrieval, context packets, and the
    limited role of RAG.
-7. [Runtime and adapters](runtime-and-adapters.md) — Herdr, provider adapters,
+7. [Context packets and live deltas](context.md) — immutable base packets,
+   explicit refresh, run acknowledgement, bounds, and rebase.
+8. [Runtime and adapters](runtime-and-adapters.md) — Herdr, provider adapters,
    lifecycle authority, and fallback modes.
-8. [Technology stack](stack.md) — proposed implementation choices and rejected
+9. [Technology stack](stack.md) — proposed implementation choices and rejected
    early complexity.
-9. [CLI experience](cli.md) — the intended human-facing command surface.
-10. [Implementation plan](implementation-plan.md) — individually demoable,
+10. [CLI experience](cli.md) — the intended human-facing command surface.
+11. [Implementation plan](implementation-plan.md) — individually demoable,
     testable vertical slices.
-11. [Testing strategy](testing.md) — fixtures, failure injection, and acceptance
+12. [Testing strategy](testing.md) — fixtures, failure injection, and acceptance
     gates.
-12. [Roadmap](roadmap.md) — compact sequence and release landmarks.
-13. [Open questions](open-questions.md) — choices that are deliberately not final.
+13. [Roadmap](roadmap.md) — compact sequence and release landmarks.
+14. [Open questions](open-questions.md) — choices that are deliberately not final.
 
 ## References
 
@@ -64,3 +66,4 @@ explicitly rather than silently treating either as authoritative.
 - [ADR-0011: Bounded deterministic context curator](decisions/0011-bounded-deterministic-context-curator.md)
 - [ADR-0012: Owner-confirmed exact knowledge contradictions](decisions/0012-owner-confirmed-exact-knowledge-contradictions.md)
 - [ADR-0013: Portable project knowledge snapshots](decisions/0013-portable-project-knowledge-snapshots.md)
+- [ADR-0014: Explicit bounded live context deltas](decisions/0014-explicit-bounded-live-context-deltas.md)

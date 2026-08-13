@@ -48,3 +48,65 @@ func (s *server) handleContextExplain(request localapi.Request) localapi.Respons
 	}
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ContextExplainResult{Schema: localapi.ContextExplainSchema, Type: "context_explanation", Explanation: explanation})
 }
+
+func (s *server) handleContextRefresh(request localapi.Request) localapi.Response {
+	var params localapi.ContextRefreshParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Run) == "" || strings.TrimSpace(params.IdempotencyKey) == "" {
+		return invalidParamsResponse(request, "context.refresh requires workspace, run, and idempotency_key")
+	}
+	result, err := s.store.RefreshContext(context.Background(), store.RefreshContextCommand{
+		WorkspaceIdentifier: params.Workspace, RunID: params.Run,
+		IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ContextRefreshResult{
+		Schema: localapi.ContextRefreshSchema, Type: "context_refresh", ContextRefreshResult: result,
+	})
+}
+
+func (s *server) handleContextDeltaList(request localapi.Request) localapi.Response {
+	var params localapi.ContextDeltaListParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Run) == "" || params.AfterSequence == nil || *params.AfterSequence < 0 || params.Limit < 1 || params.Limit > 100 {
+		return invalidParamsResponse(request, "context.delta.list requires workspace, run, after_sequence, and a limit from 1 to 100")
+	}
+	list, err := s.store.ListContextDeltas(context.Background(), store.ListContextDeltasQuery{
+		WorkspaceIdentifier: params.Workspace, RunID: params.Run,
+		AfterSequence: *params.AfterSequence, Limit: params.Limit,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ContextDeltaListResult{
+		Schema: localapi.ContextDeltaListSchema, Type: "context_delta_list", ContextDeltaList: list,
+	})
+}
+
+func (s *server) handleContextDeltaShow(request localapi.Request) localapi.Response {
+	var params localapi.ContextDeltaQueryParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Delta) == "" {
+		return invalidParamsResponse(request, "context.delta.show requires workspace and delta")
+	}
+	delta, err := s.store.ContextDelta(context.Background(), params.Workspace, params.Delta)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ContextDeltaShowResult{
+		Schema: localapi.ContextDeltaShowSchema, Type: "context_delta", Delta: delta,
+	})
+}
+
+func (s *server) handleContextDeltaExplain(request localapi.Request) localapi.Response {
+	var params localapi.ContextDeltaQueryParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Delta) == "" {
+		return invalidParamsResponse(request, "context.delta.explain requires workspace and delta")
+	}
+	explanation, err := s.store.ExplainContextDelta(context.Background(), params.Workspace, params.Delta)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ContextDeltaExplainResult{
+		Schema: localapi.ContextDeltaExplainSchema, Type: "context_delta_explanation", Explanation: explanation,
+	})
+}

@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:context-delta:v1",
+  "title": "Crewfold bounded live context delta v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "id", "run_id", "context_packet_id", "workspace_id", "project_id", "task_id", "agent_id",
+    "base_packet_schema", "sequence", "from_event_sequence", "through_event_sequence", "evaluated_at",
+    "changes", "included", "excluded", "budget", "content_hash", "byte_size", "created_at", "created_by"
+  ],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:domain:context-delta:v1"},
+    "id": {"type": "string", "pattern": "^cdelta_[0-9a-f]{32}$"},
+    "run_id": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
+    "context_packet_id": {"type": "string", "pattern": "^ctx_[0-9a-f]{32}$"},
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "agent_id": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
+    "base_packet_schema": {"const": "urn:crewfold:schema:domain:context-packet:v4"},
+    "sequence": {"type": "integer", "minimum": 1},
+    "parent_delta_id": {"type": "string", "pattern": "^cdelta_[0-9a-f]{32}$"},
+    "from_event_sequence": {"type": "integer", "minimum": 0},
+    "through_event_sequence": {"type": "integer", "minimum": 0},
+    "evaluated_at": {"type": "string", "format": "date-time"},
+    "changes": {"type": "array", "minItems": 1, "maxItems": 1000, "items": {"$ref": "#/$defs/change"}},
+    "included": {"type": "array", "minItems": 1, "maxItems": 1000, "items": {"$ref": "context-packet-v3.schema.json#/$defs/selection"}},
+    "excluded": {"type": "array", "maxItems": 0, "items": {"$ref": "context-packet-v4.schema.json#/$defs/exclusion"}},
+    "budget": {"$ref": "#/$defs/budget"},
+    "content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "byte_size": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by": {"const": "local-owner"}
+  },
+  "$defs": {
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "chain"],
+      "properties": {
+        "total": {"allOf": [{"$ref": "context-packet-v4.schema.json#/$defs/budget_usage"}, {"properties": {"limit_bytes": {"const": 16384}}}]},
+        "chain": {"allOf": [{"$ref": "context-packet-v4.schema.json#/$defs/budget_usage"}, {"properties": {"limit_bytes": {"const": 65536}}}]}
+      }
+    },
+    "cause": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "properties": {
+        "event_sequence": {"type": "integer", "minimum": 1},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1024}
+      }
+    },
+    "withdrawal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision_id", "state_revision", "reason", "open_contradiction_ids", "open_contradiction_count"],
+      "properties": {
+        "revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+        "state_revision": {"type": "integer", "minimum": 1},
+        "reason": {"enum": ["stale", "superseded", "freshness_expired", "disputed"]},
+        "replacement_revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+        "open_contradiction_ids": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "pattern": "^kcon_[0-9a-f]{32}$"}},
+        "open_contradiction_count": {"type": "integer", "minimum": 0}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"reason": {"const": "superseded"}}, "required": ["reason"]},
+          "then": {"required": ["replacement_revision_id"]},
+          "else": {"not": {"required": ["replacement_revision_id"]}}
+        },
+        {
+          "if": {"properties": {"reason": {"const": "disputed"}}, "required": ["reason"]},
+          "then": {
+            "properties": {
+              "open_contradiction_ids": {"minItems": 1},
+              "open_contradiction_count": {"minimum": 1}
+            }
+          }
+        }
+      ]
+    },
+    "contradiction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contradiction", "left_revision", "right_revision"],
+      "properties": {
+        "contradiction": {"$ref": "knowledge-contradiction.schema.json"},
+        "left_revision": {"$ref": "knowledge-revision.schema.json"},
+        "right_revision": {"$ref": "knowledge-revision.schema.json"}
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "entity_type", "entity_id", "revision", "cause"],
+      "properties": {
+        "kind": {"enum": ["message_received", "knowledge_accepted", "knowledge_withdrawn", "contradiction_opened", "contradiction_closed", "dependent_added", "dependent_updated", "participant_roster_updated"]},
+        "entity_type": {"enum": ["message", "knowledge_revision", "knowledge_contradiction", "task", "thread"]},
+        "entity_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "revision": {"type": "integer", "minimum": 1},
+        "cause": {"$ref": "#/$defs/cause"},
+        "message": {"$ref": "context-packet-v3.schema.json#/$defs/inbox_item"},
+        "knowledge": {"$ref": "knowledge-revision.schema.json"},
+        "withdrawal": {"$ref": "#/$defs/withdrawal"},
+        "contradiction": {"$ref": "#/$defs/contradiction"},
+        "dependency": {"$ref": "context-packet-v3.schema.json#/$defs/dependency"},
+        "participant_thread": {"$ref": "participant-thread.schema.json"}
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {"const": "message_received"},
+            "entity_type": {"const": "message"},
+            "entity_id": {"pattern": "^msg_[0-9a-f]{32}$"},
+            "cause": {"required": ["event_sequence"]}
+          },
+          "required": ["message"],
+          "not": {"anyOf": [{"required": ["knowledge"]}, {"required": ["withdrawal"]}, {"required": ["contradiction"]}, {"required": ["dependency"]}, {"required": ["participant_thread"]}]}
+        },
+        {
+          "properties": {
+            "kind": {"const": "knowledge_accepted"},
+            "entity_type": {"const": "knowledge_revision"},
+            "entity_id": {"pattern": "^krev_[0-9a-f]{32}$"},
+            "cause": {"required": ["event_sequence"]},
+            "knowledge": {
+              "allOf": [
+                {"$ref": "knowledge-revision.schema.json"},
+                {
+                  "properties": {
+                    "type": {"const": "decision"},
+                    "review_status": {"const": "accepted"},
+                    "currency_status": {"const": "current"}
+                  },
+                  "required": ["type", "review_status", "currency_status"]
+                }
+              ]
+            }
+          },
+          "required": ["knowledge"],
+          "not": {"anyOf": [{"required": ["message"]}, {"required": ["withdrawal"]}, {"required": ["contradiction"]}, {"required": ["dependency"]}, {"required": ["participant_thread"]}]}
+        },
+        {
+          "properties": {
+            "kind": {"const": "knowledge_withdrawn"},
+            "entity_type": {"const": "knowledge_revision"},
+            "entity_id": {"pattern": "^krev_[0-9a-f]{32}$"}
+          },
+          "required": ["withdrawal"],
+          "oneOf": [
+            {
+              "properties": {
+                "cause": {"properties": {"reason": {"const": "stale"}}, "required": ["event_sequence", "reason"]},
+                "withdrawal": {"properties": {"reason": {"const": "stale"}}, "required": ["reason"]}
+              }
+            },
+            {
+              "properties": {
+                "cause": {"properties": {"reason": {"const": "superseded"}}, "required": ["event_sequence", "reason"]},
+                "withdrawal": {"properties": {"reason": {"const": "superseded"}}, "required": ["reason"]}
+              }
+            },
+            {
+              "properties": {
+                "cause": {"properties": {"reason": {"const": "freshness_expired"}}, "required": ["reason"], "not": {"required": ["event_sequence"]}},
+                "withdrawal": {"properties": {"reason": {"const": "freshness_expired"}}, "required": ["reason"]}
+              }
+            },
+            {
+              "properties": {
+                "cause": {"properties": {"reason": {"const": "disputed"}}, "required": ["event_sequence", "reason"]},
+                "withdrawal": {"properties": {"reason": {"const": "disputed"}}, "required": ["reason"]}
+              }
+            }
+          ],
+          "not": {"anyOf": [{"required": ["message"]}, {"required": ["knowledge"]}, {"required": ["contradiction"]}, {"required": ["dependency"]}, {"required": ["participant_thread"]}]}
+        },
+        {
+          "properties": {
+            "kind": {"const": "contradiction_opened"},
+            "entity_type": {"const": "knowledge_contradiction"},
+            "entity_id": {"pattern": "^kcon_[0-9a-f]{32}$"},
+            "cause": {"required": ["event_sequence"]},
+            "contradiction": {
+              "allOf": [
+                {"$ref": "#/$defs/contradiction"},
+                {
+                  "properties": {
+                    "contradiction": {
+                      "properties": {"status": {"const": "open"}},
+                      "required": ["status"]
+                    }
+                  },
+                  "required": ["contradiction"]
+                }
+              ]
+            }
+          },
+          "required": ["contradiction"],
+          "not": {"anyOf": [{"required": ["message"]}, {"required": ["knowledge"]}, {"required": ["withdrawal"]}, {"required": ["dependency"]}, {"required": ["participant_thread"]}]}
+        },
+        {
+          "properties": {
+            "kind": {"const": "contradiction_closed"},
+            "entity_type": {"const": "knowledge_contradiction"},
+            "entity_id": {"pattern": "^kcon_[0-9a-f]{32}$"},
+            "cause": {"required": ["event_sequence"]},
+            "contradiction": {
+              "allOf": [
+                {"$ref": "#/$defs/contradiction"},
+                {
+                  "properties": {
+                    "contradiction": {
+                      "properties": {"status": {"enum": ["resolved", "dismissed"]}},
+                      "required": ["status"]
+                    }
+                  },
+                  "required": ["contradiction"]
+                }
+              ]
+            }
+          },
+          "required": ["contradiction"],
+          "not": {"anyOf": [{"required": ["message"]}, {"required": ["knowledge"]}, {"required": ["withdrawal"]}, {"required": ["dependency"]}, {"required": ["participant_thread"]}]}
+        },
+        {
+          "properties": {
+            "kind": {"enum": ["dependent_added", "dependent_updated"]},
+            "entity_type": {"const": "task"},
+            "entity_id": {"pattern": "^task_[0-9a-f]{32}$"},
+            "cause": {"required": ["event_sequence"]}
+          },
+          "required": ["dependency"],
+          "not": {"anyOf": [{"required": ["message"]}, {"required": ["knowledge"]}, {"required": ["withdrawal"]}, {"required": ["contradiction"]}, {"required": ["participant_thread"]}]}
+        },
+        {
+          "properties": {
+            "kind": {"const": "participant_roster_updated"},
+            "entity_type": {"const": "thread"},
+            "entity_id": {"pattern": "^thread_[0-9a-f]{32}$"},
+            "cause": {"required": ["event_sequence"]},
+            "participant_thread": {
+              "allOf": [
+                {"$ref": "participant-thread.schema.json"},
+                {
+                  "properties": {
+                    "thread": {
+                      "properties": {"status": {"const": "open"}},
+                      "required": ["status"],
+                      "not": {"anyOf": [{"required": ["project_id"]}, {"required": ["task_id"]}]}
+                    }
+                  },
+                  "required": ["thread"]
+                }
+              ]
+            }
+          },
+          "required": ["participant_thread"],
+          "not": {"anyOf": [{"required": ["message"]}, {"required": ["knowledge"]}, {"required": ["withdrawal"]}, {"required": ["contradiction"]}, {"required": ["dependency"]}]}
+        }
+      ]
+    }
+  }
+}

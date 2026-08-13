@@ -84,7 +84,8 @@ must never contain model credentials or machine-specific socket capabilities.
 - When does a meeting produce better outcomes than a simple reviewer handoff?
 - Are path claims sufficient for most overlap, or is symbol/component indexing
   needed early?
-- How frequently should context refresh without distracting active agents?
+- Which future supervisor signals should recommend the already-explicit owner
+  context refresh, without turning it into background push or provider steering?
 - Which knowledge updates can safely auto-accept?
 - What is a realistic default concurrent-run limit by provider and machine?
 - Should a durable agent normally keep one provider identity, or freely switch

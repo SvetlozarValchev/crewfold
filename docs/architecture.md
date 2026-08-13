@@ -75,7 +75,9 @@ crewfold daemon
 Canonical knowledge and explicit packet assembly run through normal transactional
 commands. Deterministic retrieval now uses a rebuildable SQLite FTS5 projection;
 the explicit curator projects proposed revisions and applies one bounded,
-disabled-by-default rule. Automatic context selection remains later M15 work.
+disabled-by-default rule. Live context uses explicit owner refresh and immutable,
+bounded deltas; semantic or model-assisted automatic selection remains future
+work.
 
 The CLI can start the daemon on demand. A foreground mode makes debugging easy; a
 user service may keep it running. The same binary can expose CLI subcommands so
@@ -153,6 +155,14 @@ implemented `crewfold_report_contradiction` tool derives the same run authority
 and can report only two accepted/current exact revisions applicable to its project
 and task. Neither tool can accept knowledge or confirm a contradiction.
 
+Packet-v4 runs additionally receive `crewfold_get_context_delta` and
+`crewfold_acknowledge_context_delta`. The first has no arguments and can only
+fetch a delta already built by the owner for the authenticated run. The second
+accepts only that run's exact pending delta, expected run-local sequence, and an
+idempotency key. It is the sole consumption-attestation path. Packet v1–v3
+capabilities do not advertise either tool, and the local owner cannot acknowledge
+on an agent's behalf.
+
 Project scope remains the mailbox default. An owner-created participant thread is
 the sole cross-project exception: it binds every member to an exact agent, task,
 and project. The same existing inbox/read/send/acknowledge tools accept a message
@@ -217,23 +227,29 @@ authority records, and caller payloads never select the trusted actor. The run
 capability advertises no governance operation; probes of a reserved acceptance
 name stop earlier as audited `run.tool_denied` policy violations.
 
-The context-packet v3 builder starts from the existing role, task, checkout,
-dependency, policy, reporting, and bounded-inbox snapshot. It then evaluates only
+The context-packet v4 builder starts from the existing role, task, checkout,
+dependency, reverse-dependent, participant-roster, policy, reporting, and
+bounded-inbox snapshot. It then evaluates only
 the caller's ordered exact revision IDs—never a search result. Accepted, current,
 fresh, applicable revisions are embedded as complete snapshots. Other known
 candidates receive per-revision exclusion reasons; unknown IDs fail. Superseded
 pins may expose a replacement ID as explanation metadata but are never silently
 followed.
 
-Packet assembly enforces a 32 KiB total limit and a 12 KiB whole-item knowledge
-sub-budget. It records requested IDs, inclusion/exclusion decisions, and budget
-accounting in the immutable packet. Eligibility freezes inside the build
-transaction, so later governance cannot change an existing run briefing. Provider
-transcripts are neither queried nor ingested. This is bounded context authority,
-not RAG or a transcript accumulator. An otherwise eligible explicit revision in
-an owner-confirmed open contradiction fails the whole new build before budgeting;
+Packet assembly enforces a 32 KiB total limit, a 12 KiB whole-item knowledge
+sub-budget, and an 8 KiB collaboration sub-budget. It records requested IDs,
+inclusion/exclusion decisions, budget accounting, the journal high-water, and a
+frozen live-delivery policy in the immutable packet. At most 32 reverse
+dependents and eight whole exact-bound participant-thread rosters are selected
+deterministically. Eligibility is evaluated inside the build transaction. A
+prebuilt v4 packet is revalidated once at run binding; after successful binding,
+later governance cannot change its historical bytes and only explicit refresh can
+carry a withdrawal or rebase. Provider transcripts are neither queried nor
+ingested. This is bounded context authority, not RAG or a transcript accumulator.
+An otherwise eligible explicit revision in an
+owner-confirmed open contradiction fails the whole new build before budgeting;
 an already ineligible revision keeps its ordinary exclusion precedence. Existing
-packet-v3 bytes never change.
+packet-v1–v4 bytes never change.
 
 The first M15 retrieval slice adds a disposable FTS5 projection over immutable
 revision titles and bodies. Search obtains text candidates from that projection,
@@ -253,10 +269,10 @@ without mutating knowledge, context, or the event journal. No second database,
 embedding service, or background model is involved.
 
 The second independently testable M15 slice adds participant-bound cross-project
-collaboration without changing packet v3. A new packet's bounded inbox summary may
-include exact authorized participant mail, but full bodies stay behind explicit
-MCP reads. Roster delivery through context v4/deltas remains later M15 work. The
-third slice adds a read-projected curator queue over canonical proposals and
+collaboration. A new packet's bounded inbox summary may include exact authorized
+participant mail, but full bodies stay behind explicit MCP reads. Packet v4 now
+delivers bounded whole rosters and later participant/message changes through the
+same exact task binding. The third slice adds a read-projected curator queue over canonical proposals and
 immutable derivations. Every workspace persists the single
 `accepted_meeting_resolution_copy/v1` rule disabled. An explicit process pass
 scans at most 100 candidates, deterministically copies an accepted resolution's
@@ -286,8 +302,27 @@ scope when explicitly requested, then commits canonical rows, local import
 attestations, and receipt atomically. Portable task anchors preserve narrow scope
 without creating operational tasks. Origin events, authority ledgers, curator
 proof rows, provider state, and idempotency are deliberately not replayed.
-Semantic detection, broader reconciliation, and refresh/deltas remain later work;
-retrieval still cannot automatically accept, summarize, or deliver knowledge.
+Semantic detection and broader reconciliation remain later work; retrieval still
+cannot automatically accept, summarize, or deliver knowledge.
+
+The sixth slice adds explicit live context deltas without weakening packet
+immutability. Per-run state owns an inspected event cursor, one pending immutable
+delta, acknowledged sequence, cumulative byte count, and durable rebase state.
+Owner-local refresh scans at most 1,000 potentially applicable events through one
+transactional cutoff, reloads canonical projections, and coalesces them into
+whole typed changes. A no-op advances the inspected cursor without an event or
+empty delta. A pending delta blocks further scanning until the exact authenticated
+run acknowledges it through MCP.
+
+One delta is capped at 16 KiB and the chain at 64 KiB. An old base packet, base
+contract or direct-dependency-set drift, relevant-event overflow, byte overflow,
+or unsupported authority-changing event becomes durable rebase state rather than
+partial delivery. Current supported changes are bounded message previews, new or
+dispute-closure-reoffered accepted decisions, delivered-knowledge withdrawals,
+no-body disputed suppression tombstones, contradiction transitions,
+reverse-dependent changes, and participant-roster changes. Direct-upstream
+snapshot drift rebases. Time-driven expiry is evaluated only on explicit refresh;
+there is no provider steering or background push.
 
 ### Outcome and briefing projector
 

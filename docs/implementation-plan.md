@@ -778,7 +778,10 @@ crewfold thread invite THREAD_ID --agent review-agent --task TASK_REVIEW \
   --expected-participant-revision 1 --workspace personal \
   --socket /path/to/crewfold.sock
 crewfold curator queue
-crewfold context refresh RUN_ID
+crewfold context refresh RUN_ID --workspace personal --idempotency-key refresh-1
+crewfold context delta list RUN_ID --workspace personal --after-sequence 0 --limit 20
+crewfold context delta show CONTEXT_DELTA_ID --workspace personal
+crewfold context delta explain CONTEXT_DELTA_ID --workspace personal
 crewfold contradiction list
 crewfold knowledge export /private/demo-knowledge --workspace personal --project demo
 crewfold knowledge import /private/demo-knowledge --workspace personal --project demo \
@@ -790,7 +793,18 @@ crewfold knowledge import /private/demo-knowledge --workspace personal --project
 - SQLite FTS5 retrieval with hard scope, authority, and freshness filters plus
   versioned deterministic applicability/provenance/quality/text ranking.
 - Curator proposal queue with bounded rule-based auto-acceptance.
-- Context deltas for new messages, decisions, dependencies, and contradictions.
+- Immutable packet-v4 base with source cursor, bounded same-project reverse
+  dependents, exact participant rosters, collaboration budget, and frozen live
+  delivery policy.
+- Owner-triggered context refresh plus immutable deltas for bounded message
+  previews, accepted decisions, delivered-knowledge withdrawals, no-body disputed
+  suppression tombstones, contradiction transitions and eligible decision
+  re-offers, reverse dependents, and participant rosters. Direct-upstream drift
+  rebases.
+- Argument-free run MCP fetch and exact-run ID/sequence acknowledgement; no owner
+  acknowledgement or run-triggered scan.
+- One pending delta, 1,000 relevant-event, 16 KiB per-delta, and 64 KiB chain
+  bounds with no-op cursor advancement and durable fail-closed rebase.
 - Exact-pair contradiction workflow and relational dispute state independent of
   current/stale currency.
 - Deterministic Markdown plus canonical manifest export and owner-only exact
@@ -806,7 +820,17 @@ crewfold knowledge import /private/demo-knowledge --workspace personal --project
   return only project-wide or exact-task records.
 - The exact ranking order and explanations survive daemon restart.
 - Retrieval can suggest only candidates; it cannot make proposed content accepted.
-- A newly accepted applicable decision creates one context delta.
+- Accepting an applicable decision alone creates no delta; one explicit owner
+  refresh creates exactly one delta, pending refresh returns it unchanged, and
+  only the exact live run can fetch/acknowledge it.
+- Pending delivery, acknowledgement replay, and inspected cursors survive daemon
+  restart; a no-change refresh advances without an empty delta or event.
+- Packet-v4 rosters/message previews remain exact-task scoped, contradiction and
+  withdrawal transitions are whole and explainable, closure re-offers only still
+  eligible decisions, and a legal new reverse dependent appears without granting
+  authority.
+- A v1–v3 base requires rebase and never advertises live tools. Relevant-event,
+  delta, and cumulative overflow rebase rather than truncate.
 - Contradictory accepted candidates create a conflict, not a blended summary.
 - Deleting or corrupting the search index leaves exact canonical reads unchanged;
   rebuilding changes no canonical revisions or events.
@@ -823,11 +847,17 @@ crewfold knowledge import /private/demo-knowledge --workspace personal --project
 - Corrupt or remove the search index and prove canonical reads continue while
   search returns `retrieval_degraded`, `doctor --retrieval` reports degraded
   retrieval, and an explicit rebuild repairs it.
+- Restart with one unacknowledged context delta and prove byte-identical local/run
+  reads plus exactly-once acknowledgement. Inject delta/store failures after
+  projection/event writes and prove state, event, receipt, and idempotency rollback
+  together.
 
 **Exit gate**
 
-Retrieval and curator scenarios pass over a representative fixture corpus with
-explainable selection. Embeddings remain optional and disabled.
+Retrieval, curator, collaboration, contradiction, portable-knowledge, and live
+context-delta scenarios pass over representative provider-free fixtures with
+explainable selection and restart/failure behavior. Embeddings remain optional
+and disabled.
 
 ### M16 — Manager proposals and supervisor scheduling
 

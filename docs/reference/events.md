@@ -9,8 +9,8 @@ Thread creation, durable message send/delivery/read/acknowledgement, and wake
 success/failure facts are also implemented. Claim add/release/expiry, overlap
 open/resolution, drift open/resolution, and structured meeting facts are
 implemented. Canonical knowledge proposal/governance, authority-denial, and
-context-packet build facts are also implemented. Names for policy, checks, context
-deltas and external integrations remain proposals; the
+context-packet build, live-context delta, and acknowledgement facts are also
+implemented. Names for policy, checks, and external integrations remain proposals; the
 catalogue defines intended coverage, not a frozen schema.
 
 ## Envelope
@@ -207,6 +207,9 @@ knowledge.imported
 contradiction.imported
 knowledge.import_completed
 context.packet_built
+context_delta.built
+context_delta.acknowledged
+context_delta.rebase_required
 ```
 
 Proposal events identify the item, project, optional task scope, predecessor, and
@@ -218,7 +221,23 @@ reach that boundary: its unadvertised governance-tool probe is instead captured 
 `run.tool_denied` by capability policy.
 `context.packet_built` identifies the immutable packet, task, agent, checkout,
 semantic hash, and final byte size. Selection details and exact requested knowledge
-IDs live in packet v3 rather than being duplicated into the event.
+IDs live in packet v4 rather than being duplicated into the event.
+
+`context_delta.built` identifies the exact run/base packet, immutable delta ID and
+run-local sequence, exclusive/inclusive event interval, content hash, byte size,
+and resulting state revision. The event links to the stored delta; it does not
+duplicate message, knowledge, contradiction, roster, or dependency bodies.
+`context_delta.acknowledged` links the exact `cdack_...` receipt, run, delta,
+sequence, and resulting state revision. It can be emitted only by the exact bound
+live run. Exact idempotent acknowledgement replay emits no second fact.
+
+`context_delta.rebase_required` freezes the run/base packet, inspected cursor,
+stable reason, and resulting state revision when safe incremental delivery is no
+longer possible. It is emitted once on the transition into durable rebase state;
+refresh replay does not repeat it. An `up_to_date` refresh advances only delivery
+bookkeeping and deliberately appends no event, avoiding self-triggered scan churn.
+Owner refresh while a delta is pending likewise returns the existing object and
+appends no journal fact; its command idempotency receipt is still persisted.
 
 Deterministic `knowledge.search`, `knowledge.index.status`, and
 `knowledge.index.rebuild` append no domain event. Search and status are queries;
@@ -266,8 +285,6 @@ The following remain proposals:
 artifact.registered
 artifact.redacted
 context.packet_dispatched
-context_delta.built
-context_delta.acknowledged
 ```
 
 ## Outcomes and owner checkpoints

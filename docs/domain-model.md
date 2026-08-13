@@ -140,16 +140,19 @@ handles, heartbeats, usage accounting, and enforced budgets remain planned.
 
 ### Context packet
 
-An immutable, bounded base briefing bound to exactly one run. It snapshots the
-assigned agent role, exact task revision, selected checkout and repository
-observation, direct dependency revisions, allowed tools, denied/approval-required
-operations, reporting instructions, and a bounded authority-scoped summary of
-unseen inbox items. This normally means project scope and additionally permits an
-exact participant agent/task/project binding. Full message bodies remain explicit
+An immutable, bounded base briefing built for one exact task/agent/checkout and
+bindable to at most one run. It may exist unbound after an explicit build; a
+successful `run.start` creates the unique binding. It snapshots the assigned agent
+role, exact task revision, selected checkout and repository observation, direct
+dependency revisions, bounded same-project reverse dependents, allowed tools,
+denied/approval-required operations, reporting instructions, whole authorized
+participant-thread rosters, and a bounded authority-scoped summary of unseen inbox
+items. This normally means project scope and additionally permits an exact
+participant agent/task/project binding. Full message bodies remain explicit
 mailbox reads; active claim
 snapshots and provider transcripts are deliberate exclusions.
 
-New builds use context-packet schema v3. The caller may provide up to 16 ordered,
+New builds use context-packet schema v4. The caller may provide up to 16 ordered,
 unique knowledge revision IDs. The packet preserves those exact requests and
 includes complete snapshots only for revisions that are accepted, current, fresh,
 and applicable to the task's project and optional task scope. It never searches
@@ -157,17 +160,50 @@ for related knowledge or silently follows a superseded pin. Proposed, rejected,
 stale, superseded, out-of-scope, and over-budget requests are explained per
 revision; a superseded exclusion may identify the current replacement as metadata.
 
-The total packet limit is 32 KiB, including a 12 KiB knowledge sub-budget. An item
-is included whole or excluded. Existing v1 and v2 packets remain readable and
-immutable after an upgrade.
+The total packet limit is 32 KiB, including a 12 KiB knowledge sub-budget and an
+8 KiB participant-roster sub-budget. Direct dependencies are complete and capped
+at 32; reverse dependents are informational, sorted, and capped at 32; authorized
+participant threads are selected as whole snapshots, newest update then ID, and
+capped at eight. An item is included whole or excluded. The packet freezes its
+source event high-water and live policy. Existing v1, v2, and v3 packets remain
+readable and immutable after an upgrade but cannot acquire live tools.
 
 The packet's semantic content hash excludes packet identity and creation metadata,
 so equivalent controlled inputs—including ordered explicit knowledge links—have
-the same hash while retaining distinct packet IDs. Eligibility is frozen when the
-packet is built. Later acceptance, expiry, staleness, or supersession does not
-rewrite the snapshot or invalidate its binding. Runs never silently refresh a
-packet; future context changes require a new packet or a later explicit delta
-capability.
+the same hash while retaining distinct packet IDs. Eligibility is evaluated when
+the packet is built, and the bytes never change. An explicitly prebuilt v4 packet
+is revalidated once when a run binds it: frozen run authority must still match,
+and embedded knowledge must still be accepted, current, fresh, applicable, and
+undisputed. A failed binding requires a new packet. After successful binding,
+later changes do not rewrite or silently refresh the base; explicit deltas carry
+withdrawals and durable rebase reports an unsafe base contract. Historical v1–v3
+packets remain readable but cannot acquire live delivery authority.
+
+### Context delta and acknowledgement
+
+A `cdelta_...` context delta is an immutable, bounded change object for one exact
+live run and one packet-v4 base. It records workspace/project/task/agent scope,
+base packet identity and schema, a run-local sequence and optional parent, an
+exclusive source event cursor and inclusive inspected cursor, evaluation time,
+typed whole changes, inclusion/exclusion explanations, total/chain budget
+accounting, content hash, size, and creation audit fields.
+
+Delta changes form a closed union: bounded inbox preview, newly accepted decision
+or eligible decision re-offer, known-knowledge withdrawal or no-body disputed
+suppression tombstone, contradiction opened/closed, reverse dependent
+addition/update, or complete participant-roster update. A suppression tombstone
+records a post-base accepted applicable decision hidden by an open contradiction;
+it does not disclose the decision body. Direct-upstream set or snapshot drift is
+an authority-contract change and requires rebase rather than a delta.
+Event payloads provide causes; current canonical projections provide the delivered
+snapshot. A time-driven expiry withdrawal can have equal source cursors.
+
+One run-context state projection records the base cursor, last inspected cursor,
+next/pending/acknowledged sequence, cumulative bytes, and
+`ready|pending_ack|rebase_required` status. At most one delta may be pending.
+Owner refresh builds or returns it; only the exact authenticated live run may add
+one immutable `cdack_...` acknowledgement. Owner inspection is never consumption.
+No-op refresh advances inspected state without creating a delta or event.
 
 ### Objective
 
@@ -448,8 +484,10 @@ launched it.
    explicit successor revision. Acceptance requires either the owner or the one
    transactionally revalidated exact curator state policy—never proposal labels,
    free text, retrieval rank, or general subsystem identity.
-6. A context packet is immutable after build; knowledge eligibility is not
-   re-evaluated when a run binds or reads it.
+6. A context packet is immutable after build. A prebuilt v4 packet is revalidated
+   once when a run binds it; after binding, reads do not re-evaluate its historical
+   bytes. A delta never mutates that base and is acknowledged only by its exact
+   bound live run.
 7. A message is never modified after send; delivery metadata changes separately,
    and cross-project visibility requires an exact participant agent/task/project
    binding rather than workspace membership alone.
@@ -461,3 +499,5 @@ launched it.
     records at a declared event cursor.
 13. A portable import cannot create operational work or replay origin authority;
     only its local-owner import attestation authorizes the imported final state.
+14. A live-context bound is never satisfied by truncation. An unsafe or oversized
+    incremental change becomes durable rebase state.

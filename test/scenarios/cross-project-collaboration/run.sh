@@ -227,7 +227,7 @@ fi
 
 "$binary" context build "$plug_task" --workspace personal --agent plug-agent --expected-task-revision 2 --socket "$socket_path" --idempotency-key collaboration-plug-context --output json >"$scenario_root/plug-context.json"
 plug_context=$(extract_id ctx "$scenario_root/plug-context.json")
-grep -Fq 'urn:crewfold:schema:domain:context-packet:v3' "$scenario_root/plug-context.json"
+grep -Fq 'urn:crewfold:schema:domain:context-packet:v4' "$scenario_root/plug-context.json"
 grep -Fq 'engine-sim-offline exposes deterministic step' "$scenario_root/plug-context.json"
 if grep -Fq 'legacy direct mail must remain' "$scenario_root/plug-context.json"
 then

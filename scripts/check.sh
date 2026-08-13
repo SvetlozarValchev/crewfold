@@ -85,6 +85,9 @@ printf 'Owner-confirmed knowledge contradiction black-box acceptance\n'
 printf 'Portable project knowledge black-box acceptance\n'
 "$repo_root/test/scenarios/portable-knowledge/run.sh"
 
+printf 'Live context delta black-box acceptance\n'
+"$repo_root/test/scenarios/live-context-deltas/run.sh"
+
 printf 'Herdr runtime black-box acceptance\n'
 "$repo_root/test/scenarios/herdr-runtime/run.sh"
 

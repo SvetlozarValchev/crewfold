@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 15
+	LatestSchemaVersion = 16
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -237,6 +237,27 @@ type BuildContextCommand struct {
 	ExpectedTaskRevision int64
 	IdempotencyKey       string
 	CorrelationID        string
+}
+
+type RefreshContextCommand struct {
+	WorkspaceIdentifier string
+	RunID               string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListContextDeltasQuery struct {
+	WorkspaceIdentifier string
+	RunID               string
+	AfterSequence       int64
+	Limit               int
+}
+
+type AcknowledgeContextDeltaCommand struct {
+	RunID            string
+	DeltaID          string
+	ExpectedSequence int64
+	IdempotencyKey   string
 }
 
 type CreateRunReportCommand struct {

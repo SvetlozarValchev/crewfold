@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 15.
+Status: implemented through schema version 16.
 
 ## Location and ownership
 
@@ -385,6 +385,46 @@ runs, repositories, checkouts, provider state, credentials, and transcripts.
 These tables remain local and are not reconstructed from descriptive actor fields
 in an imported snapshot.
 
+## Schema version 16
+
+Packet-v4 construction extends immutable `context_packets` JSON with its source
+event high-water, bounded reverse dependents and participant rosters, collaboration
+budget, and frozen live policy. New insert triggers require redundant packet
+scope/hash/size columns to match the JSON and validate the exact v4 policy bounds.
+Versions 1 through 3 remain accepted historical rows. Context packets and
+run-context bindings reject update/delete; migration invents no live authority for
+an old run.
+
+`run_context_delta_state` is one durable delivery projection per packet-v4 run. It
+owns `ready|pending_ack|rebase_required`, optimistic revision, inspected event
+cursor, last/pending/acknowledged IDs and run-local sequence, delta count,
+cumulative bytes, stable rebase reason/event, and timestamps. Initial state must
+match the exact immutable run binding and packet `as_of_event_sequence`. Update
+triggers permit only four transitions: event-free no-op cursor advance, one ready
+chain head becoming pending, exact pending acknowledgement returning to ready, or
+ready state becoming durable rebase. State cannot be deleted.
+
+`context_deltas` stores immutable canonical delta JSON plus redundant run/base,
+sequence/parent, exclusive/inclusive cursor interval, content hash, byte size,
+build event sequence, and audit fields. IDs use `cdelta_...`; run/sequence and
+build events are unique. Insert triggers require the row to extend the exact ready
+chain, stay under the 64 KiB cumulative limit, match every redundant JSON field,
+and link an exact `context_delta.built` journal fact. A row is limited to 16 KiB.
+
+`context_delta_acknowledgements` stores one immutable `cdack_...` receipt per
+delta: exact run/base/delta/sequence, authenticated run actor, key/request hash,
+time, and unique acknowledgement event. A trigger requires the delta to be that
+run's sole pending head and the actor to equal the run. The resulting state update
+requires the receipt already exist, preventing owner or cross-run consumption
+claims. Exact replay reads the receipt and changes no row/event.
+
+Refresh uses an immediate transaction. Pending/rebase state is returned before a
+scan. Ready refresh reads a global journal cutoff, caps potentially applicable
+events at 1,000, reloads exact canonical projections, and either atomically stores
+one whole delta/event/state transition, advances the no-op cursor without an
+event, or records rebase event/state. Event payloads are candidate/audit data, not
+the stored delta's content authority.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -409,15 +449,17 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 15 contains agent/task/run/claim coordination,
+without its WAL. Schema version 16 contains agent/task/run/claim coordination,
 meetings, canonical knowledge, immutable context packets, scoped
 report/artifact/audit records, durable message/thread/delivery/wake state,
 overlap/drift/watcher state, bounded curator policy/derivation/acceptance evidence,
 exact contradiction history and bounded derived dispute evidence,
 opaque fake/direct bindings, direct supervisor references, and a rebuildable FTS
 projection, plus portable task-scope anchors, exact owner import receipts, and
-per-entity import attestation rows. It contains no provider-private
-session transcript. Backup of a live installation must include a
+per-entity import attestation rows. It contains no provider-private session
+transcript. It additionally contains immutable context-delta chains, exact-run
+acknowledgement receipts, and durable scan/rebase state. Backup of a live
+installation must include a
 coordinated snapshot of the database, direct-runtime state, node key, and
 capability files; restored capabilities still obey their stored expiry and run
 state.

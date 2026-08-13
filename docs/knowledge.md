@@ -5,7 +5,7 @@
 Crewfold's knowledge system supplies the smallest trustworthy context needed for a
 task. It is not a transcript archive disguised as memory.
 
-The canonical knowledge core and context-packet v3 contract are implemented and
+The canonical knowledge core and context-packet v4 contract are implemented and
 their acceptance/review gate has passed. The current implementation supports:
 
 - canonical `decision` and `finding` items with immutable content revisions;
@@ -22,11 +22,14 @@ their acceptance/review gate has passed. The current implementation supports:
 - owner-confirmed exact-revision contradiction records with derived bounded
   dispute state and fail-closed retrieval/context behavior; and
 - deterministic project-scoped manifest/Markdown export plus exact owner-only
-  import into an empty canonical scope.
+  import into an empty canonical scope; and
+- explicit bounded live deltas for accepted decisions, withdrawal and dispute
+  transitions, scoped message previews, dependencies, and participant rosters.
 
 It does not ingest provider transcripts, run a model-backed curator or background
-curation loop, semantically detect conflicts, automatically reconcile them, or
-refresh a running agent with context deltas.
+curation/refresh loop, semantically detect conflicts, automatically reconcile
+them, or push provider-specific prompts. Live refresh is owner-triggered and
+consumption is attested only by the exact bound run.
 
 The system separates four layers:
 
@@ -93,11 +96,13 @@ authority check plus its action-specific denial event. Owner decisions also
 produce authority checks. Governance mutations require the state revision the
 owner inspected.
 
-## Context packet v3
+## Exact knowledge in context packets
 
-The packet builder continues to snapshot the assigned role, exact task and
-checkout revisions, direct dependencies, policy, reporting instructions, and a
-bounded project inbox summary. Packet v3 adds explicit canonical knowledge; active
+The packet builder snapshots the assigned role, exact task and checkout
+revisions, direct dependencies, policy, reporting instructions, and a bounded
+project inbox summary. Packet v3 introduced explicit canonical knowledge; new
+packet-v4 builds preserve that exact knowledge contract while adding the event
+cursor, reverse dependents, participant rosters, and bounded live policy. Active
 claim snapshots and full message bodies remain excluded.
 
 `crewfold context build ... --include krev_...` accepts at most 16 unique revision
@@ -119,17 +124,23 @@ silently replaced; its exclusion may identify the current successor as
 `replacement_revision_id`, and the caller must explicitly request that successor
 to include it.
 
-Packets have a fixed 32 KiB total limit and a 12 KiB accepted-knowledge sub-budget.
+Packets have a fixed 32 KiB total limit, a 12 KiB accepted-knowledge sub-budget,
+and an 8 KiB participant-roster sub-budget.
 Knowledge is included whole or not at all; Crewfold never truncates a decision or
 finding to make it fit. The packet and explanation report total and knowledge
 limit, used, and remaining bytes. `context explain --output json` also exposes the
 exact included and excluded entities and revisions.
 
-Eligibility is evaluated once, inside the packet-build transaction. The resulting
-snapshot is immutable: later acceptance, staleness, expiry, or supersession does
-not rewrite an existing packet or invalidate its run binding. A new packet build
-evaluates current state again. Context-packet schemas v1 and v2 remain readable;
-new builds use v3.
+Eligibility is evaluated inside the packet-build transaction, and the resulting
+bytes are immutable. If `run.start` later names that prebuilt v4 packet, the bind
+transaction revalidates its frozen run authority and requires every embedded
+knowledge revision still to be accepted, current, fresh, applicable, and
+undisputed. Failure leaves the packet unchanged but unbound; the owner must build
+a new one. A packet built and bound atomically has no intervening window. After a
+successful binding, later governance does not rewrite or invalidate the base;
+explicit refresh carries withdrawals or rebase. Context-packet schemas v1 through
+v3 remain readable historical formats; new builds use v4, and only v4 freezes an
+event high-water, bounded reverse dependents/participant rosters, and live policy.
 
 Raw terminal and provider transcript text is not a packet input and is recorded as
 an explicit exclusion. The replacement-agent path combines a durable handoff or
@@ -213,15 +224,38 @@ Agent proposals remain manual regardless of their confidence, verification label
 persuasive text, or claimed source. See
 [ADR-0011](decisions/0011-bounded-deterministic-context-curator.md).
 
-The remaining M15 slice adds explicit refresh/deltas. Future
-curator rules may cover structured handoffs, review findings, test evidence, and
+Future curator rules may cover structured handoffs, review findings, test evidence, and
 explicit owner decisions, but each requires its own frozen transform and authority
 contract; no general curator self-approval exists.
 
-Long-running sessions do not currently receive knowledge changes. A future context
-delta may report a dependency change, accepted or superseded decision, important
-message, claim conflict, or explicit refresh request. Deltas will reference an
-immutable base packet rather than mutate it.
+Long-running packet-v4 sessions can receive explicit context deltas without
+mutating their base. The local owner triggers `context refresh`; accepted
+applicable decisions become complete `knowledge_accepted` changes only at that
+point. A pending immutable delta blocks another scan until the exact authenticated
+run fetches and acknowledges it through MCP. A no-change refresh advances the
+daemon-owned inspected cursor without creating an empty object.
+
+A decision already known to the run can later produce `knowledge_withdrawn` when
+it becomes stale, superseded, freshness-expired, or quarantined. The same change
+kind can instead be a durable no-body `disputed` suppression tombstone when a
+post-base accepted applicable decision cannot be delivered because an open
+contradiction quarantines it. Contradiction confirmation and closure are separate
+typed changes so the agent sees why a revision ceased or could not begin being
+safe. After the final applicable contradiction closes, either exact category—an
+already delivered decision withdrawn solely as disputed, or a never-delivered
+decision with a suppression tombstone—is re-offered as `knowledge_accepted` with
+cause `contradiction_closed_reoffer` only if it remains accepted, current, fresh,
+applicable, and otherwise undisputed. An open contradiction snapshot alone does
+not prove its participants were delivered or suppressed and cannot authorize a
+re-offer. Findings are never re-offered as new live knowledge. Newly accepted
+findings are not automatically selected in delta v1, but an already known finding
+can be withdrawn. FTS rank never selects live authority.
+
+Every refresh reloads canonical projections and coalesces through one journal
+cutoff. One delta is limited to 16 KiB, its chain to 64 KiB, and a scan to 1,000
+potentially applicable events. Crewfold rebases instead of truncating an oversized
+or unsafe update. See [Context packets and live deltas](context.md) and
+[ADR-0014](decisions/0014-explicit-bounded-live-context-deltas.md).
 
 ## Planned broader knowledge types
 
@@ -304,7 +338,7 @@ with a task-only claim is excluded from project search and other tasks too.
 `knowledge dispute` reports total open incidence plus at most 200 sorted IDs.
 Search removes disputed revisions before ranking/limit. A new packet build fails
 atomically when an otherwise eligible explicit pin is disputed; older ordinary
-ineligibility reasons take precedence, and previously built packet-v3 bytes never
+ineligibility reasons take precedence, and previously built packet bytes never
 change.
 
 Owner dismissal removes the effect. Marking a participant stale or accepting its
