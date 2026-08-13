@@ -249,6 +249,27 @@ message single-recipient, and verifies message origins. Before/after projections
 prove collaboration does not fabricate knowledge, dependencies, claims, or
 meetings. No provider account, model call, remote, or shared Git ancestry is used.
 
+### Bounded curator fixture
+
+The provider-free curator scenario creates eleven accepted structured meeting
+resolutions plus one authenticated agent proposal labeled `high` and `verified`.
+It proves derive-only processing, disabled-rule queueing, restart-stable reads,
+persisted rule-revision inspection, explicit owner enablement, the ten-acceptance
+pass bound, exact authority and derivation links, and idempotent replay. The agent
+fixture can propose through the real scoped MCP tool but has no fields for actor,
+project, run, or source and its reserved acceptance probe must stop at
+`run.tool_denied`.
+
+A valid accepted meeting with a 2049-byte summary proves the safe-copy rule never
+truncates. Every fresh process evaluation returns its exact proposal revision with
+the stable `summary_not_exact_safe_copy` skip reason while creating no knowledge,
+derivation, authority, or curator event. Store mutation-hook tests inject failure
+after projection and event writes because public commands deliberately expose no
+transaction-failure switch. Store fixtures with 101 structured sources prove the
+100-evaluation bound and deterministic follow-up progress; starvation regressions
+keep pre-existing safe proposals and later valid sources ahead of repeating
+invalid-source skips.
+
 The real Claude canary has an independent two-flag acknowledgement gate:
 
 ```sh
@@ -346,7 +367,7 @@ The suite grows this matrix milestone by milestone:
 | Git | missing checkout, changed HEAD, dirty drift, command failure |
 | Messaging | recipient offline, wake failure, duplicate ack, forbidden recipient |
 | Meeting | participant timeout, facilitator crash, stale frozen context |
-| Knowledge | contradiction, stale item, missing/corrupt search index, budget overflow |
+| Knowledge | contradiction, stale item, missing/corrupt search index, curator rollback, oversized safe-copy source, budget overflow |
 | Scheduler | capacity saturation, dependency cycle, claim race, restart mid-launch |
 
 Fault injection should happen at named seams rather than through arbitrary sleeps.
@@ -396,7 +417,7 @@ The complete implemented offline gate is:
 ```
 
 It runs formatting, vet, all package tests, the race suite when supported, and
-twelve built-binary scenarios across local API, direct, Herdr, recorded Codex, and
+built-binary scenarios across local API, direct, Herdr, recorded Codex, and
 recorded Claude boundaries. The direct messaging
 scenario uses only public CLI/MCP surfaces, stops and restarts the daemon after an
 offline send, compares inbox JSON byte-for-byte across restart, then has agents in

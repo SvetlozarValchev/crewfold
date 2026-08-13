@@ -22,7 +22,7 @@ flowchart TB
         Projections[Read projections]
         Scheduler[Scheduler]
         Supervisor[Supervisor]
-        FutureCurator[Future context curator]
+        Curator[Bounded deterministic curator]
         Outcomes[Outcome and briefing projector]
         Watchers[Git and runtime watchers]
     end
@@ -47,7 +47,7 @@ flowchart TB
     Journal --> Projections
     Journal --> Scheduler
     Journal --> Supervisor
-    Journal -. M15 .-> FutureCurator
+    Journal --> Curator
     Journal --> Outcomes
     Watchers --> Commands
     Journal --> DB
@@ -74,7 +74,8 @@ crewfold daemon
 
 Canonical knowledge and explicit packet assembly run through normal transactional
 commands. Deterministic retrieval now uses a rebuildable SQLite FTS5 projection;
-the curator queue and automatic context selection remain later M15 components.
+the explicit curator projects proposed revisions and applies one bounded,
+disabled-by-default rule. Automatic context selection remains later M15 work.
 
 The CLI can start the daemon on demand. A foreground mode makes debugging easy; a
 user service may keep it running. The same binary can expose CLI subcommands so
@@ -196,7 +197,7 @@ Consumes task, run, claim, message, and watcher events. It applies deterministic
 rules first and may ask a manager model for a recommendation when judgment is
 useful. Recommendations do not gain more authority because a model generated them.
 
-### Canonical knowledge, retrieval, and future context curator
+### Canonical knowledge, retrieval, and bounded context curator
 
 The implemented canonical store separates stable knowledge items from numbered,
 immutable-content revisions. It currently accepts only decisions and findings.
@@ -250,8 +251,23 @@ The second independently testable M15 slice adds participant-bound cross-project
 collaboration without changing packet v3. A new packet's bounded inbox summary may
 include exact authorized participant mail, but full bodies stay behind explicit
 MCP reads. Roster delivery through context v4/deltas remains later M15 work. The
-later curator will propose broader knowledge and reconcile contradictions;
-retrieval cannot automatically accept, summarize, or deliver knowledge.
+third slice adds a read-projected curator queue over canonical proposals and
+immutable derivations. Every workspace persists the single
+`accepted_meeting_resolution_copy/v1` rule disabled. An explicit process pass
+scans at most 100 candidates, deterministically copies an accepted resolution's
+exact agenda and summary into a proposed decision, and accepts at most ten only
+after the owner enables that exact rule. Every queue page includes the effective
+rule snapshot so an operator can observe its enabled state and optimistic
+revision, including after restart.
+
+The auto-accept path revalidates rule/source/output hashes and current states in
+one transaction. It records `subsystem:curator` authority with reason
+`state_policy`, the normal knowledge acceptance fact, and immutable derivation and
+auto-acceptance evidence. The general subsystem governance path remains denied;
+quality labels, free text, agents, retrieval rank, messages, and transcripts never
+gain acceptance authority. Broader curation and contradiction reconciliation
+remain later work, and retrieval still cannot automatically accept, summarize, or
+deliver knowledge.
 
 ### Outcome and briefing projector
 

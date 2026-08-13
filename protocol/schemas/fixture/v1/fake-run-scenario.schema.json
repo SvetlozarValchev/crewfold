@@ -63,6 +63,23 @@
         "denied_recipient_probe": {"type": "string", "minLength": 1, "maxLength": 128},
         "oversized_recipient_probe": {"type": "string", "minLength": 1, "maxLength": 128}
       }
+    },
+    "knowledge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "proposal": {"$ref": "#/$defs/knowledge_proposal"},
+        "probe_reserved_acceptance": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["probe_reserved_acceptance"],
+            "properties": {"probe_reserved_acceptance": {"const": true}}
+          },
+          "then": {"required": ["proposal"]}
+        }
+      ]
     }
   },
   "$defs": {
@@ -77,6 +94,19 @@
         "kind": {"$ref": "#/$defs/message_kind"},
         "subject": {"type": "string", "minLength": 1, "maxLength": 160},
         "body": {"type": "string", "minLength": 1, "maxLength": 4096}
+      }
+    },
+    "knowledge_proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "body", "confidence", "verification_status", "freshness_policy"],
+      "properties": {
+        "type": {"enum": ["decision", "finding"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 160, "description": "The semantic fixture loader also enforces 1–160 encoded UTF-8 bytes, valid UTF-8, nonblank text, and no NUL."},
+        "body": {"type": "string", "minLength": 1, "maxLength": 16384, "description": "The semantic fixture loader also enforces 1–16384 encoded UTF-8 bytes, valid UTF-8, nonblank text, and no NUL."},
+        "confidence": {"enum": ["low", "medium", "high"]},
+        "verification_status": {"enum": ["unverified", "supported", "verified"]},
+        "freshness_policy": {"const": "until_superseded"}
       }
     }
   },

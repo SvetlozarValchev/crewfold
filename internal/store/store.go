@@ -83,7 +83,10 @@ func registerSQLiteExtensions(connection *sqlite3.Conn) error {
 	if err := hash.Register(connection); err != nil {
 		return err
 	}
-	return registerSQLiteTimestampKey(connection)
+	if err := registerSQLiteTimestampKey(connection); err != nil {
+		return err
+	}
+	return registerSQLiteUTF8Valid(connection)
 }
 
 func (s *Store) ensureDatabaseIdentity(ctx context.Context) error {

@@ -42,13 +42,14 @@ type FakeStep struct {
 }
 
 type FakeScenario struct {
-	Schema       string         `json:"schema"`
-	Name         string         `json:"name"`
-	StartFailure string         `json:"start_failure,omitempty"`
-	Acceptance   AcceptanceRule `json:"acceptance"`
-	Steps        []FakeStep     `json:"steps"`
-	Process      FixtureProcess `json:"process,omitempty"`
-	Mailbox      FixtureMailbox `json:"mailbox,omitempty"`
+	Schema       string           `json:"schema"`
+	Name         string           `json:"name"`
+	StartFailure string           `json:"start_failure,omitempty"`
+	Acceptance   AcceptanceRule   `json:"acceptance"`
+	Steps        []FakeStep       `json:"steps"`
+	Process      FixtureProcess   `json:"process,omitempty"`
+	Mailbox      FixtureMailbox   `json:"mailbox,omitempty"`
+	Knowledge    FixtureKnowledge `json:"knowledge,omitempty"`
 }
 
 // FixtureProcess describes deterministic operating-system behavior for the
@@ -84,6 +85,24 @@ type FixtureMailbox struct {
 	WaitTimeoutMillis       int                    `json:"wait_timeout_millis,omitempty"`
 	DeniedRecipientProbe    string                 `json:"denied_recipient_probe,omitempty"`
 	OversizedRecipientProbe string                 `json:"oversized_recipient_probe,omitempty"`
+}
+
+// FixtureKnowledge lets the provider-free scoped-MCP fixture exercise the same
+// proposal and governance-denial boundary available to real provider runs. The
+// fixture deliberately cannot choose its actor, run, project, source,
+// applicability scope, or expiry.
+type FixtureKnowledge struct {
+	Proposal                *FixtureKnowledgeProposal `json:"proposal,omitempty"`
+	ProbeReservedAcceptance bool                      `json:"probe_reserved_acceptance,omitempty"`
+}
+
+type FixtureKnowledgeProposal struct {
+	Type               string `json:"type"`
+	Title              string `json:"title"`
+	Body               string `json:"body"`
+	Confidence         string `json:"confidence"`
+	VerificationStatus string `json:"verification_status"`
+	FreshnessPolicy    string `json:"freshness_policy"`
 }
 
 type Run struct {

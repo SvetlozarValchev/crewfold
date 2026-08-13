@@ -7,13 +7,14 @@ foreground daemon lifecycle, process and workspace status, workspace/event
 queries, project/checkout registration and observation, durable
 agent/objective/task coordination, claims and drift, structured meetings,
 canonical decisions/findings, deterministic scoped knowledge search, a rebuildable
-knowledge index, immutable context packets, deterministic fake
+knowledge index, a bounded deterministic curator queue and one owner-configured
+safe rule, immutable context packets, deterministic fake
 execution, supervised direct and Herdr fixture subprocesses, run-scoped MCP
 reporting and knowledge proposal, durable one-recipient agent mail, and an
 offline-proven Codex provider adapter. The Claude Code adapter, provider doctor,
 and recorded Codex-to-Claude handoff are also implemented; only its separately
 gated live conformance call is pending. It supports text and JSON output. Teams,
-automatic knowledge curation, policy/approval commands, management
+broader/model-assisted knowledge curation, policy/approval commands, management
 briefings, and the TUI remain future contracts.
 
 ## Goals
@@ -408,6 +409,13 @@ crewfold knowledge index rebuild --workspace personal \
   --socket /path/to/crewfold.sock --idempotency-key rebuild-search
 crewfold knowledge accept KNOWLEDGE_REVISION --expected-state-revision 1 \
   --workspace personal --socket /path/to/crewfold.sock
+crewfold curator queue --workspace personal --project world-engine \
+  --socket /path/to/crewfold.sock
+crewfold curator rule enable accepted-meeting-resolution-copy \
+  --workspace personal --expected-revision 1 \
+  --socket /path/to/crewfold.sock
+crewfold curator process --workspace personal --project world-engine \
+  --apply-safe --socket /path/to/crewfold.sock
 crewfold context build NEXT_TASK --workspace personal --agent engine-impl \
   --include KNOWLEDGE_REVISION \
   --expected-task-revision 2 --socket /path/to/crewfold.sock
@@ -461,13 +469,46 @@ retrieval. `knowledge index rebuild` reconstructs the projection from canonical
 records and may generate an idempotency key when omitted. Exact knowledge and
 context reads remain available during retrieval degradation.
 
+`curator queue` is an owner-local read projection over proposed canonical
+revisions, ordered by proposal time and ID. Its opaque cursor is valid only for
+that stable ordering; the default page is 50 and the maximum is 200. Entries are
+`manual_review` unless they have an exact intact derivation for the one supported
+rule and that rule is enabled; only then are they `safe_auto_accept`. The queue
+also returns the effective rule snapshot, including its enabled state and
+revision. The queue itself is not a second editable store.
+
+Every workspace starts with `accepted-meeting-resolution-copy` disabled at rule
+revision one. Rule changes require the exact observed revision and are idempotent.
+`curator process` without `--apply-safe` is derive-only. Supplying the flag is the
+explicit opt-in to safe automatic acceptance. It scans at most 100 candidates and
+accepts at most ten per pass. Existing safe derivations are evaluated first; exact
+safe sources may be derived and accepted in that same opted-in pass while capacity
+remains. A disabled pass may derive
+the exact proposed decision from an accepted, concluded meeting but cannot accept
+it. After the owner enables the rule, a later pass may accept that same revision.
+The transform copies the exact bounded agenda and accepted proposal summary,
+project-wide, with `medium`/`supported`/`until_superseded` metadata and one exact
+primary `meeting_proposal` source. It never truncates and accepts no caller-defined
+transform, actor, source, task scope, or predecessor.
+An accepted structured source whose exact text exceeds the transform bounds is
+reported in the process result with its source identity and stable skip reason; it
+is never truncated and creates no revision, derivation, queue entry, or fact.
+An accepted proposal summary above 2 KiB uses
+`summary_not_exact_safe_copy`.
+
+Agent proposals remain queued even when marked `high` and `verified`. The curator
+does not call a model or provider, read transcripts, use search rank as authority,
+run in the background, or expose an agent-facing governance tool. Ordinary manual
+`knowledge accept` remains the local-owner path; the curator's narrow internal
+path records distinct rule, derivation, authority, and event evidence.
+
 The fixed packet budget is 32 KiB with a 12 KiB whole-knowledge sub-budget.
 `context show --output json` preserves the exact ordered request list and embedded
 snapshots; `context explain --output json` shows included and excluded revisions
 plus total and knowledge byte accounting. Eligibility is frozen at build, so later
 governance never rewrites an existing packet. There is no transcript ingestion,
 implicit project retrieval or context delta. Search remains a separate explicit
-M15 query and automatic curation is not implemented.
+M15 query; curator processing never inserts search results into a packet.
 To give a run explicit knowledge, build this packet first and pass its ID to
 `run start --context`; an atomically generated default run packet has no
 caller-supplied knowledge links.

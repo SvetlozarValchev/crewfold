@@ -5,6 +5,8 @@ inspection, provider-neutral agent/objective/task/run coordination, immutable
 context packets, owner-facing durable agent mail, leased claims with deterministic
 overlap/drift inspection, structured overlap-resolution meetings, canonical
 knowledge, and deterministic derived retrieval. Subscriptions arrive later.
+The owner-local surface also exposes the bounded deterministic curator queue,
+rule configuration, and explicit processing pass.
 
 ## Transport
 
@@ -504,6 +506,53 @@ so a new rebuild uses a new key. `source_event_sequence` and the search result's
 not retrieval-freshness checks or workspace-scoped knowledge cursors.
 The CLI exposes these methods as `knowledge search`, `knowledge index status`,
 `knowledge index rebuild`, and `doctor --retrieval`.
+
+### Deterministic curator
+
+`curator.queue` takes `workspace`, `project`, an optional opaque `after` cursor,
+and an optional limit defaulting to 50 and capped at 200. It projects current
+proposed revisions in ascending `(proposed_at,id)` order. Each complete revision
+is classified `manual_review` with a stable reason or `safe_auto_accept` only when
+an intact immutable derivation exactly matches
+`accepted_meeting_resolution_copy/v1` and the effective rule is enabled. The
+result contains the complete effective rule snapshot, including its optimistic
+revision; each entry repeats its evaluated enabled state and includes any
+derivation. Rule and entries are evaluated in one read transaction. The queue is
+read-only and appends no event.
+
+`curator.rule.configure` is the owner-only enable/disable mutation. It takes
+`workspace`, exactly `accepted_meeting_resolution_copy/v1`, a required Boolean
+`enabled`, the exact observed `expected_revision`, and an idempotency key. Every
+workspace has a persisted disabled revision-one rule. Configuration appends an
+immutable revision and `curator.rule_configured`; stale revision and idempotency
+conflicts change nothing.
+
+`curator.process` takes `workspace`, `project`, optional `apply_safe` (false by
+default), and an idempotency key. One transaction observes at most 100 candidates,
+and, only when `apply_safe` is true and the exact rule is enabled, accepts at most
+ten safe entries. Already-derived safe entries are evaluated first. The remaining
+candidate budget prioritizes valid exact-copy sources, creates their missing
+derivations, and may accept them in the same pass while acceptance capacity
+remains; invalid-source skip evaluations follow. This ordering prevents either
+repeatable invalid sources or unrelated manual proposals from starving safe work.
+A false or disabled pass may derive but never accepts.
+Retries replay the same process result only for the same command/state contract;
+partial derivation, authority, and event changes roll back together.
+
+The only transform creates a project-wide `decision`: title exactly the concluded
+meeting agenda, body exactly its accepted proposal summary, `medium` confidence,
+`supported` verification, `until_superseded` freshness, and exactly one primary
+`meeting_proposal` source at the accepted revision. Agenda/body are valid UTF-8
+1–160/1–2048 bytes and are never truncated. The auto-accept operation revalidates
+rule, source, output hash, derivation, and proposal state, then records
+`subsystem:curator` / `allowed` / `state_policy`, the ordinary
+`knowledge.accepted` fact, and `curator.auto_accepted`. These methods expose no
+actor, content, source, task-scope, or predecessor override.
+Out-of-bounds structured source text is returned in a bounded `skipped` list with
+exact source identity and a stable reason. It creates no knowledge revision,
+derivation, queue entry, authority record, or event; a later process evaluation may
+report it again. An accepted proposal summary above 2 KiB reports
+`summary_not_exact_safe_copy`.
 
 ### `coordination.status`
 

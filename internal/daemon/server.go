@@ -572,6 +572,12 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleKnowledgeReject(request), false
 	case localapi.MethodKnowledgeMarkStale:
 		return s.handleKnowledgeMarkStale(request), false
+	case localapi.MethodCuratorQueue:
+		return s.handleCuratorQueue(request), false
+	case localapi.MethodCuratorRuleConfigure:
+		return s.handleCuratorRuleConfigure(request), false
+	case localapi.MethodCuratorProcess:
+		return s.handleCuratorProcess(request), false
 	case localapi.MethodMessageSend:
 		return s.handleMessageSend(request), false
 	case localapi.MethodInboxList:

@@ -1164,6 +1164,12 @@ type fakeDaemonClient struct {
 	knowledgePropose        localapi.KnowledgeProposeParams
 	knowledgeDecision       localapi.KnowledgeDecisionParams
 	knowledgeStale          localapi.KnowledgeMarkStaleParams
+	curatorQueue            localapi.CuratorQueueResult
+	curatorRuleMutation     localapi.CuratorRuleMutationResult
+	curatorProcess          localapi.CuratorProcessResult
+	curatorQueueParams      localapi.CuratorQueueParams
+	curatorRuleParams       localapi.CuratorRuleConfigureParams
+	curatorProcessParams    localapi.CuratorProcessParams
 	coordinationWorkspace   string
 	initName                string
 	initKey                 string
@@ -1339,6 +1345,21 @@ func (client *fakeDaemonClient) KnowledgeReject(_ context.Context, params locala
 func (client *fakeDaemonClient) KnowledgeMarkStale(_ context.Context, params localapi.KnowledgeMarkStaleParams) (localapi.KnowledgeMutationResult, error) {
 	client.knowledgeStale = params
 	return client.knowledgeMutation, nil
+}
+
+func (client *fakeDaemonClient) CuratorQueue(_ context.Context, params localapi.CuratorQueueParams) (localapi.CuratorQueueResult, error) {
+	client.curatorQueueParams = params
+	return client.curatorQueue, nil
+}
+
+func (client *fakeDaemonClient) CuratorRuleConfigure(_ context.Context, params localapi.CuratorRuleConfigureParams) (localapi.CuratorRuleMutationResult, error) {
+	client.curatorRuleParams = params
+	return client.curatorRuleMutation, nil
+}
+
+func (client *fakeDaemonClient) CuratorProcess(_ context.Context, params localapi.CuratorProcessParams) (localapi.CuratorProcessResult, error) {
+	client.curatorProcessParams = params
+	return client.curatorProcess, nil
 }
 
 func (client *fakeDaemonClient) MessageSend(_ context.Context, params localapi.MessageSendParams) (localapi.MessageSendResult, error) {

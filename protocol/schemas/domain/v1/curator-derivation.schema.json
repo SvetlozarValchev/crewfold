@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:curator-derivation:v1",
+  "title": "Crewfold immutable curator derivation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "workspace_id", "project_id", "rule_id", "rule_name", "rule_revision",
+    "source_type", "source_id", "source_revision", "source_content_hash",
+    "output_content_hash", "knowledge_revision_id", "created_at", "created_by",
+    "event_sequence"
+  ],
+  "properties": {
+    "id": {"type": "string", "pattern": "^cder_[0-9a-f]{32}$"},
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "rule_id": {"type": "string", "pattern": "^crule_[0-9a-f]{32}$"},
+    "rule_name": {"const": "accepted_meeting_resolution_copy/v1"},
+    "rule_revision": {"type": "integer", "minimum": 1},
+    "source_type": {"const": "meeting_proposal"},
+    "source_id": {"type": "string", "pattern": "^proposal_[0-9a-f]{32}$"},
+    "source_revision": {"type": "integer", "minimum": 1},
+    "source_content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "output_content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "knowledge_revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by": {"const": "subsystem:curator"},
+    "event_sequence": {"type": "integer", "minimum": 1}
+  }
+}

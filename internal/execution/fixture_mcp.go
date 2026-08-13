@@ -147,6 +147,10 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 		fmt.Fprintln(diagnostics, err)
 		return 1
 	}
+	if err := runFixtureKnowledge(ctx, client, scenario.Knowledge); err != nil {
+		fmt.Fprintln(diagnostics, err)
+		return 1
+	}
 	for index, step := range scenario.Steps {
 		result, err := reportFixtureStep(ctx, client, index, step)
 		if err != nil || result.IsError {
@@ -175,6 +179,37 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 		}
 	}
 	return scenario.Process.ExitCode
+}
+
+func runFixtureKnowledge(ctx context.Context, client fixtureToolClient, plan domain.FixtureKnowledge) error {
+	if plan == (domain.FixtureKnowledge{}) {
+		return nil
+	}
+	proposal := plan.Proposal
+	if proposal == nil {
+		return errors.New("fixture knowledge proposal is missing")
+	}
+	arguments := map[string]any{
+		"type": proposal.Type, "title": proposal.Title, "body": proposal.Body,
+		"confidence": proposal.Confidence, "verification_status": proposal.VerificationStatus,
+		"freshness_policy": proposal.FreshnessPolicy, "idempotency_key": "fixture-knowledge-proposal",
+	}
+	result, err := client.CallTool(ctx, "crewfold_propose_knowledge", arguments)
+	if err != nil || result.IsError {
+		return errors.New("propose fixture knowledge failed")
+	}
+	var revision domain.KnowledgeRevision
+	if err := json.Unmarshal(result.StructuredContent, &revision); err != nil || revision.ID == "" || revision.ReviewStatus != domain.KnowledgeReviewProposed {
+		return errors.New("decode fixture knowledge proposal failed")
+	}
+	if !plan.ProbeReservedAcceptance {
+		return nil
+	}
+	denied, err := client.CallTool(ctx, "crewfold_accept_knowledge", map[string]any{"knowledge_revision": revision.ID})
+	if err != nil || !denied.IsError || fixtureToolErrorCode(denied) != "denied_by_policy" {
+		return errors.New("reserved fixture knowledge acceptance probe was not denied")
+	}
+	return nil
 }
 
 type fixtureToolClient interface {

@@ -753,8 +753,9 @@ volume without making retrieval the source of truth?
 
 **Implementation status:** Active. Independently testable slices now implement
 deterministic scoped search, explanation, retrieval health, explicit search-index
-rebuild, and participant-bound cross-project collaboration through the existing
-mailbox tools. Curator proposals, contradictions, context deltas, and portable
+rebuild, participant-bound cross-project collaboration through the existing
+mailbox tools, and a provider-free bounded curator with one exact deterministic
+meeting-resolution rule. Contradiction handling, context deltas, and portable
 export remain required before M15 is complete.
 
 **Visible result**

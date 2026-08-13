@@ -194,6 +194,9 @@ knowledge.superseded
 knowledge.acceptance_denied
 knowledge.rejection_denied
 knowledge.stale_denied
+curator.rule_configured
+curator.derived
+curator.auto_accepted
 context.packet_built
 ```
 
@@ -213,6 +216,16 @@ Deterministic `knowledge.search`, `knowledge.index.status`, and
 the FTS5 index is a rebuildable projection rather than canonical history. Rebuild
 idempotency is recorded separately and its result identifies the derived
 generation/source cursor without implying a knowledge revision changed.
+
+`curator.rule_configured` records one new immutable configuration revision and
+whether the exact rule became enabled. `curator.derived` links the rule revision,
+accepted structured source revision and its content hash, the new exact knowledge
+revision and output hash, without embedding either body in the journal.
+`curator.auto_accepted` links that derivation and knowledge revision to the
+`kauth_...` check and the earlier `knowledge.accepted` event sequence. Automatic
+acceptance therefore emits the normal knowledge fact as well as curator-specific
+explanation evidence. Queue queries append no event because the queue is a read
+projection. Idempotent process and rule replays append nothing.
 
 The following remain proposals:
 

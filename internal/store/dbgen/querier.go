@@ -15,6 +15,10 @@ type Querier interface {
 	FindActiveMeetingForOverlap(ctx context.Context, overlapID string) (string, error)
 	FindLiveKnowledgeSuccessor(ctx context.Context, supersedesRevisionID *string) (string, error)
 	FindThreadParticipantByBinding(ctx context.Context, arg FindThreadParticipantByBindingParams) (ThreadParticipant, error)
+	GetCuratorAutoAcceptanceByKnowledge(ctx context.Context, arg GetCuratorAutoAcceptanceByKnowledgeParams) (CuratorAutoAcceptance, error)
+	GetCuratorDerivationByKnowledge(ctx context.Context, arg GetCuratorDerivationByKnowledgeParams) (CuratorDerivation, error)
+	GetCuratorMeetingProposalSource(ctx context.Context, proposalID string) (GetCuratorMeetingProposalSourceRow, error)
+	GetEffectiveCuratorRule(ctx context.Context, arg GetEffectiveCuratorRuleParams) (CuratorRule, error)
 	GetEligibleParticipantAssignment(ctx context.Context, arg GetEligibleParticipantAssignmentParams) (GetEligibleParticipantAssignmentRow, error)
 	GetKnowledgeActorRunWorkspace(ctx context.Context, id string) (string, error)
 	GetKnowledgeAuthorityCheckByKey(ctx context.Context, arg GetKnowledgeAuthorityCheckByKeyParams) (KnowledgeAuthorityCheck, error)
@@ -27,6 +31,9 @@ type Querier interface {
 	GetMeetingProposal(ctx context.Context, meetingID string) (MeetingProposal, error)
 	GetParticipantThreadState(ctx context.Context, arg GetParticipantThreadStateParams) (GetParticipantThreadStateRow, error)
 	HasLiveTaskRun(ctx context.Context, taskID string) (bool, error)
+	InsertCuratorAutoAcceptance(ctx context.Context, arg InsertCuratorAutoAcceptanceParams) error
+	InsertCuratorDerivation(ctx context.Context, arg InsertCuratorDerivationParams) error
+	InsertCuratorRule(ctx context.Context, arg InsertCuratorRuleParams) error
 	InsertKnowledgeAuthorityCheck(ctx context.Context, arg InsertKnowledgeAuthorityCheckParams) error
 	InsertKnowledgeItem(ctx context.Context, arg InsertKnowledgeItemParams) error
 	InsertKnowledgeRevision(ctx context.Context, arg InsertKnowledgeRevisionParams) error
@@ -42,6 +49,9 @@ type Querier interface {
 	InsertParticipantThread(ctx context.Context, arg InsertParticipantThreadParams) error
 	InsertSplitTask(ctx context.Context, arg InsertSplitTaskParams) error
 	InsertThreadParticipant(ctx context.Context, arg InsertThreadParticipantParams) error
+	ListCuratorEligibleRevisionIDs(ctx context.Context, arg ListCuratorEligibleRevisionIDsParams) ([]string, error)
+	ListCuratorMeetingProposalCandidates(ctx context.Context, arg ListCuratorMeetingProposalCandidatesParams) ([]ListCuratorMeetingProposalCandidatesRow, error)
+	ListCuratorQueueRevisionIDs(ctx context.Context, arg ListCuratorQueueRevisionIDsParams) ([]string, error)
 	ListKnowledgeAuthorityChecks(ctx context.Context, arg ListKnowledgeAuthorityChecksParams) ([]KnowledgeAuthorityCheck, error)
 	ListKnowledgeRevisionIDs(ctx context.Context, arg ListKnowledgeRevisionIDsParams) ([]string, error)
 	ListKnowledgeRevisionSources(ctx context.Context, revisionID string) ([]KnowledgeSource, error)

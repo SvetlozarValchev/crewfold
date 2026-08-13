@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:curator-auto-acceptance:v1",
+  "title": "Crewfold curator automatic acceptance audit record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "workspace_id", "project_id", "rule_id", "rule_name", "rule_revision",
+    "derivation_id", "knowledge_revision_id", "authority_check_id",
+    "event_sequence", "knowledge_event_sequence", "created_at", "actor"
+  ],
+  "properties": {
+    "id": {"type": "string", "pattern": "^cauto_[0-9a-f]{32}$"},
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "rule_id": {"type": "string", "pattern": "^crule_[0-9a-f]{32}$"},
+    "rule_name": {"const": "accepted_meeting_resolution_copy/v1"},
+    "rule_revision": {"type": "integer", "minimum": 1},
+    "derivation_id": {"type": "string", "pattern": "^cder_[0-9a-f]{32}$"},
+    "knowledge_revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+    "authority_check_id": {"type": "string", "pattern": "^kauth_[0-9a-f]{32}$"},
+    "event_sequence": {"type": "integer", "minimum": 1},
+    "knowledge_event_sequence": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": {"const": "subsystem:curator"},
+        "type": {"const": "subsystem"}
+      }
+    }
+  }
+}

@@ -4,6 +4,52 @@
 
 package dbgen
 
+type CuratorAutoAcceptance struct {
+	ID                     string `json:"id"`
+	WorkspaceID            string `json:"workspace_id"`
+	ProjectID              string `json:"project_id"`
+	RuleID                 string `json:"rule_id"`
+	RuleName               string `json:"rule_name"`
+	RuleRevision           int64  `json:"rule_revision"`
+	DerivationID           string `json:"derivation_id"`
+	KnowledgeRevisionID    string `json:"knowledge_revision_id"`
+	AuthorityCheckID       string `json:"authority_check_id"`
+	KnowledgeEventSequence int64  `json:"knowledge_event_sequence"`
+	EventSequence          int64  `json:"event_sequence"`
+	CreatedAt              string `json:"created_at"`
+	ActorID                string `json:"actor_id"`
+	ActorType              string `json:"actor_type"`
+}
+
+type CuratorDerivation struct {
+	ID                  string `json:"id"`
+	WorkspaceID         string `json:"workspace_id"`
+	ProjectID           string `json:"project_id"`
+	RuleID              string `json:"rule_id"`
+	RuleName            string `json:"rule_name"`
+	RuleRevision        int64  `json:"rule_revision"`
+	SourceType          string `json:"source_type"`
+	SourceID            string `json:"source_id"`
+	SourceRevision      int64  `json:"source_revision"`
+	SourceContentHash   string `json:"source_content_hash"`
+	KnowledgeRevisionID string `json:"knowledge_revision_id"`
+	OutputContentHash   string `json:"output_content_hash"`
+	CreatedAt           string `json:"created_at"`
+	CreatedBy           string `json:"created_by"`
+	EventSequence       int64  `json:"event_sequence"`
+}
+
+type CuratorRule struct {
+	ID            string `json:"id"`
+	WorkspaceID   string `json:"workspace_id"`
+	Name          string `json:"name"`
+	Revision      int64  `json:"revision"`
+	Enabled       int64  `json:"enabled"`
+	CreatedAt     string `json:"created_at"`
+	CreatedBy     string `json:"created_by"`
+	EventSequence int64  `json:"event_sequence"`
+}
+
 type KnowledgeAuthorityCheck struct {
 	ID             string  `json:"id"`
 	WorkspaceID    string  `json:"workspace_id"`

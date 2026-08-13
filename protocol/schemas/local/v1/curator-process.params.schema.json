@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:curator-process-params:v1",
+  "title": "Crewfold local API bounded curator processing parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "project", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "project": {"type": "string", "minLength": 1, "maxLength": 128},
+    "apply_safe": {
+      "type": "boolean",
+      "description": "False or omitted derives proposals only; true explicitly permits the enabled bounded safe rule to auto-accept."
+    },
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

@@ -422,6 +422,36 @@ func (c *Client) KnowledgeMarkStale(ctx context.Context, params KnowledgeMarkSta
 	return result, nil
 }
 
+func (c *Client) CuratorQueue(ctx context.Context, params CuratorQueueParams) (CuratorQueueResult, error) {
+	if params.Limit == nil {
+		limit := 50
+		params.Limit = &limit
+	}
+	var result CuratorQueueResult
+	if err := c.callParams(ctx, MethodCuratorQueue, params, &result); err != nil {
+		return CuratorQueueResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) CuratorRuleConfigure(ctx context.Context, params CuratorRuleConfigureParams) (CuratorRuleMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result CuratorRuleMutationResult
+	if err := c.callParams(ctx, MethodCuratorRuleConfigure, params, &result); err != nil {
+		return CuratorRuleMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) CuratorProcess(ctx context.Context, params CuratorProcessParams) (CuratorProcessResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result CuratorProcessResult
+	if err := c.callParams(ctx, MethodCuratorProcess, params, &result); err != nil {
+		return CuratorProcessResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) MessageSend(ctx context.Context, paramsValue MessageSendParams) (MessageSendResult, error) {
 	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
 	if paramsValue.ArtifactIDs == nil {

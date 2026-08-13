@@ -310,10 +310,11 @@ authority records.
 ### Decision
 
 An implemented knowledge type for a governed choice. Its authority comes from an
-accepted revision and owner authority record, not from the actor that proposed it
-or from its presence in a model response. Rich structured alternatives,
-consequences, and decision-owner policies remain future extensions to the concise
-title/body contract.
+accepted revision and an allowed governance record: normally the local owner, or
+the one exact bounded curator policy described below. It does not come from the
+actor that proposed it or from its presence in a model response. Rich structured
+alternatives, consequences, and decision-owner policies remain future extensions
+to the concise title/body contract.
 
 ### Knowledge search result
 
@@ -328,6 +329,22 @@ and project. A task query permits project-wide plus exact-task applicability; a
 project-only query cannot expose task-scoped records. The result grants no
 authority and does not become a context input unless a later explicit operation
 copies an exact revision ID into a new immutable record.
+
+### Curator rule and derivation
+
+A curator rule is an immutable configuration revision in one workspace. The only
+implemented rule is `accepted_meeting_resolution_copy/v1`; every workspace starts
+with it disabled at revision one. A derivation is append-only evidence that this
+exact rule version rendered one accepted meeting-proposal revision into one exact
+proposed knowledge revision. It freezes source and output hashes and grants no
+authority by itself.
+
+The curator queue is not a stored entity. It is a read projection over proposed
+knowledge plus derivations and the effective rule. Automatic acceptance has its
+own immutable record linking enabled evaluation rule revision, derivation,
+knowledge revision, authority check, normal acceptance event, and curator event.
+Only the narrow exact-copy state policy may use actor `subsystem:curator`; general
+subsystem and agent governance remains denied.
 
 ### Outcome assessment
 
@@ -394,7 +411,9 @@ launched it.
    configured policy decides whether to notify, deny the new claim, pause new run
    scheduling, or require resolution.
 5. Knowledge revision content and provenance are immutable; correction creates an
-   explicit successor revision, and only the owner can accept it.
+   explicit successor revision. Acceptance requires either the owner or the one
+   transactionally revalidated exact curator state policy—never proposal labels,
+   free text, retrieval rank, or general subsystem identity.
 6. A context packet is immutable after build; knowledge eligibility is not
    re-evaluated when a run binds or reads it.
 7. A message is never modified after send; delivery metadata changes separately,

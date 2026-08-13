@@ -76,6 +76,9 @@ printf 'Canonical knowledge and provider-switch black-box acceptance\n'
 printf 'Deterministic knowledge retrieval black-box acceptance\n'
 "$repo_root/test/scenarios/deterministic-knowledge-retrieval/run.sh"
 
+printf 'Bounded deterministic curator black-box acceptance\n'
+"$repo_root/test/scenarios/bounded-curator/run.sh"
+
 printf 'Herdr runtime black-box acceptance\n'
 "$repo_root/test/scenarios/herdr-runtime/run.sh"
 

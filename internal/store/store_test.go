@@ -127,6 +127,11 @@ func TestMigrationUpgradesCheckedInVersionOneFixture(t *testing.T) {
 	if err != nil || workspace.ID != "ws_00000000000000000000000000000001" {
 		t.Fatalf("Workspace(fixture after migration) = %#v, %v", workspace, err)
 	}
+	var curatorRevision int64
+	var curatorEnabled int
+	if err := storage.db.QueryRow("SELECT revision, enabled FROM curator_rules WHERE workspace_id = ?", workspace.ID).Scan(&curatorRevision, &curatorEnabled); err != nil || curatorRevision != 1 || curatorEnabled != 0 {
+		t.Fatalf("migrated workspace curator default = revision %d enabled %d, %v", curatorRevision, curatorEnabled, err)
+	}
 	events, err := storage.Events(context.Background(), 0, 100)
 	if err != nil || len(events) != 1 || events[0].EventID != "evt_00000000000000000000000000000001" {
 		t.Fatalf("Events(fixture after migration) = %#v, %v", events, err)

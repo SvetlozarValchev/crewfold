@@ -124,3 +124,49 @@ func TestCheckedInCrossProjectCollaborationScenariosSatisfySemanticContract(t *t
 		t.Errorf("execution.LoadScenario(rendered engine fixture) error = %v", err)
 	}
 }
+
+func TestCheckedInCuratorAgentScenarioKeepsAuthorityFieldsOutOfFixture(t *testing.T) {
+	t.Parallel()
+	if _, err := execution.LoadScenario("../test/fixtures/curator/agent-proposal.json"); err != nil {
+		t.Fatalf("execution.LoadScenario(curator agent proposal) error = %v", err)
+	}
+	if _, err := execution.LoadScenario("../test/fixtures/curator/forged-source.json"); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("execution.LoadScenario(curator forged source) error = %v, want strict unknown-field rejection", err)
+	}
+}
+
+func TestFixtureKnowledgeSchemaCannotSelectAuthorityOrProvenance(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("schemas/fixture/v1/fake-run-scenario.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Definitions map[string]struct {
+			AdditionalProperties *bool                      `json:"additionalProperties"`
+			Properties           map[string]json.RawMessage `json:"properties"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	proposal, ok := schema.Definitions["knowledge_proposal"]
+	if !ok {
+		t.Fatal("fixture schema omits the scoped knowledge proposal")
+	}
+	if proposal.AdditionalProperties == nil || *proposal.AdditionalProperties {
+		t.Fatal("fixture knowledge proposal permits unknown authority fields")
+	}
+	want := map[string]bool{
+		"type": true, "title": true, "body": true, "confidence": true,
+		"verification_status": true, "freshness_policy": true,
+	}
+	if len(proposal.Properties) != len(want) {
+		t.Fatalf("fixture knowledge proposal properties = %v, want exact bounded set %v", proposal.Properties, want)
+	}
+	for name := range proposal.Properties {
+		if !want[name] {
+			t.Errorf("fixture knowledge proposal unexpectedly exposes %q", name)
+		}
+	}
+}

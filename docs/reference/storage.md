@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 12.
+Status: implemented through schema version 13.
 
 ## Location and ownership
 
@@ -297,6 +297,38 @@ eligibility check commits none of them. Context packet v3 is not revised: its
 existing bounded inbox shape can contain an authorized participant message, while
 the full body remains an explicit MCP read.
 
+## Schema version 13
+
+`curator_rules` stores immutable workspace policy revisions for the one implemented
+`accepted_meeting_resolution_copy/v1` rule. Migration and future workspace insert
+both seed disabled revision one. Owner configuration appends a revision; it does
+not rewrite history. The effective rule is the highest revision.
+
+`curator_derivations` is append-only proof that one exact rule version copied an
+accepted `meeting_proposal` revision into one exact proposed knowledge revision.
+It freezes the rule row, workspace/project, source identity/revision and source
+hash, output revision/hash, event cursor, time, and `subsystem:curator` actor.
+Constraints recheck the project-wide `decision`, exact agenda/summary,
+`medium`/`supported`/`until_superseded` metadata, single primary source, and
+proposed/pending state at insertion. One source revision and one knowledge
+revision can each have at most one derivation.
+
+`curator_auto_acceptances` is immutable explanation evidence for the distinct
+state-policy governance path. It links the effective enabled evaluation-rule
+revision to a compatible derivation (which may have been created under an earlier
+disabled configuration revision), exact knowledge revision, allowed
+`subsystem:curator` authority check, ordinary `knowledge.accepted` event, and
+`curator.auto_accepted` event. The generic knowledge governance path still denies
+subsystem actors.
+
+The curator queue has no table. It is a deterministic projection over proposed,
+pending canonical revisions plus derivation and effective-rule rows. Processing
+is one idempotent transaction bounded to 100 candidate evaluations and ten
+automatic acceptances. Preexisting safe derivations are evaluated first; when
+capacity remains, a new exact derivation and its automatic acceptance may commit
+together in that transaction. A structured source outside the exact title/body
+bounds is returned as a skip evaluation and creates no marker, proposal, or event.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -321,11 +353,12 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 12 contains agent/task/run/claim coordination,
+without its WAL. Schema version 13 contains agent/task/run/claim coordination,
 meetings, canonical knowledge, immutable context packets, scoped
 report/artifact/audit records, durable message/thread/delivery/wake state,
-overlap/drift/watcher state, opaque fake/direct bindings, direct supervisor
-references, and a rebuildable FTS projection. It contains no provider-private
+overlap/drift/watcher state, bounded curator policy/derivation/acceptance evidence,
+opaque fake/direct bindings, direct supervisor references, and a rebuildable FTS
+projection. It contains no provider-private
 session transcript. Backup of a live installation must include a
 coordinated snapshot of the database, direct-runtime state, node key, and
 capability files; restored capabilities still obey their stored expiry and run

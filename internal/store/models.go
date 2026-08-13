@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 12
+	LatestSchemaVersion = 13
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -440,6 +440,40 @@ type KnowledgeMutationResult struct {
 	Revision       domain.KnowledgeRevision        `json:"revision"`
 	AuthorityCheck *domain.KnowledgeAuthorityCheck `json:"authority_check,omitempty"`
 	EventSequence  int64                           `json:"event_sequence"`
+}
+
+type CuratorQueueQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	After               string
+	Limit               int
+}
+
+type ConfigureCuratorRuleCommand struct {
+	WorkspaceIdentifier string
+	RuleName            string
+	Enabled             bool
+	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type CuratorRuleMutationResult struct {
+	Rule          domain.CuratorRule `json:"rule"`
+	EventSequence int64              `json:"event_sequence"`
+}
+
+type ProcessCuratorCommand struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	ApplySafe           bool
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type CuratorProcessMutationResult struct {
+	Process       domain.CuratorProcess `json:"process"`
+	EventSequence int64                 `json:"event_sequence"`
 }
 
 type ClaimWatchTarget struct {

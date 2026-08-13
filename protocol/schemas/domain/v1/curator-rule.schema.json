@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:curator-rule:v1",
+  "title": "Crewfold deterministic curator rule v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "workspace_id", "name", "revision", "enabled", "created_at", "created_by", "event_sequence"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^crule_[0-9a-f]{32}$"},
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "name": {"const": "accepted_meeting_resolution_copy/v1"},
+    "revision": {"type": "integer", "minimum": 1},
+    "enabled": {"type": "boolean"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by": {"enum": ["subsystem:curator", "local-owner"]},
+    "event_sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero only identifies the deterministic default disabled rule seeded without a command event."
+    }
+  }
+}

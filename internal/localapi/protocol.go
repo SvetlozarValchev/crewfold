@@ -52,6 +52,9 @@ const (
 	MethodKnowledgeAccept       = "knowledge.accept"
 	MethodKnowledgeReject       = "knowledge.reject"
 	MethodKnowledgeMarkStale    = "knowledge.mark_stale"
+	MethodCuratorQueue          = "curator.queue"
+	MethodCuratorRuleConfigure  = "curator.rule.configure"
+	MethodCuratorProcess        = "curator.process"
 	MethodMessageSend           = "message.send"
 	MethodInboxList             = "inbox.list"
 	MethodThreadCreate          = "thread.create"
@@ -110,6 +113,9 @@ const (
 	KnowledgeSearchSchema           = "urn:crewfold:schema:local-api:knowledge-search-result:v1"
 	KnowledgeIndexStatusSchema      = "urn:crewfold:schema:local-api:knowledge-index-status-result:v1"
 	KnowledgeIndexRebuildSchema     = "urn:crewfold:schema:local-api:knowledge-index-rebuild-result:v1"
+	CuratorQueueSchema              = "urn:crewfold:schema:local-api:curator-queue-result:v1"
+	CuratorRuleMutationSchema       = "urn:crewfold:schema:local-api:curator-rule-mutation-result:v1"
+	CuratorProcessSchema            = "urn:crewfold:schema:local-api:curator-process-result:v1"
 	MessageSendSchema               = "urn:crewfold:schema:local-api:message-send-result:v1"
 	InboxListSchema                 = "urn:crewfold:schema:local-api:inbox-list-result:v1"
 	ParticipantThreadMutationSchema = "urn:crewfold:schema:local-api:participant-thread-mutation-result:v1"
@@ -728,6 +734,48 @@ type KnowledgeIndexRebuildResult struct {
 	Schema string                      `json:"schema"`
 	Type   string                      `json:"type"`
 	Index  domain.KnowledgeIndexStatus `json:"index"`
+}
+
+type CuratorQueueParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project"`
+	After     string `json:"after,omitempty"`
+	Limit     *int   `json:"limit,omitempty"`
+}
+
+type CuratorRuleConfigureParams struct {
+	Workspace        string `json:"workspace"`
+	Rule             string `json:"rule"`
+	Enabled          *bool  `json:"enabled"`
+	ExpectedRevision int64  `json:"expected_revision"`
+	IdempotencyKey   string `json:"idempotency_key"`
+}
+
+type CuratorProcessParams struct {
+	Workspace      string `json:"workspace"`
+	Project        string `json:"project"`
+	ApplySafe      bool   `json:"apply_safe,omitempty"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type CuratorQueueResult struct {
+	Schema string              `json:"schema"`
+	Type   string              `json:"type"`
+	Queue  domain.CuratorQueue `json:"queue"`
+}
+
+type CuratorRuleMutationResult struct {
+	Schema        string             `json:"schema"`
+	Type          string             `json:"type"`
+	Rule          domain.CuratorRule `json:"rule"`
+	EventSequence int64              `json:"event_sequence"`
+}
+
+type CuratorProcessResult struct {
+	Schema        string                `json:"schema"`
+	Type          string                `json:"type"`
+	Process       domain.CuratorProcess `json:"process"`
+	EventSequence int64                 `json:"event_sequence"`
 }
 
 type MessageSendParams struct {

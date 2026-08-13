@@ -15,11 +15,14 @@ their acceptance/review gate has passed. The current implementation supports:
 - explicit, exact revision links in bounded context packets; and
 - explanation of selection, exclusion, revision, and byte budgets;
 - deterministic, scoped full-text discovery over canonical revisions; and
-- an inspectable, explicitly rebuildable derived search index.
+- an inspectable, explicitly rebuildable derived search index;
+- a read-projected curator queue over proposed revisions; and
+- one disabled-by-default, owner-configured deterministic rule that can copy an
+  accepted structured meeting resolution into canonical project knowledge.
 
-It does not ingest provider transcripts, curate automatically, or refresh a
-running agent with context deltas. Contradiction handling and export/import also
-remain later capabilities.
+It does not ingest provider transcripts, run a model-backed curator or background
+curation loop, or refresh a running agent with context deltas. Contradiction
+handling and export/import also remain later capabilities.
 
 The system separates four layers:
 
@@ -129,7 +132,7 @@ an explicit exclusion. The replacement-agent path combines a durable handoff or
 mailbox message with explicitly pinned accepted knowledge, not copied session
 history.
 
-## Deterministic retrieval and planned curator
+## Deterministic retrieval and bounded curator
 
 The first M15 slice implements deterministic SQLite FTS5 discovery over canonical
 revision titles and bodies. `knowledge search` first applies hard workspace,
@@ -165,12 +168,51 @@ a healthy superseding snapshot makes the old key conflict. Index/search event
 cursors are node-wide journal observation high-water marks rather than retrieval
 freshness or workspace-local knowledge cursors.
 
-Later M15 slices introduce the context curator, contradiction handling, and
-explicit refresh/deltas. The planned curator is a role plus a deterministic
-pipeline, not an all-powerful memory agent. It may propose concise revisions from
-structured handoffs, accepted meeting resolutions, review findings, test evidence,
-and explicit owner decisions, but it cannot silently rewrite history or grant its
-own proposals authority.
+The implemented curator begins as an explicit deterministic pipeline rather than
+an all-powerful memory agent. `curator queue` projects all currently proposed
+canonical revisions in stable proposal order and classifies them for manual review
+or the one exact safe rule. Each page includes the effective rule snapshot, so
+its enabled state and revision are observable before an optimistic configuration
+change. There is no independently mutable queue table: the proposal, its
+governance state, and any immutable curator derivation remain the inspectable
+records.
+
+Every workspace stores `accepted_meeting_resolution_copy/v1` disabled at revision
+one. An owner may enable or disable it with an optimistic expected revision.
+`curator process` is an explicit local operation, not a background loop. Without
+`--apply-safe`, it only derives; the flag is the explicit opt-in to evaluate safe
+automatic acceptance. A pass scans at most 100 candidates and accepts at most ten.
+Already-derived safe proposals are evaluated first. If capacity remains, exact
+safe proposals newly derived from structured sources are revalidated and accepted
+within the same opted-in transaction.
+Processing while the rule is disabled may still derive a proposal from a
+concluded meeting whose proposal was accepted; the result remains queued. After
+the exact rule is enabled, a later opted-in pass may accept that same revision
+through the distinct, revalidated curator governance path.
+
+The transform is deliberately narrow: a `decision` whose title is the exact
+meeting agenda and whose body is the exact accepted proposal summary; project-wide
+scope; `medium` confidence; `supported` verification;
+`until_superseded` freshness; and exactly one primary `meeting_proposal` source at
+the accepted source revision. The agenda must be valid UTF-8 from 1 through 160
+bytes and the summary valid UTF-8 from 1 through 2 KiB. Invalid source text is
+skipped, never truncated; an accepted summary above 2 KiB reports
+`summary_not_exact_safe_copy`. There is no task scope, supporting source,
+predecessor, or caller-supplied transform field.
+
+An auto-accept rechecks the enabled rule revision, source and output hashes,
+derivation, source state, and proposed knowledge state in one transaction. Its
+authority record is `subsystem:curator`, `allowed`, `state_policy`, and is linked
+to immutable auto-acceptance evidence plus the normal `knowledge.accepted` event.
+Calling the ordinary knowledge-governance path as a subsystem remains denied.
+Agent proposals remain manual regardless of their confidence, verification label,
+persuasive text, or claimed source. See
+[ADR-0011](decisions/0011-bounded-deterministic-context-curator.md).
+
+Later M15 slices add contradiction handling and explicit refresh/deltas. Future
+curator rules may cover structured handoffs, review findings, test evidence, and
+explicit owner decisions, but each requires its own frozen transform and authority
+contract; no general curator self-approval exists.
 
 Long-running sessions do not currently receive knowledge changes. A future context
 delta may report a dependency change, accepted or superseded decision, important

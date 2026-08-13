@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"crewfold/internal/domain"
@@ -89,6 +90,24 @@ func TestValidateScenarioRejectsUnknownAndUnboundedBehavior(t *testing.T) {
 		"artifact probe without thread": {Schema: FakeScenarioSchema, Name: "artifact-thread", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Mailbox: domain.FixtureMailbox{
 			DeniedArtifactProbe: true,
 		}},
+		"knowledge probe without proposal": {Schema: FakeScenarioSchema, Name: "knowledge-probe", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Knowledge: domain.FixtureKnowledge{
+			ProbeReservedAcceptance: true,
+		}},
+		"unbounded knowledge title": {Schema: FakeScenarioSchema, Name: "knowledge-title", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Knowledge: domain.FixtureKnowledge{
+			Proposal: &domain.FixtureKnowledgeProposal{Type: domain.KnowledgeTypeFinding, Title: strings.Repeat("x", 161), Body: "bounded", Confidence: domain.KnowledgeConfidenceHigh, VerificationStatus: domain.KnowledgeVerificationVerified, FreshnessPolicy: domain.KnowledgeFreshUntilSuperseded},
+		}},
+		"multibyte knowledge title exceeds byte bound": {Schema: FakeScenarioSchema, Name: "knowledge-title-bytes", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Knowledge: domain.FixtureKnowledge{
+			Proposal: &domain.FixtureKnowledgeProposal{Type: domain.KnowledgeTypeFinding, Title: strings.Repeat("é", 81), Body: "bounded", Confidence: domain.KnowledgeConfidenceHigh, VerificationStatus: domain.KnowledgeVerificationVerified, FreshnessPolicy: domain.KnowledgeFreshUntilSuperseded},
+		}},
+		"knowledge body contains nul": {Schema: FakeScenarioSchema, Name: "knowledge-body-nul", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Knowledge: domain.FixtureKnowledge{
+			Proposal: &domain.FixtureKnowledgeProposal{Type: domain.KnowledgeTypeFinding, Title: "bounded", Body: "not\x00bounded", Confidence: domain.KnowledgeConfidenceHigh, VerificationStatus: domain.KnowledgeVerificationVerified, FreshnessPolicy: domain.KnowledgeFreshUntilSuperseded},
+		}},
+		"unsupported knowledge confidence": {Schema: FakeScenarioSchema, Name: "knowledge-confidence", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Knowledge: domain.FixtureKnowledge{
+			Proposal: &domain.FixtureKnowledgeProposal{Type: domain.KnowledgeTypeFinding, Title: "bounded", Body: "bounded", Confidence: "absolute", VerificationStatus: domain.KnowledgeVerificationVerified, FreshnessPolicy: domain.KnowledgeFreshUntilSuperseded},
+		}},
+		"knowledge freshness mismatch": {Schema: FakeScenarioSchema, Name: "knowledge-freshness", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Knowledge: domain.FixtureKnowledge{
+			Proposal: &domain.FixtureKnowledgeProposal{Type: domain.KnowledgeTypeFinding, Title: "bounded", Body: "bounded", Confidence: domain.KnowledgeConfidenceHigh, VerificationStatus: domain.KnowledgeVerificationVerified, FreshnessPolicy: domain.KnowledgeFreshExpiresAt},
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -114,12 +133,33 @@ func TestValidateScenarioAllowsInitialSendIntoOwnerCreatedThread(t *testing.T) {
 	}
 }
 
+func TestValidateScenarioAllowsBoundedProjectWideKnowledgeProposal(t *testing.T) {
+	t.Parallel()
+	scenario := domain.FakeScenario{
+		Schema: FakeScenarioSchema,
+		Name:   "scoped-knowledge",
+		Steps:  []domain.FakeStep{{Kind: domain.ObservationProgress}},
+		Knowledge: domain.FixtureKnowledge{
+			Proposal: &domain.FixtureKnowledgeProposal{
+				Type: domain.KnowledgeTypeFinding, Title: strings.Repeat("é", 80), Body: "Crewfold derives the real source.",
+				Confidence: domain.KnowledgeConfidenceHigh, VerificationStatus: domain.KnowledgeVerificationVerified,
+				FreshnessPolicy: domain.KnowledgeFreshUntilSuperseded,
+			},
+			ProbeReservedAcceptance: true,
+		},
+	}
+	if err := ValidateScenario(scenario); err != nil {
+		t.Fatalf("ValidateScenario() error = %v", err)
+	}
+}
+
 func TestLoadScenarioRejectsUnknownFieldsAndTrailingDocuments(t *testing.T) {
 	t.Parallel()
 
 	for name, contents := range map[string]string{
-		"unknown field":     `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}],"unknown":true}`,
-		"trailing document": `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}]} {}`,
+		"unknown field":           `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}],"unknown":true}`,
+		"unknown knowledge field": `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}],"knowledge":{"proposal":{"type":"finding","title":"bounded","body":"bounded","confidence":"high","verification_status":"verified","freshness_policy":"until_superseded","source_id":"forged"}}}`,
+		"trailing document":       `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}]} {}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

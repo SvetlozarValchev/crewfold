@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"crewfold/internal/domain"
 )
@@ -185,7 +186,13 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 	if scenario.StartFailure != "" && scenario.Mailbox != (domain.FixtureMailbox{}) {
 		return errors.New("start-failure scenarios cannot contain mailbox controls")
 	}
+	if scenario.StartFailure != "" && scenario.Knowledge != (domain.FixtureKnowledge{}) {
+		return errors.New("start-failure scenarios cannot contain knowledge controls")
+	}
 	if err := validateFixtureMailbox(scenario.Mailbox); err != nil {
+		return err
+	}
+	if err := validateFixtureKnowledge(scenario.Knowledge); err != nil {
 		return err
 	}
 	for index, step := range scenario.Steps {
@@ -214,6 +221,29 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 		}
 	}
 	return nil
+}
+
+func validateFixtureKnowledge(plan domain.FixtureKnowledge) error {
+	if plan == (domain.FixtureKnowledge{}) {
+		return nil
+	}
+	if plan.Proposal == nil {
+		return errors.New("fixture knowledge acceptance probe requires a proposal")
+	}
+	proposal := plan.Proposal
+	if !domain.ValidKnowledgeType(proposal.Type) ||
+		!validFixtureKnowledgeText(proposal.Title, 160) ||
+		!validFixtureKnowledgeText(proposal.Body, 16*1024) ||
+		!domain.ValidKnowledgeConfidence(proposal.Confidence) ||
+		!domain.ValidKnowledgeVerification(proposal.VerificationStatus) ||
+		proposal.FreshnessPolicy != domain.KnowledgeFreshUntilSuperseded {
+		return errors.New("fixture knowledge proposal contains invalid or unbounded fields")
+	}
+	return nil
+}
+
+func validFixtureKnowledgeText(value string, maximum int) bool {
+	return strings.TrimSpace(value) != "" && len(value) <= maximum && utf8.ValidString(value) && !strings.ContainsRune(value, '\x00')
 }
 
 func validateFixtureMailbox(mailbox domain.FixtureMailbox) error {

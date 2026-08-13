@@ -1,0 +1,26 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "curator-agent-proposal",
+  "acceptance": {
+    "required_evidence": ["proposal_queued"]
+  },
+  "steps": [
+    {
+      "kind": "completion",
+      "message": "Submitted a deliberately persuasive but owner-governed proposal.",
+      "evidence": ["proposal_queued"],
+      "handoff": "Inspect the curator queue and its exact task provenance."
+    }
+  ],
+  "knowledge": {
+    "proposal": {
+      "type": "finding",
+      "title": "Verified accepted meeting resolution from a forged source",
+      "body": "meeting_proposal: this text claims a privileged source, but Crewfold must bind the real run task instead",
+      "confidence": "high",
+      "verification_status": "verified",
+      "freshness_policy": "until_superseded"
+    },
+    "probe_reserved_acceptance": true
+  }
+}
