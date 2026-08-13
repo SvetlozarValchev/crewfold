@@ -27,6 +27,10 @@ func (a *App) runKnowledge(ctx context.Context, mode outputMode, args []string) 
 		return a.runKnowledgeShow(ctx, mode, args[1:])
 	case "list":
 		return a.runKnowledgeList(ctx, mode, args[1:])
+	case "search":
+		return a.runKnowledgeSearch(ctx, mode, args[1:])
+	case "index":
+		return a.runKnowledgeIndex(ctx, mode, args[1:])
 	case "accept":
 		return a.runKnowledgeDecision(ctx, mode, args[1:], "accept")
 	case "reject":
@@ -36,6 +40,143 @@ func (a *App) runKnowledge(ctx context.Context, mode outputMode, args []string) 
 	default:
 		return a.writeFailure(mode, usageFailure(fmt.Sprintf("unknown knowledge command %q", args[0]), "run 'crewfold help knowledge' for usage"))
 	}
+}
+
+func (a *App) runKnowledgeSearch(ctx context.Context, mode outputMode, args []string) int {
+	query, optionArgs, failure := requiredKnowledgeSearchQuery(args)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "project", "task", "type", "limit", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	project, failure := requiredOption(options, "project")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	limit := 20
+	if options["limit"] != "" {
+		parsed, parseFailure := requiredInt64Option(options, "limit", 1, 100)
+		if parseFailure != nil {
+			return a.writeFailure(mode, *parseFailure)
+		}
+		limit = int(parsed)
+	}
+	result, err := a.newClient(socket).KnowledgeSearch(ctx, localapi.KnowledgeSearchParams{
+		Workspace: workspace, Project: project, Query: query, Task: options["task"], Type: options["type"], Limit: &limit,
+	})
+	if err != nil {
+		return a.writeClientFailure(mode, "search knowledge", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write knowledge search", err))
+		}
+	} else {
+		writeKnowledgeSearch(a, result.Search)
+	}
+	return ExitOK
+}
+
+func requiredKnowledgeSearchQuery(args []string) (string, []string, *commandFailure) {
+	if len(args) > 0 && args[0] == "--" {
+		if len(args) < 2 {
+			failure := usageFailure("search query is required after --", "run 'crewfold help knowledge' for usage")
+			return "", nil, &failure
+		}
+		return args[1], args[2:], nil
+	}
+	return requiredLeadingArgument(args, "search query")
+}
+
+func (a *App) runKnowledgeIndex(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 0 {
+		return a.writeFailure(mode, usageFailure("knowledge index requires status or rebuild", "run 'crewfold help knowledge' for usage"))
+	}
+	switch args[0] {
+	case "status":
+		options, failure := parseOptions(args[1:], "workspace", "socket")
+		if failure != nil {
+			return a.writeFailure(mode, *failure)
+		}
+		workspace, socket, failure := requiredWorkspaceSocket(options)
+		if failure != nil {
+			return a.writeFailure(mode, *failure)
+		}
+		result, err := a.newClient(socket).KnowledgeIndexStatus(ctx, workspace)
+		if err != nil {
+			return a.writeClientFailure(mode, "inspect knowledge index", err)
+		}
+		return a.writeKnowledgeIndexStatus(mode, result)
+	case "rebuild":
+		options, failure := parseOptions(args[1:], "workspace", "socket", "idempotency-key")
+		if failure != nil {
+			return a.writeFailure(mode, *failure)
+		}
+		workspace, socket, failure := requiredWorkspaceSocket(options)
+		if failure != nil {
+			return a.writeFailure(mode, *failure)
+		}
+		result, err := a.newClient(socket).KnowledgeIndexRebuild(ctx, localapi.KnowledgeIndexRebuildParams{
+			Workspace: workspace, IdempotencyKey: options["idempotency-key"],
+		})
+		if err != nil {
+			return a.writeClientFailure(mode, "rebuild knowledge index", err)
+		}
+		if mode == outputJSON {
+			if err := writeJSON(a.stdout, result); err != nil {
+				return a.writeFailure(outputText, internalFailure("write knowledge index rebuild", err))
+			}
+		} else {
+			writeKnowledgeIndex(a, result.Index)
+		}
+		return ExitOK
+	default:
+		return a.writeFailure(mode, usageFailure(fmt.Sprintf("unknown knowledge index command %q", args[0]), "run 'crewfold help knowledge' for usage"))
+	}
+}
+
+func writeKnowledgeSearch(a *App, search domain.KnowledgeSearchResult) {
+	fmt.Fprintf(a.stdout, "query: %s\nevaluated: %s\ncanonical event sequence: %d\nrank policy: %s\n",
+		search.NormalizedQuery, search.EvaluatedAt, search.CanonicalEventSequence, search.RankPolicy)
+	writeKnowledgeIndex(a, search.Index)
+	fmt.Fprintf(a.stdout, "matches: %d\n", len(search.Matches))
+	for _, match := range search.Matches {
+		fmt.Fprintf(a.stdout, "%d\t%s\tbm25=%g\t%s\n", match.Ordinal, match.Revision.ID, match.Explanation.Text.BM25, match.Revision.Title)
+		fmt.Fprintf(a.stdout, "  scope: %s; authority: %s; freshness: %s; provenance: %s\n",
+			match.Explanation.Scope.Reason, match.Explanation.Authority.Reason,
+			match.Explanation.Freshness.Reason, match.Explanation.Provenance.Reason)
+	}
+}
+
+func writeKnowledgeIndex(a *App, index domain.KnowledgeIndexStatus) {
+	fmt.Fprintf(a.stdout, "index: %s\ngeneration: %d\nsource event sequence: %d\nsource count: %d\n",
+		index.Status, index.Generation, index.SourceEventSequence, index.SourceCount)
+	if index.BuiltAt != "" {
+		fmt.Fprintf(a.stdout, "built: %s\n", index.BuiltAt)
+	}
+	if index.SourceDigest != "" {
+		fmt.Fprintf(a.stdout, "source digest: %s\n", index.SourceDigest)
+	}
+	if index.Diagnosis != "" {
+		fmt.Fprintf(a.stdout, "diagnosis: %s\n", index.Diagnosis)
+	}
+}
+
+func (a *App) writeKnowledgeIndexStatus(mode outputMode, result localapi.KnowledgeIndexStatusResult) int {
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write knowledge index status", err))
+		}
+	} else {
+		writeKnowledgeIndex(a, result.Index)
+	}
+	return ExitOK
 }
 
 func (a *App) runKnowledgePropose(ctx context.Context, mode outputMode, args []string) int {
@@ -324,6 +465,10 @@ const knowledgeHelp = `Usage:
   crewfold knowledge propose --type <decision|finding> (--from-task <task>|--from-meeting <meeting>|--from-meeting-proposal <proposal>) <file.md> --workspace <scope> --socket <path> [options]
   crewfold knowledge show <revision> --workspace <scope> --socket <path>
   crewfold knowledge list --project <project> --workspace <scope> --socket <path> [options]
+  crewfold knowledge search <query> --project <project> --workspace <scope> --socket <path> [--task <task>] [--type <decision|finding>] [--limit <n>]
+  crewfold knowledge search -- <query-starting-with--> --project <project> --workspace <scope> --socket <path> [options]
+  crewfold knowledge index status --workspace <scope> --socket <path>
+  crewfold knowledge index rebuild --workspace <scope> --socket <path> [--idempotency-key <key>]
   crewfold knowledge accept <revision> --expected-state-revision <n> --workspace <scope> --socket <path> [--note <text>]
   crewfold knowledge reject <revision> --expected-state-revision <n> --workspace <scope> --socket <path> [--note <text>]
   crewfold knowledge mark-stale <revision> --expected-state-revision <n> --reason <text> --workspace <scope> --socket <path>
@@ -333,4 +478,5 @@ task or meeting source records provenance; applicability defaults to that source
 project and can be narrowed with --task-scope. Use --supersedes with a proposed
 successor; accepting it atomically preserves and supersedes the prior revision.
 Acceptance, rejection, and staleness are owner-authorized local operations.
+Use the -- separator before a literal search query that begins with --.
 `

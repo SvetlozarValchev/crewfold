@@ -140,6 +140,95 @@ type KnowledgeList struct {
 	Revisions []KnowledgeRevision `json:"revisions"`
 }
 
+const (
+	KnowledgeSearchRankPolicy     = "knowledge_search_v1"
+	KnowledgeIndexOK              = "ok"
+	KnowledgeIndexDegraded        = "degraded"
+	KnowledgeIndexMissing         = "missing"
+	KnowledgeIndexCorrupt         = "corrupt"
+	KnowledgeIndexOutOfDate       = "out_of_date"
+	KnowledgeIndexContentMismatch = "content_mismatch"
+	KnowledgeIndexUnsupported     = "unsupported"
+)
+
+type KnowledgeIndexStatus struct {
+	Status              string `json:"status"`
+	Generation          int64  `json:"generation"`
+	BuiltAt             string `json:"built_at,omitempty"`
+	SourceEventSequence int64  `json:"source_event_sequence"`
+	SourceCount         int64  `json:"source_count"`
+	SourceDigest        string `json:"source_digest,omitempty"`
+	Diagnosis           string `json:"diagnosis,omitempty"`
+}
+
+type KnowledgeSearchScopeExplanation struct {
+	Rank   int    `json:"rank"`
+	Reason string `json:"reason"`
+}
+
+type KnowledgeSearchAuthorityExplanation struct {
+	ReviewStatus   string `json:"review_status"`
+	CurrencyStatus string `json:"currency_status"`
+	AcceptedByType string `json:"accepted_by_type"`
+	Reason         string `json:"reason"`
+}
+
+type KnowledgeSearchFreshnessExplanation struct {
+	Class       int    `json:"class"`
+	FreshUntil  string `json:"fresh_until,omitempty"`
+	EvaluatedAt string `json:"evaluated_at"`
+	Reason      string `json:"reason"`
+}
+
+type KnowledgeSearchProvenanceExplanation struct {
+	Rank             int      `json:"rank"`
+	Reason           string   `json:"reason"`
+	MatchedSourceIDs []string `json:"matched_source_ids"`
+}
+
+type KnowledgeSearchQualityExplanation struct {
+	Confidence         string `json:"confidence"`
+	ConfidenceRank     int    `json:"confidence_rank"`
+	VerificationStatus string `json:"verification_status"`
+	VerificationRank   int    `json:"verification_rank"`
+}
+
+type KnowledgeSearchTextExplanation struct {
+	BM25        float64 `json:"bm25"`
+	TitleWeight float64 `json:"title_weight"`
+	BodyWeight  float64 `json:"body_weight"`
+}
+
+type KnowledgeSearchTieBreaker struct {
+	AcceptedAt string `json:"accepted_at"`
+	RevisionID string `json:"revision_id"`
+}
+
+type KnowledgeSearchExplanation struct {
+	Scope      KnowledgeSearchScopeExplanation      `json:"scope"`
+	Authority  KnowledgeSearchAuthorityExplanation  `json:"authority"`
+	Freshness  KnowledgeSearchFreshnessExplanation  `json:"freshness"`
+	Provenance KnowledgeSearchProvenanceExplanation `json:"provenance"`
+	Quality    KnowledgeSearchQualityExplanation    `json:"quality"`
+	Text       KnowledgeSearchTextExplanation       `json:"text"`
+	TieBreaker KnowledgeSearchTieBreaker            `json:"tie_breaker"`
+}
+
+type KnowledgeSearchMatch struct {
+	Ordinal     int64                      `json:"ordinal"`
+	Revision    KnowledgeRevision          `json:"revision"`
+	Explanation KnowledgeSearchExplanation `json:"explanation"`
+}
+
+type KnowledgeSearchResult struct {
+	NormalizedQuery        string                 `json:"normalized_query"`
+	EvaluatedAt            string                 `json:"evaluated_at"`
+	CanonicalEventSequence int64                  `json:"canonical_event_sequence"`
+	RankPolicy             string                 `json:"rank_policy"`
+	Index                  KnowledgeIndexStatus   `json:"index"`
+	Matches                []KnowledgeSearchMatch `json:"matches"`
+}
+
 func ValidKnowledgeType(value string) bool {
 	return value == KnowledgeTypeDecision || value == KnowledgeTypeFinding
 }

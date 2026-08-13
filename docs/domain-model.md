@@ -303,6 +303,20 @@ or from its presence in a model response. Rich structured alternatives,
 consequences, and decision-owner policies remain future extensions to the concise
 title/body contract.
 
+### Knowledge search result
+
+A read-only, evaluated candidate set over exact canonical revisions. It records
+the normalized literal query, evaluation time, canonical event cursor, named rank
+policy, derived-index generation/digest, and ordered matches. Every match contains
+the complete exact revision plus separately explained applicability, authority,
+freshness, provenance, quality, text score, and tie breaker.
+
+Search eligibility requires accepted, current, fresh knowledge in one workspace
+and project. A task query permits project-wide plus exact-task applicability; a
+project-only query cannot expose task-scoped records. The result grants no
+authority and does not become a context input unless a later explicit operation
+copies an exact revision ID into a new immutable record.
+
 ### Outcome assessment
 
 A revisioned judgment about whether a promised deliverable was achieved. It is

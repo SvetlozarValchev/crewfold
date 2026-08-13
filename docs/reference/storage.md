@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 8.
+Status: implemented through schema version 11.
 
 ## Location and ownership
 
@@ -34,9 +34,16 @@ Every connection requires:
 | `synchronous` | `FULL` | Favor local durability over mutation throughput |
 | transaction lock | `IMMEDIATE` | Acquire the write reservation before invariant checks |
 
-Startup fails before the API socket is bound if migration or database health
-checks fail. `database.status` reports the schema version, journal mode,
-foreign-key setting, and `quick_check` result.
+Startup fails before the API socket is bound if migration or canonical database
+health checks fail. Crewfold opens a short-lived base SQLite connection without
+registering the FTS5 module and runs one global `PRAGMA quick_check(1)`. This checks
+database-wide page allocation, the freelist, and every ordinary B-tree—including
+the FTS shadow tables—without invoking the disposable virtual table's semantic
+`xIntegrity` hook. Any failure remains `storage_failed`; there is no error-string
+classification or table-filter fallback. `database.status` reports this global
+physical/canonical result alongside schema version, journal mode, and the
+foreign-key setting. Retrieval projection semantics are checked and reported
+separately.
 
 ## Embedded migrations
 
@@ -221,6 +228,42 @@ or expiry resolves related overlaps and removes their scheduling holds in the
 same transaction. Git scans are external read-only observations followed by a
 separate atomic checkout/drift update.
 
+## Schema versions 9 and 10
+
+Schema version 9 adds frozen structured meetings, participant checkpoints,
+independent contributions, typed proposals/actions, and authority/application
+records. Meeting resolution commits its complete authorized action set atomically.
+
+Schema version 10 adds stable knowledge items, immutable-content revisions,
+ordered frozen provenance, and append-only governance-authority records. Database
+constraints permit only proposed acceptance/rejection, current staleness, and
+atomic predecessor supersession. It also enforces update/delete rejection for
+stored immutable context packets. Context packet v3 embeds exact accepted revision
+snapshots; the packet remains canonical even if later governance changes.
+
+## Schema version 11
+
+`knowledge_search` is a disposable SQLite FTS5 projection over canonical revision
+IDs, workspace IDs, titles, and bodies. `knowledge_search_metadata` publishes one
+completed generation with build time, source count, deterministic digest, and
+`source_event_sequence`. That sequence is the transactionally observed high-water
+mark of the node-wide event journal—not a retrieval-freshness check or a
+workspace-scoped knowledge-event cursor. Neither table is a knowledge authority.
+
+Search validates the projection against canonical revision count/digest and FTS
+integrity before returning candidates. Missing, corrupt, inconsistent, or stale
+state is a degraded retrieval diagnosis, not a database-startup failure and not an
+empty successful query. An explicit rebuild reconstructs and validates the FTS
+table transactionally, then publishes the next generation. Exact knowledge,
+context, and event reads never depend on the projection.
+
+The module-free startup connection deliberately cannot invoke FTS semantic
+integrity, so a malformed segment payload leaves retrieval degraded and keeps
+`knowledge index rebuild` reachable. Its global check still observes canonical
+corruption, freelist/page-allocation damage, and structural damage to ordinary FTS
+shadow B-trees. Simultaneous FTS semantic and canonical corruption therefore still
+blocks startup.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -245,12 +288,12 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 8 contains agent/task/run/claim coordination, immutable
-context packets, scoped report/artifact/audit records, durable
-message/thread/delivery/wake state, overlap/drift/watcher state, opaque
-fake/direct bindings, and direct
-supervisor references but no canonical knowledge or real model-provider session
-state. Backup of a live installation must include a
+without its WAL. Schema version 11 contains agent/task/run/claim coordination,
+meetings, canonical knowledge, immutable context packets, scoped
+report/artifact/audit records, durable message/thread/delivery/wake state,
+overlap/drift/watcher state, opaque fake/direct bindings, direct supervisor
+references, and a rebuildable FTS projection. It contains no provider-private
+session transcript. Backup of a live installation must include a
 coordinated snapshot of the database, direct-runtime state, node key, and
 capability files; restored capabilities still obey their stored expiry and run
 state.

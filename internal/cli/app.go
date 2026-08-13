@@ -15,6 +15,7 @@ import (
 
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/daemon"
+	"crewfold/internal/domain"
 	"crewfold/internal/execution"
 	"crewfold/internal/herdr"
 	"crewfold/internal/localapi"
@@ -54,6 +55,7 @@ type daemonClient interface {
 	Status(context.Context) (localapi.StatusResult, error)
 	Stop(context.Context) (localapi.StopResult, error)
 	DatabaseStatus(context.Context) (localapi.DatabaseStatusResult, error)
+	KnowledgeIndexStatus(context.Context, string) (localapi.KnowledgeIndexStatusResult, error)
 	WorkspaceInit(context.Context, string, string) (localapi.WorkspaceInitResult, error)
 	WorkspaceShow(context.Context, string) (localapi.WorkspaceShowResult, error)
 	ProjectAdd(context.Context, string, string, string, string, string) (localapi.ProjectAddResult, error)
@@ -82,6 +84,8 @@ type daemonClient interface {
 	KnowledgePropose(context.Context, localapi.KnowledgeProposeParams) (localapi.KnowledgeMutationResult, error)
 	KnowledgeShow(context.Context, string, string) (localapi.KnowledgeShowResult, error)
 	KnowledgeList(context.Context, localapi.KnowledgeListParams) (localapi.KnowledgeListResult, error)
+	KnowledgeSearch(context.Context, localapi.KnowledgeSearchParams) (localapi.KnowledgeSearchResult, error)
+	KnowledgeIndexRebuild(context.Context, localapi.KnowledgeIndexRebuildParams) (localapi.KnowledgeIndexRebuildResult, error)
 	KnowledgeAccept(context.Context, localapi.KnowledgeDecisionParams) (localapi.KnowledgeMutationResult, error)
 	KnowledgeReject(context.Context, localapi.KnowledgeDecisionParams) (localapi.KnowledgeMutationResult, error)
 	KnowledgeMarkStale(context.Context, localapi.KnowledgeMarkStaleParams) (localapi.KnowledgeMutationResult, error)
@@ -856,6 +860,8 @@ func clientFailureHint(code string) string {
 		return "inspect the revision's current governance state before retrying"
 	case "knowledge_denied":
 		return "only the trusted local owner can accept, reject, or mark canonical knowledge stale"
+	case "retrieval_degraded":
+		return "inspect with 'crewfold doctor --retrieval --workspace <workspace> --socket <path>' and rebuild with 'crewfold knowledge index rebuild'"
 	case "revision_conflict":
 		return "inspect the current entity revision and retry with that exact expected revision"
 	case "storage_failed":
@@ -900,6 +906,9 @@ func (a *App) runDoctor(ctx context.Context, mode outputMode, args []string) int
 	if len(args) > 0 && args[0] == "--database" {
 		return a.runDatabaseDoctor(ctx, mode, args[1:])
 	}
+	if len(args) > 0 && args[0] == "--retrieval" {
+		return a.runRetrievalDoctor(ctx, mode, args[1:])
+	}
 	if len(args) > 0 && args[0] == "--runtime" {
 		return a.runRuntimeDoctor(ctx, mode, args[1:])
 	}
@@ -908,7 +917,7 @@ func (a *App) runDoctor(ctx context.Context, mode outputMode, args []string) int
 	}
 	if len(args) != 1 || args[0] != "--self" {
 		return a.writeFailure(mode, usageFailure(
-			"doctor requires --self, --database, --runtime herdr, or --provider codex|claude",
+			"doctor requires --self, --database, --retrieval, --runtime herdr, or --provider codex|claude",
 			"run 'crewfold help doctor' for usage",
 		))
 	}
@@ -1092,6 +1101,33 @@ func (a *App) runDatabaseDoctor(ctx context.Context, mode outputMode, args []str
 		fmt.Fprintf(a.stdout, "integrity: %s\n", result.IntegrityCheck)
 	}
 	if result.Status != "ok" {
+		return ExitFailure
+	}
+	return ExitOK
+}
+
+func (a *App) runRetrievalDoctor(ctx context.Context, mode outputMode, args []string) int {
+	options, failure := parseOptions(args, "workspace", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).KnowledgeIndexStatus(ctx, workspace)
+	if err != nil {
+		return a.writeClientFailure(mode, "check knowledge retrieval", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write retrieval doctor output", err))
+		}
+	} else {
+		fmt.Fprintln(a.stdout, "Crewfold knowledge retrieval")
+		writeKnowledgeIndex(a, result.Index)
+	}
+	if result.Index.Status != domain.KnowledgeIndexOK {
 		return ExitFailure
 	}
 	return ExitOK
@@ -1406,7 +1442,7 @@ Usage:
 
 Commands:
   version        Print build and platform information
-  doctor --self  Check this binary (use --database for daemon storage)
+  doctor --self  Check this binary (use --database or --retrieval for daemon state)
   daemon run     Run the local daemon in the foreground
   daemon stop    Ask a running daemon to stop cleanly
   status         Query daemon health through its local socket
@@ -1417,7 +1453,7 @@ Commands:
   objective      Define project objectives and budgets
   task           Coordinate dependency-aware, leased work
   context        Build and inspect immutable run briefings
-  knowledge      Curate versioned decisions and findings
+  knowledge      Curate and discover versioned decisions and findings
   message        Send one bounded durable message to an agent
   inbox          Inspect an agent's durable mailbox
   thread         Inspect a durable agent conversation
@@ -1448,12 +1484,14 @@ does not invoke Git or access the network.
 const doctorHelp = `Usage:
   crewfold doctor --self [--output text|json]
   crewfold doctor --database --socket <path> [--output text|json]
+  crewfold doctor --retrieval --workspace <scope> --socket <path> [--output text|json]
   crewfold doctor --runtime herdr [--herdr-binary <path>] [--herdr-session <name>] [--output text|json]
   crewfold doctor --provider codex [--codex-binary <path>] [--codex-home <path>] [--output text|json]
   crewfold doctor --provider claude [--claude-binary <path>] [--claude-config-dir <path>] [--output text|json]
 
-Run checks for the current executable or query the daemon's SQLite schema,
-journal mode, foreign-key enforcement, and integrity status.
+Run checks for the current executable or query the daemon's SQLite database or
+rebuildable knowledge-retrieval index. Retrieval health is distinct from canonical
+database health.
 `
 
 func runAttachedProcess(ctx context.Context, attachment localapi.RunAttachResult) error {

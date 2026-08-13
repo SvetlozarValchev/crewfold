@@ -2,17 +2,18 @@
 
 ## Implementation status
 
-The current binary implements `help`, `version`, self/database diagnostics,
+The current binary implements `help`, `version`, self/database/retrieval diagnostics,
 foreground daemon lifecycle, process and workspace status, workspace/event
 queries, project/checkout registration and observation, durable
 agent/objective/task coordination, claims and drift, structured meetings,
-canonical decisions/findings, immutable context packets, deterministic fake
+canonical decisions/findings, deterministic scoped knowledge search, a rebuildable
+knowledge index, immutable context packets, deterministic fake
 execution, supervised direct and Herdr fixture subprocesses, run-scoped MCP
 reporting and knowledge proposal, durable one-recipient agent mail, and an
 offline-proven Codex provider adapter. The Claude Code adapter, provider doctor,
 and recorded Codex-to-Claude handoff are also implemented; only its separately
 gated live conformance call is pending. It supports text and JSON output. Teams,
-automatic knowledge curation/search, policy/approval commands, management
+automatic knowledge curation, policy/approval commands, management
 briefings, and the TUI remain future contracts.
 
 ## Goals
@@ -32,6 +33,7 @@ crewfold daemon run --data-dir /path/to/state --socket /path/to/crewfold.sock
 crewfold daemon stop --socket /path/to/crewfold.sock
 crewfold status --socket /path/to/crewfold.sock
 crewfold doctor --database --socket /path/to/crewfold.sock
+crewfold doctor --retrieval --workspace personal --socket /path/to/crewfold.sock
 crewfold doctor --runtime herdr
 crewfold doctor --provider codex
 crewfold doctor --provider claude
@@ -375,6 +377,13 @@ crewfold knowledge show KNOWLEDGE_REVISION --workspace personal \
   --socket /path/to/crewfold.sock
 crewfold knowledge list --workspace personal --project world-engine \
   --type finding --socket /path/to/crewfold.sock
+crewfold knowledge search "contact ordering" --workspace personal \
+  --project world-engine --task TASK_A --limit 20 \
+  --socket /path/to/crewfold.sock
+crewfold knowledge index status --workspace personal \
+  --socket /path/to/crewfold.sock
+crewfold knowledge index rebuild --workspace personal \
+  --socket /path/to/crewfold.sock --idempotency-key rebuild-search
 crewfold knowledge accept KNOWLEDGE_REVISION --expected-state-revision 1 \
   --workspace personal --socket /path/to/crewfold.sock
 crewfold context build NEXT_TASK --workspace personal --agent engine-impl \
@@ -411,12 +420,32 @@ excluded with reasons. An unknown ID fails the build. A superseded pin is never
 silently replaced; its explanation may name the current replacement, which must be
 requested explicitly.
 
+`knowledge search` treats its query as one to 16 literal whitespace-separated
+terms, not caller-supplied FTS syntax. The trimmed query is at most 256 UTF-8
+bytes; the result limit defaults to 20 and is at most 100. Without `--task`, only
+project-wide revisions are eligible. With `--task`, exact task-scoped revisions
+rank before project-wide revisions, followed by task/dependency provenance,
+freshness horizon, confidence, verification, title-weighted BM25, acceptance time,
+and exact revision ID. `--type` is an optional hard filter.
+
+Every JSON match contains the complete exact revision and its
+`knowledge_search_v1` tuple explanations, plus the search evaluation instant,
+canonical cursor, and index generation. Search is read-only candidate discovery:
+it neither governs knowledge nor inserts results into context. A missing, corrupt,
+inconsistent, or out-of-date derived index returns `retrieval_degraded` instead of
+falling back or reporting an empty success. `knowledge index status` and
+`doctor --retrieval` expose health; the doctor exits nonzero for degraded
+retrieval. `knowledge index rebuild` reconstructs the projection from canonical
+records and may generate an idempotency key when omitted. Exact knowledge and
+context reads remain available during retrieval degradation.
+
 The fixed packet budget is 32 KiB with a 12 KiB whole-knowledge sub-budget.
 `context show --output json` preserves the exact ordered request list and embedded
 snapshots; `context explain --output json` shows included and excluded revisions
 plus total and knowledge byte accounting. Eligibility is frozen at build, so later
 governance never rewrites an existing packet. There is no transcript ingestion,
-implicit project retrieval, search, automatic curation, or context delta in M14.
+implicit project retrieval or context delta. Search remains a separate explicit
+M15 query and automatic curation is not implemented.
 To give a run explicit knowledge, build this packet first and pass its ID to
 `run start --context`; an atomically generated default run packet has no
 caller-supplied knowledge links.

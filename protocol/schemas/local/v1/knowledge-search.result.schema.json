@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:knowledge-search-result:v1",
+  "title": "Crewfold local API deterministic knowledge search result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "search"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:knowledge-search-result:v1"},
+    "type": {"const": "knowledge_search"},
+    "search": {"$ref": "../../domain/v1/knowledge-search.schema.json"}
+  }
+}

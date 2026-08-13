@@ -73,7 +73,8 @@ crewfold daemon
 ```
 
 Canonical knowledge and explicit packet assembly run through normal transactional
-commands. The curator queue and automatic retrieval remain future M15 components.
+commands. Deterministic retrieval now uses a rebuildable SQLite FTS5 projection;
+the curator queue and automatic context selection remain later M15 components.
 
 The CLI can start the daemon on demand. A foreground mode makes debugging easy; a
 user service may keep it running. The same binary can expose CLI subcommands so
@@ -187,7 +188,7 @@ Consumes task, run, claim, message, and watcher events. It applies deterministic
 rules first and may ask a manager model for a recommendation when judgment is
 useful. Recommendations do not gain more authority because a model generated them.
 
-### Canonical knowledge and future context curator
+### Canonical knowledge, retrieval, and future context curator
 
 The implemented canonical store separates stable knowledge items from numbered,
 immutable-content revisions. It currently accepts only decisions and findings.
@@ -220,9 +221,26 @@ transaction, so later governance cannot change an existing run briefing. Provide
 transcripts are neither queried nor ingested. This is bounded context authority,
 not RAG or a transcript accumulator.
 
-The M15 context curator will propose broader knowledge, reconcile contradictions,
-and drive deterministic search and explicit deltas. It does not yet run, and no
-automatic acceptance or retrieval path exists in M14.
+The first M15 retrieval slice adds a disposable FTS5 projection over immutable
+revision titles and bodies. Search obtains text candidates from that projection,
+then loads canonical records and applies hard workspace, project, optional task,
+accepted/current, and freshness rules in one read transaction. Its named
+lexicographic rank is applicability, task/dependency provenance affinity,
+freshness horizon, confidence, verification, weighted BM25, acceptance time, and
+exact revision ID. Results freeze the complete revision, tuple explanations,
+canonical cursor, and index generation; they grant no authority and are never
+implicitly added to a packet.
+
+Index generation metadata and a deterministic canonical-source digest make
+missing, corrupt, inconsistent, and out-of-date state observable. Search fails
+closed as `retrieval_degraded`; exact canonical reads and context packets continue.
+An explicit idempotent rebuild reconstructs and integrity-checks the projection
+without mutating knowledge, context, or the event journal. No second database,
+embedding service, or background model is involved.
+
+The later M15 context curator will propose broader knowledge, reconcile
+contradictions, and drive explicit deltas. It does not yet run, and retrieval
+cannot automatically accept, summarize, or deliver knowledge.
 
 ### Outcome and briefing projector
 

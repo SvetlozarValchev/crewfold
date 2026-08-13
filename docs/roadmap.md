@@ -72,7 +72,7 @@ implementation commit is `e37fdcf32b2e5f69766405d6585ff24277a1ab3c`.
 | M12 ✓ | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
 | M13 ✓ | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
 | M14 ✓ | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
-| M15 | Curator/retrieval | Find, reconcile, and refresh relevant knowledge deterministically | M14 |
+| M15 ◐ | Curator/retrieval | Scoped retrieval is implemented; curation, reconciliation, and refresh remain | M14 |
 | M16 | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
 | M17 | Local checks/CI watcher | Route fresh check evidence without granting merge authority | M16 |
 | M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
@@ -217,14 +217,15 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M15 is next: add deterministic retrieval and curation on top of canonical records
-without allowing retrieval to grant authority. The first slice must make scoped
-search independently testable: hard workspace/project/authority/freshness filters,
-deterministic ranking and explanations, and a rebuildable index whose removal
-cannot affect exact canonical reads.
+M15 is active. Its first independently testable slice adds scoped FTS5 search on
+top of canonical records without allowing retrieval to grant authority: hard
+workspace/project/optional-task/authority/freshness filters, versioned
+deterministic ranking and explanations, retrieval diagnostics, and an explicitly
+rebuildable index whose removal cannot affect exact canonical reads. The accepted
+contract is [ADR-0009](decisions/0009-deterministic-derived-knowledge-retrieval.md).
 
-Later M15 slices add curator proposals, contradiction handling, explicit context
-deltas, and portable export. Native provider resume, active-turn steering,
+Remaining M15 slices add curator proposals, contradiction handling, explicit
+context deltas, and portable export. Native provider resume, active-turn steering,
 app-server ownership, remote users, and broader organizational authority remain
 outside this milestone. Every completed capability scenario remains required.
 

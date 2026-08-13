@@ -751,10 +751,22 @@ context deltas remain out of scope.
 **Question answered:** Can Crewfold find and maintain relevant knowledge at larger
 volume without making retrieval the source of truth?
 
+**Implementation status:** Active. The first independently testable slice now
+implements deterministic scoped search, explanation, retrieval health, and
+explicit search-index rebuild. Curator proposals, contradictions, context deltas,
+and portable export remain required before M15 is complete.
+
 **Visible result**
 
 ```sh
-crewfold knowledge search "contact ordering" --project demo
+crewfold knowledge search "contact ordering" --workspace personal \
+  --project demo --socket /path/to/crewfold.sock
+crewfold knowledge index status --workspace personal \
+  --socket /path/to/crewfold.sock
+crewfold knowledge index rebuild --workspace personal \
+  --socket /path/to/crewfold.sock
+crewfold doctor --retrieval --workspace personal \
+  --socket /path/to/crewfold.sock
 crewfold curator queue
 crewfold context refresh RUN_ID
 crewfold contradiction list
@@ -762,27 +774,32 @@ crewfold contradiction list
 
 **Deliverables**
 
-- SQLite FTS5 retrieval with hard scope, authority, provenance, and freshness
-  ranking.
+- SQLite FTS5 retrieval with hard scope, authority, and freshness filters plus
+  versioned deterministic applicability/provenance/quality/text ranking.
 - Curator proposal queue with bounded rule-based auto-acceptance.
 - Context deltas for new messages, decisions, dependencies, and contradictions.
 - Contradiction workflow and current/stale/disputed state.
 - Markdown plus machine-metadata export.
-- Search index rebuild from canonical records.
+- Search index health and idempotent rebuild from canonical records.
 
 **Automated acceptance**
 
 - Relevant scoped items rank above textually similar out-of-scope items.
+- A broad project search cannot expose task-scoped knowledge; a task search may
+  return only project-wide or exact-task records.
+- The exact ranking order and explanations survive daemon restart.
 - Retrieval can suggest only candidates; it cannot make proposed content accepted.
 - A newly accepted applicable decision creates one context delta.
 - Contradictory accepted candidates create a conflict, not a blended summary.
-- Deleting the search index and rebuilding it changes no canonical revisions.
+- Deleting or corrupting the search index leaves exact canonical reads unchanged;
+  rebuilding changes no canonical revisions or events.
 - Export/reimport preserves IDs, revisions, provenance, and current status.
 
 **Failure injection**
 
 - Corrupt or remove the search index and prove canonical reads continue while
-  `doctor` reports degraded retrieval and rebuild repairs it.
+  search returns `retrieval_degraded`, `doctor --retrieval` reports degraded
+  retrieval, and an explicit rebuild repairs it.
 
 **Exit gate**
 

@@ -204,6 +204,12 @@ reach that boundary: its unadvertised governance-tool probe is instead captured 
 semantic hash, and final byte size. Selection details and exact requested knowledge
 IDs live in packet v3 rather than being duplicated into the event.
 
+Deterministic `knowledge.search`, `knowledge.index.status`, and
+`knowledge.index.rebuild` append no domain event. Search and status are queries;
+the FTS5 index is a rebuildable projection rather than canonical history. Rebuild
+idempotency is recorded separately and its result identifies the derived
+generation/source cursor without implying a knowledge revision changed.
+
 The following remain proposals:
 
 ```text

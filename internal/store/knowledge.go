@@ -191,6 +191,7 @@ func (s *Store) ProposeKnowledge(ctx context.Context, command ProposeKnowledgeCo
 	if err := tx.Commit(); err != nil {
 		return KnowledgeMutationResult{}, storageFailure("commit knowledge proposal", err)
 	}
+	s.refreshKnowledgeIndexAfterCanonicalMutation(ctx)
 	return result, nil
 }
 

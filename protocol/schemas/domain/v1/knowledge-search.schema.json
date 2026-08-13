@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:knowledge-search:v1",
+  "title": "Crewfold deterministic canonical knowledge search v1",
+  "$ref": "#/$defs/result",
+  "$defs": {
+    "reason": {"type": "string", "minLength": 1, "maxLength": 256},
+    "scope": {
+      "type": "object", "additionalProperties": false, "required": ["rank", "reason"],
+      "properties": {"rank": {"type": "integer", "minimum": 0, "maximum": 1}, "reason": {"$ref": "#/$defs/reason"}}
+    },
+    "authority": {
+      "type": "object", "additionalProperties": false,
+      "required": ["review_status", "currency_status", "accepted_by_type", "reason"],
+      "properties": {
+        "review_status": {"const": "accepted"},
+        "currency_status": {"const": "current"},
+        "accepted_by_type": {"enum": ["human", "agent_run", "subsystem"]},
+        "reason": {"$ref": "#/$defs/reason"}
+      }
+    },
+    "freshness": {
+      "type": "object", "additionalProperties": false, "required": ["class", "evaluated_at", "reason"],
+      "properties": {
+        "class": {"type": "integer", "minimum": 0, "maximum": 1},
+        "fresh_until": {"type": "string", "format": "date-time"},
+        "evaluated_at": {"type": "string", "format": "date-time"},
+        "reason": {"$ref": "#/$defs/reason"}
+      }
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false, "required": ["rank", "reason", "matched_source_ids"],
+      "properties": {
+        "rank": {"type": "integer", "minimum": 0, "maximum": 4},
+        "reason": {"$ref": "#/$defs/reason"},
+        "matched_source_ids": {
+          "type": "array", "maxItems": 16, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128}
+        }
+      }
+    },
+    "quality": {
+      "type": "object", "additionalProperties": false,
+      "required": ["confidence", "confidence_rank", "verification_status", "verification_rank"],
+      "properties": {
+        "confidence": {"enum": ["low", "medium", "high"]},
+        "confidence_rank": {"type": "integer", "minimum": 0, "maximum": 2},
+        "verification_status": {"enum": ["unverified", "supported", "verified"]},
+        "verification_rank": {"type": "integer", "minimum": 0, "maximum": 2}
+      }
+    },
+    "text": {
+      "type": "object", "additionalProperties": false, "required": ["bm25", "title_weight", "body_weight"],
+      "properties": {
+        "bm25": {"type": "number"},
+        "title_weight": {"const": 8.0},
+        "body_weight": {"const": 1.0}
+      }
+    },
+    "tieBreaker": {
+      "type": "object", "additionalProperties": false, "required": ["accepted_at", "revision_id"],
+      "properties": {
+        "accepted_at": {"type": "string", "format": "date-time"},
+        "revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"}
+      }
+    },
+    "explanation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["scope", "authority", "freshness", "provenance", "quality", "text", "tie_breaker"],
+      "properties": {
+        "scope": {"$ref": "#/$defs/scope"},
+        "authority": {"$ref": "#/$defs/authority"},
+        "freshness": {"$ref": "#/$defs/freshness"},
+        "provenance": {"$ref": "#/$defs/provenance"},
+        "quality": {"$ref": "#/$defs/quality"},
+        "text": {"$ref": "#/$defs/text"},
+        "tie_breaker": {"$ref": "#/$defs/tieBreaker"}
+      }
+    },
+    "match": {
+      "type": "object", "additionalProperties": false, "required": ["ordinal", "revision", "explanation"],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 1, "maximum": 100},
+        "revision": {"$ref": "knowledge-revision.schema.json"},
+        "explanation": {"$ref": "#/$defs/explanation"}
+      }
+    },
+    "result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["normalized_query", "evaluated_at", "canonical_event_sequence", "rank_policy", "index", "matches"],
+      "properties": {
+        "normalized_query": {"type": "string", "minLength": 1, "maxLength": 256},
+        "evaluated_at": {"type": "string", "format": "date-time"},
+        "canonical_event_sequence": {"type": "integer", "minimum": 0},
+        "rank_policy": {"const": "knowledge_search_v1"},
+        "index": {"$ref": "knowledge-index-status.schema.json"},
+        "matches": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/match"}}
+      }
+    }
+  }
+}

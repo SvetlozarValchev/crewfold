@@ -13,11 +13,13 @@ their acceptance/review gate has passed. The current implementation supports:
 - owner-governed acceptance, rejection, staleness, and supersession;
 - proposals from either the owner CLI or an authenticated agent run;
 - explicit, exact revision links in bounded context packets; and
-- explanation of selection, exclusion, revision, and byte budgets.
+- explanation of selection, exclusion, revision, and byte budgets;
+- deterministic, scoped full-text discovery over canonical revisions; and
+- an inspectable, explicitly rebuildable derived search index.
 
-It does not ingest provider transcripts, search for knowledge, curate
-automatically, or refresh a running agent with context deltas. Those remain later
-capabilities.
+It does not ingest provider transcripts, curate automatically, or refresh a
+running agent with context deltas. Contradiction handling and export/import also
+remain later capabilities.
 
 The system separates four layers:
 
@@ -127,19 +129,48 @@ an explicit exclusion. The replacement-agent path combines a durable handoff or
 mailbox message with explicitly pinned accepted knowledge, not copied session
 history.
 
-## Planned curator and retrieval
+## Deterministic retrieval and planned curator
 
-M15 introduces the context curator, deterministic search, contradiction handling,
-and explicit refresh/deltas. The planned curator is a role plus a deterministic
+The first M15 slice implements deterministic SQLite FTS5 discovery over canonical
+revision titles and bodies. `knowledge search` first applies hard workspace,
+project, authority, currency, and freshness rules from canonical records. A broad
+project search includes only project-wide records. Supplying a task adds records
+scoped to that exact task and enables task/dependency provenance affinity; it does
+not widen project scope.
+
+Eligible matches use the versioned `knowledge_search_v1` lexicographic policy:
+exact-task applicability, task/dependency provenance affinity, freshness horizon,
+confidence, verification, weighted title/body BM25 score, acceptance time, then
+exact revision ID. The complete tuple and reason for every result are returned
+with the exact canonical revision, evaluation time, canonical cursor, and index
+generation. Retrieval is a candidate-discovery query only: it cannot accept
+content, follow a successor, inject results into a packet, or change canonical
+state.
+
+The FTS index is a disposable projection with a deterministic source digest. A
+missing, corrupt, inconsistent, or out-of-date index produces an explicit
+`retrieval_degraded` diagnosis instead of a fallback query or false empty result.
+Exact `knowledge show`, `knowledge list`, and context-packet reads continue to use
+canonical tables. `knowledge index rebuild` reconstructs the projection from those
+tables; `knowledge index status` and `doctor --retrieval` expose its health. See
+[ADR-0009](decisions/0009-deterministic-derived-knowledge-retrieval.md).
+After a proposal commits, atomic best-effort catch-up may append its immutable row
+and refresh the cursor/count/digest inside the current generation, but only when
+the preexisting projection still matches its published snapshot. It never repairs
+missing, corrupt, or content-mismatched derived state; only a full rebuild creates
+a new generation and repairs damage.
+Rebuild idempotency is tied to the published generation and source digest: an
+unchanged healthy snapshot replays, degradation reports `retrieval_degraded`, and
+a healthy superseding snapshot makes the old key conflict. Index/search event
+cursors are node-wide journal observation high-water marks rather than retrieval
+freshness or workspace-local knowledge cursors.
+
+Later M15 slices introduce the context curator, contradiction handling, and
+explicit refresh/deltas. The planned curator is a role plus a deterministic
 pipeline, not an all-powerful memory agent. It may propose concise revisions from
 structured handoffs, accepted meeting resolutions, review findings, test evidence,
 and explicit owner decisions, but it cannot silently rewrite history or grant its
 own proposals authority.
-
-Planned retrieval will filter by hard scope and authority before ranking by
-applicability, freshness, confidence, and measured utility. Full-text or semantic
-matching may discover candidates; neither can determine truth or acceptance.
-Existing explicit revision links remain authoritative and reproducible.
 
 Long-running sessions do not currently receive knowledge changes. A future context
 delta may report a dependency change, accepted or superseded decision, important
@@ -170,10 +201,10 @@ are not duplicated as knowledge merely to make them retrievable.
 ## Where RAG fits
 
 Retrieval-augmented generation is an implementation technique, not the knowledge
-architecture. M14 performs no full-text or semantic retrieval. A later
-deterministic retrieval layer can use relational scope queries, SQLite FTS, and
-explicit graph traversal. Optional embeddings may improve candidate discovery,
-but they must be rebuildable from canonical records and can never become the sole
+architecture. The implemented deterministic layer uses relational scope queries
+plus SQLite FTS5; it performs no model call and does not make a search result
+authoritative. Optional embeddings may later improve candidate discovery, but
+they must be rebuildable from canonical records and can never become the sole
 source of truth or acceptance.
 
 A separate vector database is unjustified for the personal product until measured

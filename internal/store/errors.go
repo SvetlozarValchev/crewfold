@@ -56,6 +56,7 @@ const (
 	CodeKnowledgeNotFound    = "knowledge_not_found"
 	CodeKnowledgeConflict    = "knowledge_conflict"
 	CodeKnowledgeDenied      = "knowledge_denied"
+	CodeRetrievalDegraded    = "retrieval_degraded"
 	CodeIdempotencyConflict  = "idempotency_conflict"
 	CodeStorageFailed        = "storage_failed"
 )

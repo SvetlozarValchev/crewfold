@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 10
+	LatestSchemaVersion = 11
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -16,6 +16,25 @@ const (
 type Workspace = domain.Workspace
 
 type Event = domain.Event
+
+type SearchKnowledgeQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	TaskIdentifier      string
+	Type                string
+	Query               string
+	Limit               int
+}
+
+type RebuildKnowledgeIndexCommand struct {
+	WorkspaceIdentifier string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type KnowledgeIndexRebuildResult struct {
+	Index domain.KnowledgeIndexStatus `json:"index"`
+}
 
 type WorkspaceInitResult struct {
 	Workspace     Workspace `json:"workspace"`

@@ -55,6 +55,12 @@ Exercise one real boundary at a time:
 
 Each component suite labels its boundary in errors and exposes operation IDs.
 
+The deterministic retrieval component suite uses the real pinned SQLite FTS5
+engine. Ranking fixtures vary one tuple axis at a time and assert the exact final
+revision-ID order; scope and authority tests prove ineligible rows never enter the
+ranked set. Index failure tests remove or invalidate only the derived projection,
+then prove canonical reads remain byte-stable before an explicit rebuild.
+
 ### 5. Black-box acceptance scenarios
 
 Launch the built Crewfold binary with an isolated temporary home, explicit socket,
@@ -323,7 +329,7 @@ The suite grows this matrix milestone by milestone:
 | Git | missing checkout, changed HEAD, dirty drift, command failure |
 | Messaging | recipient offline, wake failure, duplicate ack, forbidden recipient |
 | Meeting | participant timeout, facilitator crash, stale frozen context |
-| Knowledge | contradiction, stale item, broken search index, budget overflow |
+| Knowledge | contradiction, stale item, missing/corrupt search index, budget overflow |
 | Scheduler | capacity saturation, dependency cycle, claim race, restart mid-launch |
 
 Fault injection should happen at named seams rather than through arbitrary sleeps.

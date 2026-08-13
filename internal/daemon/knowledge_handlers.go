@@ -62,6 +62,57 @@ func (s *server) handleKnowledgeList(request localapi.Request) localapi.Response
 	})
 }
 
+func (s *server) handleKnowledgeSearch(request localapi.Request) localapi.Response {
+	var params localapi.KnowledgeSearchParams
+	if err := decodeParams(request.Params, &params); err != nil || (params.Limit != nil && (*params.Limit < 1 || *params.Limit > 100)) {
+		return invalidParamsResponse(request, "knowledge.search requires workspace, project, query, and limit between 1 and 100 when supplied")
+	}
+	limit := 0
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	result, err := s.store.SearchKnowledge(context.Background(), store.SearchKnowledgeQuery{
+		WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project,
+		TaskIdentifier: params.Task, Type: params.Type, Query: params.Query, Limit: limit,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.KnowledgeSearchResult{
+		Schema: localapi.KnowledgeSearchSchema, Type: "knowledge_search", Search: result,
+	})
+}
+
+func (s *server) handleKnowledgeIndexStatus(request localapi.Request) localapi.Response {
+	var params localapi.KnowledgeIndexStatusParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "knowledge.index.status requires workspace")
+	}
+	status, err := s.store.KnowledgeIndexStatus(context.Background(), params.Workspace)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.KnowledgeIndexStatusResult{
+		Schema: localapi.KnowledgeIndexStatusSchema, Type: "knowledge_index_status", Index: status,
+	})
+}
+
+func (s *server) handleKnowledgeIndexRebuild(request localapi.Request) localapi.Response {
+	var params localapi.KnowledgeIndexRebuildParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "knowledge.index.rebuild requires workspace and idempotency_key")
+	}
+	result, err := s.store.RebuildKnowledgeIndex(context.Background(), store.RebuildKnowledgeIndexCommand{
+		WorkspaceIdentifier: params.Workspace, IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.KnowledgeIndexRebuildResult{
+		Schema: localapi.KnowledgeIndexRebuildSchema, Type: "knowledge_index_rebuild", Index: result.Index,
+	})
+}
+
 func (s *server) handleKnowledgeAccept(request localapi.Request) localapi.Response {
 	var params localapi.KnowledgeDecisionParams
 	if err := decodeParams(request.Params, &params); err != nil {

@@ -366,6 +366,35 @@ func (c *Client) KnowledgeList(ctx context.Context, params KnowledgeListParams) 
 	return result, nil
 }
 
+func (c *Client) KnowledgeSearch(ctx context.Context, params KnowledgeSearchParams) (KnowledgeSearchResult, error) {
+	if params.Limit == nil {
+		limit := 20
+		params.Limit = &limit
+	}
+	var result KnowledgeSearchResult
+	if err := c.callParams(ctx, MethodKnowledgeSearch, params, &result); err != nil {
+		return KnowledgeSearchResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) KnowledgeIndexStatus(ctx context.Context, workspace string) (KnowledgeIndexStatusResult, error) {
+	var result KnowledgeIndexStatusResult
+	if err := c.callParams(ctx, MethodKnowledgeIndexStatus, KnowledgeIndexStatusParams{Workspace: workspace}, &result); err != nil {
+		return KnowledgeIndexStatusResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) KnowledgeIndexRebuild(ctx context.Context, params KnowledgeIndexRebuildParams) (KnowledgeIndexRebuildResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result KnowledgeIndexRebuildResult
+	if err := c.callParams(ctx, MethodKnowledgeIndexRebuild, params, &result); err != nil {
+		return KnowledgeIndexRebuildResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) KnowledgeAccept(ctx context.Context, params KnowledgeDecisionParams) (KnowledgeMutationResult, error) {
 	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
 	var result KnowledgeMutationResult

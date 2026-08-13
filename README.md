@@ -61,9 +61,11 @@ decisions and findings as immutable revisions: authenticated runs may propose,
 while the local owner accepts, rejects, marks stale, or accepts an explicit
 successor. Context packet v3 can deliver exact accepted/current revision snapshots
 to a replacement run under fixed byte budgets without reading provider
-transcripts. The canonical-knowledge acceptance gate now passes; automatic
-curation, search, context deltas, broader knowledge types, and the operator TUI
-remain to come.
+transcripts. Crewfold can now discover eligible canonical revisions through
+deterministic scoped FTS5 search, explain the exact rank tuple and derived-index
+generation, diagnose degraded retrieval, and explicitly rebuild the index without
+changing canonical state. Automatic curation, contradictions, context deltas,
+portable export, broader knowledge types, and the operator TUI remain to come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.

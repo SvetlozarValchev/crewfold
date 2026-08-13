@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:knowledge-index-status-result:v1",
+  "title": "Crewfold local API knowledge retrieval index status result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "index"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:knowledge-index-status-result:v1"},
+    "type": {"const": "knowledge_index_status"},
+    "index": {"$ref": "../../domain/v1/knowledge-index-status.schema.json"}
+  }
+}

@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"net"
 	"os/exec"
 	"testing"
 
@@ -58,6 +60,41 @@ func TestKnowledgeLocalAPIAndExplicitContextDelivery(t *testing.T) {
 	if err != nil || len(after.Detail.AuthorityChecks) != 1 || after.Detail.AuthorityChecks[0].Outcome != domain.KnowledgeAuthorityAllowed {
 		t.Fatalf("KnowledgeShow(accepted) = %#v, %v", after, err)
 	}
+	indexBefore, err := client.KnowledgeIndexStatus(context.Background(), "personal")
+	if err != nil || indexBefore.Index.Status != domain.KnowledgeIndexOK || indexBefore.Index.SourceCount != 1 {
+		t.Fatalf("KnowledgeIndexStatus(after proposal refresh) = %#v, %v", indexBefore, err)
+	}
+	searched, err := client.KnowledgeSearch(context.Background(), localapi.KnowledgeSearchParams{
+		Workspace: "personal", Project: project.Project.ID, Query: "contact ordering",
+	})
+	if err != nil || len(searched.Search.Matches) != 1 || searched.Search.Matches[0].Revision.ID != accepted.Revision.ID || searched.Search.Matches[0].Explanation.Authority.ReviewStatus != domain.KnowledgeReviewAccepted {
+		t.Fatalf("KnowledgeSearch() = %#v, %v", searched, err)
+	}
+	omittedLimit := rawLocalAPIRequest(t, running.config.SocketPath, localapi.MethodKnowledgeSearch, map[string]any{
+		"workspace": "personal", "project": project.Project.ID, "query": "contact ordering",
+	})
+	if omittedLimit.Error != nil {
+		t.Fatalf("knowledge.search without limit error = %#v", omittedLimit.Error)
+	}
+	var omittedResult localapi.KnowledgeSearchResult
+	if err := json.Unmarshal(omittedLimit.Result, &omittedResult); err != nil || len(omittedResult.Search.Matches) != 1 {
+		t.Fatalf("knowledge.search without limit result = %#v, error=%v", omittedResult, err)
+	}
+	explicitZero := rawLocalAPIRequest(t, running.config.SocketPath, localapi.MethodKnowledgeSearch, map[string]any{
+		"workspace": "personal", "project": project.Project.ID, "query": "contact ordering", "limit": 0,
+	})
+	if explicitZero.Error == nil || explicitZero.Error.Code != "invalid_request" || explicitZero.Error.Retryable {
+		t.Fatalf("knowledge.search with explicit zero limit error = %#v", explicitZero.Error)
+	}
+	rebuilt, err := client.KnowledgeIndexRebuild(context.Background(), localapi.KnowledgeIndexRebuildParams{
+		Workspace: "personal", IdempotencyKey: "api-knowledge-index-rebuild",
+	})
+	if err != nil || rebuilt.Index.Status != domain.KnowledgeIndexOK || rebuilt.Index.SourceCount != 1 {
+		t.Fatalf("KnowledgeIndexRebuild() = %#v, %v", rebuilt, err)
+	}
+	if rebuilt.Index.Generation < indexBefore.Index.Generation || rebuilt.Index.SourceDigest != indexBefore.Index.SourceDigest {
+		t.Fatalf("explicit rebuild changed canonical source identity: before=%#v after=%#v", indexBefore.Index, rebuilt.Index)
+	}
 
 	replacement := createAssignedRunWorkerTask(t, client, project.Project.ID, agent.Agent.ID, "knowledge replacement")
 	packet, err := client.ContextBuild(context.Background(), localapi.ContextBuildParams{
@@ -74,6 +111,71 @@ func TestKnowledgeLocalAPIAndExplicitContextDelivery(t *testing.T) {
 	if err := running.wait(); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+}
+
+func TestKnowledgeRetrievalHandlersRejectUnknownFields(t *testing.T) {
+	running := startTestServer(t, testConfig(t))
+	client := localapi.NewClient(running.config.SocketPath)
+	if _, err := client.WorkspaceInit(context.Background(), "personal", "strict-retrieval-workspace"); err != nil {
+		t.Fatalf("WorkspaceInit() error = %v", err)
+	}
+	for _, test := range []struct {
+		method string
+		params map[string]any
+	}{
+		{localapi.MethodKnowledgeSearch, map[string]any{"workspace": "personal", "project": "demo", "query": "term", "unexpected": true}},
+		{localapi.MethodKnowledgeIndexStatus, map[string]any{"workspace": "personal", "unexpected": true}},
+		{localapi.MethodKnowledgeIndexRebuild, map[string]any{"workspace": "personal", "idempotency_key": "strict", "unexpected": true}},
+	} {
+		response := rawLocalAPIRequest(t, running.config.SocketPath, test.method, test.params)
+		if response.Error == nil || response.Error.Code != "invalid_request" || response.Error.Retryable {
+			t.Errorf("%s response error = %#v, want non-retryable invalid_request", test.method, response.Error)
+		}
+	}
+}
+
+func TestRetrievalDegradedStoreErrorsAreRetryable(t *testing.T) {
+	response := storeErrorResponse(localapi.Request{ID: "degraded", Protocol: localapi.MaxProtocol}, &store.Error{
+		Code: store.CodeRetrievalDegraded, Message: "knowledge retrieval index is unavailable",
+	})
+	if response.Error == nil || response.Error.Code != store.CodeRetrievalDegraded || !response.Error.Retryable {
+		t.Fatalf("storeErrorResponse(retrieval degraded) = %#v", response.Error)
+	}
+}
+
+func rawLocalAPIRequest(t *testing.T, socketPath, method string, params any) localapi.Response {
+	t.Helper()
+	connection, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("dial local API: %v", err)
+	}
+	defer connection.Close()
+	reader := bufio.NewReader(connection)
+	write := func(request localapi.Request) localapi.Response {
+		t.Helper()
+		if err := json.NewEncoder(connection).Encode(request); err != nil {
+			t.Fatalf("encode %s: %v", request.Method, err)
+		}
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			t.Fatalf("read %s: %v", request.Method, err)
+		}
+		var response localapi.Response
+		if err := json.Unmarshal(line, &response); err != nil {
+			t.Fatalf("decode %s response: %v", request.Method, err)
+		}
+		return response
+	}
+	helloParams, _ := json.Marshal(localapi.HelloParams{MinProtocol: localapi.MinProtocol, MaxProtocol: localapi.MaxProtocol})
+	hello := write(localapi.Request{ID: "strict-hello", Method: localapi.MethodHello, Params: helloParams})
+	if hello.Error != nil {
+		t.Fatalf("hello error = %#v", hello.Error)
+	}
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	return write(localapi.Request{ID: "strict-retrieval", Protocol: localapi.MaxProtocol, Method: method, Params: encoded})
 }
 
 func TestRunScopedMCPCanProposeButCannotAcceptKnowledge(t *testing.T) {

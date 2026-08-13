@@ -137,6 +137,26 @@ func TestDoctorSelfFailureIsVisibleAndNonZero(t *testing.T) {
 	}
 }
 
+func TestDoctorRetrievalReportsStructuredDegradationAndFails(t *testing.T) {
+	t.Parallel()
+	client := &fakeDaemonClient{knowledgeIndexStatus: localapi.KnowledgeIndexStatusResult{
+		Schema: localapi.KnowledgeIndexStatusSchema, Type: "knowledge_index_status",
+		Index: domain.KnowledgeIndexStatus{Status: domain.KnowledgeIndexDegraded, Diagnosis: "missing"},
+	}}
+	app, stdout, stderr := newTestApp()
+	app.newClient = func(string) daemonClient { return client }
+	if exit := app.Run([]string{"doctor", "--retrieval", "--workspace", "personal", "--socket", "/tmp/crewfold.sock", "--output", "json"}); exit != ExitFailure {
+		t.Fatalf("retrieval doctor exit=%d, want failure; stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+	var result localapi.KnowledgeIndexStatusResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result.Schema != localapi.KnowledgeIndexStatusSchema || result.Index.Diagnosis != "missing" {
+		t.Fatalf("retrieval doctor JSON=%#v error=%v", result, err)
+	}
+	if stderr.Len() != 0 || client.knowledgeIndexWorkspace != "personal" {
+		t.Fatalf("retrieval doctor stderr=%q workspace=%q", stderr.String(), client.knowledgeIndexWorkspace)
+	}
+}
+
 func TestUnknownCommandHasStableTextErrorAndUsageExit(t *testing.T) {
 	t.Parallel()
 
@@ -976,76 +996,82 @@ func TestDaemonCommandsRejectMissingAndUnknownOptions(t *testing.T) {
 }
 
 type fakeDaemonClient struct {
-	status                localapi.StatusResult
-	statusErr             error
-	stop                  localapi.StopResult
-	stopErr               error
-	databaseStatus        localapi.DatabaseStatusResult
-	databaseStatusErr     error
-	workspaceInit         localapi.WorkspaceInitResult
-	workspaceInitErr      error
-	workspaceShow         localapi.WorkspaceShowResult
-	workspaceShowErr      error
-	projectAdd            localapi.ProjectAddResult
-	projectAddErr         error
-	projectInspect        localapi.ProjectInspectResult
-	projectInspectErr     error
-	checkoutAdd           localapi.CheckoutAddResult
-	checkoutAddErr        error
-	checkoutList          localapi.CheckoutListResult
-	checkoutListErr       error
-	eventsList            localapi.EventsListResult
-	eventsListErr         error
-	agentMutation         localapi.AgentMutationResult
-	agentShow             localapi.AgentShowResult
-	agentList             localapi.AgentListResult
-	objectiveMutation     localapi.ObjectiveMutationResult
-	objectiveShow         localapi.ObjectiveShowResult
-	objectiveList         localapi.ObjectiveListResult
-	taskMutation          localapi.TaskMutationResult
-	taskShow              localapi.TaskShowResult
-	taskList              localapi.TaskListResult
-	taskTimeline          localapi.TaskTimelineResult
-	runMutation           localapi.RunMutationResult
-	runShow               localapi.RunShowResult
-	runList               localapi.RunListResult
-	runLogs               localapi.RunLogsResult
-	runControl            localapi.RunControlResult
-	runAttach             localapi.RunAttachResult
-	runStartParams        localapi.RunStartParams
-	runResumeParams       localapi.RunResumeParams
-	runStopParams         localapi.RunStopParams
-	runLogsWorkspace      string
-	runLogsRun            string
-	runLogsTail           int
-	runControlWorkspace   string
-	runControlRun         string
-	runPromptText         string
-	runAttachTakeover     bool
-	coordination          localapi.CoordinationStatusResult
-	messageSend           localapi.MessageSendResult
-	inboxList             localapi.InboxListResult
-	threadShow            localapi.ThreadShowResult
-	messageSendParams     localapi.MessageSendParams
-	agentCreateParams     localapi.AgentCreateParams
-	objectiveCreateParams localapi.ObjectiveCreateParams
-	taskCreateParams      localapi.TaskCreateParams
-	taskAssignParams      localapi.TaskAssignParams
-	contextBuildParams    localapi.ContextBuildParams
-	knowledgeMutation     localapi.KnowledgeMutationResult
-	knowledgeShow         localapi.KnowledgeShowResult
-	knowledgeList         localapi.KnowledgeListResult
-	knowledgePropose      localapi.KnowledgeProposeParams
-	knowledgeDecision     localapi.KnowledgeDecisionParams
-	knowledgeStale        localapi.KnowledgeMarkStaleParams
-	coordinationWorkspace string
-	initName              string
-	initKey               string
-	showIdentifier        string
-	projectArgs           []string
-	checkoutArgs          []string
-	eventsAfter           int64
-	eventsLimit           int
+	status                  localapi.StatusResult
+	statusErr               error
+	stop                    localapi.StopResult
+	stopErr                 error
+	databaseStatus          localapi.DatabaseStatusResult
+	databaseStatusErr       error
+	knowledgeIndexStatus    localapi.KnowledgeIndexStatusResult
+	knowledgeIndexRebuild   localapi.KnowledgeIndexRebuildResult
+	knowledgeSearch         localapi.KnowledgeSearchResult
+	knowledgeSearchParams   localapi.KnowledgeSearchParams
+	knowledgeRebuildParams  localapi.KnowledgeIndexRebuildParams
+	knowledgeIndexWorkspace string
+	workspaceInit           localapi.WorkspaceInitResult
+	workspaceInitErr        error
+	workspaceShow           localapi.WorkspaceShowResult
+	workspaceShowErr        error
+	projectAdd              localapi.ProjectAddResult
+	projectAddErr           error
+	projectInspect          localapi.ProjectInspectResult
+	projectInspectErr       error
+	checkoutAdd             localapi.CheckoutAddResult
+	checkoutAddErr          error
+	checkoutList            localapi.CheckoutListResult
+	checkoutListErr         error
+	eventsList              localapi.EventsListResult
+	eventsListErr           error
+	agentMutation           localapi.AgentMutationResult
+	agentShow               localapi.AgentShowResult
+	agentList               localapi.AgentListResult
+	objectiveMutation       localapi.ObjectiveMutationResult
+	objectiveShow           localapi.ObjectiveShowResult
+	objectiveList           localapi.ObjectiveListResult
+	taskMutation            localapi.TaskMutationResult
+	taskShow                localapi.TaskShowResult
+	taskList                localapi.TaskListResult
+	taskTimeline            localapi.TaskTimelineResult
+	runMutation             localapi.RunMutationResult
+	runShow                 localapi.RunShowResult
+	runList                 localapi.RunListResult
+	runLogs                 localapi.RunLogsResult
+	runControl              localapi.RunControlResult
+	runAttach               localapi.RunAttachResult
+	runStartParams          localapi.RunStartParams
+	runResumeParams         localapi.RunResumeParams
+	runStopParams           localapi.RunStopParams
+	runLogsWorkspace        string
+	runLogsRun              string
+	runLogsTail             int
+	runControlWorkspace     string
+	runControlRun           string
+	runPromptText           string
+	runAttachTakeover       bool
+	coordination            localapi.CoordinationStatusResult
+	messageSend             localapi.MessageSendResult
+	inboxList               localapi.InboxListResult
+	threadShow              localapi.ThreadShowResult
+	messageSendParams       localapi.MessageSendParams
+	agentCreateParams       localapi.AgentCreateParams
+	objectiveCreateParams   localapi.ObjectiveCreateParams
+	taskCreateParams        localapi.TaskCreateParams
+	taskAssignParams        localapi.TaskAssignParams
+	contextBuildParams      localapi.ContextBuildParams
+	knowledgeMutation       localapi.KnowledgeMutationResult
+	knowledgeShow           localapi.KnowledgeShowResult
+	knowledgeList           localapi.KnowledgeListResult
+	knowledgePropose        localapi.KnowledgeProposeParams
+	knowledgeDecision       localapi.KnowledgeDecisionParams
+	knowledgeStale          localapi.KnowledgeMarkStaleParams
+	coordinationWorkspace   string
+	initName                string
+	initKey                 string
+	showIdentifier          string
+	projectArgs             []string
+	checkoutArgs            []string
+	eventsAfter             int64
+	eventsLimit             int
 }
 
 func (client *fakeDaemonClient) Status(context.Context) (localapi.StatusResult, error) {
@@ -1058,6 +1084,11 @@ func (client *fakeDaemonClient) Stop(context.Context) (localapi.StopResult, erro
 
 func (client *fakeDaemonClient) DatabaseStatus(context.Context) (localapi.DatabaseStatusResult, error) {
 	return client.databaseStatus, client.databaseStatusErr
+}
+
+func (client *fakeDaemonClient) KnowledgeIndexStatus(_ context.Context, workspace string) (localapi.KnowledgeIndexStatusResult, error) {
+	client.knowledgeIndexWorkspace = workspace
+	return client.knowledgeIndexStatus, nil
 }
 
 func (client *fakeDaemonClient) WorkspaceInit(_ context.Context, name, key string) (localapi.WorkspaceInitResult, error) {
@@ -1183,6 +1214,16 @@ func (client *fakeDaemonClient) KnowledgeShow(context.Context, string, string) (
 
 func (client *fakeDaemonClient) KnowledgeList(context.Context, localapi.KnowledgeListParams) (localapi.KnowledgeListResult, error) {
 	return client.knowledgeList, nil
+}
+
+func (client *fakeDaemonClient) KnowledgeSearch(_ context.Context, params localapi.KnowledgeSearchParams) (localapi.KnowledgeSearchResult, error) {
+	client.knowledgeSearchParams = params
+	return client.knowledgeSearch, nil
+}
+
+func (client *fakeDaemonClient) KnowledgeIndexRebuild(_ context.Context, params localapi.KnowledgeIndexRebuildParams) (localapi.KnowledgeIndexRebuildResult, error) {
+	client.knowledgeRebuildParams = params
+	return client.knowledgeIndexRebuild, nil
 }
 
 func (client *fakeDaemonClient) KnowledgeAccept(_ context.Context, params localapi.KnowledgeDecisionParams) (localapi.KnowledgeMutationResult, error) {

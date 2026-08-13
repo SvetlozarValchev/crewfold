@@ -12,7 +12,10 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/ncruces/go-sqlite3"
+	"github.com/ncruces/go-sqlite3/driver"
+	"github.com/ncruces/go-sqlite3/ext/fts5"
+	"github.com/ncruces/go-sqlite3/ext/hash"
 )
 
 const databaseFilename = "crewfold.db"
@@ -34,7 +37,7 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 	}
 
 	dsn := databaseDSN(path)
-	database, err := sql.Open("sqlite3", dsn)
+	database, err := driver.Open(dsn, registerSQLiteExtensions)
 	if err != nil {
 		return nil, &Error{Code: CodeStorageFailed, Message: "open SQLite database", Cause: err}
 	}
@@ -71,6 +74,16 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 		return nil, err
 	}
 	return storage, nil
+}
+
+func registerSQLiteExtensions(connection *sqlite3.Conn) error {
+	if err := fts5.Register(connection); err != nil {
+		return err
+	}
+	if err := hash.Register(connection); err != nil {
+		return err
+	}
+	return registerSQLiteTimestampKey(connection)
 }
 
 func (s *Store) ensureDatabaseIdentity(ctx context.Context) error {
@@ -138,8 +151,10 @@ func (s *Store) Health(ctx context.Context) (DatabaseHealth, error) {
 	if err := s.db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
 		return DatabaseHealth{}, storageFailure("read database foreign-key mode", err)
 	}
-	if err := s.db.QueryRowContext(ctx, "PRAGMA quick_check(1)").Scan(&health.IntegrityCheck); err != nil {
-		return DatabaseHealth{}, storageFailure("run database integrity check", err)
+	var err error
+	health.IntegrityCheck, err = s.databaseIntegrityCheck(ctx)
+	if err != nil {
+		return DatabaseHealth{}, err
 	}
 	health.ForeignKeys = foreignKeys == 1
 	health.JournalMode = strings.ToLower(health.JournalMode)
@@ -159,6 +174,59 @@ func (s *Store) Health(ctx context.Context) (DatabaseHealth, error) {
 		}
 	}
 	return health, nil
+}
+
+func (s *Store) databaseIntegrityCheck(ctx context.Context) (string, error) {
+	fileResult, err := s.databaseIntegrityCheckWithoutRetrieval(ctx)
+	if err != nil {
+		return "", storageFailure("run database integrity check", err)
+	}
+	return fileResult, nil
+}
+
+func (s *Store) databaseIntegrityCheckWithoutRetrieval(ctx context.Context) (string, error) {
+	// The base registered driver does not install FTS5. SQLite therefore runs one
+	// global page-allocation, freelist, and ordinary B-tree check without invoking
+	// the disposable virtual table's xIntegrity hook. Any failure here is file-wide
+	// or structural and must block startup; semantic FTS health is checked by the
+	// retrieval subsystem itself.
+	database, err := sql.Open("sqlite3", databaseDSN(s.path))
+	if err != nil {
+		return "", err
+	}
+	database.SetMaxOpenConns(1)
+	database.SetMaxIdleConns(0)
+	defer database.Close()
+	if err := database.PingContext(ctx); err != nil {
+		return "", err
+	}
+	return runSQLiteQuickCheck(ctx, database)
+}
+
+func runSQLiteQuickCheck(ctx context.Context, database *sql.DB) (string, error) {
+	rows, err := database.QueryContext(ctx, "PRAGMA quick_check(1)")
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	result := ""
+	for rows.Next() {
+		var current string
+		if err := rows.Scan(&current); err != nil {
+			return "", err
+		}
+		if current != "ok" {
+			return current, nil
+		}
+		result = current
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if result == "" {
+		return "", errors.New("SQLite quick_check returned no result")
+	}
+	return result, nil
 }
 
 func validateDatabasePath(path string) error {

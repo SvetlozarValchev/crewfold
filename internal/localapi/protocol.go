@@ -14,112 +14,118 @@ const (
 	MinProtocol = 1
 	MaxProtocol = 1
 
-	MethodHello              = "system.hello"
-	MethodStatus             = "system.status"
-	MethodStop               = "system.stop"
-	MethodDatabaseStatus     = "database.status"
-	MethodWorkspaceInit      = "workspace.init"
-	MethodWorkspaceShow      = "workspace.show"
-	MethodProjectAdd         = "project.add"
-	MethodProjectInspect     = "project.inspect"
-	MethodCheckoutAdd        = "checkout.add"
-	MethodCheckoutList       = "checkout.list"
-	MethodAgentCreate        = "agent.create"
-	MethodAgentUpdate        = "agent.update"
-	MethodAgentShow          = "agent.show"
-	MethodAgentList          = "agent.list"
-	MethodObjectiveCreate    = "objective.create"
-	MethodObjectiveUpdate    = "objective.update"
-	MethodObjectiveShow      = "objective.show"
-	MethodObjectiveList      = "objective.list"
-	MethodTaskCreate         = "task.create"
-	MethodTaskUpdate         = "task.update"
-	MethodTaskShow           = "task.show"
-	MethodTaskList           = "task.list"
-	MethodTaskDepend         = "task.dependency.add"
-	MethodTaskAssign         = "task.assign"
-	MethodTaskTransition     = "task.transition"
-	MethodTaskTimeline       = "task.timeline"
-	MethodContextBuild       = "context.build"
-	MethodContextShow        = "context.show"
-	MethodContextExplain     = "context.explain"
-	MethodKnowledgePropose   = "knowledge.propose"
-	MethodKnowledgeShow      = "knowledge.show"
-	MethodKnowledgeList      = "knowledge.list"
-	MethodKnowledgeAccept    = "knowledge.accept"
-	MethodKnowledgeReject    = "knowledge.reject"
-	MethodKnowledgeMarkStale = "knowledge.mark_stale"
-	MethodMessageSend        = "message.send"
-	MethodInboxList          = "inbox.list"
-	MethodThreadShow         = "thread.show"
-	MethodRunStart           = "run.start"
-	MethodRunShow            = "run.show"
-	MethodRunList            = "run.list"
-	MethodRunResume          = "run.resume"
-	MethodRunStop            = "run.stop"
-	MethodRunLogs            = "run.logs"
-	MethodRunPrompt          = "run.prompt"
-	MethodRunInterrupt       = "run.interrupt"
-	MethodRunAttach          = "run.attach"
-	MethodCoordinationStatus = "coordination.status"
-	MethodClaimAdd           = "claim.add"
-	MethodClaimList          = "claim.list"
-	MethodClaimRelease       = "claim.release"
-	MethodOverlapList        = "overlap.list"
-	MethodOverlapInspect     = "overlap.inspect"
-	MethodOverlapScan        = "overlap.scan"
-	MethodDriftList          = "drift.list"
-	MethodMeetingCreate      = "meeting.create"
-	MethodMeetingRun         = "meeting.run"
-	MethodMeetingInspect     = "meeting.inspect"
-	MethodMeetingAccept      = "meeting.accept"
-	MethodMeetingTakeover    = "meeting.takeover"
-	MethodEventsList         = "events.list"
+	MethodHello                 = "system.hello"
+	MethodStatus                = "system.status"
+	MethodStop                  = "system.stop"
+	MethodDatabaseStatus        = "database.status"
+	MethodWorkspaceInit         = "workspace.init"
+	MethodWorkspaceShow         = "workspace.show"
+	MethodProjectAdd            = "project.add"
+	MethodProjectInspect        = "project.inspect"
+	MethodCheckoutAdd           = "checkout.add"
+	MethodCheckoutList          = "checkout.list"
+	MethodAgentCreate           = "agent.create"
+	MethodAgentUpdate           = "agent.update"
+	MethodAgentShow             = "agent.show"
+	MethodAgentList             = "agent.list"
+	MethodObjectiveCreate       = "objective.create"
+	MethodObjectiveUpdate       = "objective.update"
+	MethodObjectiveShow         = "objective.show"
+	MethodObjectiveList         = "objective.list"
+	MethodTaskCreate            = "task.create"
+	MethodTaskUpdate            = "task.update"
+	MethodTaskShow              = "task.show"
+	MethodTaskList              = "task.list"
+	MethodTaskDepend            = "task.dependency.add"
+	MethodTaskAssign            = "task.assign"
+	MethodTaskTransition        = "task.transition"
+	MethodTaskTimeline          = "task.timeline"
+	MethodContextBuild          = "context.build"
+	MethodContextShow           = "context.show"
+	MethodContextExplain        = "context.explain"
+	MethodKnowledgePropose      = "knowledge.propose"
+	MethodKnowledgeShow         = "knowledge.show"
+	MethodKnowledgeList         = "knowledge.list"
+	MethodKnowledgeSearch       = "knowledge.search"
+	MethodKnowledgeIndexStatus  = "knowledge.index.status"
+	MethodKnowledgeIndexRebuild = "knowledge.index.rebuild"
+	MethodKnowledgeAccept       = "knowledge.accept"
+	MethodKnowledgeReject       = "knowledge.reject"
+	MethodKnowledgeMarkStale    = "knowledge.mark_stale"
+	MethodMessageSend           = "message.send"
+	MethodInboxList             = "inbox.list"
+	MethodThreadShow            = "thread.show"
+	MethodRunStart              = "run.start"
+	MethodRunShow               = "run.show"
+	MethodRunList               = "run.list"
+	MethodRunResume             = "run.resume"
+	MethodRunStop               = "run.stop"
+	MethodRunLogs               = "run.logs"
+	MethodRunPrompt             = "run.prompt"
+	MethodRunInterrupt          = "run.interrupt"
+	MethodRunAttach             = "run.attach"
+	MethodCoordinationStatus    = "coordination.status"
+	MethodClaimAdd              = "claim.add"
+	MethodClaimList             = "claim.list"
+	MethodClaimRelease          = "claim.release"
+	MethodOverlapList           = "overlap.list"
+	MethodOverlapInspect        = "overlap.inspect"
+	MethodOverlapScan           = "overlap.scan"
+	MethodDriftList             = "drift.list"
+	MethodMeetingCreate         = "meeting.create"
+	MethodMeetingRun            = "meeting.run"
+	MethodMeetingInspect        = "meeting.inspect"
+	MethodMeetingAccept         = "meeting.accept"
+	MethodMeetingTakeover       = "meeting.takeover"
+	MethodEventsList            = "events.list"
 
-	StatusSchema             = "urn:crewfold:schema:local-api:status-result:v1"
-	StopSchema               = "urn:crewfold:schema:local-api:stop-result:v1"
-	DatabaseStatusSchema     = "urn:crewfold:schema:local-api:database-status-result:v1"
-	WorkspaceInitSchema      = "urn:crewfold:schema:local-api:workspace-init-result:v1"
-	WorkspaceShowSchema      = "urn:crewfold:schema:local-api:workspace-show-result:v1"
-	ProjectAddSchema         = "urn:crewfold:schema:local-api:project-add-result:v1"
-	ProjectInspectSchema     = "urn:crewfold:schema:local-api:project-inspect-result:v1"
-	CheckoutAddSchema        = "urn:crewfold:schema:local-api:checkout-add-result:v1"
-	CheckoutListSchema       = "urn:crewfold:schema:local-api:checkout-list-result:v1"
-	AgentMutationSchema      = "urn:crewfold:schema:local-api:agent-mutation-result:v1"
-	AgentShowSchema          = "urn:crewfold:schema:local-api:agent-show-result:v1"
-	AgentListSchema          = "urn:crewfold:schema:local-api:agent-list-result:v1"
-	ObjectiveMutationSchema  = "urn:crewfold:schema:local-api:objective-mutation-result:v1"
-	ObjectiveShowSchema      = "urn:crewfold:schema:local-api:objective-show-result:v1"
-	ObjectiveListSchema      = "urn:crewfold:schema:local-api:objective-list-result:v1"
-	TaskMutationSchema       = "urn:crewfold:schema:local-api:task-mutation-result:v1"
-	TaskShowSchema           = "urn:crewfold:schema:local-api:task-show-result:v1"
-	TaskListSchema           = "urn:crewfold:schema:local-api:task-list-result:v1"
-	TaskTimelineSchema       = "urn:crewfold:schema:local-api:task-timeline-result:v1"
-	ContextBuildSchema       = "urn:crewfold:schema:local-api:context-build-result:v3"
-	ContextShowSchema        = "urn:crewfold:schema:local-api:context-show-result:v3"
-	ContextExplainSchema     = "urn:crewfold:schema:local-api:context-explain-result:v2"
-	KnowledgeMutationSchema  = "urn:crewfold:schema:local-api:knowledge-mutation-result:v1"
-	KnowledgeShowSchema      = "urn:crewfold:schema:local-api:knowledge-show-result:v1"
-	KnowledgeListSchema      = "urn:crewfold:schema:local-api:knowledge-list-result:v1"
-	MessageSendSchema        = "urn:crewfold:schema:local-api:message-send-result:v1"
-	InboxListSchema          = "urn:crewfold:schema:local-api:inbox-list-result:v1"
-	ThreadShowSchema         = "urn:crewfold:schema:local-api:thread-show-result:v1"
-	RunMutationSchema        = "urn:crewfold:schema:local-api:run-mutation-result:v1"
-	RunShowSchema            = "urn:crewfold:schema:local-api:run-show-result:v1"
-	RunListSchema            = "urn:crewfold:schema:local-api:run-list-result:v1"
-	RunLogsSchema            = "urn:crewfold:schema:local-api:run-logs-result:v1"
-	RunControlSchema         = "urn:crewfold:schema:local-api:run-control-result:v1"
-	RunAttachSchema          = "urn:crewfold:schema:local-api:run-attach-result:v1"
-	CoordinationStatusSchema = "urn:crewfold:schema:local-api:coordination-status-result:v1"
-	ClaimMutationSchema      = "urn:crewfold:schema:local-api:claim-mutation-result:v1"
-	ClaimListSchema          = "urn:crewfold:schema:local-api:claim-list-result:v1"
-	OverlapListSchema        = "urn:crewfold:schema:local-api:overlap-list-result:v1"
-	OverlapInspectSchema     = "urn:crewfold:schema:local-api:overlap-inspect-result:v1"
-	OverlapScanSchema        = "urn:crewfold:schema:local-api:overlap-scan-result:v1"
-	DriftListSchema          = "urn:crewfold:schema:local-api:drift-list-result:v1"
-	MeetingMutationSchema    = "urn:crewfold:schema:local-api:meeting-mutation-result:v1"
-	MeetingInspectSchema     = "urn:crewfold:schema:local-api:meeting-inspect-result:v1"
-	EventsListSchema         = "urn:crewfold:schema:local-api:events-list-result:v1"
+	StatusSchema                = "urn:crewfold:schema:local-api:status-result:v1"
+	StopSchema                  = "urn:crewfold:schema:local-api:stop-result:v1"
+	DatabaseStatusSchema        = "urn:crewfold:schema:local-api:database-status-result:v1"
+	WorkspaceInitSchema         = "urn:crewfold:schema:local-api:workspace-init-result:v1"
+	WorkspaceShowSchema         = "urn:crewfold:schema:local-api:workspace-show-result:v1"
+	ProjectAddSchema            = "urn:crewfold:schema:local-api:project-add-result:v1"
+	ProjectInspectSchema        = "urn:crewfold:schema:local-api:project-inspect-result:v1"
+	CheckoutAddSchema           = "urn:crewfold:schema:local-api:checkout-add-result:v1"
+	CheckoutListSchema          = "urn:crewfold:schema:local-api:checkout-list-result:v1"
+	AgentMutationSchema         = "urn:crewfold:schema:local-api:agent-mutation-result:v1"
+	AgentShowSchema             = "urn:crewfold:schema:local-api:agent-show-result:v1"
+	AgentListSchema             = "urn:crewfold:schema:local-api:agent-list-result:v1"
+	ObjectiveMutationSchema     = "urn:crewfold:schema:local-api:objective-mutation-result:v1"
+	ObjectiveShowSchema         = "urn:crewfold:schema:local-api:objective-show-result:v1"
+	ObjectiveListSchema         = "urn:crewfold:schema:local-api:objective-list-result:v1"
+	TaskMutationSchema          = "urn:crewfold:schema:local-api:task-mutation-result:v1"
+	TaskShowSchema              = "urn:crewfold:schema:local-api:task-show-result:v1"
+	TaskListSchema              = "urn:crewfold:schema:local-api:task-list-result:v1"
+	TaskTimelineSchema          = "urn:crewfold:schema:local-api:task-timeline-result:v1"
+	ContextBuildSchema          = "urn:crewfold:schema:local-api:context-build-result:v3"
+	ContextShowSchema           = "urn:crewfold:schema:local-api:context-show-result:v3"
+	ContextExplainSchema        = "urn:crewfold:schema:local-api:context-explain-result:v2"
+	KnowledgeMutationSchema     = "urn:crewfold:schema:local-api:knowledge-mutation-result:v1"
+	KnowledgeShowSchema         = "urn:crewfold:schema:local-api:knowledge-show-result:v1"
+	KnowledgeListSchema         = "urn:crewfold:schema:local-api:knowledge-list-result:v1"
+	KnowledgeSearchSchema       = "urn:crewfold:schema:local-api:knowledge-search-result:v1"
+	KnowledgeIndexStatusSchema  = "urn:crewfold:schema:local-api:knowledge-index-status-result:v1"
+	KnowledgeIndexRebuildSchema = "urn:crewfold:schema:local-api:knowledge-index-rebuild-result:v1"
+	MessageSendSchema           = "urn:crewfold:schema:local-api:message-send-result:v1"
+	InboxListSchema             = "urn:crewfold:schema:local-api:inbox-list-result:v1"
+	ThreadShowSchema            = "urn:crewfold:schema:local-api:thread-show-result:v1"
+	RunMutationSchema           = "urn:crewfold:schema:local-api:run-mutation-result:v1"
+	RunShowSchema               = "urn:crewfold:schema:local-api:run-show-result:v1"
+	RunListSchema               = "urn:crewfold:schema:local-api:run-list-result:v1"
+	RunLogsSchema               = "urn:crewfold:schema:local-api:run-logs-result:v1"
+	RunControlSchema            = "urn:crewfold:schema:local-api:run-control-result:v1"
+	RunAttachSchema             = "urn:crewfold:schema:local-api:run-attach-result:v1"
+	CoordinationStatusSchema    = "urn:crewfold:schema:local-api:coordination-status-result:v1"
+	ClaimMutationSchema         = "urn:crewfold:schema:local-api:claim-mutation-result:v1"
+	ClaimListSchema             = "urn:crewfold:schema:local-api:claim-list-result:v1"
+	OverlapListSchema           = "urn:crewfold:schema:local-api:overlap-list-result:v1"
+	OverlapInspectSchema        = "urn:crewfold:schema:local-api:overlap-inspect-result:v1"
+	OverlapScanSchema           = "urn:crewfold:schema:local-api:overlap-scan-result:v1"
+	DriftListSchema             = "urn:crewfold:schema:local-api:drift-list-result:v1"
+	MeetingMutationSchema       = "urn:crewfold:schema:local-api:meeting-mutation-result:v1"
+	MeetingInspectSchema        = "urn:crewfold:schema:local-api:meeting-inspect-result:v1"
+	EventsListSchema            = "urn:crewfold:schema:local-api:events-list-result:v1"
 )
 
 // Request is one newline-delimited local API request. Hello requests omit
@@ -647,6 +653,24 @@ type KnowledgeListParams struct {
 	CurrencyStatus string `json:"currency_status,omitempty"`
 }
 
+type KnowledgeSearchParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project"`
+	Query     string `json:"query"`
+	Task      string `json:"task,omitempty"`
+	Type      string `json:"type,omitempty"`
+	Limit     *int   `json:"limit,omitempty"`
+}
+
+type KnowledgeIndexStatusParams struct {
+	Workspace string `json:"workspace"`
+}
+
+type KnowledgeIndexRebuildParams struct {
+	Workspace      string `json:"workspace"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
 type KnowledgeDecisionParams struct {
 	Workspace             string `json:"workspace"`
 	KnowledgeRevision     string `json:"knowledge_revision"`
@@ -681,6 +705,24 @@ type KnowledgeListResult struct {
 	Schema string               `json:"schema"`
 	Type   string               `json:"type"`
 	List   domain.KnowledgeList `json:"list"`
+}
+
+type KnowledgeSearchResult struct {
+	Schema string                       `json:"schema"`
+	Type   string                       `json:"type"`
+	Search domain.KnowledgeSearchResult `json:"search"`
+}
+
+type KnowledgeIndexStatusResult struct {
+	Schema string                      `json:"schema"`
+	Type   string                      `json:"type"`
+	Index  domain.KnowledgeIndexStatus `json:"index"`
+}
+
+type KnowledgeIndexRebuildResult struct {
+	Schema string                      `json:"schema"`
+	Type   string                      `json:"type"`
+	Index  domain.KnowledgeIndexStatus `json:"index"`
 }
 
 type MessageSendParams struct {

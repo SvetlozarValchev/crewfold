@@ -3,8 +3,8 @@
 Status: implemented for daemon health, durable workspaces/events, read-only Git
 inspection, provider-neutral agent/objective/task/run coordination, immutable
 context packets, owner-facing durable agent mail, leased claims with deterministic
-overlap/drift inspection, and structured overlap-resolution meetings.
-Subscriptions and canonical knowledge arrive later.
+overlap/drift inspection, structured overlap-resolution meetings, canonical
+knowledge, and deterministic derived retrieval. Subscriptions arrive later.
 
 ## Transport
 
@@ -123,7 +123,11 @@ Takes no parameters. It reports:
 - current and latest embedded schema versions;
 - SQLite journal mode (`wal` is required);
 - whether foreign-key enforcement is active;
-- the result of `PRAGMA quick_check(1)`.
+- global physical/canonical SQLite integrity from `PRAGMA quick_check(1)` on a
+  short-lived connection without FTS5 registration. It checks page allocation,
+  freelist state, and ordinary B-trees without invoking the disposable virtual
+  table's semantic integrity hook. Retrieval projection health remains available
+  through `knowledge.index.status` and `doctor --retrieval`.
 
 The CLI exposes this as `crewfold doctor --database --socket <path>`.
 
@@ -441,6 +445,39 @@ overlapping claim, and resolves its coordination hold. `meeting.inspect` returns
 the frozen input, participant state, contributions, proposal, and action results.
 `meeting.takeover` lets the local owner supply and authorize a typed proposal for
 a stalled meeting; it is explicit authority, not silent autonomous recovery.
+
+### Canonical knowledge and retrieval
+
+`knowledge.propose`, `knowledge.show`, `knowledge.list`, `knowledge.accept`,
+`knowledge.reject`, and `knowledge.mark_stale` expose the canonical revision and
+owner-governance contract described in [Knowledge](../knowledge.md). Mutation
+payloads cannot select a trusted actor. Search adds three owner-socket methods
+without changing those authority rules.
+
+`knowledge.search` requires `workspace`, `project`, and a bounded literal `query`.
+It optionally accepts `task`, `type`, and a limit from 1 through 100. Its result is
+`knowledge_search`: normalized query, evaluation instant, canonical event cursor,
+`knowledge_search_v1` policy, index generation, and ordered complete revision
+matches with tuple explanations. It is read-only and never appends an event or
+builds context.
+
+`knowledge.index.status` requires `workspace` and returns
+`knowledge_index_status`. Status is `ok` or `degraded`; generation/source metadata
+and a bounded diagnosis make missing, corrupt, inconsistent, or out-of-date
+projection state inspectable. `knowledge.index.rebuild` requires `workspace` and
+an idempotency key. It returns `knowledge_index_rebuild` with the atomically
+published status/generation and changes no canonical knowledge or event record.
+Healthy post-proposal catch-up may atomically append immutable rows and refresh
+the cursor/count/digest within that generation; it does not repair damaged derived
+state, and only a full rebuild creates a generation.
+The same key replays only while that healthy generation and source digest remain
+current. A degraded projection returns `retrieval_degraded`; a later healthy
+generation or canonical refresh makes the old key return `idempotency_conflict`,
+so a new rebuild uses a new key. `source_event_sequence` and the search result's
+`canonical_event_sequence` are global event-journal observation high-water marks,
+not retrieval-freshness checks or workspace-scoped knowledge cursors.
+The CLI exposes these methods as `knowledge search`, `knowledge index status`,
+`knowledge index rebuild`, and `doctor --retrieval`.
 
 ### `coordination.status`
 

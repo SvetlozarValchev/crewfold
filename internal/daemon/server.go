@@ -560,6 +560,12 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleKnowledgeShow(request), false
 	case localapi.MethodKnowledgeList:
 		return s.handleKnowledgeList(request), false
+	case localapi.MethodKnowledgeSearch:
+		return s.handleKnowledgeSearch(request), false
+	case localapi.MethodKnowledgeIndexStatus:
+		return s.handleKnowledgeIndexStatus(request), false
+	case localapi.MethodKnowledgeIndexRebuild:
+		return s.handleKnowledgeIndexRebuild(request), false
 	case localapi.MethodKnowledgeAccept:
 		return s.handleKnowledgeAccept(request), false
 	case localapi.MethodKnowledgeReject:
@@ -841,7 +847,7 @@ func storeErrorResponse(request localapi.Request, err error) localapi.Response {
 	return localapi.ErrorResponse(request.ID, request.Protocol, &localapi.APIError{
 		Code:      code,
 		Message:   err.Error(),
-		Retryable: code == store.CodeStorageFailed,
+		Retryable: code == store.CodeStorageFailed || code == store.CodeRetrievalDegraded,
 	})
 }
 

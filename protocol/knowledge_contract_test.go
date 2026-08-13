@@ -3,6 +3,7 @@ package protocol_test
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"crewfold/internal/localapi"
@@ -12,26 +13,158 @@ func TestKnowledgeSchemaIDsMatchPublishedContract(t *testing.T) {
 	t.Parallel()
 
 	want := map[string]string{
-		"schemas/domain/v1/knowledge-item.schema.json":             "urn:crewfold:schema:domain:knowledge-item:v1",
-		"schemas/domain/v1/knowledge-source.schema.json":           "urn:crewfold:schema:domain:knowledge-source:v1",
-		"schemas/domain/v1/knowledge-revision.schema.json":         "urn:crewfold:schema:domain:knowledge-revision:v1",
-		"schemas/domain/v1/knowledge-authority.schema.json":        "urn:crewfold:schema:domain:knowledge-authority:v1",
-		"schemas/domain/v1/knowledge-detail.schema.json":           "urn:crewfold:schema:domain:knowledge-detail:v1",
-		"schemas/domain/v1/knowledge-list.schema.json":             "urn:crewfold:schema:domain:knowledge-list:v1",
-		"schemas/local/v1/knowledge-propose.params.schema.json":    "urn:crewfold:schema:local-api:knowledge-propose-params:v1",
-		"schemas/local/v1/knowledge-show.params.schema.json":       "urn:crewfold:schema:local-api:knowledge-show-params:v1",
-		"schemas/local/v1/knowledge-list.params.schema.json":       "urn:crewfold:schema:local-api:knowledge-list-params:v1",
-		"schemas/local/v1/knowledge-accept.params.schema.json":     "urn:crewfold:schema:local-api:knowledge-accept-params:v1",
-		"schemas/local/v1/knowledge-reject.params.schema.json":     "urn:crewfold:schema:local-api:knowledge-reject-params:v1",
-		"schemas/local/v1/knowledge-mark-stale.params.schema.json": "urn:crewfold:schema:local-api:knowledge-mark-stale-params:v1",
-		"schemas/local/v1/knowledge-mutation.result.schema.json":   localapi.KnowledgeMutationSchema,
-		"schemas/local/v1/knowledge-show.result.schema.json":       localapi.KnowledgeShowSchema,
-		"schemas/local/v1/knowledge-list.result.schema.json":       localapi.KnowledgeListSchema,
+		"schemas/domain/v1/knowledge-item.schema.json":                "urn:crewfold:schema:domain:knowledge-item:v1",
+		"schemas/domain/v1/knowledge-source.schema.json":              "urn:crewfold:schema:domain:knowledge-source:v1",
+		"schemas/domain/v1/knowledge-revision.schema.json":            "urn:crewfold:schema:domain:knowledge-revision:v1",
+		"schemas/domain/v1/knowledge-authority.schema.json":           "urn:crewfold:schema:domain:knowledge-authority:v1",
+		"schemas/domain/v1/knowledge-detail.schema.json":              "urn:crewfold:schema:domain:knowledge-detail:v1",
+		"schemas/domain/v1/knowledge-list.schema.json":                "urn:crewfold:schema:domain:knowledge-list:v1",
+		"schemas/local/v1/knowledge-propose.params.schema.json":       "urn:crewfold:schema:local-api:knowledge-propose-params:v1",
+		"schemas/local/v1/knowledge-show.params.schema.json":          "urn:crewfold:schema:local-api:knowledge-show-params:v1",
+		"schemas/local/v1/knowledge-list.params.schema.json":          "urn:crewfold:schema:local-api:knowledge-list-params:v1",
+		"schemas/local/v1/knowledge-accept.params.schema.json":        "urn:crewfold:schema:local-api:knowledge-accept-params:v1",
+		"schemas/local/v1/knowledge-reject.params.schema.json":        "urn:crewfold:schema:local-api:knowledge-reject-params:v1",
+		"schemas/local/v1/knowledge-mark-stale.params.schema.json":    "urn:crewfold:schema:local-api:knowledge-mark-stale-params:v1",
+		"schemas/local/v1/knowledge-mutation.result.schema.json":      localapi.KnowledgeMutationSchema,
+		"schemas/local/v1/knowledge-show.result.schema.json":          localapi.KnowledgeShowSchema,
+		"schemas/local/v1/knowledge-list.result.schema.json":          localapi.KnowledgeListSchema,
+		"schemas/local/v1/knowledge-search.params.schema.json":        "urn:crewfold:schema:local-api:knowledge-search-params:v1",
+		"schemas/local/v1/knowledge-search.result.schema.json":        localapi.KnowledgeSearchSchema,
+		"schemas/local/v1/knowledge-index-status.params.schema.json":  "urn:crewfold:schema:local-api:knowledge-index-status-params:v1",
+		"schemas/local/v1/knowledge-index-status.result.schema.json":  localapi.KnowledgeIndexStatusSchema,
+		"schemas/local/v1/knowledge-index-rebuild.params.schema.json": "urn:crewfold:schema:local-api:knowledge-index-rebuild-params:v1",
+		"schemas/local/v1/knowledge-index-rebuild.result.schema.json": localapi.KnowledgeIndexRebuildSchema,
 	}
 	for path, expectedID := range want {
 		document := readKnowledgeSchema(t, path)
 		if document.ID != expectedID {
 			t.Errorf("schema %q ID = %q, want %q", path, document.ID, expectedID)
+		}
+	}
+}
+
+func TestKnowledgeRetrievalRequestsAreStrictScopedAndNonAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	search := readKnowledgeSchema(t, "schemas/local/v1/knowledge-search.params.schema.json")
+	if search.Type != "object" || search.AdditionalProperties == nil || *search.AdditionalProperties {
+		t.Fatalf("knowledge search must be a strict request object: %#v", search)
+	}
+	for _, field := range []string{"workspace", "project", "query"} {
+		if !containsKnowledgeString(search.Required, field) {
+			t.Errorf("knowledge search does not require hard-scope field %q", field)
+		}
+	}
+	for _, forbidden := range []string{"review_status", "currency_status", "accepted", "actor", "auto_accept"} {
+		if _, exists := search.Properties[forbidden]; exists {
+			t.Errorf("knowledge search exposes authority control %q", forbidden)
+		}
+	}
+	var queryBounds struct {
+		MinLength int `json:"minLength"`
+		MaxLength int `json:"maxLength"`
+	}
+	if err := json.Unmarshal(search.Properties["query"], &queryBounds); err != nil || queryBounds.MinLength != 1 || queryBounds.MaxLength != 256 {
+		t.Errorf("knowledge search query bounds = %#v, error=%v; want 1..256", queryBounds, err)
+	}
+	var limitBounds struct {
+		Minimum int `json:"minimum"`
+		Maximum int `json:"maximum"`
+	}
+	if err := json.Unmarshal(search.Properties["limit"], &limitBounds); err != nil || limitBounds.Minimum != 1 || limitBounds.Maximum != 100 {
+		t.Errorf("knowledge search limit bounds = %#v, error=%v; want 1..100", limitBounds, err)
+	}
+	if containsKnowledgeString(search.Required, "limit") {
+		t.Error("knowledge search requires limit instead of allowing the deterministic default")
+	}
+	omittedLimit, err := json.Marshal(localapi.KnowledgeSearchParams{Workspace: "personal", Project: "demo", Query: "term"})
+	if err != nil || strings.Contains(string(omittedLimit), `"limit"`) {
+		t.Errorf("knowledge search omitted limit encoding = %s, error=%v", omittedLimit, err)
+	}
+	zero := 0
+	explicitZero, err := json.Marshal(localapi.KnowledgeSearchParams{Workspace: "personal", Project: "demo", Query: "term", Limit: &zero})
+	if err != nil || !strings.Contains(string(explicitZero), `"limit":0`) {
+		t.Errorf("knowledge search explicit zero encoding = %s, error=%v", explicitZero, err)
+	}
+
+	rebuild := readKnowledgeSchema(t, "schemas/local/v1/knowledge-index-rebuild.params.schema.json")
+	if rebuild.AdditionalProperties == nil || *rebuild.AdditionalProperties || !containsKnowledgeString(rebuild.Required, "idempotency_key") {
+		t.Fatalf("knowledge index rebuild is not strict and idempotent: %#v", rebuild)
+	}
+	for _, forbidden := range []string{"revision", "body", "review_status", "currency_status"} {
+		if _, exists := rebuild.Properties[forbidden]; exists {
+			t.Errorf("knowledge index rebuild can mutate canonical field %q", forbidden)
+		}
+	}
+}
+
+func TestKnowledgeRetrievalResultsExposeExactRevisionsRankingAndIndexHealth(t *testing.T) {
+	t.Parallel()
+
+	status := readKnowledgeSchema(t, "schemas/domain/v1/knowledge-index-status.schema.json")
+	if status.Type != "object" || status.AdditionalProperties == nil || *status.AdditionalProperties {
+		t.Fatalf("knowledge index status must be strict: %#v", status)
+	}
+	assertKnowledgeEnum(t, status.Properties["status"], []string{"ok", "degraded"})
+	for _, field := range []string{"status", "generation", "source_event_sequence", "source_count"} {
+		if !containsKnowledgeString(status.Required, field) {
+			t.Errorf("knowledge index status omits %q", field)
+		}
+	}
+
+	data, err := os.ReadFile("schemas/domain/v1/knowledge-search.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Definitions map[string]knowledgeSchemaDocument `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	result := document.Definitions["result"]
+	match := document.Definitions["match"]
+	explanation := document.Definitions["explanation"]
+	for _, field := range []string{"normalized_query", "evaluated_at", "canonical_event_sequence", "rank_policy", "index", "matches"} {
+		if !containsKnowledgeString(result.Required, field) {
+			t.Errorf("knowledge search result omits %q", field)
+		}
+	}
+	for _, field := range []string{"ordinal", "revision", "explanation"} {
+		if !containsKnowledgeString(match.Required, field) {
+			t.Errorf("knowledge search match omits %q", field)
+		}
+	}
+	for _, field := range []string{"scope", "authority", "freshness", "provenance", "quality", "text", "tie_breaker"} {
+		if !containsKnowledgeString(explanation.Required, field) {
+			t.Errorf("knowledge search explanation omits %q", field)
+		}
+	}
+	for definition, fieldAndMaximum := range map[string]struct {
+		field   string
+		maximum int
+	}{
+		"scope":      {field: "rank", maximum: 1},
+		"freshness":  {field: "class", maximum: 1},
+		"provenance": {field: "rank", maximum: 4},
+		"quality":    {field: "confidence_rank", maximum: 2},
+	} {
+		var bounds struct {
+			Minimum int `json:"minimum"`
+			Maximum int `json:"maximum"`
+		}
+		if err := json.Unmarshal(document.Definitions[definition].Properties[fieldAndMaximum.field], &bounds); err != nil || bounds.Minimum != 0 || bounds.Maximum != fieldAndMaximum.maximum {
+			t.Errorf("knowledge search %s.%s bounds = %#v, error=%v", definition, fieldAndMaximum.field, bounds, err)
+		}
+	}
+	for _, path := range []string{
+		"schemas/local/v1/knowledge-search.result.schema.json",
+		"schemas/local/v1/knowledge-index-status.result.schema.json",
+		"schemas/local/v1/knowledge-index-rebuild.result.schema.json",
+	} {
+		wrapper := readKnowledgeSchema(t, path)
+		if wrapper.Type != "object" || wrapper.AdditionalProperties == nil || *wrapper.AdditionalProperties {
+			t.Errorf("retrieval wrapper %q is not strict", path)
 		}
 	}
 }
