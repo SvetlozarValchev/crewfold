@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"crewfold/internal/domain"
 	"crewfold/internal/mcp"
@@ -13,21 +14,25 @@ import (
 )
 
 const (
-	toolBriefing    = "crewfold_get_briefing"
-	toolStatus      = "crewfold_get_status"
-	toolInbox       = "crewfold_list_inbox"
-	toolRead        = "crewfold_read_message"
-	toolSend        = "crewfold_send_message"
-	toolAcknowledge = "crewfold_acknowledge_message"
-	toolProgress    = "crewfold_report_progress"
-	toolBlocked     = "crewfold_report_blocked"
-	toolArtifact    = "crewfold_publish_artifact"
-	toolKnowledge   = "crewfold_propose_knowledge"
+	toolBriefing            = "crewfold_get_briefing"
+	toolStatus              = "crewfold_get_status"
+	toolInbox               = "crewfold_list_inbox"
+	toolRead                = "crewfold_read_message"
+	toolSend                = "crewfold_send_message"
+	toolAcknowledge         = "crewfold_acknowledge_message"
+	toolProgress            = "crewfold_report_progress"
+	toolBlocked             = "crewfold_report_blocked"
+	toolArtifact            = "crewfold_publish_artifact"
+	toolKnowledge           = "crewfold_propose_knowledge"
+	toolContradictionReport = "crewfold_report_contradiction"
 	// toolKnowledgeAccept is a reserved governance operation. It is recognized
 	// so attempts receive a durable policy denial, but it is never advertised or
 	// included in a run capability; acceptance remains local-owner-only.
 	toolKnowledgeAccept = "crewfold_accept_knowledge"
-	toolCompletion      = "crewfold_propose_completion"
+	// toolContradictionConfirm is likewise recognized but never advertised or
+	// included in a run capability. Only the local owner can confirm a report.
+	toolContradictionConfirm = "crewfold_confirm_contradiction"
+	toolCompletion           = "crewfold_propose_completion"
 )
 
 func (s *server) handleMCPRequest(request mcp.Request) mcp.Response {
@@ -266,6 +271,22 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 			})
 			value = result.Revision
 		}
+	case toolContradictionReport:
+		var arguments reportContradictionArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			err = arguments.validate()
+		}
+		if err == nil {
+			var result store.KnowledgeContradictionMutationResult
+			result, err = s.store.ReportRunKnowledgeContradiction(context.Background(), store.ReportRunKnowledgeContradictionCommand{
+				RunID: briefing.Run.ID, LeftRevisionID: arguments.LeftRevision,
+				RightRevisionID: arguments.RightRevision, ReportNote: arguments.Reason,
+				IdempotencyKey: arguments.IdempotencyKey,
+				CorrelationID:  "mcp-" + mcpRequestID(request.ID),
+			})
+			value = result.Detail
+		}
 	default:
 		return s.mcpDenied(request, briefing.Run.ID, name, "out_of_scope", "tool is outside this run capability", "denied")
 	}
@@ -362,6 +383,7 @@ func scopedMCPTools() []mcp.Tool {
 		{Name: toolBlocked, Description: "Report that this run needs an owner or coordinator decision.", InputSchema: objectSchema([]string{"reason", "needs", "severity", "related_ids", "idempotency_key"}, map[string]any{"reason": stringSchema(1, 1024), "needs": stringArraySchema(), "severity": map[string]any{"type": "string", "enum": []string{"blocking", "high", "medium", "low"}}, "related_ids": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolArtifact, Description: "Publish bounded evidence owned by this run.", InputSchema: objectSchema([]string{"name", "media_type", "content", "idempotency_key"}, map[string]any{"name": stringSchema(1, 128), "media_type": stringSchema(1, 128), "content": stringSchema(0, 32768), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolKnowledge, Description: "Propose one concise decision or finding sourced from this run's task; owner acceptance is still required.", InputSchema: objectSchema([]string{"type", "title", "body", "confidence", "verification_status", "freshness_policy", "idempotency_key"}, map[string]any{"type": map[string]any{"type": "string", "enum": []string{"decision", "finding"}}, "title": stringSchema(1, 160), "body": stringSchema(1, 16384), "confidence": map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}}, "verification_status": map[string]any{"type": "string", "enum": []string{"unverified", "supported", "verified"}}, "freshness_policy": map[string]any{"type": "string", "enum": []string{"until_superseded", "expires_at"}}, "fresh_until": stringSchema(1, 64), "task_scope_id": stringSchema(1, 128), "supersedes_revision_id": stringSchema(1, 128), "idempotency_key": stringSchema(1, 128)})},
+		{Name: toolContradictionReport, Description: "Report a reasoned contradiction between two exact accepted/current knowledge revisions that both apply to this run's project and task. The local owner must still confirm it before either revision is quarantined.", InputSchema: objectSchema([]string{"left_revision", "right_revision", "reason", "idempotency_key"}, map[string]any{"left_revision": knowledgeRevisionIDSchema(), "right_revision": knowledgeRevisionIDSchema(), "reason": stringSchema(1, 2048), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolCompletion, Description: "Propose completion with an executive handoff and evidence.", InputSchema: objectSchema([]string{"summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "handoff": stringSchema(1, 4096), "evidence_ids": stringArraySchema(), "changed_paths": stringArraySchema(), "checks": stringArraySchema(), "remaining_risks": stringArraySchema(), "unknowns": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 	}
 }
@@ -377,7 +399,7 @@ func allowedMCPTools(allowed []string) []mcp.Tool {
 }
 
 func knownMCPTool(name string) bool {
-	if name == toolKnowledgeAccept {
+	if name == toolKnowledgeAccept || name == toolContradictionConfirm {
 		return true
 	}
 	for _, tool := range scopedMCPTools() {
@@ -406,6 +428,10 @@ func objectSchema(required []string, properties map[string]any) map[string]any {
 
 func stringSchema(minimum, maximum int) map[string]any {
 	return map[string]any{"type": "string", "minLength": minimum, "maxLength": maximum}
+}
+
+func knowledgeRevisionIDSchema() map[string]any {
+	return map[string]any{"type": "string", "pattern": `^krev_[0-9a-f]{32}$`}
 }
 
 func stringArraySchema() map[string]any {
@@ -498,6 +524,42 @@ type proposeKnowledgeArguments struct {
 	IdempotencyKey       string `json:"idempotency_key"`
 }
 
+type reportContradictionArguments struct {
+	LeftRevision   string `json:"left_revision"`
+	RightRevision  string `json:"right_revision"`
+	Reason         string `json:"reason"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+func (arguments reportContradictionArguments) validate() error {
+	if !validMCPKnowledgeRevisionID(strings.TrimSpace(arguments.LeftRevision)) ||
+		!validMCPKnowledgeRevisionID(strings.TrimSpace(arguments.RightRevision)) ||
+		strings.TrimSpace(arguments.LeftRevision) == strings.TrimSpace(arguments.RightRevision) {
+		return errors.New("contradiction report requires two distinct exact knowledge revision IDs")
+	}
+	if strings.TrimSpace(arguments.Reason) == "" || len(arguments.Reason) > 2048 ||
+		!utf8.ValidString(arguments.Reason) || strings.ContainsRune(arguments.Reason, '\x00') {
+		return errors.New("contradiction reason must contain 1 to 2048 UTF-8 bytes without NUL")
+	}
+	if strings.TrimSpace(arguments.IdempotencyKey) == "" || len(arguments.IdempotencyKey) > 128 ||
+		!utf8.ValidString(arguments.IdempotencyKey) || strings.ContainsRune(arguments.IdempotencyKey, '\x00') {
+		return errors.New("contradiction report requires a bounded idempotency key")
+	}
+	return nil
+}
+
+func validMCPKnowledgeRevisionID(value string) bool {
+	if len(value) != len("krev_")+32 || !strings.HasPrefix(value, "krev_") {
+		return false
+	}
+	for _, character := range value[len("krev_"):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func (arguments proposeKnowledgeArguments) validate() error {
 	if arguments.FreshnessPolicy == domain.KnowledgeFreshExpiresAt && strings.TrimSpace(arguments.FreshUntil) == "" {
 		return errors.New("expires_at knowledge requires fresh_until")
@@ -552,11 +614,12 @@ func mcpErrorFromStore(err error) mcp.ToolError {
 	code := store.ErrorCode(err)
 	result := mcp.ToolError{Message: err.Error()}
 	switch code {
-	case store.CodeInvalidContext, store.CodeInvalidReport, store.CodeInvalidRun, store.CodeInvalidMessage, store.CodeInvalidKnowledge, store.CodeIdempotencyConflict:
+	case store.CodeInvalidContext, store.CodeInvalidReport, store.CodeInvalidRun, store.CodeInvalidMessage, store.CodeInvalidKnowledge,
+		store.CodeKnowledgeConflict, store.CodeContradictionConflict, store.CodeIdempotencyConflict:
 		result.Code = "invalid_input"
-	case store.CodeContextNotFound, store.CodeRunNotFound, store.CodeMessageNotFound, store.CodeKnowledgeNotFound:
+	case store.CodeContextNotFound, store.CodeRunNotFound, store.CodeMessageNotFound, store.CodeKnowledgeNotFound, store.CodeContradictionNotFound:
 		result.Code = "out_of_scope"
-	case store.CodeCapabilityExpired, store.CodeCapabilityInactive, store.CodeRunConflict, store.CodeMessageDenied, store.CodeKnowledgeDenied:
+	case store.CodeCapabilityExpired, store.CodeCapabilityInactive, store.CodeRunConflict, store.CodeMessageDenied, store.CodeKnowledgeDenied, store.CodeContradictionDenied:
 		result.Code = "denied_by_policy"
 	default:
 		result.Code, result.Retryable = "temporarily_unavailable", true

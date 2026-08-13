@@ -72,7 +72,7 @@ implementation commit is `e37fdcf32b2e5f69766405d6585ff24277a1ab3c`.
 | M12 ✓ | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
 | M13 ✓ | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
 | M14 ✓ | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
-| M15 ◐ | Curator/retrieval | Scoped retrieval, participant-bound cross-project mail, and one bounded deterministic curator rule are implemented; reconciliation, refresh, and export remain | M14 |
+| M15 ◐ | Curator/retrieval | Scoped retrieval, participant-bound cross-project mail, one bounded deterministic curator rule, and owner-confirmed exact contradictions are implemented; refresh and export remain | M14 |
 | M16 | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
 | M17 | Local checks/CI watcher | Route fresh check evidence without granting merge authority | M16 |
 | M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
@@ -239,8 +239,14 @@ auto-acceptance is an explicit, bounded processing mode with exact provenance an
 authority evidence. The accepted contract is
 [ADR-0011](decisions/0011-bounded-deterministic-context-curator.md).
 
-Remaining M15 slices add contradiction handling, explicit context deltas, and
-portable export. Participant rosters in context are deferred to packet v4/deltas;
+A fourth completed slice adds exact-pair contradiction reports, owner confirmation,
+bounded dispute inspection, conservative search/context quarantine, and automatic
+closure when a participant becomes stale or superseded. Agent reporting is
+run/task scoped and never grants governance. The accepted contract is
+[ADR-0012](decisions/0012-owner-confirmed-exact-knowledge-contradictions.md).
+
+Remaining M15 slices add explicit context deltas and portable export. Participant
+rosters in context are deferred to packet v4/deltas;
 packet v3 only keeps its bounded authorized inbox summary.
 Native provider resume, active-turn steering,
 app-server ownership, remote users, and broader organizational authority remain

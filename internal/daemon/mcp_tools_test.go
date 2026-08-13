@@ -3,6 +3,8 @@ package daemon
 import (
 	"strings"
 	"testing"
+
+	"crewfold/internal/mcp"
 )
 
 func TestImmutableToolAllowlistHidesLaterCapabilities(t *testing.T) {
@@ -13,11 +15,13 @@ func TestImmutableToolAllowlistHidesLaterCapabilities(t *testing.T) {
 		t.Fatalf("allowedMCPTools(legacy) count = %d, want %d", len(tools), len(legacyAllowed))
 	}
 	for _, tool := range tools {
-		if tool.Name == toolInbox || tool.Name == toolRead || tool.Name == toolSend || tool.Name == toolAcknowledge || tool.Name == toolKnowledge {
+		if tool.Name == toolInbox || tool.Name == toolRead || tool.Name == toolSend || tool.Name == toolAcknowledge ||
+			tool.Name == toolKnowledge || tool.Name == toolContradictionReport {
 			t.Fatalf("legacy immutable capability exposed later tool %q", tool.Name)
 		}
 	}
-	if !knownMCPTool(toolSend) || !knownMCPTool(toolKnowledge) || !knownMCPTool(toolKnowledgeAccept) || knownMCPTool("crewfold_unknown_tool") {
+	if !knownMCPTool(toolSend) || !knownMCPTool(toolKnowledge) || !knownMCPTool(toolKnowledgeAccept) ||
+		!knownMCPTool(toolContradictionReport) || !knownMCPTool(toolContradictionConfirm) || knownMCPTool("crewfold_unknown_tool") {
 		t.Fatal("known MCP tool classification is inconsistent")
 	}
 }
@@ -41,6 +45,50 @@ func TestMessageToolArgumentsEnforceAdvertisedRequiredFields(t *testing.T) {
 	}
 	if err := (proposeKnowledgeArguments{FreshnessPolicy: "until_superseded", FreshUntil: "2026-08-14T00:00:00Z"}).validate(); err == nil {
 		t.Fatal("until_superseded knowledge with fresh_until unexpectedly validated")
+	}
+	validRevision := "krev_0123456789abcdef0123456789abcdef"
+	otherRevision := "krev_fedcba9876543210fedcba9876543210"
+	if err := (reportContradictionArguments{LeftRevision: validRevision, RightRevision: otherRevision, Reason: "exact facts disagree", IdempotencyKey: "report"}).validate(); err != nil {
+		t.Fatalf("bounded contradiction report error = %v", err)
+	}
+	for name, arguments := range map[string]reportContradictionArguments{
+		"same revision": {LeftRevision: validRevision, RightRevision: validRevision, Reason: "same", IdempotencyKey: "report"},
+		"invalid id":    {LeftRevision: "krev_short", RightRevision: otherRevision, Reason: "bad", IdempotencyKey: "report"},
+		"invalid UTF-8": {LeftRevision: validRevision, RightRevision: otherRevision, Reason: string([]byte{0xff}), IdempotencyKey: "report"},
+		"oversized":     {LeftRevision: validRevision, RightRevision: otherRevision, Reason: strings.Repeat("x", 2049), IdempotencyKey: "report"},
+	} {
+		if err := arguments.validate(); err == nil {
+			t.Errorf("%s contradiction arguments unexpectedly validated", name)
+		}
+	}
+}
+
+func TestContradictionReportToolIsAdvertisedWithoutGovernanceFields(t *testing.T) {
+	t.Parallel()
+	var found *mcp.Tool
+	for _, tool := range scopedMCPTools() {
+		if tool.Name == toolContradictionReport {
+			copy := tool
+			found = &copy
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("run-scoped contradiction report tool is missing")
+	}
+	properties, ok := found.InputSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("contradiction report properties = %#v", found.InputSchema["properties"])
+	}
+	for _, field := range []string{"left_revision", "right_revision", "reason", "idempotency_key"} {
+		if _, exists := properties[field]; !exists {
+			t.Errorf("contradiction report schema omits %q", field)
+		}
+	}
+	for _, forbidden := range []string{"actor", "actor_id", "actor_type", "workspace", "project", "task", "status"} {
+		if _, exists := properties[forbidden]; exists {
+			t.Errorf("contradiction report schema exposes trusted field %q", forbidden)
+		}
 	}
 }
 

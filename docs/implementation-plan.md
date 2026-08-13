@@ -744,7 +744,7 @@ crewfold context explain CONTEXT_PACKET_ID --workspace personal \
 
 One replacement-agent scenario succeeds using explicit canonical knowledge.
 Search, broader knowledge types, automatic curation, contradiction handling, and
-context deltas remain out of scope.
+context deltas remain out of scope for M14.
 
 ### M15 — Curator, deterministic retrieval, and context deltas
 
@@ -755,8 +755,9 @@ volume without making retrieval the source of truth?
 deterministic scoped search, explanation, retrieval health, explicit search-index
 rebuild, participant-bound cross-project collaboration through the existing
 mailbox tools, and a provider-free bounded curator with one exact deterministic
-meeting-resolution rule. Contradiction handling, context deltas, and portable
-export remain required before M15 is complete.
+meeting-resolution rule, plus owner-confirmed exact-revision contradictions with
+agent-run reporting and fail-closed search/context behavior. Context deltas and
+portable export remain required before M15 is complete.
 
 **Visible result**
 
@@ -786,7 +787,8 @@ crewfold contradiction list
   versioned deterministic applicability/provenance/quality/text ranking.
 - Curator proposal queue with bounded rule-based auto-acceptance.
 - Context deltas for new messages, decisions, dependencies, and contradictions.
-- Contradiction workflow and current/stale/disputed state.
+- Exact-pair contradiction workflow and relational dispute state independent of
+  current/stale currency.
 - Markdown plus machine-metadata export.
 - Search index health and idempotent rebuild from canonical records.
 - Owner-created, participant-bound cross-project threads using the existing

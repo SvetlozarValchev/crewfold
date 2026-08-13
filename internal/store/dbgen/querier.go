@@ -10,11 +10,16 @@ import (
 
 type Querier interface {
 	AcceptKnowledgeRevision(ctx context.Context, arg AcceptKnowledgeRevisionParams) (int64, error)
+	ConfirmKnowledgeContradiction(ctx context.Context, arg ConfirmKnowledgeContradictionParams) (int64, error)
+	CountKnowledgeContradictionAuthorityChecks(ctx context.Context, arg CountKnowledgeContradictionAuthorityChecksParams) (int64, error)
+	CountOpenKnowledgeContradictionsForRevision(ctx context.Context, arg CountOpenKnowledgeContradictionsForRevisionParams) (int64, error)
 	DecideMeetingProposal(ctx context.Context, arg DecideMeetingProposalParams) error
+	DismissKnowledgeContradiction(ctx context.Context, arg DismissKnowledgeContradictionParams) (int64, error)
 	FindAcceptedKnowledgeSuccessor(ctx context.Context, arg FindAcceptedKnowledgeSuccessorParams) (string, error)
 	FindActiveMeetingForOverlap(ctx context.Context, overlapID string) (string, error)
 	FindLiveKnowledgeSuccessor(ctx context.Context, supersedesRevisionID *string) (string, error)
 	FindThreadParticipantByBinding(ctx context.Context, arg FindThreadParticipantByBindingParams) (ThreadParticipant, error)
+	GetContradictionReporterRunScope(ctx context.Context, runID string) (GetContradictionReporterRunScopeRow, error)
 	GetCuratorAutoAcceptanceByKnowledge(ctx context.Context, arg GetCuratorAutoAcceptanceByKnowledgeParams) (CuratorAutoAcceptance, error)
 	GetCuratorDerivationByKnowledge(ctx context.Context, arg GetCuratorDerivationByKnowledgeParams) (CuratorDerivation, error)
 	GetCuratorMeetingProposalSource(ctx context.Context, proposalID string) (GetCuratorMeetingProposalSourceRow, error)
@@ -22,6 +27,9 @@ type Querier interface {
 	GetEligibleParticipantAssignment(ctx context.Context, arg GetEligibleParticipantAssignmentParams) (GetEligibleParticipantAssignmentRow, error)
 	GetKnowledgeActorRunWorkspace(ctx context.Context, id string) (string, error)
 	GetKnowledgeAuthorityCheckByKey(ctx context.Context, arg GetKnowledgeAuthorityCheckByKeyParams) (KnowledgeAuthorityCheck, error)
+	GetKnowledgeContradiction(ctx context.Context, arg GetKnowledgeContradictionParams) (KnowledgeContradiction, error)
+	GetKnowledgeContradictionAuthorityCheckByKey(ctx context.Context, arg GetKnowledgeContradictionAuthorityCheckByKeyParams) (KnowledgeContradictionAuthorityCheck, error)
+	GetKnowledgeContradictionByPair(ctx context.Context, arg GetKnowledgeContradictionByPairParams) (KnowledgeContradiction, error)
 	GetKnowledgeRevision(ctx context.Context, arg GetKnowledgeRevisionParams) (GetKnowledgeRevisionRow, error)
 	GetKnowledgeSourceMeeting(ctx context.Context, id string) (GetKnowledgeSourceMeetingRow, error)
 	GetKnowledgeSourceMeetingProposal(ctx context.Context, id string) (GetKnowledgeSourceMeetingProposalRow, error)
@@ -35,6 +43,8 @@ type Querier interface {
 	InsertCuratorDerivation(ctx context.Context, arg InsertCuratorDerivationParams) error
 	InsertCuratorRule(ctx context.Context, arg InsertCuratorRuleParams) error
 	InsertKnowledgeAuthorityCheck(ctx context.Context, arg InsertKnowledgeAuthorityCheckParams) error
+	InsertKnowledgeContradiction(ctx context.Context, arg InsertKnowledgeContradictionParams) error
+	InsertKnowledgeContradictionAuthorityCheck(ctx context.Context, arg InsertKnowledgeContradictionAuthorityCheckParams) error
 	InsertKnowledgeItem(ctx context.Context, arg InsertKnowledgeItemParams) error
 	InsertKnowledgeRevision(ctx context.Context, arg InsertKnowledgeRevisionParams) error
 	InsertKnowledgeSource(ctx context.Context, arg InsertKnowledgeSourceParams) error
@@ -49,15 +59,19 @@ type Querier interface {
 	InsertParticipantThread(ctx context.Context, arg InsertParticipantThreadParams) error
 	InsertSplitTask(ctx context.Context, arg InsertSplitTaskParams) error
 	InsertThreadParticipant(ctx context.Context, arg InsertThreadParticipantParams) error
+	ListAllOpenKnowledgeContradictionsForRevision(ctx context.Context, arg ListAllOpenKnowledgeContradictionsForRevisionParams) ([]KnowledgeContradiction, error)
 	ListCuratorEligibleRevisionIDs(ctx context.Context, arg ListCuratorEligibleRevisionIDsParams) ([]string, error)
 	ListCuratorMeetingProposalCandidates(ctx context.Context, arg ListCuratorMeetingProposalCandidatesParams) ([]ListCuratorMeetingProposalCandidatesRow, error)
 	ListCuratorQueueRevisionIDs(ctx context.Context, arg ListCuratorQueueRevisionIDsParams) ([]string, error)
 	ListKnowledgeAuthorityChecks(ctx context.Context, arg ListKnowledgeAuthorityChecksParams) ([]KnowledgeAuthorityCheck, error)
+	ListKnowledgeContradictionAuthorityChecks(ctx context.Context, arg ListKnowledgeContradictionAuthorityChecksParams) ([]KnowledgeContradictionAuthorityCheck, error)
+	ListKnowledgeContradictionIDs(ctx context.Context, arg ListKnowledgeContradictionIDsParams) ([]string, error)
 	ListKnowledgeRevisionIDs(ctx context.Context, arg ListKnowledgeRevisionIDsParams) ([]string, error)
 	ListKnowledgeRevisionSources(ctx context.Context, revisionID string) ([]KnowledgeSource, error)
 	ListMeetingActions(ctx context.Context, proposalID string) ([]MeetingAction, error)
 	ListMeetingContributions(ctx context.Context, meetingID string) ([]MeetingContribution, error)
 	ListMeetingParticipants(ctx context.Context, meetingID string) ([]MeetingParticipant, error)
+	ListOpenKnowledgeContradictionsForRevision(ctx context.Context, arg ListOpenKnowledgeContradictionsForRevisionParams) ([]KnowledgeContradiction, error)
 	ListThreadParticipants(ctx context.Context, threadID string) ([]ThreadParticipant, error)
 	ListThreadParticipantsByAgent(ctx context.Context, arg ListThreadParticipantsByAgentParams) ([]ThreadParticipant, error)
 	MarkKnowledgeRevisionStale(ctx context.Context, arg MarkKnowledgeRevisionStaleParams) (int64, error)
@@ -68,6 +82,7 @@ type Querier interface {
 	RejectKnowledgeRevision(ctx context.Context, arg RejectKnowledgeRevisionParams) (int64, error)
 	ReleaseMeetingClaim(ctx context.Context, arg ReleaseMeetingClaimParams) error
 	ReleaseTaskAssignmentsForMeeting(ctx context.Context, arg ReleaseTaskAssignmentsForMeetingParams) error
+	ResolveKnowledgeContradiction(ctx context.Context, arg ResolveKnowledgeContradictionParams) (int64, error)
 	RunAuthorizedForMessage(ctx context.Context, arg RunAuthorizedForMessageParams) (int64, error)
 	SetMeetingTaskAssigned(ctx context.Context, arg SetMeetingTaskAssignedParams) error
 	SetMeetingTaskCancelled(ctx context.Context, arg SetMeetingTaskCancelledParams) error

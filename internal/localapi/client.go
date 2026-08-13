@@ -422,6 +422,16 @@ func (c *Client) KnowledgeMarkStale(ctx context.Context, params KnowledgeMarkSta
 	return result, nil
 }
 
+func (c *Client) KnowledgeDispute(ctx context.Context, workspace, revision string) (KnowledgeDisputeResult, error) {
+	var result KnowledgeDisputeResult
+	if err := c.callParams(ctx, MethodKnowledgeDispute, KnowledgeQueryParams{
+		Workspace: workspace, KnowledgeRevision: revision,
+	}, &result); err != nil {
+		return KnowledgeDisputeResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) CuratorQueue(ctx context.Context, params CuratorQueueParams) (CuratorQueueResult, error) {
 	if params.Limit == nil {
 		limit := 50
@@ -448,6 +458,55 @@ func (c *Client) CuratorProcess(ctx context.Context, params CuratorProcessParams
 	var result CuratorProcessResult
 	if err := c.callParams(ctx, MethodCuratorProcess, params, &result); err != nil {
 		return CuratorProcessResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ContradictionReport(ctx context.Context, params ContradictionReportParams) (ContradictionMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result ContradictionMutationResult
+	if err := c.callParams(ctx, MethodContradictionReport, params, &result); err != nil {
+		return ContradictionMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ContradictionShow(ctx context.Context, workspace, contradiction string) (ContradictionShowResult, error) {
+	var result ContradictionShowResult
+	if err := c.callParams(ctx, MethodContradictionShow, ContradictionQueryParams{
+		Workspace: workspace, Contradiction: contradiction,
+	}, &result); err != nil {
+		return ContradictionShowResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ContradictionList(ctx context.Context, params ContradictionListParams) (ContradictionListResult, error) {
+	if params.Limit == nil {
+		limit := 50
+		params.Limit = &limit
+	}
+	var result ContradictionListResult
+	if err := c.callParams(ctx, MethodContradictionList, params, &result); err != nil {
+		return ContradictionListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ContradictionConfirm(ctx context.Context, params ContradictionDecisionParams) (ContradictionMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result ContradictionMutationResult
+	if err := c.callParams(ctx, MethodContradictionConfirm, params, &result); err != nil {
+		return ContradictionMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ContradictionDismiss(ctx context.Context, params ContradictionDecisionParams) (ContradictionMutationResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result ContradictionMutationResult
+	if err := c.callParams(ctx, MethodContradictionDismiss, params, &result); err != nil {
+		return ContradictionMutationResult{}, err
 	}
 	return result, nil
 }

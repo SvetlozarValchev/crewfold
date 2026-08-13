@@ -203,14 +203,41 @@ provenance source. Optional `task_scope_id` narrows applicability;
 requires `fresh_until`. The result remains proposed until the local owner accepts
 it. No accept, reject, or stale tool is advertised to a run.
 
+### `crewfold_report_contradiction`
+
+```json
+{
+  "left_revision": "krev_0123456789abcdef0123456789abcdef",
+  "right_revision": "krev_fedcba9876543210fedcba9876543210",
+  "reason": "The two accepted routing decisions require incompatible orders.",
+  "idempotency_key": "routing-order-conflict"
+}
+```
+
+The tool reports a conflict between two distinct exact accepted/current revisions.
+It exposes no actor, run, workspace, project, task, status, or governance field.
+The store derives the authenticated live run inside the report transaction and
+requires each participant to be project-wide or scoped to that run's exact task.
+Revision order is canonicalized for request hashing and identity. The structured
+result is the complete proposed contradiction detail with both exact revision
+snapshots and its initially empty bounded authority ledger.
+
+A report is only a proposal and does not quarantine either revision. The local
+owner must confirm it through the owner-only local API. The known name
+`crewfold_confirm_contradiction` is deliberately not advertised or included in a
+run capability; probing it produces durable `run.tool_denied` and never creates a
+contradiction authority check. The report reason is valid UTF-8 without NUL and is
+bounded to 2048 encoded bytes.
+
 Newly built context packets include a bounded summary of at most ten queued or
 delivered messages for the assigned agent and project. Full message bodies remain
 outside the base packet and are retrieved explicitly through the mailbox tools.
 
 ## Idempotency and audit
 
-Report, artifact, message-send, read, acknowledgement, and knowledge-proposal
-idempotency is local to the authenticated actor/run. Repeating the same key and
+Report, artifact, message-send, read, acknowledgement, knowledge-proposal, and
+contradiction-report idempotency is local to the authenticated actor/run.
+Repeating the same key and
 content returns the same durable record while the capability remains active,
 including after the worker has applied a progress report. Reusing a key with
 different content returns `invalid_input` without another mutation.
@@ -221,7 +248,10 @@ Allowed tools/resources append `run.tool_called`; denied scope probes append
 `knowledge.proposed`. A reserved governance-tool probe never reaches knowledge
 state and is recorded only as `run.tool_denied`. Audits contain
 request/method/target/outcome/error code, not capability tokens or arbitrary
-request bodies.
+request bodies. A successful fresh contradiction report also appends
+`contradiction.detected`; its canonical reversed-pair retry appends neither a
+second contradiction nor a second `contradiction.detected` fact. The retry's
+tool invocation still has its own `run.tool_called` audit.
 
 Codex connects through Crewfold's local STDIO bridge. Codex receives only the
 socket path and private capability-file path as forwarded environment variables;

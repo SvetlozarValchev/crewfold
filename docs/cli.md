@@ -8,7 +8,8 @@ queries, project/checkout registration and observation, durable
 agent/objective/task coordination, claims and drift, structured meetings,
 canonical decisions/findings, deterministic scoped knowledge search, a rebuildable
 knowledge index, a bounded deterministic curator queue and one owner-configured
-safe rule, immutable context packets, deterministic fake
+safe rule, owner-confirmed exact knowledge contradictions, immutable context
+packets, deterministic fake
 execution, supervised direct and Herdr fixture subprocesses, run-scoped MCP
 reporting and knowledge proposal, durable one-recipient agent mail, and an
 offline-proven Codex provider adapter. The Claude Code adapter, provider doctor,
@@ -409,6 +410,8 @@ crewfold knowledge index rebuild --workspace personal \
   --socket /path/to/crewfold.sock --idempotency-key rebuild-search
 crewfold knowledge accept KNOWLEDGE_REVISION --expected-state-revision 1 \
   --workspace personal --socket /path/to/crewfold.sock
+crewfold knowledge dispute KNOWLEDGE_REVISION --workspace personal \
+  --socket /path/to/crewfold.sock
 crewfold curator queue --workspace personal --project world-engine \
   --socket /path/to/crewfold.sock
 crewfold curator rule enable accepted-meeting-resolution-copy \
@@ -416,6 +419,13 @@ crewfold curator rule enable accepted-meeting-resolution-copy \
   --socket /path/to/crewfold.sock
 crewfold curator process --workspace personal --project world-engine \
   --apply-safe --socket /path/to/crewfold.sock
+crewfold contradiction report LEFT_REVISION RIGHT_REVISION \
+  --reason 'The accepted routing rules disagree.' --workspace personal \
+  --socket /path/to/crewfold.sock
+crewfold contradiction list --workspace personal --project world-engine \
+  --socket /path/to/crewfold.sock
+crewfold contradiction confirm CONTRADICTION --expected-state-revision 1 \
+  --workspace personal --socket /path/to/crewfold.sock
 crewfold context build NEXT_TASK --workspace personal --agent engine-impl \
   --include KNOWLEDGE_REVISION \
   --expected-task-revision 2 --socket /path/to/crewfold.sock
@@ -501,6 +511,22 @@ does not call a model or provider, read transcripts, use search rank as authorit
 run in the background, or expose an agent-facing governance tool. Ordinary manual
 `knowledge accept` remains the local-owner path; the curator's narrow internal
 path records distinct rule, derivation, authority, and event evidence.
+
+`contradiction report` records a canonical pair of different accepted/current
+items with intersecting applicability. Revision order is normalized and the same
+immutable pair is unique for all time. A report remains proposed and changes no
+retrieval state until the owner uses `contradiction confirm` with the exact state
+revision. `contradiction show` returns both exact snapshots and a bounded authority
+ledger. `contradiction list` requires the project; omitted status means active
+proposed/open records, newest first, default 50 and maximum 200 with no cursor.
+
+An open record quarantines each whole exact participant everywhere it would
+otherwise apply, without changing accepted/current currency. Search excludes it
+before ranking/limit; an otherwise eligible explicit context pin fails the whole
+new build with `knowledge_conflict`. `knowledge dispute` derives total incident
+open records and the first 200 sorted IDs. Owner dismissal, or a participant
+becoming stale/superseded, clears that record's effect. Existing packet-v3 bytes
+never change.
 
 The fixed packet budget is 32 KiB with a 12 KiB whole-knowledge sub-budget.
 `context show --output json` preserves the exact ordered request list and embedded

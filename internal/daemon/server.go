@@ -572,12 +572,24 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleKnowledgeReject(request), false
 	case localapi.MethodKnowledgeMarkStale:
 		return s.handleKnowledgeMarkStale(request), false
+	case localapi.MethodKnowledgeDispute:
+		return s.handleKnowledgeDispute(request), false
 	case localapi.MethodCuratorQueue:
 		return s.handleCuratorQueue(request), false
 	case localapi.MethodCuratorRuleConfigure:
 		return s.handleCuratorRuleConfigure(request), false
 	case localapi.MethodCuratorProcess:
 		return s.handleCuratorProcess(request), false
+	case localapi.MethodContradictionReport:
+		return s.handleContradictionReport(request), false
+	case localapi.MethodContradictionShow:
+		return s.handleContradictionShow(request), false
+	case localapi.MethodContradictionList:
+		return s.handleContradictionList(request), false
+	case localapi.MethodContradictionConfirm:
+		return s.handleContradictionConfirm(request), false
+	case localapi.MethodContradictionDismiss:
+		return s.handleContradictionDismiss(request), false
 	case localapi.MethodMessageSend:
 		return s.handleMessageSend(request), false
 	case localapi.MethodInboxList:

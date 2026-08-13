@@ -67,9 +67,13 @@ generation, diagnose degraded retrieval, and explicitly rebuild the index withou
 changing canonical state. Agents assigned to different registered projects can
 now negotiate through an owner-created participant thread: exact agent/task/project
 bindings preserve direct-mail isolation, offline delivery, origin provenance, and
-single-recipient semantics across adjacent unrelated repositories. Automatic
-curation, contradictions, context deltas, portable export, broader knowledge
-types, and the operator TUI remain to come.
+single-recipient semantics across adjacent unrelated repositories. One bounded
+deterministic curator rule now safely copies accepted meeting resolutions under
+explicit owner configuration. Exact-revision contradiction reports remain inert
+until owner confirmation; an open record then quarantines both exact participants
+from search and new explicit context without changing currency or historical
+packets. Model-assisted curation, semantic conflict detection, context deltas,
+portable export, broader knowledge types, and the operator TUI remain to come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.

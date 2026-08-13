@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 13
+	LatestSchemaVersion = 14
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -440,6 +440,56 @@ type KnowledgeMutationResult struct {
 	Revision       domain.KnowledgeRevision        `json:"revision"`
 	AuthorityCheck *domain.KnowledgeAuthorityCheck `json:"authority_check,omitempty"`
 	EventSequence  int64                           `json:"event_sequence"`
+}
+
+type ReportKnowledgeContradictionCommand struct {
+	WorkspaceIdentifier string
+	LeftRevisionID      string
+	RightRevisionID     string
+	ReportNote          string
+	Actor               domain.KnowledgeActor
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+// ReportRunKnowledgeContradictionCommand is the authenticated-run boundary for
+// contradiction reports. Workspace, project, task, and actor are deliberately
+// absent: the store derives all four from RunID in the report transaction.
+type ReportRunKnowledgeContradictionCommand struct {
+	RunID           string
+	LeftRevisionID  string
+	RightRevisionID string
+	ReportNote      string
+	IdempotencyKey  string
+	CorrelationID   string
+}
+
+type DecideKnowledgeContradictionCommand struct {
+	WorkspaceIdentifier   string
+	ContradictionID       string
+	ExpectedStateRevision int64
+	Note                  string
+	Actor                 domain.KnowledgeActor
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type ConfirmKnowledgeContradictionCommand = DecideKnowledgeContradictionCommand
+
+type DismissKnowledgeContradictionCommand = DecideKnowledgeContradictionCommand
+
+type ListKnowledgeContradictionsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	Status              string
+	RevisionID          string
+	Limit               int
+}
+
+type KnowledgeContradictionMutationResult struct {
+	Detail         domain.KnowledgeContradictionDetail          `json:"detail"`
+	AuthorityCheck *domain.KnowledgeContradictionAuthorityCheck `json:"authority_check,omitempty"`
+	EventSequence  int64                                        `json:"event_sequence"`
 }
 
 type CuratorQueueQuery struct {

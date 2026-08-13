@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:knowledge-revision-dispute:v1",
+  "title": "Crewfold derived effective knowledge dispute v1",
+  "type": "object",
+  "additionalProperties": false,
+	"required": ["revision_id", "disputed", "open_contradiction_count", "open_contradiction_ids"],
+  "properties": {
+    "revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+    "disputed": {"type": "boolean"},
+	"open_contradiction_count": {"type": "integer", "minimum": 0, "description": "Total open contradictions, including any omitted from the bounded ID sample."},
+    "open_contradiction_ids": {
+      "type": "array",
+      "maxItems": 200,
+      "uniqueItems": true,
+	  "description": "The first at most 200 open contradiction IDs in ascending lexical order.",
+	  "items": {"type": "string", "pattern": "^kcon_[0-9a-f]{32}$"}
+    }
+	},
+	"allOf": [
+	  {
+		"if": {"properties": {"disputed": {"const": false}}, "required": ["disputed"]},
+		"then": {"properties": {"open_contradiction_count": {"const": 0}, "open_contradiction_ids": {"maxItems": 0}}},
+		"else": {"properties": {"open_contradiction_count": {"minimum": 1}, "open_contradiction_ids": {"minItems": 1}}}
+	  }
+	]
+}

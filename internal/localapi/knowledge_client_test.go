@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"crewfold/internal/domain"
@@ -32,6 +33,26 @@ func TestKnowledgeSearchClientPreservesLimitPresenceAndSendsDefault(t *testing.T
 				t.Fatalf("captured limit = %v, want pointer to %d", captured.Limit, test.want)
 			}
 		})
+	}
+}
+
+func TestKnowledgeDisputeClientSendsExactReadWithoutAuthorityFields(t *testing.T) {
+	t.Parallel()
+	request := captureCuratorRequest(t, MethodKnowledgeDispute, func(client *Client) error {
+		_, err := client.KnowledgeDispute(context.Background(), "personal", "krev_exact")
+		return err
+	}, KnowledgeDisputeResult{Schema: KnowledgeDisputeSchema, Type: "knowledge_revision_dispute"})
+	var params KnowledgeQueryParams
+	if err := json.Unmarshal(request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.Workspace != "personal" || params.KnowledgeRevision != "krev_exact" {
+		t.Fatalf("knowledge dispute params=%#v", params)
+	}
+	for _, forbidden := range []string{`"actor"`, `"currency_status"`, `"contradiction"`} {
+		if strings.Contains(string(request.Params), forbidden) {
+			t.Errorf("knowledge dispute read exposed mutation input %s: %s", forbidden, request.Params)
+		}
 	}
 }
 

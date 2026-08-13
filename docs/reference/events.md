@@ -10,7 +10,7 @@ success/failure facts are also implemented. Claim add/release/expiry, overlap
 open/resolution, drift open/resolution, and structured meeting facts are
 implemented. Canonical knowledge proposal/governance, authority-denial, and
 context-packet build facts are also implemented. Names for policy, checks, context
-deltas, contradiction handling, and external integrations remain proposals; the
+deltas and external integrations remain proposals; the
 catalogue defines intended coverage, not a frozen schema.
 
 ## Envelope
@@ -197,6 +197,12 @@ knowledge.stale_denied
 curator.rule_configured
 curator.derived
 curator.auto_accepted
+contradiction.detected
+contradiction.confirmed
+contradiction.dismissed
+contradiction.resolved
+contradiction.confirm_denied
+contradiction.dismiss_denied
 context.packet_built
 ```
 
@@ -227,17 +233,30 @@ acceptance therefore emits the normal knowledge fact as well as curator-specific
 explanation evidence. Queue queries append no event because the queue is a read
 projection. Idempotent process and rule replays append nothing.
 
+`contradiction.detected` records the canonical exact pair, project, both task
+scopes, proposed state, and reporter actor without embedding either immutable
+body. `contradiction.confirmed` and `contradiction.dismissed` advance the
+contradiction state and link the exact owner authority check. Internal non-owner
+governance attempts commit `contradiction.confirm_denied` or
+`contradiction.dismiss_denied` plus their denied authority record without changing
+state. The reserved run-MCP confirmation probe stops earlier and emits only
+`run.tool_denied`.
+
+`contradiction.resolved` is emitted atomically when a normal owner-governed stale
+or supersede event makes one participant terminal. It names the participant,
+resolution reason, and exact cause event. Derived `knowledge.dispute` queries,
+search filtering, and failed context builds append no event. No
+`knowledge.disputed` fact exists because effective dispute is relational open
+state, not knowledge currency.
+
 The following remain proposals:
 
 ```text
 artifact.registered
 artifact.redacted
-knowledge.disputed
 context.packet_dispatched
 context_delta.built
 context_delta.acknowledged
-contradiction.detected
-contradiction.resolved
 ```
 
 ## Outcomes and owner checkpoints

@@ -52,9 +52,15 @@ const (
 	MethodKnowledgeAccept       = "knowledge.accept"
 	MethodKnowledgeReject       = "knowledge.reject"
 	MethodKnowledgeMarkStale    = "knowledge.mark_stale"
+	MethodKnowledgeDispute      = "knowledge.dispute"
 	MethodCuratorQueue          = "curator.queue"
 	MethodCuratorRuleConfigure  = "curator.rule.configure"
 	MethodCuratorProcess        = "curator.process"
+	MethodContradictionReport   = "contradiction.report"
+	MethodContradictionShow     = "contradiction.show"
+	MethodContradictionList     = "contradiction.list"
+	MethodContradictionConfirm  = "contradiction.confirm"
+	MethodContradictionDismiss  = "contradiction.dismiss"
 	MethodMessageSend           = "message.send"
 	MethodInboxList             = "inbox.list"
 	MethodThreadCreate          = "thread.create"
@@ -113,9 +119,13 @@ const (
 	KnowledgeSearchSchema           = "urn:crewfold:schema:local-api:knowledge-search-result:v1"
 	KnowledgeIndexStatusSchema      = "urn:crewfold:schema:local-api:knowledge-index-status-result:v1"
 	KnowledgeIndexRebuildSchema     = "urn:crewfold:schema:local-api:knowledge-index-rebuild-result:v1"
+	KnowledgeDisputeSchema          = "urn:crewfold:schema:local-api:knowledge-dispute-result:v1"
 	CuratorQueueSchema              = "urn:crewfold:schema:local-api:curator-queue-result:v1"
 	CuratorRuleMutationSchema       = "urn:crewfold:schema:local-api:curator-rule-mutation-result:v1"
 	CuratorProcessSchema            = "urn:crewfold:schema:local-api:curator-process-result:v1"
+	ContradictionMutationSchema     = "urn:crewfold:schema:local-api:contradiction-mutation-result:v1"
+	ContradictionShowSchema         = "urn:crewfold:schema:local-api:contradiction-show-result:v1"
+	ContradictionListSchema         = "urn:crewfold:schema:local-api:contradiction-list-result:v1"
 	MessageSendSchema               = "urn:crewfold:schema:local-api:message-send-result:v1"
 	InboxListSchema                 = "urn:crewfold:schema:local-api:inbox-list-result:v1"
 	ParticipantThreadMutationSchema = "urn:crewfold:schema:local-api:participant-thread-mutation-result:v1"
@@ -704,6 +714,61 @@ type KnowledgeMutationResult struct {
 	Revision       domain.KnowledgeRevision        `json:"revision"`
 	AuthorityCheck *domain.KnowledgeAuthorityCheck `json:"authority_check,omitempty"`
 	EventSequence  int64                           `json:"event_sequence"`
+}
+
+type KnowledgeDisputeResult struct {
+	Schema  string                          `json:"schema"`
+	Type    string                          `json:"type"`
+	Dispute domain.KnowledgeRevisionDispute `json:"dispute"`
+}
+
+type ContradictionReportParams struct {
+	Workspace      string `json:"workspace"`
+	LeftRevision   string `json:"left_revision"`
+	RightRevision  string `json:"right_revision"`
+	Reason         string `json:"reason"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type ContradictionQueryParams struct {
+	Workspace     string `json:"workspace"`
+	Contradiction string `json:"contradiction"`
+}
+
+type ContradictionListParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project"`
+	Status    string `json:"status,omitempty"`
+	Revision  string `json:"revision,omitempty"`
+	Limit     *int   `json:"limit,omitempty"`
+}
+
+type ContradictionDecisionParams struct {
+	Workspace             string `json:"workspace"`
+	Contradiction         string `json:"contradiction"`
+	ExpectedStateRevision int64  `json:"expected_state_revision"`
+	Note                  string `json:"note,omitempty"`
+	IdempotencyKey        string `json:"idempotency_key"`
+}
+
+type ContradictionMutationResult struct {
+	Schema         string                                       `json:"schema"`
+	Type           string                                       `json:"type"`
+	Detail         domain.KnowledgeContradictionDetail          `json:"detail"`
+	AuthorityCheck *domain.KnowledgeContradictionAuthorityCheck `json:"authority_check,omitempty"`
+	EventSequence  int64                                        `json:"event_sequence"`
+}
+
+type ContradictionShowResult struct {
+	Schema string                              `json:"schema"`
+	Type   string                              `json:"type"`
+	Detail domain.KnowledgeContradictionDetail `json:"detail"`
+}
+
+type ContradictionListResult struct {
+	Schema string                            `json:"schema"`
+	Type   string                            `json:"type"`
+	List   domain.KnowledgeContradictionList `json:"list"`
 }
 
 type KnowledgeShowResult struct {

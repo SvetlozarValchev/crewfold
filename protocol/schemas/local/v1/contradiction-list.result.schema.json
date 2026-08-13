@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:contradiction-list-result:v1",
+  "title": "Crewfold local API contradiction list result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "list"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:contradiction-list-result:v1"},
+    "type": {"const": "knowledge_contradiction_list"},
+    "list": {"$ref": "../../domain/v1/knowledge-contradiction-list.schema.json"}
+  }
+}

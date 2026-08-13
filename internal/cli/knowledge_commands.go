@@ -37,6 +37,8 @@ func (a *App) runKnowledge(ctx context.Context, mode outputMode, args []string) 
 		return a.runKnowledgeDecision(ctx, mode, args[1:], "reject")
 	case "mark-stale":
 		return a.runKnowledgeMarkStale(ctx, mode, args[1:])
+	case "dispute":
+		return a.runKnowledgeDispute(ctx, mode, args[1:])
 	default:
 		return a.writeFailure(mode, usageFailure(fmt.Sprintf("unknown knowledge command %q", args[0]), "run 'crewfold help knowledge' for usage"))
 	}
@@ -263,6 +265,36 @@ func (a *App) runKnowledgeShow(ctx context.Context, mode outputMode, args []stri
 	return ExitOK
 }
 
+func (a *App) runKnowledgeDispute(ctx context.Context, mode outputMode, args []string) int {
+	revision, optionArgs, failure := requiredLeadingArgument(args, "knowledge revision ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).KnowledgeDispute(ctx, workspace, revision)
+	if err != nil {
+		return a.writeClientFailure(mode, "show knowledge dispute", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write knowledge dispute", err))
+		}
+	} else {
+		fmt.Fprintf(a.stdout, "revision: %s\ndisputed: %t\nopen contradictions: %d displayed / %d total\n", result.Dispute.RevisionID, result.Dispute.Disputed, len(result.Dispute.OpenContradictionIDs), result.Dispute.OpenContradictionCount)
+		for _, contradiction := range result.Dispute.OpenContradictionIDs {
+			fmt.Fprintf(a.stdout, "%s\n", contradiction)
+		}
+	}
+	return ExitOK
+}
+
 func (a *App) runKnowledgeList(ctx context.Context, mode outputMode, args []string) int {
 	options, failure := parseOptions(args, "workspace", "project", "task-scope", "type", "review-status", "currency-status", "socket")
 	if failure != nil {
@@ -472,11 +504,17 @@ const knowledgeHelp = `Usage:
   crewfold knowledge accept <revision> --expected-state-revision <n> --workspace <scope> --socket <path> [--note <text>]
   crewfold knowledge reject <revision> --expected-state-revision <n> --workspace <scope> --socket <path> [--note <text>]
   crewfold knowledge mark-stale <revision> --expected-state-revision <n> --reason <text> --workspace <scope> --socket <path>
+  crewfold knowledge dispute <revision> --workspace <scope> --socket <path>
 
 Proposal Markdown must begin with one '# ' title followed by a concise body. A
 task or meeting source records provenance; applicability defaults to that source's
 project and can be narrowed with --task-scope. Use --supersedes with a proposed
 successor; accepting it atomically preserves and supersedes the prior revision.
 Acceptance, rejection, and staleness are owner-authorized local operations.
+Dispute inspection derives effective state from confirmed open contradiction
+records; it does not add a currency value or mutate the knowledge revision. An open
+contradiction quarantines each exact participant everywhere it would otherwise apply.
+The dispute read returns the first at most 200 contradiction IDs in ascending lexical
+order together with the exact total count.
 Use the -- separator before a literal search query that begins with --.
 `

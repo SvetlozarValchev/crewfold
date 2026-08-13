@@ -89,9 +89,15 @@ type daemonClient interface {
 	KnowledgeAccept(context.Context, localapi.KnowledgeDecisionParams) (localapi.KnowledgeMutationResult, error)
 	KnowledgeReject(context.Context, localapi.KnowledgeDecisionParams) (localapi.KnowledgeMutationResult, error)
 	KnowledgeMarkStale(context.Context, localapi.KnowledgeMarkStaleParams) (localapi.KnowledgeMutationResult, error)
+	KnowledgeDispute(context.Context, string, string) (localapi.KnowledgeDisputeResult, error)
 	CuratorQueue(context.Context, localapi.CuratorQueueParams) (localapi.CuratorQueueResult, error)
 	CuratorRuleConfigure(context.Context, localapi.CuratorRuleConfigureParams) (localapi.CuratorRuleMutationResult, error)
 	CuratorProcess(context.Context, localapi.CuratorProcessParams) (localapi.CuratorProcessResult, error)
+	ContradictionReport(context.Context, localapi.ContradictionReportParams) (localapi.ContradictionMutationResult, error)
+	ContradictionShow(context.Context, string, string) (localapi.ContradictionShowResult, error)
+	ContradictionList(context.Context, localapi.ContradictionListParams) (localapi.ContradictionListResult, error)
+	ContradictionConfirm(context.Context, localapi.ContradictionDecisionParams) (localapi.ContradictionMutationResult, error)
+	ContradictionDismiss(context.Context, localapi.ContradictionDecisionParams) (localapi.ContradictionMutationResult, error)
 	MessageSend(context.Context, localapi.MessageSendParams) (localapi.MessageSendResult, error)
 	InboxList(context.Context, string, string, int) (localapi.InboxListResult, error)
 	ThreadCreate(context.Context, localapi.ThreadCreateParams) (localapi.ParticipantThreadMutationResult, error)
@@ -193,6 +199,8 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runKnowledge(ctx, mode, args[1:])
 	case "curator":
 		return a.runCurator(ctx, mode, args[1:])
+	case "contradiction":
+		return a.runContradiction(ctx, mode, args[1:])
 	case "message":
 		return a.runMessage(ctx, mode, args[1:])
 	case "inbox":
@@ -803,6 +811,8 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, knowledgeHelp)
 	case "curator":
 		fmt.Fprint(a.stdout, curatorHelp)
+	case "contradiction":
+		fmt.Fprint(a.stdout, contradictionHelp)
 	case "message":
 		fmt.Fprint(a.stdout, messageHelp)
 	case "inbox":
@@ -1465,6 +1475,7 @@ Commands:
   context        Build and inspect immutable run briefings
   knowledge      Curate and discover versioned decisions and findings
   curator        Derive reviewable knowledge from structured evidence
+  contradiction  Report and govern exact conflicting knowledge revisions
   message        Send one bounded durable message to an agent
   inbox          Inspect an agent's durable mailbox
   thread         Manage participant-bound and direct conversations

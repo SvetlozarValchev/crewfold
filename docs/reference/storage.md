@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 13.
+Status: implemented through schema version 14.
 
 ## Location and ownership
 
@@ -329,6 +329,38 @@ capacity remains, a new exact derivation and its automatic acceptance may commit
 together in that transaction. A structured source outside the exact title/body
 bounds is returned as a skip evaluation and creates no marker, proposal, or event.
 
+## Schema version 14
+
+`knowledge_contradictions` is immutable exact-pair history plus a narrow lifecycle
+projection. It stores one lexically ordered, globally unique pair of different
+knowledge items; workspace/project, proposed report reason/actor/time, state
+revision, and exact lifecycle event links. Optional confirmation, dismissal, and
+automatic-resolution columns are legal only in their corresponding states.
+
+Insert triggers independently require both participants to be accepted/current in
+one project with intersecting applicability, the exact `contradiction.detected`
+event/actor link, valid encoded UTF-8 bounds, and either `local-owner/human` or a
+`starting|active|blocked` reporter run whose exact project/task can see both
+participants. Update triggers make identity/report immutable, revalidate
+participants at confirmation, require exact owner authority/event linkage for
+confirm/dismiss, and require a matching normal knowledge governance event and
+authority record for stale/supersede resolution. Deletes and illegal transitions
+abort. Direct SQL therefore cannot bypass the Go authority contract.
+
+`knowledge_contradiction_authority_checks` is append-only evidence for every
+confirm/dismiss attempt that reaches domain governance. It freezes action, actor,
+allowed/denied outcome and reason, optional bounded note, command key/hash, event
+sequence, and timestamp. A trigger requires the matching contradiction state and
+event actor/revision. Detail queries return a separate total count plus the newest
+at most 200 checks; the sample never silently claims to be complete.
+
+Effective dispute has no table and adds no knowledge currency value. It is a
+relational projection over open contradiction rows: at most 200 sorted IDs plus a
+separate total count. Search applies the same open-row exclusion before `LIMIT`.
+Context-build conflict checks fetch only 16 sorted IDs plus a total count and
+commit no packet/event/key on failure. Mark-stale and successor acceptance resolve
+all incident open rows within their existing knowledge transaction.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -353,10 +385,11 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 13 contains agent/task/run/claim coordination,
+without its WAL. Schema version 14 contains agent/task/run/claim coordination,
 meetings, canonical knowledge, immutable context packets, scoped
 report/artifact/audit records, durable message/thread/delivery/wake state,
 overlap/drift/watcher state, bounded curator policy/derivation/acceptance evidence,
+exact contradiction history and bounded derived dispute evidence,
 opaque fake/direct bindings, direct supervisor references, and a rebuildable FTS
 projection. It contains no provider-private
 session transcript. Backup of a live installation must include a

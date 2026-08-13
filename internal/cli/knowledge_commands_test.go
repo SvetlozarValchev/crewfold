@@ -12,6 +12,32 @@ import (
 	"crewfold/internal/localapi"
 )
 
+func TestKnowledgeDisputeShowsSeparateBoundedDerivedState(t *testing.T) {
+	t.Parallel()
+	revisionID := "krev_00000000000000000000000000000001"
+	contradictionID := "kcon_00000000000000000000000000000001"
+	client := &fakeDaemonClient{knowledgeDispute: localapi.KnowledgeDisputeResult{
+		Schema: localapi.KnowledgeDisputeSchema, Type: "knowledge_revision_dispute",
+		Dispute: domain.KnowledgeRevisionDispute{
+			RevisionID: revisionID, Disputed: true, OpenContradictionCount: 1,
+			OpenContradictionIDs: []string{contradictionID},
+		},
+	}}
+	app, stdout, stderr := newTestApp()
+	app.newClient = func(string) daemonClient { return client }
+	if exit := app.Run([]string{"knowledge", "dispute", revisionID, "--workspace", "personal", "--socket", "/tmp/crewfold.sock"}); exit != ExitOK || stderr.Len() != 0 {
+		t.Fatalf("knowledge dispute exit=%d stderr=%q", exit, stderr.String())
+	}
+	if len(client.knowledgeDisputeArgs) != 2 || client.knowledgeDisputeArgs[0] != "personal" || client.knowledgeDisputeArgs[1] != revisionID {
+		t.Fatalf("KnowledgeDispute args=%v", client.knowledgeDisputeArgs)
+	}
+	for _, wanted := range []string{"disputed: true", "open contradictions: 1", contradictionID} {
+		if !strings.Contains(stdout.String(), wanted) {
+			t.Errorf("knowledge dispute output %q lacks %q", stdout.String(), wanted)
+		}
+	}
+}
+
 func TestKnowledgeSearchForwardsScopeDefaultsAndExplainsTextAndJSON(t *testing.T) {
 	t.Parallel()
 	search := domain.KnowledgeSearchResult{

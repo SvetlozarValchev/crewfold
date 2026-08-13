@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:contradiction-confirm-params:v1",
+  "title": "Crewfold local API contradiction confirmation parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "contradiction", "expected_state_revision", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "contradiction": {"type": "string", "pattern": "^kcon_[0-9a-f]{32}$"},
+    "expected_state_revision": {"type": "integer", "minimum": 1},
+	"note": {"type": "string", "maxLength": 2048, "description": "Optional UTF-8 text bounded to 2048 encoded bytes."},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

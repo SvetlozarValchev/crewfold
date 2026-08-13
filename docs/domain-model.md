@@ -346,6 +346,23 @@ knowledge revision, authority check, normal acceptance event, and curator event.
 Only the narrow exact-copy state policy may use actor `subsystem:curator`; general
 subsystem and agent governance remains denied.
 
+### Knowledge contradiction and derived dispute
+
+A `kcon_...` record preserves one globally unique lexical pair of different exact
+knowledge revisions. Both must be accepted/current in the same project and their
+project-wide/task applicability must intersect. Its independent lifecycle is
+`proposed -> open -> dismissed|resolved`, or direct `proposed -> dismissed`; it
+never changes either revision's review/currency axis.
+
+Owner or live run actors may report, but only owner confirmation makes the record
+effective. A run reporter is bound to its exact workspace/project/task and may see
+only broad or same-task participants. `knowledge dispute` is not stored: it derives
+the total and a bounded sorted ID sample from incident open records. Each open
+record quarantines both complete revisions everywhere they otherwise apply.
+Dismissal closes it; stale/supersede governance resolves it atomically with the
+exact cause event. A revision remains disputed while any other incident record is
+open.
+
 ### Outcome assessment
 
 A revisioned judgment about whether a promised deliverable was achieved. It is

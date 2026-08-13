@@ -108,6 +108,17 @@ func TestValidateScenarioRejectsUnknownAndUnboundedBehavior(t *testing.T) {
 		"knowledge freshness mismatch": {Schema: FakeScenarioSchema, Name: "knowledge-freshness", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Knowledge: domain.FixtureKnowledge{
 			Proposal: &domain.FixtureKnowledgeProposal{Type: domain.KnowledgeTypeFinding, Title: "bounded", Body: "bounded", Confidence: domain.KnowledgeConfidenceHigh, VerificationStatus: domain.KnowledgeVerificationVerified, FreshnessPolicy: domain.KnowledgeFreshExpiresAt},
 		}},
+		"contradiction without assertions": {Schema: FakeScenarioSchema, Name: "contradiction-assertions", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Contradiction: domain.FixtureContradiction{
+			Report: &domain.FixtureContradictionReport{LeftRevision: "krev_00000000000000000000000000000001", RightRevision: "krev_00000000000000000000000000000002", Reason: "decisions disagree"},
+		}},
+		"contradiction same revision": {Schema: FakeScenarioSchema, Name: "contradiction-same", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Contradiction: domain.FixtureContradiction{
+			Report:         &domain.FixtureContradictionReport{LeftRevision: "krev_00000000000000000000000000000001", RightRevision: "krev_00000000000000000000000000000001", Reason: "decisions disagree"},
+			ReportReceived: true, ConfirmDenied: true,
+		}},
+		"contradiction multibyte reason exceeds byte bound": {Schema: FakeScenarioSchema, Name: "contradiction-reason", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Contradiction: domain.FixtureContradiction{
+			Report:         &domain.FixtureContradictionReport{LeftRevision: "krev_00000000000000000000000000000001", RightRevision: "krev_00000000000000000000000000000002", Reason: strings.Repeat("é", 1025)},
+			ReportReceived: true, ConfirmDenied: true,
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -153,13 +164,34 @@ func TestValidateScenarioAllowsBoundedProjectWideKnowledgeProposal(t *testing.T)
 	}
 }
 
+func TestValidateScenarioAllowsStrictContradictionAssertions(t *testing.T) {
+	t.Parallel()
+	scenario := domain.FakeScenario{
+		Schema: FakeScenarioSchema,
+		Name:   "scoped-contradiction",
+		Steps:  []domain.FakeStep{{Kind: domain.ObservationProgress}},
+		Contradiction: domain.FixtureContradiction{
+			Report: &domain.FixtureContradictionReport{
+				LeftRevision: "krev_00000000000000000000000000000001", RightRevision: "krev_00000000000000000000000000000002",
+				Reason: "The accepted decisions disagree.",
+			},
+			ReportReceived: true,
+			ConfirmDenied:  true,
+		},
+	}
+	if err := ValidateScenario(scenario); err != nil {
+		t.Fatalf("ValidateScenario() error = %v", err)
+	}
+}
+
 func TestLoadScenarioRejectsUnknownFieldsAndTrailingDocuments(t *testing.T) {
 	t.Parallel()
 
 	for name, contents := range map[string]string{
-		"unknown field":           `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}],"unknown":true}`,
-		"unknown knowledge field": `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}],"knowledge":{"proposal":{"type":"finding","title":"bounded","body":"bounded","confidence":"high","verification_status":"verified","freshness_policy":"until_superseded","source_id":"forged"}}}`,
-		"trailing document":       `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}]} {}`,
+		"unknown field":                         `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}],"unknown":true}`,
+		"unknown knowledge field":               `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}],"knowledge":{"proposal":{"type":"finding","title":"bounded","body":"bounded","confidence":"high","verification_status":"verified","freshness_policy":"until_superseded","source_id":"forged"}}}`,
+		"unknown contradiction authority field": `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}],"contradiction":{"report":{"left_revision":"krev_00000000000000000000000000000001","right_revision":"krev_00000000000000000000000000000002","reason":"disagree","project":"forged"},"report_received":true,"confirm_denied":true}}`,
+		"trailing document":                     `{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"test","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress"}]} {}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

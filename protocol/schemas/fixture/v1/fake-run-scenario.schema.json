@@ -80,6 +80,16 @@
           "then": {"required": ["proposal"]}
         }
       ]
+    },
+    "contradiction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["report", "report_received", "confirm_denied"],
+      "properties": {
+        "report": {"$ref": "#/$defs/contradiction_report"},
+        "report_received": {"const": true},
+        "confirm_denied": {"const": true}
+      }
     }
   },
   "$defs": {
@@ -107,6 +117,16 @@
         "confidence": {"enum": ["low", "medium", "high"]},
         "verification_status": {"enum": ["unverified", "supported", "verified"]},
         "freshness_policy": {"const": "until_superseded"}
+      }
+    },
+    "contradiction_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left_revision", "right_revision", "reason"],
+      "properties": {
+        "left_revision": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+        "right_revision": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 2048, "description": "The semantic fixture loader enforces 1–2048 encoded UTF-8 bytes, nonblank text, and no NUL."}
       }
     }
   },

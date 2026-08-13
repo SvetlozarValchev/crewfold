@@ -151,6 +151,10 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 		fmt.Fprintln(diagnostics, err)
 		return 1
 	}
+	if err := runFixtureContradiction(ctx, client, scenario.Contradiction); err != nil {
+		fmt.Fprintln(diagnostics, err)
+		return 1
+	}
 	for index, step := range scenario.Steps {
 		result, err := reportFixtureStep(ctx, client, index, step)
 		if err != nil || result.IsError {
@@ -208,6 +212,50 @@ func runFixtureKnowledge(ctx context.Context, client fixtureToolClient, plan dom
 	denied, err := client.CallTool(ctx, "crewfold_accept_knowledge", map[string]any{"knowledge_revision": revision.ID})
 	if err != nil || !denied.IsError || fixtureToolErrorCode(denied) != "denied_by_policy" {
 		return errors.New("reserved fixture knowledge acceptance probe was not denied")
+	}
+	return nil
+}
+
+func runFixtureContradiction(ctx context.Context, client fixtureToolClient, plan domain.FixtureContradiction) error {
+	if plan == (domain.FixtureContradiction{}) {
+		return nil
+	}
+	report := plan.Report
+	if report == nil {
+		return errors.New("fixture contradiction report is missing")
+	}
+	result, err := client.CallTool(ctx, "crewfold_report_contradiction", map[string]any{
+		"left_revision": report.LeftRevision, "right_revision": report.RightRevision,
+		"reason": report.Reason, "idempotency_key": "fixture-contradiction-report",
+	})
+	if err != nil || result.IsError {
+		return errors.New("report fixture contradiction failed")
+	}
+	var detail domain.KnowledgeContradictionDetail
+	if err := json.Unmarshal(result.StructuredContent, &detail); err != nil ||
+		detail.Contradiction.ID == "" || detail.Contradiction.Status != domain.KnowledgeContradictionProposed ||
+		detail.Contradiction.ReportedByType != domain.KnowledgeActorAgentRun {
+		return errors.New("decode fixture contradiction report failed")
+	}
+	if !plan.ReportReceived {
+		return errors.New("fixture contradiction report_received assertion is missing")
+	}
+	replayed, err := client.CallTool(ctx, "crewfold_report_contradiction", map[string]any{
+		"left_revision": report.RightRevision, "right_revision": report.LeftRevision,
+		"reason": report.Reason, "idempotency_key": "fixture-contradiction-report",
+	})
+	if err != nil || replayed.IsError || !bytes.Equal(replayed.StructuredContent, result.StructuredContent) {
+		return errors.New("fixture contradiction reversed-pair replay was not idempotent")
+	}
+	if !plan.ConfirmDenied {
+		return errors.New("fixture contradiction confirm_denied assertion is missing")
+	}
+	denied, err := client.CallTool(ctx, "crewfold_confirm_contradiction", map[string]any{
+		"contradiction": detail.Contradiction.ID, "expected_state_revision": detail.Contradiction.StateRevision,
+		"idempotency_key": "fixture-contradiction-confirmation",
+	})
+	if err != nil || !denied.IsError || fixtureToolErrorCode(denied) != "denied_by_policy" {
+		return errors.New("reserved fixture contradiction confirmation probe was not denied")
 	}
 	return nil
 }

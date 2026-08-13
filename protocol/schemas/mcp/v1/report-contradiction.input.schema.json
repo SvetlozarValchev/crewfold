@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:mcp:report-contradiction-input:v1",
+  "title": "crewfold_report_contradiction input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["left_revision", "right_revision", "reason", "idempotency_key"],
+  "properties": {
+    "left_revision": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+    "right_revision": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "Required valid UTF-8 text without NUL; the implementation enforces the 2048 limit on encoded bytes."
+    },
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

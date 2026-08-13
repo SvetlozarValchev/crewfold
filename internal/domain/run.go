@@ -42,14 +42,15 @@ type FakeStep struct {
 }
 
 type FakeScenario struct {
-	Schema       string           `json:"schema"`
-	Name         string           `json:"name"`
-	StartFailure string           `json:"start_failure,omitempty"`
-	Acceptance   AcceptanceRule   `json:"acceptance"`
-	Steps        []FakeStep       `json:"steps"`
-	Process      FixtureProcess   `json:"process,omitempty"`
-	Mailbox      FixtureMailbox   `json:"mailbox,omitempty"`
-	Knowledge    FixtureKnowledge `json:"knowledge,omitempty"`
+	Schema        string               `json:"schema"`
+	Name          string               `json:"name"`
+	StartFailure  string               `json:"start_failure,omitempty"`
+	Acceptance    AcceptanceRule       `json:"acceptance"`
+	Steps         []FakeStep           `json:"steps"`
+	Process       FixtureProcess       `json:"process,omitempty"`
+	Mailbox       FixtureMailbox       `json:"mailbox,omitempty"`
+	Knowledge     FixtureKnowledge     `json:"knowledge,omitempty"`
+	Contradiction FixtureContradiction `json:"contradiction,omitempty"`
 }
 
 // FixtureProcess describes deterministic operating-system behavior for the
@@ -103,6 +104,20 @@ type FixtureKnowledgeProposal struct {
 	Confidence         string `json:"confidence"`
 	VerificationStatus string `json:"verification_status"`
 	FreshnessPolicy    string `json:"freshness_policy"`
+}
+
+// FixtureContradiction exercises authenticated reporting and the immutable
+// governance boundary without allowing a fixture to choose its actor or scope.
+type FixtureContradiction struct {
+	Report         *FixtureContradictionReport `json:"report,omitempty"`
+	ReportReceived bool                        `json:"report_received,omitempty"`
+	ConfirmDenied  bool                        `json:"confirm_denied,omitempty"`
+}
+
+type FixtureContradictionReport struct {
+	LeftRevision  string `json:"left_revision"`
+	RightRevision string `json:"right_revision"`
+	Reason        string `json:"reason"`
 }
 
 type Run struct {

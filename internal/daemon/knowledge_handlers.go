@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 
 	"crewfold/internal/domain"
 	"crewfold/internal/localapi"
@@ -159,6 +160,20 @@ func (s *server) handleKnowledgeMarkStale(request localapi.Request) localapi.Res
 		return storeErrorResponse(request, err)
 	}
 	return marshalKnowledgeMutation(request, result)
+}
+
+func (s *server) handleKnowledgeDispute(request localapi.Request) localapi.Response {
+	var params localapi.KnowledgeQueryParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.KnowledgeRevision) == "" {
+		return invalidParamsResponse(request, "knowledge.dispute requires workspace and knowledge_revision")
+	}
+	dispute, err := s.store.KnowledgeRevisionDispute(context.Background(), params.Workspace, params.KnowledgeRevision)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.KnowledgeDisputeResult{
+		Schema: localapi.KnowledgeDisputeSchema, Type: "knowledge_revision_dispute", Dispute: dispute,
+	})
 }
 
 func marshalKnowledgeMutation(request localapi.Request, result store.KnowledgeMutationResult) localapi.Response {

@@ -288,6 +288,7 @@ func (s *Store) decideKnowledge(ctx context.Context, action, workspaceIdentifier
 	}
 	now := s.nowText()
 	var rows int64
+	lastEventSequence := int64(0)
 	switch action {
 	case domain.KnowledgeAuthorityAccept:
 		if revision.ReviewStatus != domain.KnowledgeReviewProposed || revision.CurrencyStatus != domain.KnowledgeCurrencyPending {
@@ -319,6 +320,15 @@ func (s *Store) decideKnowledge(ctx context.Context, action, workspaceIdentifier
 				domain.KnowledgeAuthorityReasonOwner, note, idempotencyKey, requestHash, supersededSequence, now); err != nil {
 				return KnowledgeMutationResult{}, err
 			}
+			resolvedSequence, resolveErr := s.resolveOpenKnowledgeContradictionsInTransaction(ctx, tx,
+				workspace.ID, predecessor.ID, domain.KnowledgeCurrencySuperseded, supersededSequence,
+				actor, correlationID, now)
+			if resolveErr != nil {
+				return KnowledgeMutationResult{}, resolveErr
+			}
+			if resolvedSequence > lastEventSequence {
+				lastEventSequence = resolvedSequence
+			}
 		}
 		rows, err = queries.AcceptKnowledgeRevision(ctx, dbgen.AcceptKnowledgeRevisionParams{
 			AcceptedAt: &now, AcceptedBy: &actor.ID, AcceptedByType: &actor.Type,
@@ -349,9 +359,6 @@ func (s *Store) decideKnowledge(ctx context.Context, action, workspaceIdentifier
 	if rows != 1 {
 		return KnowledgeMutationResult{}, &Error{Code: CodeRevisionConflict, Message: "knowledge state changed before the decision was applied"}
 	}
-	if err := s.runMutationHook(MutationAfterProjection); err != nil {
-		return KnowledgeMutationResult{}, err
-	}
 	eventType := map[string]string{
 		domain.KnowledgeAuthorityAccept:    knowledgeAcceptedEvent,
 		domain.KnowledgeAuthorityReject:    knowledgeRejectedEvent,
@@ -363,10 +370,24 @@ func (s *Store) decideKnowledge(ctx context.Context, action, workspaceIdentifier
 	if err != nil {
 		return KnowledgeMutationResult{}, err
 	}
+	lastEventSequence = sequence
 	check, err := insertKnowledgeAuthorityCheck(ctx, queries, workspace.ID, revision.ID, action, actor,
 		domain.KnowledgeAuthorityAllowed, domain.KnowledgeAuthorityReasonOwner, note,
 		idempotencyKey, requestHash, sequence, now)
 	if err != nil {
+		return KnowledgeMutationResult{}, err
+	}
+	if action == domain.KnowledgeAuthorityMarkStale {
+		resolvedSequence, resolveErr := s.resolveOpenKnowledgeContradictionsInTransaction(ctx, tx,
+			workspace.ID, revision.ID, domain.KnowledgeCurrencyStale, sequence, actor, correlationID, now)
+		if resolveErr != nil {
+			return KnowledgeMutationResult{}, resolveErr
+		}
+		if resolvedSequence > lastEventSequence {
+			lastEventSequence = resolvedSequence
+		}
+	}
+	if err := s.runMutationHook(MutationAfterProjection); err != nil {
 		return KnowledgeMutationResult{}, err
 	}
 	if err := s.runMutationHook(MutationAfterEvent); err != nil {
@@ -376,7 +397,7 @@ func (s *Store) decideKnowledge(ctx context.Context, action, workspaceIdentifier
 	if err != nil {
 		return KnowledgeMutationResult{}, err
 	}
-	result := KnowledgeMutationResult{Revision: revision, AuthorityCheck: &check, EventSequence: sequence}
+	result := KnowledgeMutationResult{Revision: revision, AuthorityCheck: &check, EventSequence: lastEventSequence}
 	if err := recordIdempotency(ctx, tx, checkKey, commandName, requestHash, result, now); err != nil {
 		return KnowledgeMutationResult{}, err
 	}

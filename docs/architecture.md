@@ -148,8 +148,10 @@ scope violations are denied and audited. The same identity derives mailbox sende
 recipient visibility, project scope, and thread-participant authority; agents
 cannot select a different sender or run in message tool arguments. The implemented
 `crewfold_propose_knowledge` tool similarly fixes proposal actor, workspace,
-project, and primary provenance to the authenticated run and its task. It cannot
-accept or otherwise govern the resulting proposal.
+project, and primary provenance to the authenticated run and its task. The
+implemented `crewfold_report_contradiction` tool derives the same run authority
+and can report only two accepted/current exact revisions applicable to its project
+and task. Neither tool can accept knowledge or confirm a contradiction.
 
 Project scope remains the mailbox default. An owner-created participant thread is
 the sole cross-project exception: it binds every member to an exact agent, task,
@@ -228,7 +230,10 @@ sub-budget. It records requested IDs, inclusion/exclusion decisions, and budget
 accounting in the immutable packet. Eligibility freezes inside the build
 transaction, so later governance cannot change an existing run briefing. Provider
 transcripts are neither queried nor ingested. This is bounded context authority,
-not RAG or a transcript accumulator.
+not RAG or a transcript accumulator. An otherwise eligible explicit revision in
+an owner-confirmed open contradiction fails the whole new build before budgeting;
+an already ineligible revision keeps its ordinary exclusion precedence. Existing
+packet-v3 bytes never change.
 
 The first M15 retrieval slice adds a disposable FTS5 projection over immutable
 revision titles and bodies. Search obtains text candidates from that projection,
@@ -265,9 +270,15 @@ one transaction. It records `subsystem:curator` authority with reason
 `state_policy`, the normal knowledge acceptance fact, and immutable derivation and
 auto-acceptance evidence. The general subsystem governance path remains denied;
 quality labels, free text, agents, retrieval rank, messages, and transcripts never
-gain acceptance authority. Broader curation and contradiction reconciliation
-remain later work, and retrieval still cannot automatically accept, summarize, or
-deliver knowledge.
+gain acceptance authority. The fourth M15 slice adds exact-pair contradiction
+records on a separate lifecycle axis. Agent or owner reports remain proposed;
+only the owner can open the record. Open participants are conservatively
+quarantined everywhere they otherwise apply, search excludes them before limit,
+and exact context assembly fails closed. Dismissal or a participant becoming
+stale/superseded closes effective dispute, while old packets remain immutable.
+Semantic detection, broader reconciliation, refresh/deltas, and export remain
+later work; retrieval still cannot automatically accept, summarize, or deliver
+knowledge.
 
 ### Outcome and briefing projector
 
@@ -331,7 +342,7 @@ capabilities and events.
 | Terminal topology and live pane buffers | Runtime driver, initially Herdr |
 | Provider-private conversation/session | Provider tool |
 | Tasks, assignments, claims, messages, meetings | Crewfold database |
-| Accepted project knowledge and decisions | Crewfold knowledge records |
+| Accepted project knowledge and decisions | Crewfold knowledge records; open contradictions derive a separate temporary quarantine without changing currency |
 | Accepted deliverables and residual outcome risk | Crewfold outcome assessments |
 | Verification results | Check systems and evidence records, with source and freshness |
 | Management briefing | Derived Crewfold projection; never an independent authority |

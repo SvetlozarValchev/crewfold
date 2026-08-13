@@ -1164,12 +1164,21 @@ type fakeDaemonClient struct {
 	knowledgePropose        localapi.KnowledgeProposeParams
 	knowledgeDecision       localapi.KnowledgeDecisionParams
 	knowledgeStale          localapi.KnowledgeMarkStaleParams
+	knowledgeDispute        localapi.KnowledgeDisputeResult
+	knowledgeDisputeArgs    []string
 	curatorQueue            localapi.CuratorQueueResult
 	curatorRuleMutation     localapi.CuratorRuleMutationResult
 	curatorProcess          localapi.CuratorProcessResult
 	curatorQueueParams      localapi.CuratorQueueParams
 	curatorRuleParams       localapi.CuratorRuleConfigureParams
 	curatorProcessParams    localapi.CuratorProcessParams
+	conMutation             localapi.ContradictionMutationResult
+	conShow                 localapi.ContradictionShowResult
+	conList                 localapi.ContradictionListResult
+	conReportParams         localapi.ContradictionReportParams
+	conListParams           localapi.ContradictionListParams
+	conDecisionParams       localapi.ContradictionDecisionParams
+	conAction               string
 	coordinationWorkspace   string
 	initName                string
 	initKey                 string
@@ -1347,6 +1356,11 @@ func (client *fakeDaemonClient) KnowledgeMarkStale(_ context.Context, params loc
 	return client.knowledgeMutation, nil
 }
 
+func (client *fakeDaemonClient) KnowledgeDispute(_ context.Context, workspace, revision string) (localapi.KnowledgeDisputeResult, error) {
+	client.knowledgeDisputeArgs = []string{workspace, revision}
+	return client.knowledgeDispute, nil
+}
+
 func (client *fakeDaemonClient) CuratorQueue(_ context.Context, params localapi.CuratorQueueParams) (localapi.CuratorQueueResult, error) {
 	client.curatorQueueParams = params
 	return client.curatorQueue, nil
@@ -1360,6 +1374,32 @@ func (client *fakeDaemonClient) CuratorRuleConfigure(_ context.Context, params l
 func (client *fakeDaemonClient) CuratorProcess(_ context.Context, params localapi.CuratorProcessParams) (localapi.CuratorProcessResult, error) {
 	client.curatorProcessParams = params
 	return client.curatorProcess, nil
+}
+
+func (client *fakeDaemonClient) ContradictionReport(_ context.Context, params localapi.ContradictionReportParams) (localapi.ContradictionMutationResult, error) {
+	client.conReportParams = params
+	return client.conMutation, nil
+}
+
+func (client *fakeDaemonClient) ContradictionShow(context.Context, string, string) (localapi.ContradictionShowResult, error) {
+	return client.conShow, nil
+}
+
+func (client *fakeDaemonClient) ContradictionList(_ context.Context, params localapi.ContradictionListParams) (localapi.ContradictionListResult, error) {
+	client.conListParams = params
+	return client.conList, nil
+}
+
+func (client *fakeDaemonClient) ContradictionConfirm(_ context.Context, params localapi.ContradictionDecisionParams) (localapi.ContradictionMutationResult, error) {
+	client.conDecisionParams = params
+	client.conAction = "confirm"
+	return client.conMutation, nil
+}
+
+func (client *fakeDaemonClient) ContradictionDismiss(_ context.Context, params localapi.ContradictionDecisionParams) (localapi.ContradictionMutationResult, error) {
+	client.conDecisionParams = params
+	client.conAction = "dismiss"
+	return client.conMutation, nil
 }
 
 func (client *fakeDaemonClient) MessageSend(_ context.Context, params localapi.MessageSendParams) (localapi.MessageSendResult, error) {

@@ -270,6 +270,33 @@ transaction-failure switch. Store fixtures with 101 structured sources prove the
 keep pre-existing safe proposals and later valid sources ahead of repeating
 invalid-source skips.
 
+### Owner-confirmed contradiction fixture
+
+The provider-free contradiction scenario renders a strict JSON template only
+after two dynamic exact revision IDs exist. Its authenticated `fixture-mcp` run
+reports one project-wide/task-scoped pair, asserts receipt, retries the reversed
+pair with the same key, and probes the reserved confirmation name. The fixture
+schema exposes only `left_revision`, `right_revision`, and `reason`; it has no
+actor, run, workspace, project, task, status, or governance override. Explicit
+`report_received` and `confirm_denied` assertions are required.
+
+Through public commands, the scenario proves proposed records have no effect;
+owner confirmation creates conservative whole-revision quarantine; project-only
+and unrelated-task search exclude the broad participant before `LIMIT`; and an
+otherwise eligible explicit context build fails with `knowledge_conflict` while
+appending no packet, event, or idempotency result. A pre-confirmation packet stays
+byte-stable. Dismissal restores search and lets the exact failed context key
+succeed, while the canonical terminal pair cannot be re-reported. Detail and
+owner-decision replay survive daemon restart.
+
+The unique report-reason sentinel must appear in canonical contradiction detail
+but remain absent from captured provider logs. Store/migration tests additionally
+cover multi-conflict last-open behavior, stale/supersede automatic resolution,
+more-than-200 dispute/authority histories, first-16 context error disclosure,
+confirm-time revalidation, denied non-owner governance, direct-SQL trigger
+attacks, mutation-hook rollback, and run-report replay after completion/restart.
+No model, credential, remote, or network is used.
+
 The real Claude canary has an independent two-flag acknowledgement gate:
 
 ```sh

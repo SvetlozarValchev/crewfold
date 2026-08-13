@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:knowledge-dispute-result:v1",
+  "title": "Crewfold local API derived knowledge dispute result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "dispute"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:knowledge-dispute-result:v1"},
+    "type": {"const": "knowledge_revision_dispute"},
+    "dispute": {"$ref": "../../domain/v1/knowledge-revision-dispute.schema.json"}
+  }
+}

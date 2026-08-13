@@ -189,10 +189,16 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 	if scenario.StartFailure != "" && scenario.Knowledge != (domain.FixtureKnowledge{}) {
 		return errors.New("start-failure scenarios cannot contain knowledge controls")
 	}
+	if scenario.StartFailure != "" && scenario.Contradiction != (domain.FixtureContradiction{}) {
+		return errors.New("start-failure scenarios cannot contain contradiction controls")
+	}
 	if err := validateFixtureMailbox(scenario.Mailbox); err != nil {
 		return err
 	}
 	if err := validateFixtureKnowledge(scenario.Knowledge); err != nil {
+		return err
+	}
+	if err := validateFixtureContradiction(scenario.Contradiction); err != nil {
 		return err
 	}
 	for index, step := range scenario.Steps {
@@ -221,6 +227,37 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 		}
 	}
 	return nil
+}
+
+func validateFixtureContradiction(plan domain.FixtureContradiction) error {
+	if plan == (domain.FixtureContradiction{}) {
+		return nil
+	}
+	if plan.Report == nil {
+		return errors.New("fixture contradiction assertions require a report")
+	}
+	if !plan.ReportReceived || !plan.ConfirmDenied {
+		return errors.New("fixture contradiction requires report_received and confirm_denied assertions")
+	}
+	report := plan.Report
+	if !validFixtureKnowledgeRevisionID(report.LeftRevision) ||
+		!validFixtureKnowledgeRevisionID(report.RightRevision) || report.LeftRevision == report.RightRevision ||
+		!validFixtureKnowledgeText(report.Reason, 2048) {
+		return errors.New("fixture contradiction report contains invalid or unbounded fields")
+	}
+	return nil
+}
+
+func validFixtureKnowledgeRevisionID(value string) bool {
+	if len(value) != len("krev_")+32 || !strings.HasPrefix(value, "krev_") {
+		return false
+	}
+	for _, character := range value[len("krev_"):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func validateFixtureKnowledge(plan domain.FixtureKnowledge) error {

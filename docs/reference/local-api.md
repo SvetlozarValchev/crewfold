@@ -6,7 +6,8 @@ context packets, owner-facing durable agent mail, leased claims with determinist
 overlap/drift inspection, structured overlap-resolution meetings, canonical
 knowledge, and deterministic derived retrieval. Subscriptions arrive later.
 The owner-local surface also exposes the bounded deterministic curator queue,
-rule configuration, and explicit processing pass.
+rule configuration, explicit processing pass, and exact knowledge-contradiction
+governance.
 
 ## Transport
 
@@ -553,6 +554,41 @@ exact source identity and a stable reason. It creates no knowledge revision,
 derivation, queue entry, authority record, or event; a later process evaluation may
 report it again. An accepted proposal summary above 2 KiB reports
 `summary_not_exact_safe_copy`.
+
+### Exact knowledge contradictions
+
+`contradiction.report` takes `workspace`, two distinct exact revision IDs,
+`reason` (1–2048 encoded UTF-8 bytes), and an idempotency key. It canonicalizes
+revision order. Both revisions must be accepted/current, be different items in
+one project, and have intersecting project-wide/task applicability. It creates a
+`proposed` record and does not change knowledge currency or retrieval.
+
+`contradiction.show` takes `workspace` and the exact `kcon_...` ID. It returns the
+record, both complete exact revision snapshots, `authority_check_count`, and only
+the newest at most 200 authority checks ordered by event sequence then ID
+descending. `contradiction.list` additionally requires `project`; optional
+`status`, exact participant `revision`, and limit filters are strict. An omitted
+status returns active `proposed|open` records, newest first by reported time then
+ID. The default is 50, maximum is 200, and v1 has no cursor. Each list item is the
+same coherent bounded detail shape.
+
+`contradiction.confirm` and `contradiction.dismiss` take `workspace`,
+`contradiction`, `expected_state_revision`, an optional note bounded to 2048
+encoded bytes, and an idempotency key. Caller payloads cannot select an actor.
+Only the local owner can confirm a still-eligible proposed record `open`; the
+owner may dismiss a proposed or open record. Allowed authority evidence and the
+lifecycle event commit in the same transaction. A stale/superseded participant
+automatically resolves every incident open record with exact governing-event
+linkage.
+
+`knowledge.dispute` takes `workspace` and an exact revision. It derives, without
+mutation, whether any open record references the revision, the total open count,
+and the first at most 200 contradiction IDs in ascending lexical order. Open
+participants are quarantined everywhere they otherwise apply. Search filters them
+before ranking/limit, while a new explicit context build returns
+`knowledge_conflict` for an otherwise eligible disputed pin and commits nothing.
+Existing packet-v3 bytes remain unchanged. See
+[ADR-0012](../decisions/0012-owner-confirmed-exact-knowledge-contradictions.md).
 
 ### `coordination.status`
 

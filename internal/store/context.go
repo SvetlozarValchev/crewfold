@@ -37,6 +37,7 @@ var runScopedTools = []string{
 	"crewfold_publish_artifact",
 	"crewfold_read_message",
 	"crewfold_report_blocked",
+	"crewfold_report_contradiction",
 	"crewfold_report_progress",
 	"crewfold_send_message",
 }
@@ -285,8 +286,7 @@ func validContextKnowledgeRevisionID(value string) bool {
 }
 
 func (s *Store) selectContextKnowledgeInTransaction(ctx context.Context, tx *sql.Tx, workspaceID string, task domain.Task, revisionIDs []string, nowText string) ([]domain.KnowledgeRevision, []domain.ContextSelection, map[string]domain.ContextExclusion, int, error) {
-	accepted := make([]domain.KnowledgeRevision, 0, len(revisionIDs))
-	selections := make([]domain.ContextSelection, 0, len(revisionIDs))
+	eligible := make([]domain.KnowledgeRevision, 0, len(revisionIDs))
 	exclusions := make(map[string]domain.ContextExclusion)
 	for _, revisionID := range revisionIDs {
 		revision, err := s.KnowledgeRevisionInTransaction(ctx, tx, workspaceID, revisionID)
@@ -310,6 +310,22 @@ func (s *Store) selectContextKnowledgeInTransaction(ctx context.Context, tx *sql
 			}
 			exclusions[revision.ID] = exclusion
 			continue
+		}
+		eligible = append(eligible, revision)
+	}
+	eligibleIDs := make([]string, 0, len(eligible))
+	for _, revision := range eligible {
+		eligibleIDs = append(eligibleIDs, revision.ID)
+	}
+	if err := s.AssertKnowledgeRevisionsUndisputedInTransaction(ctx, tx, workspaceID, eligibleIDs); err != nil {
+		return nil, nil, nil, 0, err
+	}
+	accepted := make([]domain.KnowledgeRevision, 0, len(eligible))
+	selections := make([]domain.ContextSelection, 0, len(eligible))
+	for _, revision := range eligible {
+		encoded, err := json.Marshal(revision)
+		if err != nil {
+			return nil, nil, nil, 0, storageFailure("encode context knowledge revision", err)
 		}
 		prospective := append(append([]domain.KnowledgeRevision(nil), accepted...), revision)
 		usedBytes, err := contextKnowledgeEncodedBytes(prospective)

@@ -18,11 +18,13 @@ their acceptance/review gate has passed. The current implementation supports:
 - an inspectable, explicitly rebuildable derived search index;
 - a read-projected curator queue over proposed revisions; and
 - one disabled-by-default, owner-configured deterministic rule that can copy an
-  accepted structured meeting resolution into canonical project knowledge.
+  accepted structured meeting resolution into canonical project knowledge; and
+- owner-confirmed exact-revision contradiction records with derived bounded
+  dispute state and fail-closed retrieval/context behavior.
 
 It does not ingest provider transcripts, run a model-backed curator or background
-curation loop, or refresh a running agent with context deltas. Contradiction
-handling and export/import also remain later capabilities.
+curation loop, semantically detect conflicts, automatically reconcile them, or
+refresh a running agent with context deltas. Export/import also remains later.
 
 The system separates four layers:
 
@@ -209,7 +211,7 @@ Agent proposals remain manual regardless of their confidence, verification label
 persuasive text, or claimed source. See
 [ADR-0011](decisions/0011-bounded-deterministic-context-curator.md).
 
-Later M15 slices add contradiction handling and explicit refresh/deltas. Future
+Later M15 slices add explicit refresh/deltas and portable export. Future
 curator rules may cover structured handoffs, review findings, test evidence, and
 explicit owner decisions, but each requires its own frozen transform and authority
 contract; no general curator self-approval exists.
@@ -277,13 +279,43 @@ model rendering may compress it for an audience but may not invent acceptance,
 erase disagreement, or upgrade evidence strength. Raw transcripts are never
 required to build it.
 
-## Contradictions and export
+## Exact contradictions and export
 
-M14 preserves immutable supersession history and explicit staleness but does not
-automatically detect or reconcile contradictions. Future contradiction handling
-will preserve both sources, exclude unsafe derived claims, and route a decision to
-the responsible authority rather than blending conflicting statements.
+Contradictions are a separate lifecycle over an immutable, lexically canonical
+pair of exact revisions. Both participants must be different items in one project,
+accepted/current, and have intersecting applicability. The pair is globally
+unique: reversing it, dismissing it, or automatically resolving it does not make
+the same immutable bodies reportable again.
+
+An owner or live authenticated run may report. A run can report only when both
+participants are project-wide or apply to its exact task; workspace, project,
+task, and actor come from the run rather than tool arguments. Reports remain
+`proposed` and do not affect retrieval. Only the owner can confirm an eligible
+report `open`, and every confirmation/dismissal has optimistic revision and
+durable authority/event evidence. The MCP confirmation name is reserved but not
+advertised, so an agent probe is audited as `run.tool_denied` without creating a
+governance attempt.
+
+An open contradiction conservatively quarantines each whole exact participant
+wherever it would otherwise apply. In particular, a project-wide claim paired
+with a task-only claim is excluded from project search and other tasks too.
+`knowledge dispute` reports total open incidence plus at most 200 sorted IDs.
+Search removes disputed revisions before ranking/limit. A new packet build fails
+atomically when an otherwise eligible explicit pin is disputed; older ordinary
+ineligibility reasons take precedence, and previously built packet-v3 bytes never
+change.
+
+Owner dismissal removes the effect. Marking a participant stale or accepting its
+successor atomically resolves all incident open records with exact governing
+event/actor linkage; other open records can keep the revision disputed. See
+[ADR-0012](decisions/0012-owner-confirmed-exact-knowledge-contradictions.md).
+
+Automatic semantic detection and reconciliation are not implemented. The system
+preserves both claims, provenance, scope, and resolution authority rather than
+silently choosing the highest-ranked result.
 
 Human-readable export plus machine-readable metadata remains planned. Provider
 embeddings, hidden prompts, and proprietary databases must never be required to
-recover canonical decisions and findings.
+recover canonical decisions and findings. Export must preserve exact contradiction
+pairs, lifecycle/event links, and authority history without flattening dispute
+into knowledge currency.

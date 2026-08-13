@@ -170,7 +170,12 @@ WHERE knowledge_search MATCH ? AND ki.workspace_id=? AND ki.project_id=?
 	  AND (?='' OR ki.type=?)
 	  AND ((?='' AND ki.task_scope_id IS NULL) OR (?!='' AND (ki.task_scope_id IS NULL OR ki.task_scope_id=?)))
 	  AND EXISTS (SELECT 1 FROM knowledge_sources primary_source WHERE primary_source.revision_id=kr.id AND primary_source.role='primary')
-  AND (kr.freshness_policy='until_superseded' OR crewfold_timestamp_key(kr.fresh_until)>crewfold_timestamp_key(?))
+	  AND NOT EXISTS (
+	    SELECT 1 FROM knowledge_contradictions contradiction
+	    WHERE contradiction.workspace_id=ki.workspace_id AND contradiction.status='open'
+	      AND (contradiction.left_revision_id=kr.id OR contradiction.right_revision_id=kr.id)
+	  )
+	  AND (kr.freshness_policy='until_superseded' OR crewfold_timestamp_key(kr.fresh_until)>crewfold_timestamp_key(?))
 )
 SELECT id,scope_rank,provenance_rank,freshness_class,fresh_until,confidence_rank,verification_rank,text_rank,accepted_at
 FROM ranked ORDER BY scope_rank,provenance_rank,freshness_class,

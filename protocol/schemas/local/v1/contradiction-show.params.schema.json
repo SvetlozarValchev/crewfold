@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:contradiction-show-params:v1",
+  "title": "Crewfold local API contradiction show parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "contradiction"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "contradiction": {"type": "string", "pattern": "^kcon_[0-9a-f]{32}$"}
+  }
+}

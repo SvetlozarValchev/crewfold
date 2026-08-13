@@ -79,6 +79,9 @@ printf 'Deterministic knowledge retrieval black-box acceptance\n'
 printf 'Bounded deterministic curator black-box acceptance\n'
 "$repo_root/test/scenarios/bounded-curator/run.sh"
 
+printf 'Owner-confirmed knowledge contradiction black-box acceptance\n'
+"$repo_root/test/scenarios/knowledge-contradictions/run.sh"
+
 printf 'Herdr runtime black-box acceptance\n'
 "$repo_root/test/scenarios/herdr-runtime/run.sh"
 

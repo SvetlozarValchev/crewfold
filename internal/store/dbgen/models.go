@@ -66,6 +66,54 @@ type KnowledgeAuthorityCheck struct {
 	CreatedAt      string  `json:"created_at"`
 }
 
+type KnowledgeContradiction struct {
+	ID                           string  `json:"id"`
+	WorkspaceID                  string  `json:"workspace_id"`
+	ProjectID                    string  `json:"project_id"`
+	LeftRevisionID               string  `json:"left_revision_id"`
+	RightRevisionID              string  `json:"right_revision_id"`
+	Status                       string  `json:"status"`
+	StateRevision                int64   `json:"state_revision"`
+	ReportNote                   string  `json:"report_note"`
+	ReportedAt                   string  `json:"reported_at"`
+	ReportedBy                   string  `json:"reported_by"`
+	ReportedByType               string  `json:"reported_by_type"`
+	DetectedEventSequence        int64   `json:"detected_event_sequence"`
+	ConfirmedAt                  *string `json:"confirmed_at"`
+	ConfirmedBy                  *string `json:"confirmed_by"`
+	ConfirmedByType              *string `json:"confirmed_by_type"`
+	ConfirmNote                  *string `json:"confirm_note"`
+	ConfirmEventSequence         *int64  `json:"confirm_event_sequence"`
+	DismissedAt                  *string `json:"dismissed_at"`
+	DismissedBy                  *string `json:"dismissed_by"`
+	DismissedByType              *string `json:"dismissed_by_type"`
+	DismissNote                  *string `json:"dismiss_note"`
+	DismissEventSequence         *int64  `json:"dismiss_event_sequence"`
+	ResolutionReason             *string `json:"resolution_reason"`
+	ResolvedAt                   *string `json:"resolved_at"`
+	ResolvedBy                   *string `json:"resolved_by"`
+	ResolvedByType               *string `json:"resolved_by_type"`
+	ResolutionNote               *string `json:"resolution_note"`
+	ResolutionEventSequence      *int64  `json:"resolution_event_sequence"`
+	ResolutionCauseEventSequence *int64  `json:"resolution_cause_event_sequence"`
+}
+
+type KnowledgeContradictionAuthorityCheck struct {
+	ID              string  `json:"id"`
+	WorkspaceID     string  `json:"workspace_id"`
+	ContradictionID string  `json:"contradiction_id"`
+	Action          string  `json:"action"`
+	ActorID         string  `json:"actor_id"`
+	ActorType       string  `json:"actor_type"`
+	Outcome         string  `json:"outcome"`
+	Reason          string  `json:"reason"`
+	Note            *string `json:"note"`
+	IdempotencyKey  string  `json:"idempotency_key"`
+	RequestHash     string  `json:"request_hash"`
+	EventSequence   int64   `json:"event_sequence"`
+	CreatedAt       string  `json:"created_at"`
+}
+
 type KnowledgeSource struct {
 	RevisionID     string `json:"revision_id"`
 	Ordinal        int64  `json:"ordinal"`

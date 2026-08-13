@@ -135,6 +135,29 @@ func TestCheckedInCuratorAgentScenarioKeepsAuthorityFieldsOutOfFixture(t *testin
 	}
 }
 
+func TestKnowledgeContradictionScenarioTemplateRendersStrictDynamicRevisions(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../test/scenarios/knowledge-contradictions/report.json.in")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := strings.NewReplacer(
+		"__LEFT_REVISION__", "krev_00000000000000000000000000000001",
+		"__RIGHT_REVISION__", "krev_00000000000000000000000000000002",
+	).Replace(string(data))
+	path := filepath.Join(t.TempDir(), "report.json")
+	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scenario, err := execution.LoadScenario(path)
+	if err != nil {
+		t.Fatalf("execution.LoadScenario(rendered contradiction fixture) error = %v", err)
+	}
+	if !scenario.Contradiction.ReportReceived || !scenario.Contradiction.ConfirmDenied || scenario.Contradiction.Report == nil {
+		t.Fatalf("rendered contradiction assertions = %#v", scenario.Contradiction)
+	}
+}
+
 func TestFixtureKnowledgeSchemaCannotSelectAuthorityOrProvenance(t *testing.T) {
 	t.Parallel()
 	data, err := os.ReadFile("schemas/fixture/v1/fake-run-scenario.schema.json")
@@ -167,6 +190,72 @@ func TestFixtureKnowledgeSchemaCannotSelectAuthorityOrProvenance(t *testing.T) {
 	for name := range proposal.Properties {
 		if !want[name] {
 			t.Errorf("fixture knowledge proposal unexpectedly exposes %q", name)
+		}
+	}
+}
+
+func TestFixtureContradictionSchemaIsStrictAndCannotSelectAuthority(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("schemas/fixture/v1/fake-run-scenario.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties  map[string]json.RawMessage `json:"properties"`
+		Definitions map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	type strictObject struct {
+		AdditionalProperties *bool                      `json:"additionalProperties"`
+		Required             []string                   `json:"required"`
+		Properties           map[string]json.RawMessage `json:"properties"`
+	}
+	var plan strictObject
+	if err := json.Unmarshal(schema.Properties["contradiction"], &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.AdditionalProperties == nil || *plan.AdditionalProperties {
+		t.Fatal("fixture contradiction permits unknown authority fields")
+	}
+	wantPlan := map[string]bool{"report": true, "report_received": true, "confirm_denied": true}
+	if len(plan.Properties) != len(wantPlan) || len(plan.Required) != len(wantPlan) {
+		t.Fatalf("fixture contradiction properties=%v required=%v, want exact %v", plan.Properties, plan.Required, wantPlan)
+	}
+	for name := range wantPlan {
+		if _, exists := plan.Properties[name]; !exists || !containsKnowledgeString(plan.Required, name) {
+			t.Errorf("fixture contradiction does not require exact field %q", name)
+		}
+	}
+	for _, name := range []string{"report_received", "confirm_denied"} {
+		var assertion struct {
+			Const bool `json:"const"`
+		}
+		if err := json.Unmarshal(plan.Properties[name], &assertion); err != nil || !assertion.Const {
+			t.Errorf("fixture contradiction assertion %q=%#v error=%v, want const true", name, assertion, err)
+		}
+	}
+
+	var report strictObject
+	if err := json.Unmarshal(schema.Definitions["contradiction_report"], &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.AdditionalProperties == nil || *report.AdditionalProperties {
+		t.Fatal("fixture contradiction report permits unknown authority fields")
+	}
+	wantReport := map[string]bool{"left_revision": true, "right_revision": true, "reason": true}
+	if len(report.Properties) != len(wantReport) || len(report.Required) != len(wantReport) {
+		t.Fatalf("fixture contradiction report properties=%v required=%v, want exact %v", report.Properties, report.Required, wantReport)
+	}
+	for name := range wantReport {
+		if _, exists := report.Properties[name]; !exists || !containsKnowledgeString(report.Required, name) {
+			t.Errorf("fixture contradiction report does not require exact field %q", name)
+		}
+	}
+	for _, forbidden := range []string{"actor", "workspace", "project", "task", "run", "status"} {
+		if _, exists := report.Properties[forbidden]; exists {
+			t.Errorf("fixture contradiction report exposes authority field %q", forbidden)
 		}
 	}
 }

@@ -1,0 +1,24 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "knowledge-contradiction-report",
+  "acceptance": {
+    "required_evidence": ["contradiction_reported"]
+  },
+  "steps": [
+    {
+      "kind": "completion",
+      "message": "Reported the conflicting exact decisions for owner review.",
+      "evidence": ["contradiction_reported"],
+      "handoff": "The owner can inspect and govern the proposed contradiction."
+    }
+  ],
+  "contradiction": {
+    "report": {
+      "left_revision": "__LEFT_REVISION__",
+      "right_revision": "__RIGHT_REVISION__",
+      "reason": "CONTRADICTION_MCP_INPUT_SENTINEL: the accepted routing decisions disagree."
+    },
+    "report_received": true,
+    "confirm_denied": true
+  }
+}
