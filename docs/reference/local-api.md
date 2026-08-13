@@ -10,7 +10,9 @@ rule configuration, explicit processing pass, and exact knowledge-contradiction
 governance, portable project knowledge snapshots, and explicit bounded live
 context refresh and inspection. M16 adds owner-granted manager invocation and
 proposal decisions, exact launch profiles, deterministic supervision, and an
-owner approval queue.
+owner approval queue. M17 retains protocol v1 and adds owner check-definition,
+criterion, exact grant/route/policy, execution/inspection/watch, and repair-
+decision methods.
 
 ## Transport
 
@@ -289,9 +291,8 @@ included/excluded explanations.
 `context.show` returns that exact packet; `context.explain` returns its stable
 selection reasons, semantic hash, and byte size.
 
-New builds return context-packet/result schema v4. `context.show` can carry a
-preserved v1, v2, or v3 packet; it never upgrades the stored packet in place. Old
-packets do not advertise live MCP tools and require rebase for refresh.
+Build and show return the single current context-packet/result schema. Stored
+packets are immutable and never rewritten in place.
 
 `context.refresh` is the owner-only live mutation. Its strict params are
 `workspace`, `run`, and `idempotency_key`; it accepts no caller cursor, task,
@@ -301,7 +302,7 @@ agent, or packet. It returns
 the exact run/base packet, durable state revision, inspected event interval,
 chain state, optional immutable delta, optional rebase reason, and
 `event_sequence`. The event sequence identifies the built/rebase fact and is zero
-for pending, up-to-date, and unsupported-old-packet compatibility results. A
+for pending and up-to-date results. A
 matching key replays. Any key while one delta is pending returns that same object
 without scanning. A no-change refresh durably advances the inspected cursor but
 emits no empty delta or event.
@@ -315,7 +316,7 @@ sequence page. `context.delta.show` and `context.delta.explain` each take
 `context_delta_explanation`. These are owner inspection queries and do not fetch
 or acknowledge for the run. No owner/local acknowledgement method exists.
 
-Each delta is immutable, based on packet v4, and capped at 16 KiB; the chain is
+Each delta is immutable, based on the current packet, and capped at 16 KiB; the chain is
 capped at 64 KiB and one refresh examines at most 1,000 potentially applicable
 events. Stable failures are `invalid_context_delta` and
 `context_delta_not_found`; rebase crosses refresh/fetch as a typed result rather
@@ -339,7 +340,7 @@ write mode, adapter pair, and human-readable reasons. Creating a run and its
 pending worker job, context binding, and expiring capability is one transaction;
 no adapter call occurs in that transaction. Without an explicit packet, the same
 transaction creates one. An explicit packet must match current task, agent, and
-checkout revisions and cannot be reused by another run. A prebuilt v4 packet also
+checkout revisions and cannot be reused by another run. A prebuilt current packet also
 undergoes one bind-time canonical revalidation: its frozen run authority must
 still match, and every embedded knowledge revision must remain accepted, current,
 fresh, applicable, and undisputed. Failure requires a new packet without changing
@@ -633,7 +634,7 @@ and the first at most 200 contradiction IDs in ascending lexical order. Open
 participants are quarantined everywhere they otherwise apply. Search filters them
 before ranking/limit, while a new explicit context build returns
 `knowledge_conflict` for an otherwise eligible disputed pin and commits nothing.
-Existing packet-v3 bytes remain unchanged. See
+Existing current-packet bytes remain unchanged. See
 [ADR-0012](../decisions/0012-owner-confirmed-exact-knowledge-contradictions.md).
 
 ### Portable project knowledge
@@ -701,7 +702,7 @@ The grant is the authority. An agent definition's `role` remains any
 owner-selected descriptive string; neither the role, agent name, nor launch
 profile `purpose` can authorize a manager call. A manager run must still match the
 grant's exact active assignment, task/agent revisions, planning launch profile,
-packet-v5 snapshot, capability, expiry, proposal kind, and target-profile set at
+current-packet management-grant snapshot, capability, expiry, proposal kind, and target-profile set at
 every proposal call. Revocation stops later proposal calls from an already-live
 run.
 
@@ -720,13 +721,13 @@ candidates; retirement never rewrites their execution content.
 `manager.invoke` takes workspace and objective plus either a fully explicit
 planning tuple (`planning_task`, `grant`, `profile`, and their expected revisions)
 or an unambiguous resolvable tuple, and an idempotency key. It atomically creates
-packet v5, the run and pending job, and context/capability bindings for the
+the current packet with an exact management grant, the run and pending job, and context/capability bindings for the
 existing exact active assignment. It returns `manager_invocation`: the exact grant
 and profile, complete run detail, and final event sequence. Ambiguity, an inactive
 grant/profile, stale revision or assignment, scope mismatch, or a planning profile
 not bound to the grant fails before any runtime launch.
 
-The run can submit only the proposal kinds frozen in packet v5. One action array
+The run can submit only the proposal kinds frozen in its current-packet grant. One action array
 is bounded to 32 actions and 49,152 encoded bytes. `proposal.list`
 filters by workspace plus optional project, objective, source run, grant, kind,
 status, and limit. `proposal.inspect` returns the complete immutable action array
@@ -745,7 +746,7 @@ probe.
 
 A pending immutable proposal remains owner-decidable after its source planning
 run completes and releases the planning assignment. Acceptance still requires
-the active unexpired grant, immutable source packet-v5/grant tuple, current source
+the active unexpired grant, immutable source packet/grant tuple, current source
 agent at its frozen revision, exact active objective revision, and current target
 references; it does not require or restore a live planning capability.
 
@@ -862,6 +863,153 @@ unsupported_supervisor_event
 approval_not_found
 approval_conflict
 ```
+
+## M17 local-check methods
+
+The owner-local protocol remains version 1. M17 methods use the existing strict
+decoder: unknown or duplicate JSON fields are invalid, no public parameter names
+an actor, and every mutation has an idempotency key. Lifecycle and decision
+mutations also require the exact current revision.
+
+Definition methods are:
+
+```text
+check.definition.create
+check.definition.retire
+check.definition.show
+check.definition.list
+```
+
+Create accepts `workspace`, `project`, `name`, `executable`, ordered `arguments`,
+`working_directory`, `timeout_millis`, `output_byte_limit`, and
+`idempotency_key`. `executable` is absolute; the working directory is normalized
+relative to the chosen checkout. There is no command-string, shell, stdin,
+environment, credential, provider, MCP, role, or purpose field. Retire accepts
+the definition ID, `expected_revision`, bounded reason, and idempotency key.
+
+Named task acceptance criteria use:
+
+```text
+check.requirement.create
+check.requirement.retire
+check.requirement.list
+```
+
+Create accepts the workspace, task, `criterion_key`, criterion statement, exact
+definition ID/revision, expected task revision, and idempotency key. Retire
+requires its expected revision. A list result always includes derived
+`missing|running|verified|failed|stale|unknown` state; missing and stale rows are
+not omitted.
+
+Delegation and deterministic routing use:
+
+```text
+check.grant.create
+check.grant.revoke
+check.grant.show
+check.grant.list
+check.route.create
+check.route.retire
+check.route.list
+check.policy.show
+check.policy.configure
+```
+
+A grant names one project, exact agent revision, exact definition revisions, a
+subset of `run|inspect|propose_repair`, pending/in-flight limits, optional expiry,
+and idempotency key. It never accepts or resolves an agent role or launch-profile
+purpose. A route names an optional exact definition, trigger
+`pass|nonpass|stale`, duty `evidence_review|coordination`, exact agent revision,
+and lifecycle fields. The mandatory failure-to-current-task-owner route is
+system-defined and not caller-remappable. Policy defaults repair proposals to
+disabled; enabling them requires one exact active repair launch-profile revision
+and a bounded open-proposal limit.
+
+Execution and inspection use:
+
+```text
+check.run
+check.list
+check.inspect
+check.logs
+check.watch
+```
+
+`check.run` accepts `workspace`, task, definition name or ID, optional checkout,
+expected requirement/definition/checkout revisions, and idempotency key. The
+server resolves exactly one active requirement. When checkout is absent, it uses
+the currently reserved task run's checkout, then the latest task run checkout in
+a stable order, and otherwise rejects the request. The response returns the
+durable requested check run; it does not wait for or predict its result.
+
+`check.inspect` returns the frozen run, definition and requirement revisions,
+launch receipt, source observations, one optional terminal result, current
+freshness revision and reason, bounded artifact metadata, mechanical evidence,
+all four evidence-class buckets, notification/route failures, repair proposal,
+and the derived requirement state. Process outcome and freshness are separate.
+Only passed plus fresh from the latest exact active requirement revision is
+`verified`.
+
+`check.logs` returns only bounded, redacted retained stdout, stderr, and diagnostic
+content with captured/omitted byte counts, truncation, and hashes. It cannot expose
+raw runtime-inspection captures.
+
+`check.watch` accepts one project, bounded cursor/limit, and idempotency key. It
+performs one pass of at most 100 reconciliation, fresh-Git inspection, routing,
+and repair-staleness candidates. It does not launch missing checks. A public exact
+no-op stores a receipt, emits `check.watch_completed`, and replays the same result
+with its nonzero event sequence. The daemon background path uses the same
+classifier but writes no receipt/event for an exact no-op. The public completion
+event confirms the requested pass committed; clients use the receipt counters,
+not the event's presence, to decide whether freshness changed.
+
+Repair handling is owner-only:
+
+```text
+check.repair.list
+check.repair.inspect
+check.repair.accept
+check.repair.reject
+```
+
+Accept/reject takes the exact proposal, expected revision, bounded decision note,
+and idempotency key. Acceptance revalidates the latest exact trusted failed result
+at the current fresh source, authenticated watcher run/agent/grant tuple, and
+current policy/profile/task/objective before atomically creating one linked repair task
+and scheduling intent. A proposal remains inert before that decision; a later
+fresh pass makes it stale. List, inspect, and mutation details expose an optional
+immutable decision with proposal revision, optional canonical note bounded to
+4096 encoded UTF-8 bytes, timestamp, and exact `local-owner` author; pending and
+stale-undecided proposals omit it. Only an accepted decision has a repair effect.
+Timed-out, start-failed, and unknown outcomes or stale/unknown freshness remain
+inspectable but cannot seed a proposal.
+
+Stable M17 failures include:
+
+```text
+invalid_check_definition
+check_definition_not_found
+invalid_check_requirement
+check_requirement_not_found
+check_requirement_conflict
+invalid_check_watch_grant
+check_watch_grant_not_found
+check_watch_grant_denied
+invalid_check_route
+invalid_check_policy
+check_run_not_found
+check_run_conflict
+check_runtime_unknown
+check_artifact_unavailable
+unsupported_check_event
+check_repair_not_found
+check_repair_conflict
+check_repair_denied
+```
+
+No check result, watch pass, notification, or repair proposal invokes Git commit,
+push, merge, deployment, task completion, policy acceptance, or integration-order
+selection.
 
 ### `coordination.status`
 

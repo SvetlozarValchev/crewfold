@@ -23,6 +23,7 @@ workspace
 ├─ projects
 │  ├─ repositories
 │  ├─ checkouts
+│  ├─ check definitions, requirements, and results
 │  ├─ knowledge scopes
 │  └─ tasks
 ├─ teams
@@ -97,7 +98,10 @@ The implemented subset stores name, role, provider/runtime preference, enabled
 state, maximum concurrency, revision, and audit metadata. Instructions,
 capabilities, team membership, and action policy arrive with the capabilities that
 consume them. M16 launch profiles provide exact project/agent scheduling bindings.
-Provider/runtime values remain opaque data.
+M17 check-watch grants provide exact project/definition/operation bindings.
+Provider/runtime values remain opaque data. `AgentDefinition.Role` is always
+descriptive metadata: it is never consulted for management, check-watch, evidence,
+routing, completion, or integration authority.
 
 ### Run
 
@@ -139,6 +143,10 @@ reconciliation. A run-scoped capability exposes its packet and normalized
 reporting tools without granting task-completion authority. Real provider resume
 handles, heartbeats, usage accounting, and enforced budgets remain planned.
 
+An agent run and a check run are different entities. A check never occupies this
+state machine, assignment, provider binding, or agent concurrency slot, and a
+check result never ends or completes an agent run.
+
 ### Context packet
 
 An immutable, bounded base briefing built for one exact task/agent/checkout and
@@ -153,7 +161,7 @@ participant agent/task/project binding. Full message bodies remain explicit
 mailbox reads; active claim
 snapshots and provider transcripts are deliberate exclusions.
 
-Ordinary new builds use context-packet schema v4. The caller may provide up to 16 ordered,
+Context builds use the one current packet schema. The caller may provide up to 16 ordered,
 unique knowledge revision IDs. The packet preserves those exact requests and
 includes complete snapshots only for revisions that are accepted, current, fresh,
 and applicable to the task's project and optional task scope. It never searches
@@ -166,24 +174,27 @@ The total packet limit is 32 KiB, including a 12 KiB knowledge sub-budget and an
 at 32; reverse dependents are informational, sorted, and capped at 32; authorized
 participant threads are selected as whole snapshots, newest update then ID, and
 capped at eight. An item is included whole or excluded. The packet freezes its
-source event high-water and live policy. Existing v1, v2, and v3 packets remain
-readable and immutable after an upgrade but cannot acquire live tools.
+source event high-water and live policy. A packet's frozen allowed tools cannot
+expand after construction.
 
 The packet's semantic content hash excludes packet identity and creation metadata,
 so equivalent controlled inputs—including ordered explicit knowledge links—have
 the same hash while retaining distinct packet IDs. Eligibility is evaluated when
-the packet is built, and the bytes never change. An explicitly prebuilt v4 packet
+the packet is built, and the bytes never change. An explicitly prebuilt packet
 is revalidated once when a run binds it: frozen run authority must still match,
 and embedded knowledge must still be accepted, current, fresh, applicable, and
 undisputed. A failed binding requires a new packet. After successful binding,
 later changes do not rewrite or silently refresh the base; explicit deltas carry
-withdrawals and durable rebase reports an unsafe base contract. Historical v1–v3
-packets remain readable but cannot acquire live delivery authority.
+withdrawals and durable rebase reports an unsafe base contract.
 
-An owner-authorized management-capability build uses schema v5 instead. It
-preserves the complete v4 contract and adds one exact, immutable manager-grant
-snapshot. Ordinary runs and historical packets never acquire manager proposal
-tools merely because their owner-defined descriptive role labels happen to match.
+The single current packet may carry one exact immutable manager-grant snapshot,
+one exact project-scoped check-watch grant snapshot, or neither. The two grants
+are mutually exclusive. A packet without the relevant grant receives no delegated
+tools merely because its descriptive role matches a grantee; a granted run
+advertises only the operations in its current grant. Binding and every call
+revalidate the exact enabled agent revision, live
+run, packet, grant revision and expiry, project, operation, and allowlisted
+definition. Neither `AgentDefinition.Role` nor `LaunchProfile.Purpose` participates.
 
 ### Launch profile
 
@@ -208,8 +219,8 @@ A manager grant is a bounded owner delegation to one exact agent, assigned task,
 project, and objective. Its revision freezes expiry, allowed proposal kinds,
 exact target profile revisions, and task, action, token, cost, and time ceilings.
 The grantee's role remains arbitrary descriptive metadata. The current grant is
-revalidated both when packet v5 binds and on every proposal call; revocation leaves
-historical packet bytes intact but denies later calls.
+revalidated both when the current packet binds and on every proposal call;
+revocation denies later calls without rewriting the immutable packet.
 
 A manager proposal is immutable, typed, and inert. It contains at most 32 ordered
 actions and 48 KiB (49,152 encoded bytes) of canonical content covering task creation, same-project
@@ -222,6 +233,124 @@ whole proposed graph, exact source revisions, scope, grant/profile binding,
 claims, and finite budgets in one immediate transaction, then applies every action
 or none. A proposed claim is only a later scheduling requirement, a nomination is
 only a preference, and a review requirement grants no completion authority.
+
+### Check definition and task check requirement
+
+A check definition is an owner-authored project allowlist entry, not an agent run
+profile. One immutable content revision fixes a bounded name, absolute executable,
+at most 64 ordered arguments, normalized checkout-relative working directory,
+timeout, per-stream capture limit, and content hash. It has `active|retired`
+lifecycle. It contains no shell command string, stdin, environment, credential,
+provider configuration, MCP access, or caller-supplied argument slot.
+
+A task check requirement is M17's first concrete named acceptance criterion. It
+binds one task and project, a unique active criterion key and statement, and one
+exact check-definition content revision. A task has at most one active
+requirement per definition. A pass can therefore support only the requirement
+frozen into its run, never every task criterion.
+
+### Check-watch grant, policy, and route
+
+A check-watch grant is a bounded owner delegation to one exact enabled agent
+revision and project. Immutable children name exact definition revisions and the
+closed operations `run`, `inspect`, and `propose_repair`; bounds, expiry, status,
+revision, and canonical hash are explicit. It is independent of the grantee's
+task and may observe another task's active requirement in the same project.
+Authority comes only from this grant and a live current-packet run. Role and purpose
+strings are never candidates or permissions.
+
+A project check policy bounds execution and defaults repair proposals to
+disabled. When repair proposals are enabled, the policy freezes one exact repair
+launch-profile revision and an open-proposal limit. A check route is either the
+mandatory current task-owner resolution or an owner-authored exact agent-revision
+binding with `evidence_review|coordination` duty and `pass|nonpass|stale` trigger.
+The route itself assigns the duty; a label does not.
+
+### Check run, launch receipt, and result
+
+A check run is a separate direct-process operation:
+
+```text
+requested -> starting -> running -> finished
+```
+
+Every finished run has exactly one immutable result with outcome
+`passed|failed|timed_out|start_failed|unknown`. Trusted exit zero passes, trusted
+nonzero or signal fails, runtime timeout is timed out, a definite pre-child error
+is start failed, and untrustworthy process identity or outcome is unknown.
+
+The request freezes requirement, definition, checkout, source actor, job, and
+idempotency response. Before launching, a receipt freezes the source Git
+observation and canonical effective direct-runtime specification. The check-run
+ID is the stable runtime operation ID. Recovery may replay only that identical
+specification. A missing receipt makes a job unclaimable; an unknown child outcome
+becomes one explicit unknown result and is never silently relaunched.
+
+A result records launch and terminal repository, object format, checkout, branch,
+HEAD, dirty flag, sorted dirty paths, exit/timeout diagnosis, and bounded
+content-addressed redacted stdout, stderr, and diagnostic artifact metadata.
+Process outcome and source freshness are independent.
+
+### Check freshness and evidence
+
+A check is initially verification-eligible only when launch and terminal Git
+observations are available, identify the same nonempty repository/checkout/HEAD,
+and are both clean. Equal clean observations are `fresh`; a different known HEAD
+is `stale`; dirty, unavailable, invalid, or incomplete observations are `unknown`.
+Dirty checks may provide diagnostics, but a pass cannot verify a criterion.
+
+The check watcher obtains fresh Git observations rather than relying on a cached
+checkout timestamp. A later different HEAD or any dirty tree marks the result
+stale. Staleness is monotonic: returning to the old HEAD or cleaning the tree does
+not restore it. A temporarily unavailable observation may return from unknown to
+fresh only for an originally eligible result with no stale observation.
+
+The requirement projection is `missing|running|verified|failed|stale|unknown`.
+Only the latest exact active-revision passed and fresh result is verified.
+
+Evidence class is a closed vocabulary:
+
+- `agent_self_report`;
+- `mechanical_check`;
+- `independent_review`; and
+- `policy_acceptance`.
+
+A check evidence link is always `mechanical_check` and attaches only to its named
+requirement. The exact requirement/result/freshness-revision tuple has one
+immutable link: revision 1 remains with its original effect, while a later stale
+freshness revision adds a separate `inconclusive` link. Callers
+cannot select or upgrade that class. No check evidence changes task state,
+accepts completion, or confers Git/integration authority.
+
+### Check notification and repair proposal
+
+A nonpass result resolves the exact current active task assignment and freezes its
+assignment and recipient revisions. No active assignment produces durable
+`unroutable` state rather than a guessed former or role-matched agent. Additional
+evidence-review and coordination notifications freeze their exact route and
+recipient revisions.
+
+Inbox messages emitted by the check worker use `sender_type=subsystem`, exact
+sender `crewfold-check-worker`, no sender agent/run, and an immutable receipt
+proving the result, route or policy, duty, recipient, and assignment when
+applicable. The subsystem does not impersonate `local-owner` or an agent run.
+
+A check repair proposal contains the latest exact trusted failed result at the
+current fresh source, current exact project policy, bounded rationale, and the
+exact authenticated current-packet source run,
+agent revision, and grant revision. These authority facts—not its role—also bind
+the proposal's agent author. It is inert: no task, assignment, intent,
+dependency, claim, or task transition exists until the local owner accepts it.
+Owner acceptance revalidates the policy and exact repair profile and atomically
+creates one linked repair task, scheduling intent, decision, and effect receipt.
+The immutable decision freezes its ID, proposal ID, `accepted|rejected` value,
+proposal revision, optional canonical note of at most 4096 UTF-8 bytes, timestamp,
+and exact `local-owner` author. Repair detail omits the decision until one exists
+and omits the effect unless acceptance created work. A later fresh pass makes a
+pending proposal stale.
+
+Timed-out, start-failed, and unknown outcomes remain inspectable, as do failed
+results whose freshness is stale or unknown, but none can seed repair work.
 
 ### Scheduling intent
 
@@ -257,7 +386,7 @@ after the evidence becomes stale.
 ### Context delta and acknowledgement
 
 A `cdelta_...` context delta is an immutable, bounded change object for one exact
-live run and one packet-v4 base. It records workspace/project/task/agent scope,
+live run and one current-packet base. It records workspace/project/task/agent scope,
 base packet identity and schema, a run-local sequence and optional parent, an
 exclusive source event cursor and inclusive inspected cursor, evaluation time,
 typed whole changes, inclusion/exclusion explanations, total/chain budget
@@ -322,6 +451,10 @@ assigned or ready, and cancellation. Dependency completion and review/completion
 are introduced with the run loop. Assignments are separate durable records with
 `active|expired|released` status; expiry never deletes history.
 
+M17 adds active/retired task check requirements and their independent evidence
+projection. A `verified` criterion does not imply `task.completed`; the existing
+completion decision remains explicit.
+
 ### Claim
 
 A time-bounded declaration that an agent/task intends to own or modify a resource.
@@ -361,6 +494,11 @@ from `queued` through `delivered`, `read`, and `acknowledged`; a separate wake j
 is `pending`, `leased`, `succeeded`, or `failed`. `not_requested` means no live
 recipient run existed at send time. Wake failure never means message failure.
 
+An M17 check notification is the one subsystem-sender exception to owner and
+agent-run authorship. Its immutable typed receipt must exist in the same
+transaction and prevents either public message path from forging subsystem
+provenance.
+
 Direct messages remain project-scoped. A message in an owner-created participant
 thread can cross projects only when both sender and recipient have frozen bindings
 to their exact agent, active assigned task, and derived project. The message keeps
@@ -390,6 +528,11 @@ resolution criteria, final record, and action items.
 A typed pointer to evidence or output: a file, diff, commit, test result, log
 excerpt, plan, patch, report, external URL, or content-addressed blob. Crewfold
 stores metadata and only copies content when retention policy requires it.
+
+Check stdout, stderr, and diagnostic artifacts are redacted and bounded before
+retention. Private content-addressed blobs live outside SQLite; exact SHA-256,
+captured and omitted byte counts, truncation, and result identity live in immutable
+rows and are validated on read.
 
 ### Knowledge item
 
@@ -559,7 +702,7 @@ launched it.
    explicit successor revision. Acceptance requires either the owner or the one
    transactionally revalidated exact curator state policy—never proposal labels,
    free text, retrieval rank, or general subsystem identity.
-6. A context packet is immutable after build. A prebuilt v4 packet is revalidated
+6. A context packet is immutable after build. A prebuilt packet is revalidated
    once when a run binds it; after binding, reads do not re-evaluate its historical
    bytes. A delta never mutates that base and is acknowledged only by its exact
    bound live run.
@@ -576,8 +719,16 @@ launched it.
     only its local-owner import attestation authorizes the imported final state.
 14. A live-context bound is never satisfied by truncation. An unsafe or oversized
     incremental change becomes durable rebase state.
+15. A check run is never an agent run and has exactly one launch receipt before
+    external effect and one terminal result or explicit unknown.
+16. Only an exact current-packet check-watch grant authorizes watcher tools.
+    `AgentDefinition.Role` and `LaunchProfile.Purpose` never do.
+17. Only a fresh, clean-HEAD mechanical pass verifies its one named requirement;
+    stale, unknown, dirty, and missing evidence remain visible.
+18. A check result never completes a task, creates policy acceptance, pushes,
+    merges, deploys, or selects integration order.
 15. Agent role strings are owner-defined descriptive labels, never an authority
-    taxonomy. Only an authenticated packet-v5 run with a current exact owner grant
+    taxonomy. Only an authenticated current-packet run with a current exact owner grant
     may submit the proposal kinds in that grant, and it may neither accept a
     proposal nor decide an approval.
 16. Proposal submission is operationally inert. Owner acceptance has exactly one

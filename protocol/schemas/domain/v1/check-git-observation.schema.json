@@ -1,0 +1,20 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:domain:check-git-observation:v1",
+  "$comment":"The 256 KiB aggregate UTF-8 dirty-path limit requires Crewfold semantic validation in addition to these per-item wire bounds.",
+  "type":"object","additionalProperties":false,
+  "required":["available","repository_id","object_format","checkout_id","dirty","dirty_paths","observed_at"],
+  "properties":{
+    "available":{"type":"boolean"},
+    "repository_id":{"type":"string","pattern":"^repo_[0-9a-f]{32}$"},
+    "object_format":{"enum":["sha1","sha256"]},
+    "checkout_id":{"type":"string","pattern":"^co_[0-9a-f]{32}$"},
+    "branch":{"type":"string","maxLength":1024},
+    "head_commit":{"type":"string","pattern":"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "dirty":{"type":"boolean"},
+    "dirty_paths":{"type":"array","maxItems":256,"items":{"type":"string","maxLength":1024}},
+    "observed_at":{"type":"string","format":"date-time"},
+    "diagnostic_code":{"type":"string","maxLength":128},
+    "diagnostic":{"type":"string","maxLength":4096}
+  }
+}

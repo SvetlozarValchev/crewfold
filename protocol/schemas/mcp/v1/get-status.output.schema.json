@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:crewfold:schema:mcp:get-status-output:v2",
-  "title": "Crewfold run status structured output v2",
+  "$id": "urn:crewfold:schema:mcp:get-status-output:v1",
+  "title": "Crewfold run status structured output v1",
   "type": "object",
   "additionalProperties": false,
   "required": ["run_id", "run_status", "run_revision", "task_id", "task_status", "task_revision", "budget", "blocked_question", "context"],
@@ -27,7 +27,7 @@
       ],
       "properties": {
         "base_packet_id": {"type": "string", "pattern": "^ctx_[0-9a-f]{32}$"},
-        "base_schema": {"enum": ["urn:crewfold:schema:domain:context-packet:v1", "urn:crewfold:schema:domain:context-packet:v2", "urn:crewfold:schema:domain:context-packet:v3", "urn:crewfold:schema:domain:context-packet:v4", "urn:crewfold:schema:domain:context-packet:v5"]},
+        "base_schema": {"const": "urn:crewfold:schema:domain:context-packet:v1"},
         "base_as_of_event_sequence": {"type": "integer", "minimum": 0},
         "state_revision": {"type": "integer", "minimum": 0},
         "scanned_through_event_sequence": {"type": "integer", "minimum": 0},
@@ -41,7 +41,7 @@
         "cumulative_byte_size": {"type": "integer", "minimum": 0, "maximum": 65536},
         "status": {"enum": ["pending", "none_pending", "rebase_required"]},
         "rebase_required": {"type": "boolean"},
-        "rebase_reason": {"enum": ["unsupported_packet", "base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]}
+        "rebase_reason": {"enum": ["base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]}
       },
       "allOf": [
         {"if": {"properties": {"status": {"const": "pending"}}}, "then": {"required": ["pending_delta_id", "pending_delta_sequence"], "not": {"required": ["rebase_reason"]}, "properties": {"rebase_required": {"const": false}}}},

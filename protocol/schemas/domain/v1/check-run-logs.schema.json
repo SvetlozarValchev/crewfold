@@ -1,0 +1,12 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:domain:check-run-logs:v1",
+  "type":"object","additionalProperties":false,
+  "required":["check_run_id"],
+  "properties":{
+    "check_run_id":{"type":"string","pattern":"^checkrun_[0-9a-f]{32}$"},
+    "stdout":{"$ref":"check-captured-log.schema.json"},
+    "stderr":{"$ref":"check-captured-log.schema.json"},
+    "diagnostic":{"$ref":"check-captured-log.schema.json"}
+  }
+}

@@ -198,6 +198,9 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 	if scenario.StartFailure != "" && !emptyFixtureManagement(scenario.Management) {
 		return errors.New("start-failure scenarios cannot contain management controls")
 	}
+	if scenario.StartFailure != "" && !emptyFixtureCheckWatch(scenario.CheckWatch) {
+		return errors.New("start-failure scenarios cannot contain check-watch controls")
+	}
 	if err := validateFixtureMailbox(scenario.Mailbox); err != nil {
 		return err
 	}
@@ -212,6 +215,12 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 	}
 	if err := validateFixtureManagement(scenario.Management); err != nil {
 		return err
+	}
+	if err := validateFixtureCheckWatch(scenario.CheckWatch); err != nil {
+		return err
+	}
+	if !emptyFixtureManagement(scenario.Management) && !emptyFixtureCheckWatch(scenario.CheckWatch) {
+		return errors.New("one fixture run cannot combine manager and check-watch authority")
 	}
 	for index, step := range scenario.Steps {
 		if step.Kind != domain.ObservationProgress && step.Kind != domain.ObservationBlocked && step.Kind != domain.ObservationCompletion {
@@ -237,6 +246,49 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 		if step.WaitForResume && step.Kind != domain.ObservationProgress {
 			return fmt.Errorf("fake scenario step %d can wait for resume only after progress", index)
 		}
+	}
+	return nil
+}
+
+func emptyFixtureCheckWatch(plan domain.FixtureCheckWatch) bool {
+	return plan.RunRequirementID == "" && !plan.ListResults && plan.InspectCheckRunID == "" &&
+		plan.ProposeRepairResultID == "" && plan.RepairRationale == "" && !plan.ProbeReservedAcceptance &&
+		!plan.ExpectToolsDenied && !plan.ProbeRevokedGrant && plan.RevocationProbeDelayMillis == 0
+}
+
+func validateFixtureCheckWatch(plan domain.FixtureCheckWatch) error {
+	if emptyFixtureCheckWatch(plan) {
+		return nil
+	}
+	if plan.ExpectToolsDenied {
+		if plan.RunRequirementID != "" || plan.ListResults || plan.InspectCheckRunID != "" || plan.ProposeRepairResultID != "" ||
+			plan.RepairRationale != "" || plan.ProbeReservedAcceptance || plan.ProbeRevokedGrant || plan.RevocationProbeDelayMillis != 0 {
+			return errors.New("fixture denied check-watch mode cannot include granted operations or revocation controls")
+		}
+		return nil
+	}
+	if plan.RunRequirementID != "" && !validFixtureOpaqueID(plan.RunRequirementID, "checkreq_") {
+		return errors.New("fixture check-watch run requires an exact check requirement ID")
+	}
+	if plan.InspectCheckRunID != "" && !validFixtureOpaqueID(plan.InspectCheckRunID, "checkrun_") {
+		return errors.New("fixture check-watch inspection requires an exact check run ID")
+	}
+	if (plan.ProposeRepairResultID == "") != (plan.RepairRationale == "") ||
+		(plan.ProposeRepairResultID != "" && (!validFixtureOpaqueID(plan.ProposeRepairResultID, "checkresult_") ||
+			strings.TrimSpace(plan.RepairRationale) == "" || len(plan.RepairRationale) > 4096 || !utf8.ValidString(plan.RepairRationale) || strings.ContainsRune(plan.RepairRationale, '\x00'))) {
+		return errors.New("fixture check-watch repair requires an exact result and bounded rationale")
+	}
+	if plan.ProbeReservedAcceptance && plan.ProposeRepairResultID == "" {
+		return errors.New("fixture reserved repair acceptance probe requires a repair proposal")
+	}
+	if plan.RunRequirementID == "" && !plan.ListResults && plan.InspectCheckRunID == "" && plan.ProposeRepairResultID == "" {
+		return errors.New("fixture check-watch plan requires at least one granted operation")
+	}
+	if plan.ProbeRevokedGrant && (plan.RevocationProbeDelayMillis < 1 || plan.RevocationProbeDelayMillis > 30000) {
+		return errors.New("fixture revoked check-watch grant probe requires a delay from 1 to 30000 milliseconds")
+	}
+	if !plan.ProbeRevokedGrant && plan.RevocationProbeDelayMillis != 0 {
+		return errors.New("fixture check-watch revocation delay requires probe_revoked_grant")
 	}
 	return nil
 }
@@ -302,7 +354,7 @@ func fixtureManagerActionMatchesKind(kind, actionType string) bool {
 func emptyFixtureContextDelta(plan domain.FixtureContextDelta) bool {
 	return len(plan.Expectations) == 0 && plan.InitialDelayMillis == 0 && plan.WaitTimeoutMillis == 0 &&
 		!plan.DuplicateAcknowledge && !plan.ExpectNoPending && plan.DeniedDeltaID == "" &&
-		plan.DeniedExpectedSequence == 0 && !plan.ExpectToolsDenied
+		plan.DeniedExpectedSequence == 0
 }
 
 func validateFixtureContextDelta(plan domain.FixtureContextDelta) error {
@@ -319,11 +371,8 @@ func validateFixtureContextDelta(plan domain.FixtureContextDelta) error {
 	if plan.ExpectNoPending {
 		modeCount++
 	}
-	if plan.ExpectToolsDenied {
-		modeCount++
-	}
 	if modeCount != 1 {
-		return errors.New("fixture context delta requires exactly one of expectations, expect_no_pending, or expect_tools_denied")
+		return errors.New("fixture context delta requires exactly one of expectations or expect_no_pending")
 	}
 	if len(plan.Expectations) > 16 {
 		return errors.New("fixture context delta accepts at most 16 expectations")

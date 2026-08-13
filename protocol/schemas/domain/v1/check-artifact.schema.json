@@ -1,0 +1,23 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:domain:check-artifact:v1",
+  "type":"object","additionalProperties":false,
+  "required":["id","check_result_id","kind","content_sha256","captured_bytes","omitted_bytes","truncated","created_at"],
+  "allOf":[
+    {
+      "if":{"properties":{"truncated":{"const":true}},"required":["truncated"]},
+      "then":{"properties":{"omitted_bytes":{"minimum":1}}},
+      "else":{"properties":{"omitted_bytes":{"const":0}}}
+    }
+  ],
+  "properties":{
+    "id":{"type":"string","pattern":"^checkartifact_[0-9a-f]{32}$"},
+    "check_result_id":{"type":"string","pattern":"^checkresult_[0-9a-f]{32}$"},
+    "kind":{"enum":["stdout","stderr","diagnostic"]},
+    "content_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "captured_bytes":{"type":"integer","minimum":0,"maximum":1048576},
+    "omitted_bytes":{"type":"integer","minimum":0},
+    "truncated":{"type":"boolean"},
+    "created_at":{"type":"string","format":"date-time"}
+  }
+}

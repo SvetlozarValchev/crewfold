@@ -148,7 +148,7 @@ outsider_task=$(extract_id task "$scenario_root/outsider-task.json")
 
 # Ordinary direct mail keeps its project boundary even when the recipient agent
 # also owns a task in another project.
-"$binary" message send plug-agent --workspace personal --project engine-sim-offline --kind inform --body "legacy direct mail must remain in the engine project" --socket "$socket_path" --idempotency-key collaboration-direct-message --output json >"$scenario_root/direct-message.json"
+"$binary" message send plug-agent --workspace personal --project engine-sim-offline --kind inform --body "project-scoped direct mail must remain in the engine project" --socket "$socket_path" --idempotency-key collaboration-direct-message --output json >"$scenario_root/direct-message.json"
 direct_thread=$(extract_id thread "$scenario_root/direct-message.json")
 
 "$binary" thread create --workspace personal --subject "plugandrev / engine-sim-offline contract" --participant "plug-agent=$plug_task" --participant "engine-agent=$engine_task" --socket "$socket_path" --idempotency-key collaboration-thread --output json >"$scenario_root/thread-created.json"
@@ -227,11 +227,11 @@ fi
 
 "$binary" context build "$plug_task" --workspace personal --agent plug-agent --expected-task-revision 2 --socket "$socket_path" --idempotency-key collaboration-plug-context --output json >"$scenario_root/plug-context.json"
 plug_context=$(extract_id ctx "$scenario_root/plug-context.json")
-grep -Fq 'urn:crewfold:schema:domain:context-packet:v4' "$scenario_root/plug-context.json"
+grep -Fq 'urn:crewfold:schema:domain:context-packet:v1' "$scenario_root/plug-context.json"
 grep -Fq 'engine-sim-offline exposes deterministic step' "$scenario_root/plug-context.json"
-if grep -Fq 'legacy direct mail must remain' "$scenario_root/plug-context.json"
+if grep -Fq 'project-scoped direct mail must remain' "$scenario_root/plug-context.json"
 then
-  printf 'legacy cross-project direct mail leaked into the plug task context\n' >&2
+  printf 'cross-project direct mail leaked into the plug task context\n' >&2
   exit 1
 fi
 
@@ -265,7 +265,7 @@ fi
 "$binary" inbox --workspace personal --agent review-agent --limit 20 --socket "$socket_path" --output json >"$scenario_root/reviewer-inbox.json"
 grep -Fq '"items":[]' "$scenario_root/reviewer-inbox.json"
 "$binary" thread show "$direct_thread" --workspace personal --socket "$socket_path" --output json >"$scenario_root/direct-thread.json"
-grep -Fq 'legacy direct mail must remain in the engine project' "$scenario_root/direct-thread.json"
+grep -Fq 'project-scoped direct mail must remain in the engine project' "$scenario_root/direct-thread.json"
 grep -Fq '"status":"queued"' "$scenario_root/direct-thread.json"
 
 "$binary" knowledge list --workspace personal --project plugandrev --socket "$socket_path" --output json >"$scenario_root/plug-knowledge.json"

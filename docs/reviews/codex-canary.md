@@ -30,7 +30,7 @@
 | Suite | Command | Result | Artifact/log |
 | --- | --- | --- | --- |
 | Unit | `./scripts/go.sh test ./internal/execution ./internal/cli ./internal/daemon ./protocol` | passed | probe, manifest, bridge, boundary normalization, CLI, daemon, schema tests |
-| Store/migration | `./scripts/check.sh` | passed | existing store/migration suite; no migration added |
+| Store/schema | `./scripts/check.sh` | passed | current storage-baseline suite; no Codex-specific storage added |
 | Protocol | `./scripts/go.sh test ./protocol` | passed | provider-doctor JSON Schema plus all published schemas |
 | Component | `./scripts/go.sh test ./internal/execution ./internal/daemon` | passed | real Unix STDIO bridge and recorded Codex command boundary |
 | Black-box acceptance | `test/scenarios/codex-provider/run.sh` | passed | recorded Codex probe → launch → briefing → completion → handoff |
@@ -65,7 +65,6 @@
   no new provider-private durable saga is introduced.
 - Reconciliation outcome: runtime drivers continue to own process reconciliation;
   a Codex completion report is accepted only after the provider process settles.
-- Migration fixture added: N/A.
 - Backup/restore impact: N/A; only existing rows are written.
 
 ## Security and autonomy
@@ -105,8 +104,8 @@
   output for provider-boundary diagnosis.
 - Earlier milestone scenarios rerun: all M0–M9 scenarios passed under
   `scripts/check.sh`.
-- Upgrade/rollback impact: rollback removes the registered Codex adapter/doctor;
-  SQLite needs no downgrade.
+- Removal impact: removing the registered Codex adapter removes its doctor and
+  launch path without changing SQLite.
 
 ## Known limitations and deferrals
 

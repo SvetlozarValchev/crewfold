@@ -5,6 +5,13 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["workspace", "task", "runtime", "provider", "scenario", "expected_task_revision", "idempotency_key"],
+  "dependentRequired": {
+    "check_watch_grant": ["expected_check_watch_grant_revision"],
+    "expected_check_watch_grant_revision": ["check_watch_grant"]
+  },
+  "not": {
+    "required": ["context", "check_watch_grant"]
+  },
   "properties": {
     "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
     "task": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
@@ -14,6 +21,8 @@
     "provider": {"type": "string", "minLength": 1, "maxLength": 128},
     "scenario": {"$ref": "../../fixture/v1/fake-run-scenario.schema.json"},
     "expected_task_revision": {"type": "integer", "minimum": 1},
+    "check_watch_grant": {"type": "string", "pattern": "^checkgrant_[0-9a-f]{32}$"},
+    "expected_check_watch_grant_revision": {"type": "integer", "minimum": 1},
     "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
   }
 }

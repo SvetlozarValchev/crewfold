@@ -128,7 +128,7 @@ crewfold daemon stop --socket "$tmp/crewfold.sock"
 **Deliverables**
 
 - Foreground daemon with user-only Unix socket permissions.
-- Request/response envelope, health query, and protocol-version negotiation.
+- Request/response envelope, health query, and exact current protocol selection.
 - Structured logs with request/operation correlation IDs.
 - Graceful shutdown and stale-socket handling.
 - CLI client that can use an explicit socket and emit JSON.
@@ -171,8 +171,8 @@ crewfold workspace show personal --socket "$tmp/crewfold.sock"
 
 **Deliverables**
 
-- SQLite connection, WAL configuration, foreign keys, and embedded migrations.
-- Workspace table, event journal, idempotency records, and migration metadata.
+- SQLite connection, WAL configuration, foreign keys, and the embedded current schema baseline.
+- Workspace table, event journal, idempotency records, and schema-baseline metadata.
 - Atomic command handling: state projection and event append commit together.
 - Database status and schema version in `doctor`.
 
@@ -182,7 +182,8 @@ crewfold workspace show personal --socket "$tmp/crewfold.sock"
 - Repeating a command with one idempotency key returns the original result and does
   not append a second event.
 - Failed invariant checks append no event and mutate no projection.
-- Every supported migration upgrades from checked-in prior-version fixtures.
+- A fresh database exactly matches the checked-in current baseline and rejects
+  partial, foreign, or canonically invalid state.
 
 **Failure injection**
 
@@ -713,7 +714,7 @@ crewfold context explain CONTEXT_PACKET_ID --workspace personal \
   task scope narrows applicability.
 - Owner acceptance/rejection/staleness/supersession with durable authority checks,
   plus authenticated agent-run proposal without agent governance authority.
-- Context packet v3 using ordered exact revision links only, with a 32 KiB total
+- The current context packet using ordered exact revision links only, with a 32 KiB total
   limit and 12 KiB whole-item knowledge sub-budget.
 - Packet output preserving exact requests, plus explanation of inclusions,
   exclusions, replacement metadata, revisions, and total/knowledge byte
@@ -759,7 +760,7 @@ mailbox tools, and a provider-free bounded curator with one exact deterministic
 meeting-resolution rule, plus owner-confirmed exact-revision contradictions with
 agent-run reporting and fail-closed search/context behavior, and deterministic
 project knowledge export/import with exact applicability and contradiction
-snapshots, plus packet-v4 bounded live context deltas with explicit owner refresh
+snapshots, plus bounded live context deltas on the current packet with explicit owner refresh
 and exact-run acknowledgement. The milestone review and complete repository gate
 pass.
 
@@ -796,7 +797,7 @@ crewfold knowledge import /private/demo-knowledge --workspace personal --project
 - SQLite FTS5 retrieval with hard scope, authority, and freshness filters plus
   versioned deterministic applicability/provenance/quality/text ranking.
 - Curator proposal queue with bounded rule-based auto-acceptance.
-- Immutable packet-v4 base with source cursor, bounded same-project reverse
+- Immutable current-packet base with source cursor, bounded same-project reverse
   dependents, exact participant rosters, collaboration budget, and frozen live
   delivery policy.
 - Owner-triggered context refresh plus immutable deltas for bounded message
@@ -828,12 +829,12 @@ crewfold knowledge import /private/demo-knowledge --workspace personal --project
   only the exact live run can fetch/acknowledge it.
 - Pending delivery, acknowledgement replay, and inspected cursors survive daemon
   restart; a no-change refresh advances without an empty delta or event.
-- Packet-v4 rosters/message previews remain exact-task scoped, contradiction and
+- Current-packet rosters/message previews remain exact-task scoped, contradiction and
   withdrawal transitions are whole and explainable, closure re-offers only still
   eligible decisions, and a legal new reverse dependent appears without granting
   authority.
-- A v1–v3 base requires rebase and never advertises live tools. Relevant-event,
-  delta, and cumulative overflow rebase rather than truncate.
+- A changed base contract requires rebase and cannot invent live tools.
+  Relevant-event, delta, and cumulative overflow rebase rather than truncate.
 - Contradictory accepted candidates create a conflict, not a blended summary.
 - Deleting or corrupting the search index leaves exact canonical reads unchanged;
   rebuilding changes no canonical revisions or events.
@@ -886,8 +887,8 @@ crewfold supervisor explain ACTION_ID
 **Deliverables**
 
 - Manager MCP tools for task, assignment, review, and escalation proposals.
-- Owner-revisioned manager grants, packet-v5 exact grant snapshots, and exact
-  project/agent-bound launch profiles; packet v1–v4 authority remains unchanged.
+- Owner-revisioned manager grants, optional exact grant snapshots in the current
+  packet, and exact project/agent-bound launch profiles.
 - Deterministic validation of proposed dependencies, claims, budgets, and policy.
 - Dependency-aware ready queue and global/provider/project concurrency bounds.
 - Supervisor conditions for blocked, stale, failed, over-budget, dependency-ready,
@@ -919,8 +920,8 @@ crewfold supervisor explain ACTION_ID
 - Named cases exercise `dependency_ready`, `blocked`, `stale`, `failed`, wall-time
   `over_budget`, and `repeated_failure`; only dependency-ready scheduling
   auto-applies by default and each other condition yields one approval.
-- Packet v4 and wrong-scope/expired/revoked packet-v5 runs are denied while one
-  exact current v5 grant permits only its proposal kinds.
+- A current packet without a grant and wrong-scope, expired, or revoked grants are
+  denied while one exact current grant permits only its proposal kinds.
 - Raw-SQL, named transaction-failure, idempotency, and restart tests prove that
   proposal/decision/application and condition/action/run/job/event receipts cannot
   become partially visible.
@@ -948,6 +949,8 @@ human approval and a fully inspectable decision trail.
 
 ### M17 — Local checks and reusable check-watch capability
 
+Contract: [ADR-0016](decisions/0016-owner-granted-local-check-evidence.md).
+
 **Question answered:** Can Crewfold run and route check results as evidence without
 confusing test status with task or merge authority?
 
@@ -970,6 +973,20 @@ crewfold check inspect CHECK_RUN_ID
 - Invalidated/stale result handling when repository HEAD changes.
 - Evidence classification that distinguishes agent self-report, mechanical check,
   independent review, and policy acceptance.
+- Current-packet exact project/agent/definition/operation grant snapshots,
+  mutually exclusive with manager grants. `AgentDefinition.Role` and
+  `LaunchProfile.Purpose` are never authority or routing inputs.
+- A separate `requested -> starting -> running -> finished` check lifecycle with
+  durable launch receipt, stable direct-runtime operation ID, sealed-spec replay,
+  status-only inspection, and bounded redacted retained logs.
+- First-class task check requirements so one result links only one named
+  criterion. Verification requires matching clean launch/terminal HEAD; dirty
+  passes are diagnostic/unknown and later observed staleness is monotonic.
+- Exact task-assignment and owner duty routes with honest
+  `crewfold-check-worker` subsystem message provenance. Missing owner is visible
+  `unroutable` state.
+- Repair proposals disabled by default, policy/profile bounded, inert until one
+  current local-owner decision.
 
 **Automated acceptance**
 
@@ -979,6 +996,9 @@ crewfold check inspect CHECK_RUN_ID
 - Missing or stale checks remain visible and cannot be summarized as verified.
 - Timeout, crash, and excessive output retain a bounded diagnostic artifact.
 - No result automatically pushes, merges, or determines integration order.
+- A check result never changes task lifecycle, creates independent review, or
+  records policy acceptance. Direct local checks are trusted owner-authored
+  commands rather than a sandbox/no-network promise.
 
 **Failure injection**
 
@@ -1092,7 +1112,8 @@ equally available through the CLI/API.
 
 ### M20 — Personal-scale hardening and recovery
 
-**Question answered:** Can Crewfold remain controllable, recoverable, and upgradable
+**Question answered:** Can Crewfold remain controllable, recoverable, restorable,
+and canonically intact
 at the target local scale?
 
 **Visible result**
@@ -1113,7 +1134,7 @@ crewfold test load --profile personal-100
   and query latency.
 - Queue backpressure, retry/cooldown policy, and resource-budget reporting.
 - Online backup, restore-to-new-directory, integrity checks, and repair guidance.
-- Upgrade/rollback process and migration fixtures for supported releases.
+- Current-baseline creation, integrity verification, and restore-to-new-directory tests.
 - Security/redaction review, endurance suite, and Linux packaging candidate.
 
 **Automated acceptance**
@@ -1126,7 +1147,8 @@ crewfold test load --profile personal-100
 - Backup/restore reproduces domain state and event cursor independently.
 - Fault suite covers daemon kill, runtime loss, stale leases, duplicate delivery,
   database busy, truncated output, and unavailable provider.
-- Upgrade from every supported prior-release fixture passes.
+- Fresh initialization and restore both reproduce the exact current schema and
+  pass canonical integrity checks.
 
 **Failure injection**
 
@@ -1154,9 +1176,9 @@ crewfold adapter conformance ./path/to/adapter
 
 - Approved open-source license and contribution/governance policy.
 - Installation packages, tutorial, example project, and release notes.
-- Adapter SDK, protocol compatibility policy, and conformance command.
+- Adapter SDK, one current adapter contract, and conformance command.
 - Public security contact and threat model.
-- Reproducible release build and upgrade/rollback documentation.
+- Reproducible release build and current-baseline backup/restore documentation.
 - Name/namespace review before any upstream repository is created.
 
 **Automated acceptance**
@@ -1215,7 +1237,7 @@ Before marking any milestone complete, produce a review record using the
 - acceptance scenario command and captured structured result;
 - automated test list and results;
 - failure injected and observed diagnosis;
-- schema/migration changes;
+- schema/current-baseline changes;
 - security or autonomy-policy changes;
 - known limitations and explicitly deferred work;
 - next milestone entry criteria.

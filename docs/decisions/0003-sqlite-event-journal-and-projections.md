@@ -24,7 +24,7 @@ retained artifacts outside the database by content hash.
 
 - Current queries and durable transactions remain simple.
 - Every accepted mutation has a compact audit record.
-- Schema migrations and event compatibility require disciplined testing.
+- Current-baseline changes and event-reader integrity require disciplined testing.
 - Background workers must keep transactions short and handle SQLite contention.
 - Organization mode will need a different authoritative store while preserving
   event semantics and entity IDs.

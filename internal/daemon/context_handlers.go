@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"crewfold/internal/domain"
 	"crewfold/internal/localapi"
 	"crewfold/internal/store"
 )
@@ -35,11 +34,7 @@ func (s *server) handleContextShow(request localapi.Request) localapi.Response {
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	schema := localapi.ContextShowSchema
-	if packet.Schema == domain.ContextPacketSchemaV5 {
-		schema = localapi.ContextShowSchemaV5
-	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ContextShowResult{Schema: schema, Type: "context_packet", Packet: packet})
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ContextShowResult{Schema: localapi.ContextShowSchema, Type: "context_packet", Packet: packet})
 }
 
 func (s *server) handleContextExplain(request localapi.Request) localapi.Response {

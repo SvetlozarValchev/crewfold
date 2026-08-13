@@ -321,6 +321,65 @@ It captures bounded stdout/stderr, preserves the exit result, supports graceful
 and forced stop, and never retains unlimited output in memory. Arbitrary headless
 provider commands are not yet exposed.
 
+### Direct local-check execution
+
+M17 reuses direct-process supervision without representing a check as an agent
+run. The dedicated check worker and runtime instance use a private state subtree
+and one stable check-run ID as the runtime operation ID.
+
+Before launch, the database receipt freezes the owner-authored definition,
+requirement, checkout, initial Git observation, and the canonical effective
+runtime-spec digest. Direct-runtime replay compares that digest before returning
+an existing binding. It covers schema and operation ID, absolute executable,
+ordered argv, empty stdin, sorted effective environment, absolute working
+directory, clamped per-stream output limit, timeout, and grace period. A mismatch
+is corruption/conflict rather than idempotent success.
+
+The check definition cannot provide stdin or environment. The dedicated instance
+inherits only `PATH`, `LANG`/`LC_*`, `TMPDIR`, and `TZ`, and adds
+`CREWFOLD_CHECK_RUN_ID` as diagnostic metadata. It never inherits
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, the MCP socket, or a capability-file path.
+That operation-ID variable is not accepted back as identity or authority. The
+working directory is resolved beneath the real checkout and a symlink escape is
+rejected.
+
+Checks use the optional status-only capability:
+
+```text
+InspectStatus(operation_id, handle)
+  -> state, exit code/known, forced, diagnostic
+```
+
+It exposes no captured text. The worker reads text only through `Logs`, which
+returns bounded, redacted stdout and stderr with captured/omitted counts and
+truncation. It never consumes `RuntimeSnapshot.Stdout` or
+`RuntimeSnapshot.Stderr` for retained check evidence.
+
+Check lifecycle is:
+
+```text
+requested -> starting -> running -> finished
+```
+
+The job and request commit before launch; the exact launch receipt commits before
+the effect. A crash before the receipt creates no child authority. A crash after
+the receipt reclaims the original job. A crash after launch replays the same
+sealed operation and reconciles its handle. Temporary control-plane outage
+defers. A trusted terminal observation records one
+`passed|failed|timed_out|start_failed` result; an untrustworthy process identity
+or outcome records one explicit `unknown` and is never silently relaunched.
+
+Later definition retirement or watcher-grant revocation prevents future requests
+but does not invalidate exact recovery of the already receipted operation. That
+receipt is not reusable authority for a new check.
+
+Direct check execution is not a sandbox. The local owner is trusted to allowlist
+the executable, which may itself access the filesystem, Git, or network. Crewfold
+guarantees spec immutability, least environment inheritance, bounded/redacted
+retention, and recovery identity; it does not claim no-network/no-push enforcement.
+No result-handling path itself commits, pushes, merges, deploys, or decides
+integration order.
+
 ## MCP coordination surface
 
 Agents use MCP to retrieve briefings and operate on Crewfold records. The endpoint

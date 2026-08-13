@@ -60,7 +60,7 @@ assumption participates in these decisions.
 | --- | --- | --- | --- |
 | Domain/glob | `./scripts/go.sh test ./internal/domain` | passed | normalization, exact witness, conflict matrix, concrete matching, bounded exhaustive comparison |
 | Git observer | `./scripts/go.sh test ./internal/gitstate` | passed | porcelain-v2 dirty paths, spaces, rename destination, adjacent clones/worktrees, read-only commands |
-| Store/migration | `./scripts/go.sh test ./internal/store` | passed | schema v8, atomic claim/overlap persistence, deny, pause, release, expiry, restart, drift, gap, checkout attribution, injected rollback |
+| Store/schema | `./scripts/go.sh test ./internal/store` | passed | current-baseline claim/overlap integrity, deny, pause, release, expiry, restart, drift, gap, checkout attribution, injected rollback |
 | Daemon/CLI/protocol | `./scripts/go.sh test ./internal/daemon ./internal/cli ./protocol` | passed | watcher lifecycle, public commands, JSON schemas, result-ID contract |
 | Black-box acceptance | `test/scenarios/claims-overlap/run.sh` | passed | three concrete checkouts, cross-checkout overlap, atomic denial, shared warning, stopped-watcher drift, unchanged declaration |
 | Full offline/race gate | `./scripts/check.sh` | passed | vet, all tests, race tests, and all thirteen black-box scenarios |
@@ -91,10 +91,9 @@ assumption participates in these decisions.
 - Reconciliation: claim queries/creation and run scheduling expire elapsed claims,
   resolve their overlaps, and remove holds. A new daemon watcher preserves the
   last scan but marks its first subsequent out-of-scope observation as gapped.
-- Migration: embedded `008_work_claims.sql` upgrades every checked-in earlier
-  database fixture through the standard migration suite. Existing checkout rows
-  receive a valid empty dirty-path array; no historical claims are fabricated.
-- Backup impact: schema-v8 database backup must include claim, overlap, hold,
+- Baseline integrity: fresh storage initializes canonical empty dirty-path arrays,
+  and no claims are fabricated before an owner creates them.
+- Backup impact: a database backup must include claim, overlap, hold,
   drift, and watcher-scan tables. No provider-private state is added.
 
 ## Security and autonomy
@@ -114,11 +113,11 @@ assumption participates in these decisions.
 - No secret, credential, provider transcript, model call, paid service, or network
   boundary is introduced.
 
-## Compatibility
+## Current contract
 
-- Storage changes: schema version advances from 7 to 8 through one additive
-  migration plus new strict tables/indexes.
-- Domain/API changes: `dirty_paths` is now required in checkout JSON; claim,
+- Storage contract: the current baseline includes strict claim/overlap tables,
+  indexes, and required checkout dirty-path arrays.
+- Domain/API contract: `dirty_paths` is required in checkout JSON; claim,
   overlap, scan, and drift records/methods are additive local API v1 contracts
   with published JSON Schemas.
 - Scheduler change: `run.start` adds a deterministic open-hold check after lease
@@ -128,8 +127,6 @@ assumption participates in these decisions.
   paths nor determines drift attribution.
 - Earlier milestone scenarios: M0 through M11 all passed unchanged in the final
   `scripts/check.sh` run. Recorded Codex and Claude gates made no model call.
-- Rollback: an older binary safely refuses schema version 8 as newer; downgrade
-  requires restoring a schema-v7 backup rather than dropping coordination data.
 
 ## Known limitations and deferrals
 

@@ -16,7 +16,7 @@
   artifacts, blockage, status, or proposed completion through MCP.
 - Acceptance scenario path: `test/scenarios/scoped-mcp/run.sh`
 - Exact command: `./scripts/check.sh`
-- Expected result: formatting, vet, unit, migration, protocol, race, and all eight
+- Expected result: formatting, vet, unit, schema, protocol, race, and all eight
   capability-named built-binary scenarios pass; scoped execution prints
   `Scoped MCP capability acceptance: PASS`; no model, credential, remote, or
   network service is required.
@@ -31,7 +31,7 @@
 | Suite | Command | Result | Evidence |
 | --- | --- | --- | --- |
 | Complete local gate | `./scripts/check.sh` | passed | `gofmt`, vet, all Go tests, race detector, and eight built-binary scenarios |
-| Store/migration | `go test ./internal/store` | passed | Stable packet selection/hash, scoped binding, report/artifact idempotency, ordered application, expiration/inactivity, schema 4→5→6 migration, and no invented authority for old runs |
+| Store/schema | `go test ./internal/store` | passed | Stable packet selection/hash, scoped binding, report/artifact idempotency, ordered application, expiration/inactivity, and no invented authority for unbound runs |
 | Protocol | `go test ./protocol` | passed | Unique valid schema IDs/references and semantic validation for context and MCP mutation contracts |
 | Component | `go test ./internal/daemon` | passed | Private deterministic capability material, tamper rejection, restart derivation, scoped MCP success, cross-run denial, stopped-run denial, and audit facts |
 | CLI | `go test ./internal/cli` | passed | Context build/show/explain and explicit context binding use structured public requests |
@@ -62,7 +62,7 @@
 
 ## Persistence and recovery
 
-- Durable state introduced or changed: schema version 6 adds immutable
+- Durable state exercised: immutable
   `context_packets`, unique `run_context_bindings`, expiring `run_capabilities`,
   ordered `run_reports`, bounded `run_artifacts`, and `run_tool_calls`.
 - Atomic boundaries: run creation either validates and binds an explicit packet or
@@ -77,14 +77,12 @@
 - Reconciliation outcome: completed runs restore with the same context packet ID;
   capabilities authorize only live `starting`, `active`, or `blocked` runs and
   therefore do not regain authority after terminal restoration.
-- Migration fixture: the store test upgrades representative schema-v4 state
-  through schema 5 and 6, preserves its prior run/timeline facts, and verifies the
-  scoped tables remain empty. Crewfold does not invent context or capability
-  authority for a run created by an older schema.
+- Current-baseline tests preserve representative run/timeline facts and prove
+  Crewfold does not invent context or capability authority for a run not created
+  with it.
 - Backup/restore impact: the SQLite database and owner-only node key are both
   required to preserve live scoped authority. Runtime capability files can be
-  deterministically recreated from that key. There is no backup command or down
-  migration; rollback requires a compatible pre-upgrade backup.
+  deterministically recreated from that key.
 
 ## Security and autonomy
 
@@ -122,11 +120,11 @@
 - Transport compatibility: owner JSON-RPC and MCP JSON-RPC share the existing Unix
   socket and are discriminated by their protocol envelopes. Existing owner
   clients and all earlier acceptance scenarios pass unchanged.
-- Storage changes: forward-only schema migration 5→6. Older binaries refuse the
-  newer `user_version`; rollback requires a pre-upgrade backup.
+- Storage evidence: fresh-baseline creation and canonical reads cover every scoped
+  authority relationship.
 - Adapter compatibility: the direct runtime/provider separation remains intact.
-  The new `fixture-mcp` provider consumes scoped environment paths; the legacy
-  deterministic fixture provider remains available for earlier contracts.
+  The `fixture-mcp` provider consumes scoped environment paths; the deterministic
+  fixture provider exercises the non-MCP runtime contract.
 - Source-layout compatibility: packet checkout identity comes from the registered
   placement contract. Adjacent standalone clones and linked worktrees remain
   equivalent; no `git worktree` topology is assumed.

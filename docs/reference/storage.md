@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 17.
+Status: implemented as one current greenfield schema baseline.
 
 ## Location and ownership
 
@@ -10,8 +10,8 @@ exclusive `<data-dir>/daemon.lock`. A newly created data directory uses mode
 a symbolic link or a non-regular file.
 
 Crewfold writes the ASCII application ID `CRFD` into SQLite's file header. An
-unidentified database with a nonzero schema version or user tables is preserved
-and refused rather than adopted and migrated accidentally.
+unidentified database with a nonzero schema marker or user tables is preserved
+and refused rather than adopted as Crewfold storage.
 
 The database is opened through the CGO-free `github.com/ncruces/go-sqlite3`
 `database/sql` driver. The driver and its transitive build dependencies are
@@ -34,7 +34,7 @@ Every connection requires:
 | `synchronous` | `FULL` | Favor local durability over mutation throughput |
 | transaction lock | `IMMEDIATE` | Acquire the write reservation before invariant checks |
 
-Startup fails before the API socket is bound if migration or canonical database
+Startup fails before the API socket is bound if baseline initialization or canonical database
 health checks fail. Crewfold opens a short-lived base SQLite connection without
 registering the FTS5 module and runs one global `PRAGMA quick_check(1)`. This checks
 database-wide page allocation, the freelist, and every ordinary B-tree—including
@@ -45,19 +45,16 @@ physical/canonical result alongside schema version, journal mode, and the
 foreign-key setting. Retrieval projection semantics are checked and reported
 separately.
 
-## Embedded migrations
+## Embedded current baseline
 
-Ordered SQL files under `internal/store/migrations/` are embedded into the binary.
-Names begin with a contiguous three-digit version. Each migration and its
-`schema_migrations` record commit in one transaction, and SQLite `user_version`
-tracks the current binary schema.
+The current SQL baseline under `internal/store/migrations/` is embedded into the
+binary. A fresh data directory is initialized transactionally, and SQLite
+`user_version` plus `schema_migrations` identify the one schema understood by the
+binary. Tests construct that baseline from empty storage and exercise canonical
+integrity against representative current records; no historical upgrade path is
+part of the greenfield contract.
 
-The daemon refuses a database whose version is newer than the binary. Every
-supported starting version has checked-in fixture data under
-`internal/store/testdata/`. Base fixtures plus representative coordination upgrade
-records prove every forward migration while preserving existing records.
-
-## Schema version 1
+## Workspaces, events, and idempotency
 
 `workspaces` is the current-state projection. It stores an opaque stable ID,
 unique human name, revision, timestamps, and creating/updating actor IDs.
@@ -71,9 +68,9 @@ validated JSON data.
 successful domain result. Keys are globally unique within this local database in
 M2. Retention/compaction is deferred until command volume makes it necessary.
 
-`schema_migrations` records the ordered migrations applied to the database.
+`schema_migrations` records the embedded baseline applied to the database.
 
-## Schema version 2
+## Projects, repositories, and checkouts
 
 `projects` scopes a named coordinated body of work to a workspace.
 
@@ -93,7 +90,7 @@ Project and checkout registration update all projections, append their events,
 and record idempotency responses in one transaction. Git probing happens before
 that transaction and uses only bounded read commands.
 
-## Schema version 3
+## Agents, objectives, and tasks
 
 `agents` stores provider-neutral durable definitions: scoped name, role, provider,
 runtime preference, enabled state, concurrency configuration, revision, and audit
@@ -115,12 +112,10 @@ inside that write transaction, so concurrent stale writers cannot both succeed.
 Readiness is a deterministic query over task state and incomplete dependencies;
 it is not stored as an independently drifting boolean.
 
-## Schema version 4
+## Runs and deterministic execution
 
-The task state constraint expands with `review`, `changes_requested`, and `failed`
-for evidence-driven run outcomes. The migration rebuilds tasks, dependencies, and
-assignments while preserving their IDs, revisions, edges, leases, and audit data;
-upgrade records contain representative completed and actively assigned tasks.
+The task state constraint includes `review`, `changes_requested`, and `failed`
+for evidence-driven run outcomes.
 
 `runs` stores committed execution intent, task/agent/checkout placement, opaque
 runtime/provider names and handles, the validated fake scenario, normalized
@@ -136,11 +131,10 @@ idempotency response commit atomically. Worker transitions update run/task state
 timeline, handoff, assignment release, and events in transactions separate from
 adapter effects.
 
-## Schema version 5
+## Direct-runtime supervision
 
-Run state adds `stopping`, `stopped`, and `lost`, plus bounded stop-grace and
-forced-stop facts. The migration rebuilds the run-owned tables in dependency order
-and preserves existing run intents, handles, queues, timelines, and handoffs.
+Run state includes `stopping`, `stopped`, and `lost`, plus bounded stop-grace and
+forced-stop facts.
 
 The live-run uniqueness and checkout-capacity indexes include `stopping` and
 `lost`. A lost process may still be writing, so uncertainty cannot silently free
@@ -150,7 +144,7 @@ coordination meaning. Each supervisor state file is atomically replaced and
 contains process identity, exit/timeout/stop result, output byte counts, and an
 explicit unknown state when identity cannot be verified.
 
-## Schema version 6
+## Context packets and run-scoped MCP
 
 `context_packets` stores an immutable bounded JSON packet, semantic SHA-256 hash,
 byte size, task/agent/checkout scope, and creation provenance. The packet includes
@@ -167,11 +161,9 @@ one transaction. `run_artifacts` stores at most 32 KiB of UTF-8 text with a cont
 hash and run-local idempotency key. `run_tool_calls` records allowed, denied, and
 errored MCP operations without request bodies or credentials.
 
-Old runs migrate without invented packet bindings or capabilities; only runs
-created under schema version 6 receive them. Capability expiry and terminal run
-state are both checked on each MCP request.
+Capability expiry and terminal run state are both checked on each MCP request.
 
-## Schema version 7
+## Durable messaging
 
 `message_threads` stores workspace/project/task scope, a bounded subject, open or
 closed state, revision, and actor provenance. `messages` stores immutable sender,
@@ -190,16 +182,11 @@ diagnostic and leaves delivery queued so later inbox polling remains authoritati
 Message sends are idempotent within their sender identity, and read/acknowledge
 mutations are idempotent within the authenticated run. Artifact references are
 validated against the sender run. A run inbox is restricted to its agent and
-project; owner inspection is wider but does not mutate delivery state. Existing
-schema-version-6 databases migrate with empty message tables and no fabricated
-threads, mail, recipients, or wake work.
+project; owner inspection is wider but does not mutate delivery state. The current
+context packet carries a bounded inbox snapshot and advertises mailbox tools only
+when they are present in its frozen allowlist.
 
-New context packets use domain schema v2 because adding the inbox snapshot is an
-incompatible wire change. Stored v1 packets remain readable, retain their original
-byte size and semantic hash, omit the v2 inbox, and do not acquire the new mailbox
-tools. Local `context.show` accepts either version; `context.build` emits v2.
-
-## Schema version 8
+## Work claims, overlaps, and drift
 
 `checkouts.dirty_paths_json` stores the sorted repository-relative paths from the
 most recent bounded Git observation in addition to the coarse dirty boolean.
@@ -228,20 +215,20 @@ or expiry resolves related overlaps and removes their scheduling holds in the
 same transaction. Git scans are external read-only observations followed by a
 separate atomic checkout/drift update.
 
-## Schema versions 9 and 10
+## Meetings and canonical knowledge
 
-Schema version 9 adds frozen structured meetings, participant checkpoints,
+The current baseline stores frozen structured meetings, participant checkpoints,
 independent contributions, typed proposals/actions, and authority/application
 records. Meeting resolution commits its complete authorized action set atomically.
 
-Schema version 10 adds stable knowledge items, immutable-content revisions,
+It also stores stable knowledge items, immutable-content revisions,
 ordered frozen provenance, and append-only governance-authority records. Database
 constraints permit only proposed acceptance/rejection, current staleness, and
 atomic predecessor supersession. It also enforces update/delete rejection for
-stored immutable context packets. Context packet v3 embeds exact accepted revision
+stored immutable context packets. The current packet embeds exact accepted revision
 snapshots; the packet remains canonical even if later governance changes.
 
-## Schema version 11
+## Retrieval projection
 
 `knowledge_search` is a disposable SQLite FTS5 projection over canonical revision
 IDs, workspace IDs, titles, and bodies. `knowledge_search_metadata` publishes one
@@ -264,12 +251,11 @@ corruption, freelist/page-allocation damage, and structural damage to ordinary F
 shadow B-trees. Simultaneous FTS semantic and canonical corruption therefore still
 blocks startup.
 
-## Schema version 12
+## Participant-bound collaboration
 
-`message_threads.kind` distinguishes existing `direct` threads from
+`message_threads.kind` distinguishes `direct` threads from
 `participant_bound` collaboration, and `participant_revision` provides optimistic
-roster concurrency. Existing rows migrate as direct threads at participant
-revision zero; no cross-project authority is inferred for old mail.
+roster concurrency. No cross-project authority is inferred from a direct thread.
 
 `thread_participants` stores two through eight immutable owner-created bindings.
 Each freezes one enabled agent, its exact active unexpired assignment and task,
@@ -286,22 +272,22 @@ authorized a participant-thread delivery. Inserts enforce that sender runs match
 the bound agent/project/task and recipients belong to the same thread. Participant
 messages reject artifacts. Inbox, read, acknowledgement, context summary, wake
 selection, and wake completion all re-check the exact run binding; direct rows
-retain the schema-version-7 project rule. Message bodies stay immutable and retain
+retain the project-scope rule. Message bodies stay immutable and retain
 the authenticated sender run's origin project/task.
 Owner participant mail cannot claim a binding origin: it must omit project/task
 and stores both as null.
 
 Thread create/invite, their journal events, roster projection, and idempotency
 commit in one transaction. A stale expected participant revision or failed
-eligibility check commits none of them. Context packet v3 is not revised: its
+eligibility check commits none of them. The current context packet's
 existing bounded inbox shape can contain an authorized participant message, while
 the full body remains an explicit MCP read.
 
-## Schema version 13
+## Curator policy and derivation
 
 `curator_rules` stores immutable workspace policy revisions for the one implemented
-`accepted_meeting_resolution_copy/v1` rule. Migration and future workspace insert
-both seed disabled revision one. Owner configuration appends a revision; it does
+`accepted_meeting_resolution_copy/v1` rule. Every workspace is seeded with disabled
+revision one. Owner configuration appends a revision; it does
 not rewrite history. The effective rule is the highest revision.
 
 `curator_derivations` is append-only proof that one exact rule version copied an
@@ -329,7 +315,7 @@ capacity remains, a new exact derivation and its automatic acceptance may commit
 together in that transaction. A structured source outside the exact title/body
 bounds is returned as a skip evaluation and creates no marker, proposal, or event.
 
-## Schema version 14
+## Knowledge contradictions
 
 `knowledge_contradictions` is immutable exact-pair history plus a narrow lifecycle
 projection. It stores one lexically ordered, globally unique pair of different
@@ -361,12 +347,12 @@ Context-build conflict checks fetch only 16 sorted IDs plus a total count and
 commit no packet/event/key on failure. Mark-stale and successor acceptance resolve
 all incident open rows within their existing knowledge transaction.
 
-## Schema version 15
+## Portable project knowledge
 
-This schema adds immutable task-scope anchors and owner import receipts. A
+The current baseline includes immutable task-scope anchors and owner import receipts. A
 task anchor binds an exact opaque task ID to workspace/project applicability
-without requiring or creating an operational task row. Existing task-scoped
-knowledge is backfilled; native proposals validate/create the same binding.
+without requiring or creating an operational task row. Native proposals
+validate or create the same binding.
 Insert/update triggers prevent an existing or later operational task with that ID
 from disagreeing on workspace, project, creation time, or creator identity.
 
@@ -385,17 +371,15 @@ runs, repositories, checkouts, provider state, credentials, and transcripts.
 These tables remain local and are not reconstructed from descriptive actor fields
 in an imported snapshot.
 
-## Schema version 16
+## Live context deltas
 
-Packet-v4 construction extends immutable `context_packets` JSON with its source
+Current-packet construction includes its source
 event high-water, bounded reverse dependents and participant rosters, collaboration
-budget, and frozen live policy. New insert triggers require redundant packet
-scope/hash/size columns to match the JSON and validate the exact v4 policy bounds.
-Versions 1 through 3 remain accepted historical rows. Context packets and
-run-context bindings reject update/delete; migration invents no live authority for
-an old run.
+budget, and frozen live policy. Insert triggers require redundant packet
+scope/hash/size columns to match the JSON and validate the exact policy bounds.
+Context packets and run-context bindings reject update/delete.
 
-`run_context_delta_state` is one durable delivery projection per packet-v4 run. It
+`run_context_delta_state` is one durable delivery projection per current-packet run. It
 owns `ready|pending_ack|rebase_required`, optimistic revision, inspected event
 cursor, last/pending/acknowledged IDs and run-local sequence, delta count,
 cumulative bytes, stable rebase reason/event, and timestamps. Initial state must
@@ -425,9 +409,9 @@ one whole delta/event/state transition, advances the no-op cursor without an
 event, or records rebase event/state. Event payloads are candidate/audit data, not
 the stored delta's content authority.
 
-## Schema version 17
+## Manager delegation and deterministic supervision
 
-Schema version 17 adds owner-granted manager proposals and a deterministic local
+The current baseline includes owner-granted manager proposals and a deterministic local
 supervisor. `manager_grants` binds one exact workspace/project/objective,
 planning-task revision, agent revision, proposal-kind set, target launch-profile
 revision set, allowed claim-kind set, quantitative limits, optional expiry, and
@@ -456,7 +440,7 @@ launch profiles, then writes typed work mutations and immutable
 `manager_proposal_effects`. Rejection writes no work effect.
 Completion of the source planning run and release of its assignment do not make
 an already-sealed pending proposal undecidable. Acceptance instead proves the
-immutable source packet-v5/grant tuple, current frozen source-agent revision,
+immutable source packet/grant tuple, current frozen source-agent revision,
 active/unexpired grant, exact active objective revision, and current referenced
 profiles/tasks; it never grants the completed run another tool capability.
 
@@ -523,7 +507,7 @@ consume every applicable capacity dimension until run-first reconciliation
 establishes their terminal state; the supervisor cannot free a lease merely to
 make a replacement fit.
 
-Schema 17 also freezes the scheduling boundary. `runs.assignment_id` binds the
+The schema also freezes the scheduling boundary. `runs.assignment_id` binds the
 exact assignment. `run_jobs.origin` distinguishes owner and supervisor work, and
 every supervisor-origin job requires an immutable `run_scheduling_receipts` row
 linking the run, intent, applied action, exact launch-profile revision, assignment,
@@ -552,17 +536,128 @@ authority merely because history still contains the original scheduling receipt.
 The corresponding action stores `prior_run_id` for the immutable failed run and
 `run_id` for the fresh requested run; ordinary actions leave `prior_run_id` null.
 
-Context packet v5 extends v4 only for a manager run. It freezes the complete exact
-grant snapshot and adds only the proposal tools allowed by that grant. Insert and
+The current context packet freezes the complete exact manager-grant snapshot and
+adds only the proposal tools allowed by that grant. Insert and
 binding checks require the active unexpired grant, exact planning task/agent and
 profile revisions, live assignment, canonical target-profile tuples, and exact
-tool intersection. Packets v1 through v4 remain immutable and never acquire
-manager authority after upgrade or role-label changes.
+tool intersection. A packet without that exact grant has no manager authority,
+regardless of role-label changes.
 
 The schema rejects update/delete of immutable evidence and rejects partial direct
 SQL that cannot prove the same canonical relationships. Transactions use an
 immediate write reservation, so concurrent proposal decisions, supervisor scans,
 approval decisions, and scheduling attempts serialize their invariant checks.
+
+## Local-check evidence and authority
+
+Local checks remain separate from agent `runs`. The current baseline includes the
+following strict tables:
+
+| Concern | Tables |
+| --- | --- |
+| Owner command allowlist | `check_definitions`, `check_definition_arguments` |
+| Named criteria | `task_check_requirements` |
+| Delegated authority | `check_watch_grants`, `check_watch_grant_operations`, `check_watch_grant_definitions` |
+| Project handling | `check_policies`, `check_routes` |
+| Execution saga | `check_runs`, `check_jobs`, `check_launch_receipts` |
+| Outcome and retained output | `check_results`, `check_artifacts`, `check_result_freshness`, `check_requirement_evidence` |
+| Delivery | `check_notification_receipts`, `check_route_failures` |
+| Inert follow-up | `check_repair_proposals`, `check_repair_decisions`, `check_repair_effects` |
+
+Definitions store an absolute executable and typed limits. Arguments are
+contiguous immutable child rows. There is deliberately no definition environment,
+stdin, shell string, credential, provider, or MCP configuration. One active task
+requirement binds one criterion key and statement to one exact definition content
+revision; an active task cannot bind the same definition twice.
+
+One `check_watch_grants` row binds the owner-selected project and exact enabled
+agent revision. Its child mirrors contain only the closed operations
+`run|inspect|propose_repair` and exact definition revisions. Grant insert and
+lifecycle triggers prove those mirrors, scope, bounds, expiry, owner authorship,
+revision, and content hash. No grant, route, policy, or execution query joins or
+filters on `agents.role` or `launch_profiles.purpose`.
+
+Context-packet insert and binding triggers accept a check-watch grant only when it
+is the complete exact active grant and no manager grant coexists. Every agent
+check mutation revalidates the live run/capability, current packet, current grant revision/expiry, exact agent/project,
+operation, and allowlisted definition before it inserts a request.
+
+`check_runs` has only:
+
+```text
+requested -> starting -> running -> finished
+```
+
+A partial unique index allows one live run per requirement/checkout. One request
+transaction inserts the run, pending job, event, and actor-scoped idempotency
+result. A worker may claim an external effect only after one immutable
+`check_launch_receipts` row proves the exact job, definition and requirement
+revisions, checkout, initial Git observation, effective runtime-spec digest,
+source authority, and corresponding event. The check-run ID is the stable direct
+runtime operation ID. An existing operation with a different spec digest is a
+conflict, not replay.
+
+Each finished run has exactly one immutable `check_results` row with outcome
+`passed|failed|timed_out|start_failed|unknown`. Exit and diagnostic authority come
+from status-only runtime inspection. Text enters storage only through the bounded,
+redacted runtime logs path. `check_artifacts` stores immutable kind, SHA-256,
+captured/omitted byte counts, and truncation for private content-addressed blobs.
+A reference whose blob is missing or hash-mismatched fails canonical read.
+
+Freshness is append-only and separate from process outcome. Initial state is
+`fresh` only for available, identical, nonempty, clean launch/terminal
+repository-checkout-HEAD observations. A known HEAD difference is `stale`;
+dirty/unavailable/invalid observations are `unknown`. A later fresh inspector
+observation of a different HEAD or any dirty tree appends stale. Stale cannot
+transition back. Only an originally eligible result with no stale observation
+may return from a transient observation-unknown state to fresh.
+
+`check_requirement_evidence` is forced to class `mechanical_check` and the exact
+requirement/result/freshness-revision tuple. Each tuple has one immutable link:
+the historical initial revision-1 link remains readable, and a later stale
+revision records a distinct inconclusive link rather than rewriting the earlier
+truth. It cannot update task lifecycle or represent `independent_review` or
+`policy_acceptance`. The derived requirement state
+`missing|running|verified|failed|stale|unknown` is a read projection; only the
+latest exact active-revision passed/fresh result is verified.
+
+Every nonpass result attempts one exact current-task-assignment notification.
+Owner routes add an exact agent revision and explicit
+`evidence_review|coordination` duty. Receipts freeze route/policy, result or
+freshness revision, recipient, and assignment when applicable. A missing current
+owner inserts `check_route_failures` as `unroutable` instead of guessing.
+
+Subsystem delivery uses `messages.sender_type='subsystem'`. A check message is
+valid only with sender `crewfold-check-worker`, null sender agent/run, a direct
+thread, and a matching immutable notification receipt in the same transaction.
+Public owner/agent message commands cannot select subsystem provenance.
+
+Repair policy is seeded disabled for every existing and new project. An enabled
+revision freezes an exact repair launch-profile revision and open-proposal bound.
+A repair proposal is immutable and inert. One owner decision may accept it only
+after revalidating the latest exact trusted failed result at the current fresh
+source, its authenticated watcher run/agent/grant tuple, policy, task/objective,
+and exact current profile; the task, scheduling intent, decision, effects, events, and
+idempotency response then commit together. A later fresh pass stales a pending
+proposal. The immutable decision freezes the exact proposal revision,
+`accepted|rejected` value, optional canonical note of at most 4096 encoded UTF-8
+bytes, timestamp, and `local-owner` author; undecided detail has no synthetic
+decision row.
+
+Timed-out, start-failed, and unknown outcomes, plus stale or unknown freshness,
+remain durable and inspectable but cannot seed a repair proposal.
+
+The schema defines immutable/reject-delete, legal-transition, exact-scope,
+canonical-mirror, receipt-provenance, and child-ordinal triggers for each family.
+Local-check persistence uses named sqlc queries and generated models; the bounded
+supervisor transaction exception does not extend to this surface.
+
+Named fault barriers surround request projection/event/job/idempotency; launch
+receipt/event; external launch; handle binding; terminal
+result/artifact/freshness/evidence/notification/message/event; and repair
+decision/effect. Each database bundle is wholly absent or wholly committed.
+Content-addressed blob preparation may leave an unauthoritative orphan but cannot
+produce a valid result without its exact typed metadata.
 
 ## Atomic command path
 
@@ -588,7 +683,7 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 17 contains agent/task/run/claim coordination,
+without its WAL. The current database contains agent/task/run/claim coordination,
 meetings, canonical knowledge, immutable context packets, scoped
 report/artifact/audit records, durable message/thread/delivery/wake state,
 overlap/drift/watcher state, bounded curator policy/derivation/acceptance evidence,
@@ -605,4 +700,9 @@ state. It also includes manager grants/proposals, immutable launch profiles,
 accepted-action effects and scheduling intents, append-only supervisor policy,
 actions/approvals/state, and exact supervisor scheduling receipts. Restoring only
 part of that authority graph is unsupported and must fail canonical health or the
-first dependent operation closed.
+first dependent operation closed. It further includes check definitions and
+criteria, current-packet check-watch grants, check execution receipts/results/freshness/evidence,
+subsystem delivery receipts, and inert repair proposals. A coordinated backup
+must include the private content-addressed check-artifact directory and dedicated
+direct-check runtime state; missing or hash-mismatched output fails closed rather
+than being summarized as verification.

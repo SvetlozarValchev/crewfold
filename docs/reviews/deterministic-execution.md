@@ -16,7 +16,7 @@
   accepted handoff, and resume durable work after daemon restart.
 - Acceptance scenario path: `test/scenarios/deterministic-execution/run.sh`
 - Exact command: `./scripts/check.sh`
-- Expected result: formatting, vet, unit, migration, protocol, race, and every
+- Expected result: formatting, vet, unit, schema, protocol, race, and every
   capability-named black-box scenario pass; deterministic execution prints
   `Deterministic execution acceptance: PASS`; no external process, model,
   credential, network service, remote, or source mutation is involved.
@@ -32,7 +32,7 @@
 | --- | --- | --- | --- |
 | Complete local gate | `./scripts/check.sh` | passed | Formatting, vet, all Go tests, race detector, and six built-binary scenarios |
 | Unit/store | `go test ./internal/execution ./internal/store` | passed | Strict scenario parsing, idempotent runtime launch, acceptance, placement, capacity, atomic intent, state transitions, queue, timeline, and handoff |
-| Store/migration | `go test ./internal/store` | passed | Schema version 4 plus representative coordination-record upgrade preserving task, dependency, and active assignment data |
+| Store/schema | `go test ./internal/store` | passed | Current-baseline execution records preserve task, dependency, and active assignment integrity |
 | Protocol | `go test ./protocol` | passed | Unique valid schema IDs/references, constant agreement, provider-neutral methods, and semantic validation of all five checked-in scenarios |
 | Component | `go test ./internal/daemon` | passed | Real Unix socket and SQLite worker; success, block/resume, review, start failure, requested-intent restart, and post-launch/pre-ack restart |
 | Black-box acceptance | Deterministic execution scenario via check script | passed | Real binary exercises public CLI/API only, including two daemon restarts and adjacent-clone placement |
@@ -67,7 +67,7 @@
 
 ## Persistence and recovery
 
-- Durable state introduced or changed: schema version 4 expands task outcomes and
+- Durable state exercised: task outcomes and
   adds `runs`, `run_jobs`, `run_timeline`, and `run_handoffs`, plus live-run,
   placement/capacity, queue, and timeline indexes.
 - Restart/crash points tested: requested intent before any worker effect;
@@ -77,13 +77,10 @@
 - Reconciliation outcome: one stable run ID drives idempotent launch; requested
   and starting jobs are reclaimed; blocked/active runs preserve their observation
   cursor; accepted handoffs remain singular; terminal jobs do not rerun.
-- Migration fixture: `internal/store/testdata/coordination-upgrade.sql` composes
-  representative schema-v3 coordination records without naming a file after the
-  milestone. Migration preserves IDs, revisions, dependency edge, and active
-  assignment while adding empty run tables.
-- Backup/restore impact: online backup still must include the live WAL. There is no
-  backup command or down migration; rollback requires a compatible pre-upgrade
-  backup.
+- Current-baseline tests preserve representative IDs, revisions, dependency edges,
+  and active assignments while exercising empty and populated run tables.
+- Backup/restore impact: online backup still must include the live WAL; restore
+  targets a new directory and must pass integrity checks.
 
 ## Security and autonomy
 
@@ -108,8 +105,8 @@
 - API/schema changes: additive protocol-v1 methods `run.start`, `run.show`,
   `run.list`, `run.resume`, and `task.timeline`; domain/local/fake-scenario JSON
   Schemas publish run, placement, timeline, and handoff records.
-- Storage changes: forward-only schema migration 3→4. Older binaries correctly
-  refuse the newer `user_version`; rollback requires a pre-upgrade backup.
+- Storage evidence: fresh-baseline creation and canonical reads cover every run,
+  job, timeline, and handoff relationship.
 - Adapter compatibility: runtime and provider are independent interfaces and
   registries. Core placement/state code does not branch on Codex, Claude, Herdr,
   or worktree names.

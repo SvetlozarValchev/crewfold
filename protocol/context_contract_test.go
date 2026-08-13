@@ -14,16 +14,13 @@ import (
 func TestContextSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 	t.Parallel()
 	for path, expectedID := range map[string]string{
-		"schemas/domain/v1/context-packet.schema.json":              domain.ContextPacketSchemaV1,
-		"schemas/domain/v1/context-packet-v2.schema.json":           domain.ContextPacketSchemaV2,
-		"schemas/domain/v1/context-packet-v3.schema.json":           domain.ContextPacketSchemaV3,
-		"schemas/domain/v1/context-packet-v4.schema.json":           domain.ContextPacketSchema,
+		"schemas/domain/v1/context-packet.schema.json":              domain.ContextPacketSchema,
+		"schemas/domain/v1/context-check-watch-grant.schema.json":   domain.ContextCheckWatchGrantSchema,
 		"schemas/domain/v1/context-delta.schema.json":               domain.ContextDeltaSchema,
 		"schemas/domain/v1/live-context-policy.schema.json":         domain.ContextLivePolicySchema,
-		"schemas/local/v1/context-build-v4.result.schema.json":      localapi.ContextBuildSchema,
-		"schemas/local/v1/context-show-v4.result.schema.json":       localapi.ContextShowSchema,
-		"schemas/local/v1/context-show-v5.result.schema.json":       localapi.ContextShowSchemaV5,
-		"schemas/local/v1/context-explain-v3.result.schema.json":    localapi.ContextExplainSchema,
+		"schemas/local/v1/context-build.result.schema.json":         localapi.ContextBuildSchema,
+		"schemas/local/v1/context-show.result.schema.json":          localapi.ContextShowSchema,
+		"schemas/local/v1/context-explain.result.schema.json":       localapi.ContextExplainSchema,
 		"schemas/local/v1/context-refresh.result.schema.json":       localapi.ContextRefreshSchema,
 		"schemas/local/v1/context-delta-list.result.schema.json":    localapi.ContextDeltaListSchema,
 		"schemas/local/v1/context-delta-show.result.schema.json":    localapi.ContextDeltaShowSchema,
@@ -45,19 +42,119 @@ func TestContextSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 	}
 }
 
-func TestContextV4FreezesLiveToolsAndBounds(t *testing.T) {
+func TestContextShowAcceptsOnlyTheCurrentPacket(t *testing.T) {
 	t.Parallel()
-	packet := readContextSchema(t, "schemas/domain/v1/context-packet-v4.schema.json")
+	document := readContextSchema(t, "schemas/local/v1/context-show.result.schema.json")
+	packet := document["properties"].(map[string]any)["packet"].(map[string]any)
+	if got := packet["$ref"]; got != "../../domain/v1/context-packet.schema.json" {
+		t.Fatalf("context show packet ref = %v, want the one current packet", got)
+	}
+	if _, branches := packet["oneOf"]; branches {
+		t.Fatal("context show retains noncurrent packet branches")
+	}
+}
+
+func TestContextCheckWatchGrantDeclaresMandatorySemanticValidation(t *testing.T) {
+	t.Parallel()
+	document := readContextSchema(t, "schemas/domain/v1/context-check-watch-grant.schema.json")
+	comment, _ := document["$comment"].(string)
+	for _, semanticRule := range []string{"canonical operation ordering", "definitions sorted by definition_id", "max_in_flight <= max_pending"} {
+		if !strings.Contains(comment, semanticRule) {
+			t.Errorf("check-watch grant semantic-validation note %q omits %q", comment, semanticRule)
+		}
+	}
+	properties := document["properties"].(map[string]any)
+	for _, collection := range []string{"operations", "definitions"} {
+		if properties[collection].(map[string]any)["uniqueItems"] != true {
+			t.Errorf("check-watch grant %s does not enforce shape-level uniqueness", collection)
+		}
+	}
+}
+
+func TestCurrentContextPacketFreezesOptionalExactGrantWithoutRoleAuthority(t *testing.T) {
+	t.Parallel()
+	packet := readContextSchema(t, "schemas/domain/v1/context-packet.schema.json")
+	required := contractStringSlice(packet["required"])
+	if containsContractString(required, "check_watch_grant") || containsContractString(required, "management_grant") {
+		t.Fatalf("current packet makes delegated authority mandatory: %v", required)
+	}
+	properties := packet["properties"].(map[string]any)
+	for _, requiredGrant := range []string{"management_grant", "check_watch_grant"} {
+		if _, exists := properties[requiredGrant]; !exists {
+			t.Errorf("current packet omits optional authority family %q", requiredGrant)
+		}
+	}
+	for _, forbidden := range []string{"role_authority", "purpose_authority"} {
+		if _, exists := properties[forbidden]; exists {
+			t.Errorf("current packet exposes forbidden authority family %q", forbidden)
+		}
+	}
+	grantRef := properties["check_watch_grant"].(map[string]any)["$ref"]
+	if grantRef != "context-check-watch-grant.schema.json" {
+		t.Fatalf("current packet check-watch grant ref = %v", grantRef)
+	}
+	mutualExclusion := packet["allOf"].([]any)[0].(map[string]any)["not"].(map[string]any)
+	if got := contractStringSlice(mutualExclusion["required"]); !reflect.DeepEqual(got, []string{"management_grant", "check_watch_grant"}) {
+		t.Fatalf("current packet grant exclusion = %v", got)
+	}
+
+	grant := readContextSchema(t, "schemas/domain/v1/context-check-watch-grant.schema.json")
+	grantProperties := grant["properties"].(map[string]any)
+	for _, forbidden := range []string{"role", "purpose", "runtime", "provider", "checkout_id", "command", "arguments", "environment"} {
+		if _, exists := grantProperties[forbidden]; exists {
+			t.Errorf("check-watch snapshot exposes forbidden authority field %q", forbidden)
+		}
+	}
+	operations := contractStringSlice(grantProperties["operations"].(map[string]any)["items"].(map[string]any)["enum"])
+	wantOperations := []string{domain.CheckWatchOperationRun, domain.CheckWatchOperationInspect, domain.CheckWatchOperationProposeRepair}
+	if !reflect.DeepEqual(operations, wantOperations) {
+		t.Fatalf("check-watch operations = %v, want %v", operations, wantOperations)
+	}
+	definition := grant["$defs"].(map[string]any)["definition"].(map[string]any)
+	definitionRequired := contractStringSlice(definition["required"])
+	for _, field := range []string{"definition_id", "content_revision", "definition_sha256"} {
+		if !containsContractString(definitionRequired, field) {
+			t.Errorf("check-watch definition tuple omits %q", field)
+		}
+	}
+
+	policy := packet["$defs"].(map[string]any)["policy"].(map[string]any)["properties"].(map[string]any)
+	allowed := policy["allowed_tools"].(map[string]any)
+	prefix := make([]string, 0)
+	for _, item := range allowed["prefixItems"].([]any) {
+		prefix = append(prefix, item.(map[string]any)["const"].(string))
+	}
+	wantBase := []string{
+		"crewfold_acknowledge_context_delta", "crewfold_acknowledge_message", "crewfold_get_briefing",
+		"crewfold_get_context_delta", "crewfold_get_status", "crewfold_list_inbox", "crewfold_propose_knowledge",
+		"crewfold_propose_completion", "crewfold_publish_artifact", "crewfold_read_message", "crewfold_report_blocked",
+		"crewfold_report_contradiction", "crewfold_report_progress", "crewfold_send_message",
+	}
+	if !reflect.DeepEqual(prefix, wantBase) {
+		t.Fatalf("current packet base tools = %v, want exact order %v", prefix, wantBase)
+	}
+	suffix := contractStringSlice(allowed["items"].(map[string]any)["enum"])
+	wantSuffix := []string{"crewfold_run_check", "crewfold_list_check_results", "crewfold_inspect_check_result", "crewfold_propose_check_repair"}
+	for _, wanted := range wantSuffix {
+		if !containsContractString(suffix, wanted) {
+			t.Errorf("current packet watcher suffix omits %q: %v", wanted, suffix)
+		}
+	}
+}
+
+func TestCurrentContextFreezesLiveToolsAndBounds(t *testing.T) {
+	t.Parallel()
+	packet := readContextSchema(t, "schemas/domain/v1/context-packet.schema.json")
 	properties := packet["properties"].(map[string]any)
 	threads := properties["participant_threads"].(map[string]any)
 	dependents := properties["dependents"].(map[string]any)
 	if threads["maxItems"] != float64(8) || dependents["maxItems"] != float64(32) {
-		t.Fatalf("v4 packet bounds: participant_threads=%v dependents=%v", threads["maxItems"], dependents["maxItems"])
+		t.Fatalf("current packet bounds: participant_threads=%v dependents=%v", threads["maxItems"], dependents["maxItems"])
 	}
 	definitions := packet["$defs"].(map[string]any)
 	task := definitions["task"].(map[string]any)
 	if !containsContractString(contractStringSlice(task["required"]), "assignment_id") {
-		t.Fatal("v4 task does not require immutable assignment identity")
+		t.Fatal("current task does not require immutable assignment identity")
 	}
 	livePolicy := readContextSchema(t, "schemas/domain/v1/live-context-policy.schema.json")
 	live := livePolicy["properties"].(map[string]any)
@@ -74,11 +171,15 @@ func TestContextV4FreezesLiveToolsAndBounds(t *testing.T) {
 		parts := budget[name].(map[string]any)["allOf"].([]any)
 		properties := parts[1].(map[string]any)["properties"].(map[string]any)
 		if properties["limit_bytes"].(map[string]any)["const"] != limit {
-			t.Errorf("v4 %s budget does not freeze limit %.0f", name, limit)
+			t.Errorf("current %s budget does not freeze limit %.0f", name, limit)
 		}
 	}
 	policy := definitions["policy"].(map[string]any)["properties"].(map[string]any)
-	allowed := contractStringSlice(policy["allowed_tools"].(map[string]any)["const"])
+	allowedSchema := policy["allowed_tools"].(map[string]any)
+	allowed := make([]string, 0)
+	for _, item := range allowedSchema["prefixItems"].([]any) {
+		allowed = append(allowed, item.(map[string]any)["const"].(string))
+	}
 	wantAllowed := []string{
 		"crewfold_acknowledge_context_delta", "crewfold_acknowledge_message", "crewfold_get_briefing",
 		"crewfold_get_context_delta", "crewfold_get_status", "crewfold_list_inbox", "crewfold_propose_knowledge",
@@ -86,7 +187,7 @@ func TestContextV4FreezesLiveToolsAndBounds(t *testing.T) {
 		"crewfold_report_contradiction", "crewfold_report_progress", "crewfold_send_message",
 	}
 	if !reflect.DeepEqual(allowed, wantAllowed) {
-		t.Fatalf("v4 policy allowed_tools = %v, want exact immutable set %v", allowed, wantAllowed)
+		t.Fatalf("current policy base allowed_tools = %v, want exact immutable set %v", allowed, wantAllowed)
 	}
 }
 
@@ -330,8 +431,7 @@ func TestContextDeltaResultSchemasExposeExplanationAndEventFacts(t *testing.T) {
 	refreshDocument := readContextSchema(t, "schemas/domain/v1/context-refresh-result.schema.json")
 	rebaseUnion := refreshDocument["$defs"].(map[string]any)["rebase_union"].(map[string]any)["oneOf"].([]any)
 	wantRebaseReasons := []string{
-		domain.ContextRebaseUnsupportedPacket, domain.ContextRebaseBaseContractChanged,
-		domain.ContextRebaseDependencySetChanged, domain.ContextRebaseEventWindowExceeded,
+		domain.ContextRebaseBaseContractChanged, domain.ContextRebaseDependencySetChanged, domain.ContextRebaseEventWindowExceeded,
 		domain.ContextRebaseDeltaLimitExceeded, domain.ContextRebaseCumulativeLimitExceeded,
 		domain.ContextRebaseUnsupportedEventType,
 	}
@@ -344,11 +444,7 @@ func TestContextDeltaResultSchemasExposeExplanationAndEventFacts(t *testing.T) {
 			t.Errorf("context refresh rebase branch %d reason = %v, want %q", index, got, wantRebaseReasons[index])
 		}
 		eventSequence := properties["event_sequence"].(map[string]any)
-		if index == 0 {
-			if eventSequence["const"] != float64(0) {
-				t.Errorf("unsupported-packet refresh event sequence = %v, want 0", eventSequence)
-			}
-		} else if eventSequence["minimum"] != float64(1) {
+		if eventSequence["minimum"] != float64(1) {
 			t.Errorf("durable rebase %q event sequence = %v, want minimum 1", wantRebaseReasons[index], eventSequence)
 		}
 	}
@@ -403,15 +499,12 @@ func TestContextStatusChainConstraintsRejectImpossibleFixtures(t *testing.T) {
 		{"clear rebase reason", "clear_chain", map[string]any{"chain": map[string]any{"pending_sequence": 0.0, "rebase_reason": domain.ContextRebaseBaseContractChanged}}, false},
 		{"clear rebase event", "clear_chain", map[string]any{"chain": map[string]any{"pending_sequence": 0.0, "rebase_event_sequence": 8.0}}, false},
 
-		{"unsupported packet", "rebase_union", map[string]any{"rebase_reason": domain.ContextRebaseUnsupportedPacket, "event_sequence": 0.0, "chain": map[string]any{"pending_sequence": 0.0, "rebase_reason": domain.ContextRebaseUnsupportedPacket}}, true},
 		{"durable exact", "rebase_union", map[string]any{"rebase_reason": domain.ContextRebaseBaseContractChanged, "event_sequence": 8.0, "chain": map[string]any{"pending_sequence": 0.0, "rebase_reason": domain.ContextRebaseBaseContractChanged, "rebase_event_sequence": 8.0}}, true},
 		{"durable preserves latest", "rebase_union", map[string]any{"rebase_reason": domain.ContextRebaseDependencySetChanged, "event_sequence": 9.0, "chain": map[string]any{"pending_sequence": 0.0, "rebase_reason": domain.ContextRebaseDependencySetChanged, "rebase_event_sequence": 9.0, "latest_delta_id": deltaID, "latest_sequence": 1.0}}, true},
 		{"rebase reason mismatch", "rebase_union", map[string]any{"rebase_reason": domain.ContextRebaseBaseContractChanged, "event_sequence": 8.0, "chain": map[string]any{"pending_sequence": 0.0, "rebase_reason": domain.ContextRebaseDependencySetChanged, "rebase_event_sequence": 8.0}}, false},
 		{"durable zero event", "rebase_union", map[string]any{"rebase_reason": domain.ContextRebaseBaseContractChanged, "event_sequence": 0.0, "chain": map[string]any{"pending_sequence": 0.0, "rebase_reason": domain.ContextRebaseBaseContractChanged, "rebase_event_sequence": 8.0}}, false},
 		{"durable missing chain event", "rebase_union", map[string]any{"rebase_reason": domain.ContextRebaseBaseContractChanged, "event_sequence": 8.0, "chain": map[string]any{"pending_sequence": 0.0, "rebase_reason": domain.ContextRebaseBaseContractChanged}}, false},
 		{"durable with pending", "rebase_union", map[string]any{"rebase_reason": domain.ContextRebaseBaseContractChanged, "event_sequence": 8.0, "chain": map[string]any{"pending_delta_id": deltaID, "pending_sequence": 1.0, "rebase_reason": domain.ContextRebaseBaseContractChanged, "rebase_event_sequence": 8.0}}, false},
-		{"unsupported nonzero event", "rebase_union", map[string]any{"rebase_reason": domain.ContextRebaseUnsupportedPacket, "event_sequence": 1.0, "chain": map[string]any{"pending_sequence": 0.0, "rebase_reason": domain.ContextRebaseUnsupportedPacket}}, false},
-		{"unsupported with chain event", "rebase_union", map[string]any{"rebase_reason": domain.ContextRebaseUnsupportedPacket, "event_sequence": 0.0, "chain": map[string]any{"pending_sequence": 0.0, "rebase_reason": domain.ContextRebaseUnsupportedPacket, "rebase_event_sequence": 8.0}}, false},
 	}
 	for _, fixture := range fixtures {
 		fixture := fixture
@@ -432,8 +525,6 @@ func TestContextStatusChainConstraintsRejectImpossibleFixtures(t *testing.T) {
 	}{
 		{"standalone pending", map[string]any{"pending_delta_id": deltaID, "pending_sequence": 1.0}, true},
 		{"standalone acknowledged latest", map[string]any{"pending_sequence": 0.0, "latest_delta_id": deltaID, "latest_sequence": 1.0}, true},
-		{"standalone unsupported rebase", map[string]any{"pending_sequence": 0.0, "rebase_reason": domain.ContextRebaseUnsupportedPacket}, true},
-		{"standalone unsupported rebase pending", map[string]any{"pending_delta_id": deltaID, "pending_sequence": 1.0, "rebase_reason": domain.ContextRebaseUnsupportedPacket}, false},
 		{"standalone durable rebase pending", map[string]any{"pending_delta_id": deltaID, "pending_sequence": 1.0, "rebase_reason": domain.ContextRebaseBaseContractChanged, "rebase_event_sequence": 8.0}, false},
 	} {
 		fixture := fixture
@@ -601,17 +692,6 @@ func contextContractEqual(left, right any) bool {
 	return reflect.DeepEqual(left, right)
 }
 
-func TestContextExplanationV3PreservesLegacyReadCompatibility(t *testing.T) {
-	t.Parallel()
-	schema := readContextSchema(t, "schemas/domain/v1/context-explanation-v3.schema.json")
-	definitions := schema["$defs"].(map[string]any)
-	budget := definitions["budget"].(map[string]any)["properties"].(map[string]any)
-	collaboration := budget["collaboration"].(map[string]any)["properties"].(map[string]any)
-	if collaboration["limit_bytes"].(map[string]any)["minimum"] != float64(0) {
-		t.Fatal("context explanation v3 cannot represent a pre-v4 packet's absent collaboration budget")
-	}
-}
-
 func readContextSchema(t *testing.T, path string) map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -636,9 +716,9 @@ func contractStringSlice(value any) []string {
 	return result
 }
 
-func TestContextV3PublishesBoundedExplicitKnowledgeLinks(t *testing.T) {
+func TestCurrentContextPublishesBoundedExplicitKnowledgeLinks(t *testing.T) {
 	t.Parallel()
-	paramsData, err := os.ReadFile("schemas/local/v1/context-build-v2.params.schema.json")
+	paramsData, err := os.ReadFile("schemas/local/v1/context-build.params.schema.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,7 +737,7 @@ func TestContextV3PublishesBoundedExplicitKnowledgeLinks(t *testing.T) {
 		t.Fatalf("context knowledge revision parameter = %#v, required = %v", knowledge, params.Required)
 	}
 
-	packetData, err := os.ReadFile("schemas/domain/v1/context-packet-v3.schema.json")
+	packetData, err := os.ReadFile("schemas/domain/v1/context-packet.schema.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -669,7 +749,7 @@ func TestContextV3PublishesBoundedExplicitKnowledgeLinks(t *testing.T) {
 	}
 	for _, field := range []string{"requested_knowledge_revision_ids", "accepted_knowledge", "budget"} {
 		if !containsContractString(packet.Required, field) {
-			t.Errorf("context packet v3 does not require %q", field)
+			t.Errorf("current context packet does not require %q", field)
 		}
 	}
 }

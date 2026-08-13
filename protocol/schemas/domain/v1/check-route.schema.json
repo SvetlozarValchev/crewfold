@@ -1,0 +1,27 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:domain:check-route:v1",
+  "type":"object","additionalProperties":false,
+  "required":["id","workspace_id","project_id","trigger","duty","agent_id","agent_revision","status","revision","created_at","updated_at","created_by","updated_by"],
+  "properties":{
+    "id":{"type":"string","pattern":"^checkroute_[0-9a-f]{32}$"},
+    "workspace_id":{"type":"string","pattern":"^ws_[0-9a-f]{32}$"},
+    "project_id":{"type":"string","pattern":"^prj_[0-9a-f]{32}$"},
+    "definition_id":{"type":"string","pattern":"^checkdef_[0-9a-f]{32}$"},
+    "definition_content_revision":{"type":"integer","minimum":1},
+    "trigger":{"enum":["pass","nonpass","stale"]},
+    "duty":{"enum":["evidence_review","coordination"]},
+    "agent_id":{"type":"string","pattern":"^agent_[0-9a-f]{32}$"},
+    "agent_revision":{"type":"integer","minimum":1},
+    "status":{"enum":["active","retired"]},
+    "revision":{"type":"integer","minimum":1},
+    "created_at":{"type":"string","format":"date-time"},
+    "updated_at":{"type":"string","format":"date-time"},
+    "created_by":{"type":"string","minLength":1},
+    "updated_by":{"type":"string","minLength":1}
+  },
+  "dependentRequired":{
+    "definition_id":["definition_content_revision"],
+    "definition_content_revision":["definition_id"]
+  }
+}

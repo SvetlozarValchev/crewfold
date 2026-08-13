@@ -3,6 +3,7 @@ package execution
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,49 +19,65 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"crewfold/internal/domain"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
-	directSupervisorSpecSchema  = "urn:crewfold:direct-supervisor-spec:v1"
-	directSupervisorStateSchema = "urn:crewfold:direct-supervisor-state:v1"
-	directStopRequestSchema     = "urn:crewfold:direct-stop-request:v1"
-	directDefaultOutputLimit    = int64(64 * 1024)
-	directMaximumOutputLimit    = int64(1024 * 1024)
-	directDefaultGracePeriod    = 500 * time.Millisecond
-	directStartupTimeout        = 3 * time.Second
-	directPollInterval          = 10 * time.Millisecond
-	directStateStartFailed      = "start_failed"
+	directSupervisorSpecSchema   = "urn:crewfold:direct-supervisor-spec:v1"
+	directSupervisorStateSchema  = "urn:crewfold:direct-supervisor-state:v1"
+	directStopRequestSchema      = "urn:crewfold:direct-stop-request:v1"
+	directDefaultOutputLimit     = int64(64 * 1024)
+	directMaximumOutputLimit     = int64(1024 * 1024)
+	directDefaultGracePeriod     = 500 * time.Millisecond
+	directStartupTimeout         = 3 * time.Second
+	directPollInterval           = 10 * time.Millisecond
+	directStateStartFailed       = "start_failed"
+	directMaximumSpecBytes       = int64(256 * 1024)
+	directMaximumStateBytes      = int64(64 * 1024)
+	directMaximumDiagnosticBytes = 16 * 1024
+	directMaximumStopBytes       = int64(4 * 1024)
+	directMaximumStopGrace       = 30 * time.Second
+	directSupervisorWorkingDirFD = 3
+
+	DirectRunIDEnvironmentVariable      = "CREWFOLD_RUN_ID"
+	DirectCheckRunIDEnvironmentVariable = "CREWFOLD_CHECK_RUN_ID"
 )
 
 var (
-	directOperationPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
-	secretAssignment       = regexp.MustCompile(`(?i)(authorization\s*:\s*bearer\s+|(?:token|secret|password|api[_-]?key)\s*[:=]\s*)([^\s]+)`)
+	directOperationPattern  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	directSpecSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	secretAssignment        = regexp.MustCompile(`(?i)((?:"?authorization"?\s*:\s*"?bearer\s+)|(?:"?(?:token|secret|password|api[_-]?key)"?\s*[:=]\s*"?))([^"\s,}]+)`)
+	errDirectSpecExists     = errors.New("direct runtime launch specification already exists")
 )
 
 var directEnvironmentAllowlist = []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "CREWFOLD_MCP_CAPABILITY_FILE", "CREWFOLD_MCP_SOCKET", "LANG", "LC_ALL", "LC_CTYPE", "PATH", "TMPDIR", "TZ"}
 
 type DirectRuntimeOptions struct {
-	StateRoot            string
-	SupervisorExecutable string
-	SupervisorArguments  []string
-	InheritedEnvironment []string
-	OutputByteLimit      int64
-	StartupTimeout       time.Duration
+	StateRoot                      string
+	SupervisorExecutable           string
+	SupervisorArguments            []string
+	InheritedEnvironment           []string
+	OutputByteLimit                int64
+	StartupTimeout                 time.Duration
+	OperationIDEnvironmentVariable string
 }
 
 // DirectRuntime launches one durable supervisor per operation. The supervisor is
 // deliberately a separate process so output bounds and exit records survive a
 // daemon restart.
 type DirectRuntime struct {
-	root                 string
-	supervisorExecutable string
-	supervisorArguments  []string
-	inheritedEnvironment []string
-	outputLimit          int64
-	startupTimeout       time.Duration
-	mu                   sync.Mutex
+	root                           string
+	supervisorExecutable           string
+	supervisorArguments            []string
+	inheritedEnvironment           []string
+	outputLimit                    int64
+	startupTimeout                 time.Duration
+	operationIDEnvironmentVariable string
+	mu                             sync.Mutex
 }
 
 func NewDirectRuntime(options DirectRuntimeOptions) *DirectRuntime {
@@ -72,51 +89,53 @@ func NewDirectRuntime(options DirectRuntimeOptions) *DirectRuntime {
 	if startupTimeout <= 0 {
 		startupTimeout = directStartupTimeout
 	}
-	inherited := append([]string(nil), options.InheritedEnvironment...)
-	if inherited == nil {
+	var inherited []string
+	if options.InheritedEnvironment == nil {
 		inherited = os.Environ()
+	} else {
+		inherited = append([]string{}, options.InheritedEnvironment...)
+	}
+	operationIDEnvironmentVariable := options.OperationIDEnvironmentVariable
+	if operationIDEnvironmentVariable == "" {
+		operationIDEnvironmentVariable = DirectRunIDEnvironmentVariable
 	}
 	return &DirectRuntime{
-		root:                 options.StateRoot,
-		supervisorExecutable: options.SupervisorExecutable,
-		supervisorArguments:  append([]string(nil), options.SupervisorArguments...),
-		inheritedEnvironment: inherited,
-		outputLimit:          outputLimit,
-		startupTimeout:       startupTimeout,
+		root:                           options.StateRoot,
+		supervisorExecutable:           options.SupervisorExecutable,
+		supervisorArguments:            append([]string(nil), options.SupervisorArguments...),
+		inheritedEnvironment:           inherited,
+		outputLimit:                    outputLimit,
+		startupTimeout:                 startupTimeout,
+		operationIDEnvironmentVariable: operationIDEnvironmentVariable,
 	}
 }
 
 func (runtime *DirectRuntime) Name() string { return "direct" }
 
+// PrepareLaunch returns the exact effective-spec seal used by Launch without
+// creating an operation directory, writing runtime state, or starting a child.
+func (runtime *DirectRuntime) PrepareLaunch(_ context.Context, operationID string, placement domain.RunPlacement, launch LaunchSpec) (RuntimeLaunchPreparation, error) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	spec, err := runtime.prepareEffectiveSpec(operationID, placement, launch)
+	if err != nil {
+		return RuntimeLaunchPreparation{}, err
+	}
+	return RuntimeLaunchPreparation{SpecSHA256: spec.SpecSHA256}, nil
+}
+
 func (runtime *DirectRuntime) Launch(ctx context.Context, operationID string, placement domain.RunPlacement, launch LaunchSpec) (RuntimeBinding, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 
-	if err := runtime.validate(); err != nil {
+	spec, err := runtime.prepareEffectiveSpec(operationID, placement, launch)
+	if err != nil {
 		return RuntimeBinding{}, err
 	}
-	if !directOperationPattern.MatchString(operationID) {
-		return RuntimeBinding{}, &StartError{Message: "direct runtime operation ID is invalid"}
-	}
-	if launch.Command == nil {
-		return RuntimeBinding{}, &StartError{Message: "direct runtime requires a command specification"}
-	}
-	workingDirectory, err := validateDirectWorkingDirectory(placement.CheckoutPath)
-	if err != nil {
-		return RuntimeBinding{}, &StartError{Message: err.Error()}
-	}
-	executable, err := filepath.Abs(strings.TrimSpace(launch.Command.Executable))
-	if err != nil || !filepath.IsAbs(executable) {
-		return RuntimeBinding{}, &StartError{Message: "direct runtime executable must resolve to an absolute path"}
-	}
-	info, err := os.Stat(executable)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-		return RuntimeBinding{}, &StartError{Message: "direct runtime executable is unavailable or not executable"}
-	}
-	environment, err := buildDirectEnvironment(runtime.inheritedEnvironment, launch.Command.Environment, operationID)
-	if err != nil {
-		return RuntimeBinding{}, &StartError{Message: err.Error()}
-	}
+	workingDirectory := spec.WorkingDirectory
+	executable := spec.Executable
+	environment := spec.Environment
 
 	runDirectory, err := runtime.prepareRunDirectory(operationID)
 	if err != nil {
@@ -124,49 +143,64 @@ func (runtime *DirectRuntime) Launch(ctx context.Context, operationID string, pl
 	}
 	binding := RuntimeBinding{RuntimeHandle: directHandle(operationID)}
 	if state, stateErr := readDirectState(runDirectory); stateErr == nil {
-		if state.Status == directStateStartFailed {
-			return RuntimeBinding{}, &StartError{Message: state.Diagnostic}
+		if state.OperationID != operationID {
+			return RuntimeBinding{}, &OutcomeUnknownError{Message: "existing direct runtime state identity is invalid"}
 		}
-		return binding, nil
+		if err := verifyDirectReplay(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, spec); err != nil {
+			return RuntimeBinding{}, &OutcomeUnknownError{Message: err.Error()}
+		}
+		switch state.Status {
+		case RuntimeStateRunning, RuntimeStateExited, RuntimeStateStopped, RuntimeStateTimedOut:
+			return binding, nil
+		case directStateStartFailed:
+			return RuntimeBinding{}, &StartError{Message: state.Diagnostic}
+		case RuntimeStateUnknown:
+			return RuntimeBinding{}, &OutcomeUnknownError{Message: state.Diagnostic}
+		case RuntimeStateStarting:
+			return runtime.waitForDirectReplayState(ctx, runDirectory, binding, spec)
+		}
 	} else if !errors.Is(stateErr, os.ErrNotExist) {
-		return RuntimeBinding{}, &StartError{Message: fmt.Sprintf("read existing direct runtime state: %v", stateErr)}
+		return RuntimeBinding{}, &OutcomeUnknownError{Message: fmt.Sprintf("read existing direct runtime state: %v", stateErr)}
 	}
-
-	outputLimit := launch.Command.OutputByteLimit
-	if outputLimit <= 0 || outputLimit > runtime.outputLimit {
-		outputLimit = runtime.outputLimit
+	if _, specErr := os.Lstat(directSpecPath(runDirectory)); specErr == nil {
+		if err := verifyDirectPendingReplay(directSpecPath(runDirectory), spec); err != nil {
+			return RuntimeBinding{}, &OutcomeUnknownError{Message: err.Error()}
+		}
+		return runtime.waitForDirectReplayState(ctx, runDirectory, binding, spec)
+	} else if !errors.Is(specErr, os.ErrNotExist) {
+		return RuntimeBinding{}, &OutcomeUnknownError{Message: fmt.Sprintf("inspect existing direct runtime launch specification: %v", specErr)}
 	}
-	spec := directSupervisorSpec{
-		Schema:             directSupervisorSpecSchema,
-		OperationID:        operationID,
-		Executable:         executable,
-		Arguments:          append([]string(nil), launch.Command.Arguments...),
-		StandardInput:      append([]byte(nil), launch.Command.StandardInput...),
-		Environment:        environment,
-		WorkingDirectory:   workingDirectory,
-		OutputByteLimit:    outputLimit,
-		TimeoutMillis:      launch.Command.Timeout.Milliseconds(),
-		DefaultGraceMillis: directDefaultGracePeriod.Milliseconds(),
+	workingDirectoryFile, err := openDirectWorkingDirectory(workingDirectory)
+	if err != nil {
+		return RuntimeBinding{}, &StartError{Message: "assigned checkout directory is unavailable without following symbolic links"}
 	}
-	if spec.TimeoutMillis < 0 {
-		return RuntimeBinding{}, &StartError{Message: "direct runtime timeout cannot be negative"}
+	defer workingDirectoryFile.Close()
+	info, err := os.Stat(executable)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return RuntimeBinding{}, &StartError{Message: "direct runtime executable is unavailable or not executable"}
 	}
 	if err := writeDirectSpec(runDirectory, spec); err != nil {
+		if errors.Is(err, errDirectSpecExists) {
+			if replayErr := verifyDirectPendingReplay(directSpecPath(runDirectory), spec); replayErr != nil {
+				return RuntimeBinding{}, &OutcomeUnknownError{Message: replayErr.Error()}
+			}
+			return runtime.waitForDirectReplayState(ctx, runDirectory, binding, spec)
+		}
 		return RuntimeBinding{}, &StartError{Message: err.Error()}
 	}
-	initial := directSupervisorState{Schema: directSupervisorStateSchema, OperationID: operationID, Status: RuntimeStateStarting}
+	initial := directSupervisorState{Schema: directSupervisorStateSchema, OperationID: operationID, Status: RuntimeStateStarting, SpecSHA256: spec.SpecSHA256}
 	if err := writeDirectState(runDirectory, initial); err != nil {
-		return RuntimeBinding{}, &StartError{Message: fmt.Sprintf("record direct runtime launch intent: %v", err)}
+		return RuntimeBinding{}, &OutcomeUnknownError{Message: fmt.Sprintf("record direct runtime launch intent after publishing its immutable specification: %v", err)}
 	}
 
 	supervisorArguments := append([]string(nil), runtime.supervisorArguments...)
 	if len(supervisorArguments) == 0 {
 		supervisorArguments = []string{"__direct-supervisor"}
 	}
-	supervisorArguments = append(supervisorArguments, directSpecPath(runDirectory))
+	supervisorArguments = append(supervisorArguments, directSpecPath(runDirectory), strconv.Itoa(directSupervisorWorkingDirFD))
 	command := exec.CommandContext(context.WithoutCancel(ctx), runtime.supervisorExecutable, supervisorArguments...)
 	command.Env = environment
-	command.Dir = workingDirectory
+	command.ExtraFiles = []*os.File{workingDirectoryFile}
 	command.Stdin = nil
 	command.Stdout = nil
 	command.Stderr = nil
@@ -185,12 +219,22 @@ func (runtime *DirectRuntime) Launch(ctx context.Context, operationID string, pl
 	for {
 		state, stateErr := readDirectState(runDirectory)
 		if stateErr == nil {
+			if state.OperationID != operationID {
+				return RuntimeBinding{}, &OutcomeUnknownError{Message: "direct runtime supervisor acknowledgement identity is invalid"}
+			}
+			if replayErr := verifyDirectReplay(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, spec); replayErr != nil {
+				return RuntimeBinding{}, &OutcomeUnknownError{Message: "direct runtime supervisor acknowledged an invalid immutable launch specification: " + replayErr.Error()}
+			}
 			switch state.Status {
 			case RuntimeStateRunning, RuntimeStateExited, RuntimeStateStopped, RuntimeStateTimedOut:
 				return binding, nil
 			case directStateStartFailed:
 				return RuntimeBinding{}, &StartError{Message: state.Diagnostic}
+			case RuntimeStateUnknown:
+				return RuntimeBinding{}, &OutcomeUnknownError{Message: state.Diagnostic}
 			}
+		} else if !errors.Is(stateErr, os.ErrNotExist) {
+			return RuntimeBinding{}, &OutcomeUnknownError{Message: "direct runtime supervisor recorded invalid state: " + stateErr.Error()}
 		}
 		select {
 		case <-ctx.Done():
@@ -202,44 +246,127 @@ func (runtime *DirectRuntime) Launch(ctx context.Context, operationID string, pl
 	}
 }
 
+func (runtime *DirectRuntime) waitForDirectReplayState(ctx context.Context, runDirectory string, binding RuntimeBinding, spec directSupervisorSpec) (RuntimeBinding, error) {
+	deadline := time.NewTimer(runtime.startupTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(directPollInterval)
+	defer ticker.Stop()
+	for {
+		state, err := readDirectState(runDirectory)
+		if err == nil {
+			if state.OperationID != spec.OperationID {
+				return RuntimeBinding{}, &OutcomeUnknownError{Message: "direct runtime concurrent launch state identity is invalid"}
+			}
+			if replayErr := verifyDirectReplay(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, spec); replayErr != nil {
+				return RuntimeBinding{}, &OutcomeUnknownError{Message: "direct runtime concurrent launch recorded an invalid immutable specification: " + replayErr.Error()}
+			}
+			switch state.Status {
+			case RuntimeStateRunning, RuntimeStateExited, RuntimeStateStopped, RuntimeStateTimedOut:
+				return binding, nil
+			case directStateStartFailed:
+				return RuntimeBinding{}, &StartError{Message: state.Diagnostic}
+			case RuntimeStateUnknown:
+				return RuntimeBinding{}, &OutcomeUnknownError{Message: state.Diagnostic}
+			}
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return RuntimeBinding{}, &OutcomeUnknownError{Message: "direct runtime concurrent launch recorded invalid state: " + err.Error()}
+		}
+		select {
+		case <-ctx.Done():
+			return RuntimeBinding{}, &OutcomeUnknownError{Message: "direct runtime launch specification was published but its concurrent state acknowledgement is unknown"}
+		case <-deadline.C:
+			return RuntimeBinding{}, &OutcomeUnknownError{Message: "direct runtime launch specification exists without a recoverable state; child outcome is unknown"}
+		case <-ticker.C:
+		}
+	}
+}
+
 func (runtime *DirectRuntime) Reconcile(ctx context.Context, operationID, handle string) (RuntimeBinding, error) {
 	if err := validateDirectHandle(operationID, handle); err != nil {
 		return RuntimeBinding{}, err
 	}
-	snapshot, err := runtime.Inspect(ctx, operationID, handle)
+	status, err := runtime.InspectStatus(ctx, operationID, handle)
 	if err != nil {
 		return RuntimeBinding{}, err
 	}
-	if snapshot.State == RuntimeStateUnknown {
-		return RuntimeBinding{}, errors.New(snapshot.Diagnostic)
+	if status.State == RuntimeStateUnknown {
+		return RuntimeBinding{}, errors.New(status.Diagnostic)
 	}
 	return RuntimeBinding{RuntimeHandle: handle}, nil
 }
 
 func (runtime *DirectRuntime) Inspect(_ context.Context, operationID, handle string) (RuntimeSnapshot, error) {
-	if err := validateDirectHandle(operationID, handle); err != nil {
+	state, err := runtime.inspectState(operationID, handle)
+	if err != nil {
 		return RuntimeSnapshot{}, err
 	}
 	runDirectory, err := runtime.runDirectory(operationID)
 	if err != nil {
 		return RuntimeSnapshot{}, err
 	}
+	stdout, err := readDirectCapture(filepath.Join(runDirectory, "stdout.log"), state.StdoutCapturedBytes, state.StdoutOmittedBytes, state.StdoutSHA256, 0, directMaximumOutputLimit, directStateHasStableCaptures(state.Status))
+	if err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	stderr, err := readDirectCapture(filepath.Join(runDirectory, "stderr.log"), state.StderrCapturedBytes, state.StderrOmittedBytes, state.StderrSHA256, 0, directMaximumOutputLimit, directStateHasStableCaptures(state.Status))
+	if err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	status := directStatus(state)
+	return RuntimeSnapshot{
+		State: status.State, ExitCode: status.ExitCode, ExitKnown: status.ExitKnown,
+		CompletionReady: status.CompletionReady,
+		Forced:          status.Forced, Diagnostic: status.Diagnostic, Stdout: stdout, Stderr: stderr,
+	}, nil
+}
+
+// InspectStatus returns lifecycle state without reading or returning the raw
+// stdout/stderr capture. Mechanical consumers should pair this with Logs when
+// they need bounded, redacted diagnostic text.
+func (runtime *DirectRuntime) InspectStatus(_ context.Context, operationID, handle string) (RuntimeStatus, error) {
+	state, err := runtime.inspectState(operationID, handle)
+	if err != nil {
+		return RuntimeStatus{}, err
+	}
+	return directStatus(state), nil
+}
+
+func (runtime *DirectRuntime) inspectState(operationID, handle string) (directSupervisorState, error) {
+	if err := validateDirectHandle(operationID, handle); err != nil {
+		return directSupervisorState{}, err
+	}
+	runDirectory, err := runtime.runDirectory(operationID)
+	if err != nil {
+		return directSupervisorState{}, err
+	}
 	state, err := readDirectState(runDirectory)
 	if err != nil {
-		return RuntimeSnapshot{}, fmt.Errorf("read direct runtime state: %w", err)
+		return directSupervisorState{}, fmt.Errorf("read direct runtime state: %w", err)
 	}
 	if state.OperationID != operationID || state.Schema != directSupervisorStateSchema {
-		return RuntimeSnapshot{}, errors.New("direct runtime state identity is invalid")
+		return directSupervisorState{}, errors.New("direct runtime state identity is invalid")
+	}
+	if err := verifyDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, operationID); err != nil {
+		return directSupervisorState{}, err
 	}
 	if (state.Status == RuntimeStateStarting || state.Status == RuntimeStateRunning) && state.SupervisorPID > 0 && !sameProcess(state.SupervisorPID, state.SupervisorStart) {
 		time.Sleep(directPollInterval)
 		if refreshed, refreshErr := readDirectState(runDirectory); refreshErr == nil {
+			if refreshed.OperationID != operationID || refreshed.Schema != directSupervisorStateSchema {
+				return directSupervisorState{}, errors.New("direct runtime state identity changed during inspection")
+			}
 			state = refreshed
+		} else {
+			return directSupervisorState{}, fmt.Errorf("refresh direct runtime state after process disappearance: %w", refreshErr)
 		}
 		if (state.Status == RuntimeStateStarting || state.Status == RuntimeStateRunning) && !sameProcess(state.SupervisorPID, state.SupervisorStart) {
 			state.Status = RuntimeStateUnknown
 			state.Diagnostic = "direct runtime supervisor disappeared before recording a final process result"
 		}
+	}
+	if err := verifyDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, operationID); err != nil {
+		return directSupervisorState{}, err
 	}
 	if state.Status == RuntimeStateStarting && state.SupervisorPID == 0 {
 		if info, statErr := os.Stat(filepath.Join(runDirectory, "state.json")); statErr == nil && time.Since(info.ModTime()) > runtime.startupTimeout {
@@ -247,19 +374,24 @@ func (runtime *DirectRuntime) Inspect(_ context.Context, operationID, handle str
 			state.Diagnostic = "direct runtime launch intent has no acknowledged supervisor identity"
 		}
 	}
-	stdout, err := readDirectCapture(filepath.Join(runDirectory, "stdout.log"), state.StdoutCapturedBytes, state.StdoutOmittedBytes, 0)
-	if err != nil {
-		return RuntimeSnapshot{}, err
-	}
-	stderr, err := readDirectCapture(filepath.Join(runDirectory, "stderr.log"), state.StderrCapturedBytes, state.StderrOmittedBytes, 0)
-	if err != nil {
-		return RuntimeSnapshot{}, err
-	}
-	return RuntimeSnapshot{
+	return state, nil
+}
+
+func directStatus(state directSupervisorState) RuntimeStatus {
+	return RuntimeStatus{
 		State: state.Status, ExitCode: state.ExitCode, ExitKnown: state.ExitKnown,
-		CompletionReady: state.Status == RuntimeStateExited,
-		Forced:          state.Forced, Diagnostic: state.Diagnostic, Stdout: stdout, Stderr: stderr,
-	}, nil
+		CompletionReady: state.Status == RuntimeStateExited && state.ExitKnown,
+		Forced:          state.Forced, Diagnostic: state.Diagnostic,
+	}
+}
+
+func directStateHasStableCaptures(status string) bool {
+	switch status {
+	case RuntimeStateExited, RuntimeStateStopped, RuntimeStateTimedOut:
+		return true
+	default:
+		return false
+	}
 }
 
 func (runtime *DirectRuntime) Stop(ctx context.Context, operationID, handle string, spec StopSpec) (StopResult, error) {
@@ -274,15 +406,34 @@ func (runtime *DirectRuntime) Stop(ctx context.Context, operationID, handle stri
 	if err != nil {
 		return StopResult{}, err
 	}
+	if state.OperationID != operationID {
+		return StopResult{}, errors.New("direct runtime state identity is invalid for stop")
+	}
+	if err := verifyDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, operationID); err != nil {
+		return StopResult{}, err
+	}
 	if state.Status == RuntimeStateStopped || state.Status == RuntimeStateExited || state.Status == RuntimeStateTimedOut {
 		return StopResult{Forced: state.Forced, Diagnostic: state.Diagnostic}, nil
 	}
 	if state.SupervisorPID <= 0 || !sameProcess(state.SupervisorPID, state.SupervisorStart) {
+		time.Sleep(directPollInterval)
+		refreshed, refreshErr := readDirectState(runDirectory)
+		if refreshErr == nil && refreshed.OperationID == operationID {
+			if specErr := verifyDirectStoredSpec(directSpecPath(runDirectory), refreshed.SpecSHA256, refreshed.StateSHA256, operationID); specErr != nil {
+				return StopResult{}, specErr
+			}
+			if refreshed.Status == RuntimeStateStopped || refreshed.Status == RuntimeStateExited || refreshed.Status == RuntimeStateTimedOut {
+				return StopResult{Forced: refreshed.Forced, Diagnostic: refreshed.Diagnostic}, nil
+			}
+		}
 		return StopResult{}, &OutcomeUnknownError{Message: "direct runtime supervisor identity cannot be trusted for stop"}
 	}
 	grace := spec.GracePeriod
 	if grace <= 0 {
 		grace = directDefaultGracePeriod
+	}
+	if grace > directMaximumStopGrace {
+		grace = directMaximumStopGrace
 	}
 	request := directStopRequest{Schema: directStopRequestSchema, GraceMillis: grace.Milliseconds()}
 	if err := writeJSONAtomic(filepath.Join(runDirectory, "stop.json"), request); err != nil {
@@ -298,7 +449,13 @@ func (runtime *DirectRuntime) Stop(ctx context.Context, operationID, handle stri
 	defer ticker.Stop()
 	for {
 		current, stateErr := readDirectState(runDirectory)
+		if stateErr == nil && current.OperationID != operationID {
+			return StopResult{}, errors.New("direct runtime state identity changed while stopping")
+		}
 		if stateErr == nil && (current.Status == RuntimeStateStopped || current.Status == RuntimeStateExited || current.Status == RuntimeStateTimedOut) {
+			if specErr := verifyDirectStoredSpec(directSpecPath(runDirectory), current.SpecSHA256, current.StateSHA256, operationID); specErr != nil {
+				return StopResult{}, specErr
+			}
 			return StopResult{Forced: current.Forced, Diagnostic: current.Diagnostic}, nil
 		}
 		if stateErr == nil && current.Status == RuntimeStateUnknown {
@@ -315,21 +472,113 @@ func (runtime *DirectRuntime) Stop(ctx context.Context, operationID, handle stri
 }
 
 func (runtime *DirectRuntime) Logs(ctx context.Context, operationID, handle string, tail int) (domain.RunLogs, error) {
-	snapshot, err := runtime.Inspect(ctx, operationID, handle)
+	_ = ctx
+	state, err := runtime.inspectState(operationID, handle)
 	if err != nil {
 		return domain.RunLogs{}, err
 	}
-	stdout, stderr := snapshot.Stdout, snapshot.Stderr
-	stdout.Text = redactDirectOutput(tailText(stdout.Text, tail))
-	stderr.Text = redactDirectOutput(tailText(stderr.Text, tail))
-	return domain.RunLogs{RunID: operationID, State: snapshot.State, Stdout: stdout, Stderr: stderr}, nil
+	runDirectory, err := runtime.runDirectory(operationID)
+	if err != nil {
+		return domain.RunLogs{}, err
+	}
+	spec, err := readVerifiedDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, operationID)
+	if err != nil {
+		return domain.RunLogs{}, err
+	}
+	if state.StdoutCapturedBytes > spec.OutputByteLimit || state.StderrCapturedBytes > spec.OutputByteLimit {
+		return domain.RunLogs{}, errors.New("direct runtime output capture exceeds its sealed effective byte limit")
+	}
+	stdout, err := readDirectCapture(filepath.Join(runDirectory, "stdout.log"), state.StdoutCapturedBytes, state.StdoutOmittedBytes, state.StdoutSHA256, tail, spec.OutputByteLimit, directStateHasStableCaptures(state.Status))
+	if err != nil {
+		return domain.RunLogs{}, err
+	}
+	stderr, err := readDirectCapture(filepath.Join(runDirectory, "stderr.log"), state.StderrCapturedBytes, state.StderrOmittedBytes, state.StderrSHA256, tail, spec.OutputByteLimit, directStateHasStableCaptures(state.Status))
+	if err != nil {
+		return domain.RunLogs{}, err
+	}
+	stdout = redactAndBoundDirectCapture(stdout, tail, spec.OutputByteLimit)
+	stderr = redactAndBoundDirectCapture(stderr, tail, spec.OutputByteLimit)
+	return domain.RunLogs{RunID: operationID, State: state.Status, Stdout: stdout, Stderr: stderr}, nil
+}
+
+func redactAndBoundDirectCapture(capture domain.CapturedLog, tail int, byteLimit int64) domain.CapturedLog {
+	text := strings.ToValidUTF8(capture.Text, "\uFFFD")
+	text = tailText(redactDirectOutput(text), tail)
+	if byteLimit <= 0 || byteLimit > directMaximumOutputLimit {
+		byteLimit = directMaximumOutputLimit
+	}
+	if int64(len(text)) > byteLimit {
+		originalLength := len(text)
+		limit := int(byteLimit)
+		for limit > 0 && !utf8.ValidString(text[:limit]) {
+			limit--
+		}
+		text = text[:limit]
+		responseOmitted := int64(originalLength - limit)
+		const maximumInt64 = int64(^uint64(0) >> 1)
+		if capture.OmittedBytes > maximumInt64-responseOmitted {
+			capture.OmittedBytes = maximumInt64
+		} else {
+			capture.OmittedBytes += responseOmitted
+		}
+		capture.Truncated = true
+	}
+	capture.Text = text
+	return capture
+}
+
+func (runtime *DirectRuntime) prepareEffectiveSpec(operationID string, placement domain.RunPlacement, launch LaunchSpec) (directSupervisorSpec, error) {
+	if err := runtime.validate(); err != nil {
+		return directSupervisorSpec{}, err
+	}
+	if !directOperationPattern.MatchString(operationID) {
+		return directSupervisorSpec{}, &StartError{Message: "direct runtime operation ID is invalid"}
+	}
+	if launch.Command == nil {
+		return directSupervisorSpec{}, &StartError{Message: "direct runtime requires a command specification"}
+	}
+	workingDirectory, err := resolveDirectWorkingDirectory(placement.CheckoutPath)
+	if err != nil {
+		return directSupervisorSpec{}, &StartError{Message: err.Error()}
+	}
+	executable, err := filepath.Abs(strings.TrimSpace(launch.Command.Executable))
+	if err != nil || !filepath.IsAbs(executable) {
+		return directSupervisorSpec{}, &StartError{Message: "direct runtime executable must resolve to an absolute path"}
+	}
+	environment, err := buildDirectEnvironment(runtime.inheritedEnvironment, launch.Command.Environment, operationID, runtime.operationIDEnvironmentVariable)
+	if err != nil {
+		return directSupervisorSpec{}, &StartError{Message: err.Error()}
+	}
+	outputLimit := launch.Command.OutputByteLimit
+	if outputLimit <= 0 || outputLimit > runtime.outputLimit {
+		outputLimit = runtime.outputLimit
+	}
+	spec := directSupervisorSpec{
+		Schema:             directSupervisorSpecSchema,
+		OperationID:        operationID,
+		Executable:         executable,
+		Arguments:          append([]string{}, launch.Command.Arguments...),
+		StandardInput:      append([]byte{}, launch.Command.StandardInput...),
+		Environment:        environment,
+		WorkingDirectory:   workingDirectory,
+		OutputByteLimit:    outputLimit,
+		TimeoutMillis:      launch.Command.Timeout.Milliseconds(),
+		DefaultGraceMillis: directDefaultGracePeriod.Milliseconds(),
+	}
+	if spec.TimeoutMillis < 0 {
+		return directSupervisorSpec{}, &StartError{Message: "direct runtime timeout cannot be negative"}
+	}
+	if err := sealDirectSpec(&spec); err != nil {
+		return directSupervisorSpec{}, &StartError{Message: err.Error()}
+	}
+	return spec, nil
 }
 
 func (runtime *DirectRuntime) validate() error {
 	if strings.TrimSpace(runtime.root) == "" || strings.TrimSpace(runtime.supervisorExecutable) == "" {
 		return &StartError{Message: "direct runtime state root and supervisor executable are required"}
 	}
-	return nil
+	return validateDirectOperationIDEnvironmentVariable(runtime.operationIDEnvironmentVariable)
 }
 
 func (runtime *DirectRuntime) prepareRunDirectory(operationID string) (string, error) {
@@ -379,6 +628,7 @@ type directSupervisorSpec struct {
 	OutputByteLimit    int64    `json:"output_byte_limit"`
 	TimeoutMillis      int64    `json:"timeout_millis"`
 	DefaultGraceMillis int64    `json:"default_grace_millis"`
+	SpecSHA256         string   `json:"spec_sha256,omitempty"`
 }
 
 type directSupervisorState struct {
@@ -395,8 +645,12 @@ type directSupervisorState struct {
 	Diagnostic          string `json:"diagnostic,omitempty"`
 	StdoutCapturedBytes int64  `json:"stdout_captured_bytes,omitempty"`
 	StdoutOmittedBytes  int64  `json:"stdout_omitted_bytes,omitempty"`
+	StdoutSHA256        string `json:"stdout_sha256,omitempty"`
 	StderrCapturedBytes int64  `json:"stderr_captured_bytes,omitempty"`
 	StderrOmittedBytes  int64  `json:"stderr_omitted_bytes,omitempty"`
+	StderrSHA256        string `json:"stderr_sha256,omitempty"`
+	SpecSHA256          string `json:"spec_sha256,omitempty"`
+	StateSHA256         string `json:"state_sha256,omitempty"`
 }
 
 type directStopRequest struct {
@@ -413,7 +667,7 @@ func validateDirectHandle(operationID, handle string) error {
 	return nil
 }
 
-func validateDirectWorkingDirectory(path string) (string, error) {
+func resolveDirectWorkingDirectory(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", errors.New("direct runtime requires an assigned checkout directory")
@@ -422,14 +676,76 @@ func validateDirectWorkingDirectory(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve assigned checkout directory: %w", err)
 	}
+	return resolved, nil
+}
+
+func validateDirectWorkingDirectoryAvailable(resolved string) error {
 	info, err := os.Stat(resolved)
 	if err != nil || !info.IsDir() {
-		return "", errors.New("assigned checkout directory is unavailable")
+		return errors.New("assigned checkout directory is unavailable")
+	}
+	return nil
+}
+
+func validateDirectWorkingDirectory(path string) (string, error) {
+	resolved, err := resolveDirectWorkingDirectory(path)
+	if err != nil {
+		return "", err
+	}
+	if err := validateDirectWorkingDirectoryAvailable(resolved); err != nil {
+		return "", err
 	}
 	return resolved, nil
 }
 
-func buildDirectEnvironment(inherited []string, overrides map[string]string, operationID string) ([]string, error) {
+// openDirectWorkingDirectory resolves no part of the launch directory through
+// a symbolic link. The descriptor pins the selected directory across renames
+// and is passed to the supervisor so child startup never resolves the mutable
+// pathname after this effect-boundary check.
+func openDirectWorkingDirectory(path string) (*os.File, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return nil, errors.New("direct runtime working directory must be an absolute clean path")
+	}
+	fd, err := unix.Open(string(filepath.Separator), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open filesystem root for direct runtime working directory: %w", err)
+	}
+	for _, component := range strings.Split(strings.Trim(path, string(filepath.Separator)), string(filepath.Separator)) {
+		if component == "" {
+			continue
+		}
+		next, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		_ = unix.Close(fd)
+		if openErr != nil {
+			return nil, fmt.Errorf("open direct runtime working directory without following symbolic links: %w", openErr)
+		}
+		fd = next
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, errors.New("adopt direct runtime working directory descriptor")
+	}
+	return file, nil
+}
+
+func validateDirectOperationIDEnvironmentVariable(name string) error {
+	switch name {
+	case DirectRunIDEnvironmentVariable, DirectCheckRunIDEnvironmentVariable:
+		return nil
+	default:
+		return errors.New("direct runtime operation ID environment variable is invalid")
+	}
+}
+
+func buildDirectEnvironment(inherited []string, overrides map[string]string, operationID string, operationIDEnvironmentVariable ...string) ([]string, error) {
+	identityName := DirectRunIDEnvironmentVariable
+	if len(operationIDEnvironmentVariable) > 0 {
+		identityName = operationIDEnvironmentVariable[0]
+	}
+	if err := validateDirectOperationIDEnvironmentVariable(identityName); err != nil {
+		return nil, err
+	}
 	allowed := make(map[string]struct{}, len(directEnvironmentAllowlist))
 	for _, name := range directEnvironmentAllowlist {
 		allowed[name] = struct{}{}
@@ -440,12 +756,12 @@ func buildDirectEnvironment(inherited []string, overrides map[string]string, ope
 		if !ok {
 			continue
 		}
-		if _, accepted := allowed[name]; accepted {
+		if directEnvironmentNameAllowed(allowed, name) {
 			values[name] = value
 		}
 	}
 	for name, value := range overrides {
-		if _, accepted := allowed[name]; !accepted {
+		if !directEnvironmentNameAllowed(allowed, name) {
 			return nil, fmt.Errorf("direct runtime environment variable %q is not allowlisted", name)
 		}
 		if strings.ContainsRune(value, '\x00') {
@@ -453,7 +769,7 @@ func buildDirectEnvironment(inherited []string, overrides map[string]string, ope
 		}
 		values[name] = value
 	}
-	values["CREWFOLD_RUN_ID"] = operationID
+	values[identityName] = operationID
 	names := make([]string, 0, len(values))
 	for name := range values {
 		names = append(names, name)
@@ -466,37 +782,56 @@ func buildDirectEnvironment(inherited []string, overrides map[string]string, ope
 	return result, nil
 }
 
+func directEnvironmentNameAllowed(exact map[string]struct{}, name string) bool {
+	_, allowed := exact[name]
+	return allowed || strings.HasPrefix(name, "LC_")
+}
+
 func directSpecPath(runDirectory string) string { return filepath.Join(runDirectory, "launch.json") }
 
 func writeDirectSpec(runDirectory string, spec directSupervisorSpec) error {
+	if err := sealDirectSpec(&spec); err != nil {
+		return err
+	}
 	data, err := json.Marshal(spec)
 	if err != nil {
 		return fmt.Errorf("encode direct runtime launch specification: %w", err)
 	}
-	path := directSpecPath(runDirectory)
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		return errors.New("direct runtime launch specification exists without a recoverable state; refusing duplicate launch")
-	}
+	file, err := os.CreateTemp(runDirectory, ".crewfold-launch-*")
 	if err != nil {
-		return fmt.Errorf("create direct runtime launch specification: %w", err)
+		return fmt.Errorf("create temporary direct runtime launch specification: %w", err)
+	}
+	temporaryPath := file.Name()
+	defer os.Remove(temporaryPath)
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("protect direct runtime launch specification: %w", err)
 	}
 	if _, err := file.Write(data); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("write direct runtime launch specification: %w", err)
 	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync direct runtime launch specification: %w", err)
+	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close direct runtime launch specification: %w", err)
+	}
+	if err := os.Link(temporaryPath, directSpecPath(runDirectory)); errors.Is(err, os.ErrExist) {
+		return errDirectSpecExists
+	} else if err != nil {
+		return fmt.Errorf("publish direct runtime launch specification: %w", err)
 	}
 	return nil
 }
 
 func readDirectSpec(path string) (directSupervisorSpec, error) {
-	data, err := os.ReadFile(path)
+	data, err := readBoundedRegularFile(path, directMaximumSpecBytes)
 	if err != nil {
 		return directSupervisorSpec{}, err
 	}
-	if len(data) > 256*1024 {
+	if int64(len(data)) > directMaximumSpecBytes {
 		return directSupervisorSpec{}, errors.New("direct supervisor specification exceeds 256 KiB")
 	}
 	var spec directSupervisorSpec
@@ -505,26 +840,247 @@ func readDirectSpec(path string) (directSupervisorSpec, error) {
 	if err := decoder.Decode(&spec); err != nil {
 		return directSupervisorSpec{}, err
 	}
+	if err := requireJSONEOF(decoder); err != nil {
+		return directSupervisorSpec{}, err
+	}
 	if spec.Schema != directSupervisorSpecSchema || !directOperationPattern.MatchString(spec.OperationID) || !filepath.IsAbs(spec.Executable) || !filepath.IsAbs(spec.WorkingDirectory) || spec.OutputByteLimit <= 0 || spec.OutputByteLimit > directMaximumOutputLimit || spec.TimeoutMillis < 0 || spec.DefaultGraceMillis <= 0 {
 		return directSupervisorSpec{}, errors.New("direct supervisor specification is invalid")
+	}
+	if !directSpecSHA256Pattern.MatchString(spec.SpecSHA256) {
+		return directSupervisorSpec{}, errors.New("direct supervisor specification digest is invalid")
+	}
+	digest, err := directSpecDigest(spec)
+	if err != nil {
+		return directSupervisorSpec{}, err
+	}
+	if digest != spec.SpecSHA256 {
+		return directSupervisorSpec{}, errors.New("direct supervisor specification digest does not match its canonical contents")
 	}
 	return spec, nil
 }
 
+func sealDirectSpec(spec *directSupervisorSpec) error {
+	digest, err := directSpecDigest(*spec)
+	if err != nil {
+		return fmt.Errorf("digest direct runtime launch specification: %w", err)
+	}
+	spec.SpecSHA256 = digest
+	return nil
+}
+
+func directSpecDigest(spec directSupervisorSpec) (string, error) {
+	spec.SpecSHA256 = ""
+	if spec.Arguments == nil {
+		spec.Arguments = []string{}
+	}
+	if spec.StandardInput == nil {
+		spec.StandardInput = []byte{}
+	}
+	if spec.Environment == nil {
+		spec.Environment = []string{}
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(data)
+	return fmt.Sprintf("%x", digest[:]), nil
+}
+
+func verifyDirectReplay(path, stateDigest, stateSeal string, desired directSupervisorSpec) error {
+	stored, err := readDirectSpec(path)
+	if err != nil {
+		return fmt.Errorf("read existing direct runtime launch specification: %w", err)
+	}
+	if stored.OperationID != desired.OperationID {
+		return errors.New("existing direct runtime launch specification identity is invalid")
+	}
+	storedDigest, err := directSpecDigest(stored)
+	if err != nil {
+		return fmt.Errorf("digest existing direct runtime launch specification: %w", err)
+	}
+	if stateSeal == "" {
+		return errors.New("existing direct runtime state is missing its persisted state digest")
+	}
+	if !directSpecSHA256Pattern.MatchString(stateDigest) || stateDigest != stored.SpecSHA256 || stateDigest != storedDigest {
+		return errors.New("existing direct runtime state does not match its launch specification digest")
+	}
+	desiredDigest, err := directSpecDigest(desired)
+	if err != nil {
+		return fmt.Errorf("digest requested direct runtime launch specification: %w", err)
+	}
+	if storedDigest != desiredDigest {
+		return errors.New("direct runtime operation ID already belongs to a different launch specification")
+	}
+	return nil
+}
+
+func verifyDirectPendingReplay(path string, desired directSupervisorSpec) error {
+	stored, err := readDirectSpec(path)
+	if err != nil {
+		return fmt.Errorf("read existing direct runtime launch specification: %w", err)
+	}
+	if stored.OperationID != desired.OperationID {
+		return errors.New("existing direct runtime launch specification identity is invalid")
+	}
+	storedDigest, err := directSpecDigest(stored)
+	if err != nil {
+		return fmt.Errorf("digest existing direct runtime launch specification: %w", err)
+	}
+	desiredDigest, err := directSpecDigest(desired)
+	if err != nil {
+		return fmt.Errorf("digest requested direct runtime launch specification: %w", err)
+	}
+	if storedDigest != desiredDigest {
+		return errors.New("direct runtime operation ID already belongs to a different launch specification")
+	}
+	return nil
+}
+
+func verifyDirectStoredSpec(path, stateDigest, stateSeal, operationID string) error {
+	_, err := readVerifiedDirectStoredSpec(path, stateDigest, stateSeal, operationID)
+	return err
+}
+
+func readVerifiedDirectStoredSpec(path, stateDigest, stateSeal, operationID string) (directSupervisorSpec, error) {
+	stored, err := readDirectSpec(path)
+	if err != nil {
+		return directSupervisorSpec{}, fmt.Errorf("read direct runtime launch specification: %w", err)
+	}
+	if stored.OperationID != operationID {
+		return directSupervisorSpec{}, errors.New("direct runtime launch specification identity does not match its state")
+	}
+	if stateSeal == "" {
+		return directSupervisorSpec{}, errors.New("direct runtime state is missing its persisted state digest")
+	}
+	digest, err := directSpecDigest(stored)
+	if err != nil {
+		return directSupervisorSpec{}, fmt.Errorf("digest direct runtime launch specification: %w", err)
+	}
+	if !directSpecSHA256Pattern.MatchString(stateDigest) || stateDigest != stored.SpecSHA256 || stateDigest != digest {
+		return directSupervisorSpec{}, errors.New("direct runtime state does not match its launch specification digest")
+	}
+	return stored, nil
+}
+
+func requireJSONEOF(decoder *json.Decoder) error {
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("JSON contains trailing content")
+		}
+		return err
+	}
+	return nil
+}
+
 func readDirectState(runDirectory string) (directSupervisorState, error) {
-	data, err := os.ReadFile(filepath.Join(runDirectory, "state.json"))
+	data, err := readBoundedRegularFile(filepath.Join(runDirectory, "state.json"), directMaximumStateBytes)
 	if err != nil {
 		return directSupervisorState{}, err
 	}
+	if int64(len(data)) > directMaximumStateBytes {
+		return directSupervisorState{}, errors.New("direct runtime state exceeds 64 KiB")
+	}
 	var state directSupervisorState
-	if err := json.Unmarshal(data, &state); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&state); err != nil {
 		return directSupervisorState{}, err
+	}
+	if err := requireJSONEOF(decoder); err != nil {
+		return directSupervisorState{}, err
+	}
+	if err := validateDirectState(state); err != nil {
+		return directSupervisorState{}, err
+	}
+	digest, err := directStateDigest(state)
+	if err != nil {
+		return directSupervisorState{}, err
+	}
+	if digest != state.StateSHA256 {
+		return directSupervisorState{}, errors.New("direct runtime state digest does not match its canonical contents")
 	}
 	return state, nil
 }
 
+func validateDirectState(state directSupervisorState) error {
+	if state.Schema != directSupervisorStateSchema || !directOperationPattern.MatchString(state.OperationID) {
+		return errors.New("direct runtime state identity is invalid")
+	}
+	switch state.Status {
+	case RuntimeStateStarting, RuntimeStateRunning, RuntimeStateExited, RuntimeStateStopped, RuntimeStateTimedOut, RuntimeStateUnknown, directStateStartFailed:
+	default:
+		return errors.New("direct runtime state status is invalid")
+	}
+	if (state.Status == RuntimeStateExited || state.Status == RuntimeStateStopped || state.Status == RuntimeStateTimedOut) && !state.ExitKnown {
+		return errors.New("direct runtime terminal state is missing a known process result")
+	}
+	if state.Status == RuntimeStateRunning && (state.SupervisorPID <= 0 || state.SupervisorStart == "") {
+		return errors.New("direct runtime running state is missing a supervisor identity")
+	}
+	if state.Status == RuntimeStateStarting || state.Status == directStateStartFailed {
+		if state.ChildPID != 0 || state.ChildStart != "" || state.ExitKnown || state.Forced || state.StdoutCapturedBytes != 0 || state.StdoutOmittedBytes != 0 || state.StderrCapturedBytes != 0 || state.StderrOmittedBytes != 0 {
+			return errors.New("direct runtime pre-child state contains an impossible process result")
+		}
+	}
+	if (state.Status == directStateStartFailed || state.Status == RuntimeStateUnknown) && strings.TrimSpace(state.Diagnostic) == "" {
+		return errors.New("direct runtime failure state is missing a diagnostic")
+	}
+	if state.SupervisorPID < 0 || state.ChildPID < 0 || state.StdoutCapturedBytes < 0 || state.StdoutOmittedBytes < 0 || state.StderrCapturedBytes < 0 || state.StderrOmittedBytes < 0 || state.StdoutCapturedBytes > directMaximumOutputLimit || state.StderrCapturedBytes > directMaximumOutputLimit {
+		return errors.New("direct runtime state counters are invalid")
+	}
+	if !directSpecSHA256Pattern.MatchString(state.SpecSHA256) {
+		return errors.New("direct runtime state launch specification digest is invalid")
+	}
+	if !directSpecSHA256Pattern.MatchString(state.StateSHA256) {
+		return errors.New("direct runtime state digest is invalid")
+	}
+	if state.StdoutSHA256 != "" && !directSpecSHA256Pattern.MatchString(state.StdoutSHA256) || state.StderrSHA256 != "" && !directSpecSHA256Pattern.MatchString(state.StderrSHA256) {
+		return errors.New("direct runtime output digest is invalid")
+	}
+	if directStateHasStableCaptures(state.Status) && (state.StdoutSHA256 == "" || state.StderrSHA256 == "") {
+		return errors.New("direct runtime terminal state is missing output digests")
+	}
+	if len(state.Diagnostic) > directMaximumDiagnosticBytes || strings.ContainsRune(state.Diagnostic, '\x00') {
+		return errors.New("direct runtime state diagnostic is invalid")
+	}
+	return nil
+}
+
+func readBoundedRegularFile(path string, byteLimit int64) ([]byte, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("direct runtime durable record must be a regular file")
+	}
+	return io.ReadAll(io.LimitReader(file, byteLimit+1))
+}
+
 func writeDirectState(runDirectory string, state directSupervisorState) error {
+	digest, err := directStateDigest(state)
+	if err != nil {
+		return fmt.Errorf("digest direct runtime state: %w", err)
+	}
+	state.StateSHA256 = digest
 	return writeJSONAtomic(filepath.Join(runDirectory, "state.json"), state)
+}
+
+func directStateDigest(state directSupervisorState) (string, error) {
+	state.StateSHA256 = ""
+	data, err := json.Marshal(state)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(data)
+	return fmt.Sprintf("%x", digest[:]), nil
 }
 
 func writeJSONAtomic(path string, value any) error {
@@ -594,19 +1150,66 @@ func sameProcess(pid int, startIdentity string) bool {
 	return processStartIdentity(pid) == startIdentity
 }
 
-func readDirectCapture(path string, recordedCaptured, recordedOmitted int64, tail int) (domain.CapturedLog, error) {
-	data, err := os.ReadFile(path)
+func readDirectCapture(path string, recordedCaptured, recordedOmitted int64, recordedSHA256 string, tail int, byteLimit int64, stable bool) (domain.CapturedLog, error) {
+	if byteLimit <= 0 || byteLimit > directMaximumOutputLimit {
+		byteLimit = directMaximumOutputLimit
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, os.ErrNotExist) {
-		data = nil
-	} else if err != nil {
+		if recordedCaptured > 0 {
+			return domain.CapturedLog{}, errors.New("direct runtime output capture is missing recorded bytes")
+		}
+		return domain.CapturedLog{CapturedBytes: recordedCaptured, OmittedBytes: recordedOmitted, Truncated: recordedOmitted > 0}, nil
+	}
+	if err != nil {
 		return domain.CapturedLog{}, fmt.Errorf("read direct runtime output: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return domain.CapturedLog{}, fmt.Errorf("inspect direct runtime output: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return domain.CapturedLog{}, errors.New("direct runtime output capture must be a regular file")
+	}
+	if info.Size() < recordedCaptured {
+		return domain.CapturedLog{}, errors.New("direct runtime output capture is shorter than its recorded byte count")
+	}
+	if stable && info.Size() != recordedCaptured {
+		return domain.CapturedLog{}, errors.New("direct runtime terminal output capture does not match its recorded byte count")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, byteLimit+1))
+	if err != nil {
+		return domain.CapturedLog{}, fmt.Errorf("read direct runtime output: %w", err)
+	}
+	if stable && recordedSHA256 != "" {
+		digest := sha256.Sum256(data)
+		if fmt.Sprintf("%x", digest[:]) != recordedSHA256 {
+			return domain.CapturedLog{}, errors.New("direct runtime terminal output capture digest does not match its recorded contents")
+		}
+	}
+	responseOmitted := int64(0)
+	if int64(len(data)) > byteLimit {
+		data = data[:byteLimit]
+		responseOmitted = 1
+		if info.Size() > byteLimit {
+			responseOmitted = info.Size() - byteLimit
+		}
 	}
 	captured := int64(len(data))
 	if recordedCaptured > captured {
 		captured = recordedCaptured
 	}
-	text := tailText(string(data), tail)
-	return domain.CapturedLog{Text: text, CapturedBytes: captured, OmittedBytes: recordedOmitted, Truncated: recordedOmitted > 0}, nil
+	omitted := recordedOmitted
+	if responseOmitted > 0 {
+		const maximumInt64 = int64(^uint64(0) >> 1)
+		if omitted > maximumInt64-responseOmitted {
+			omitted = maximumInt64
+		} else {
+			omitted += responseOmitted
+		}
+	}
+	return domain.CapturedLog{Text: string(data), CapturedBytes: captured, OmittedBytes: omitted, Truncated: omitted > 0}, nil
 }
 
 func tailText(value string, lines int) string {
@@ -632,7 +1235,7 @@ func redactDirectOutput(value string) string {
 
 // RunDirectSupervisor is the hidden process entry point used by DirectRuntime.
 func RunDirectSupervisor(arguments []string) int {
-	if len(arguments) != 1 {
+	if len(arguments) < 1 || len(arguments) > 2 {
 		return 2
 	}
 	specPath, err := filepath.Abs(arguments[0])
@@ -649,18 +1252,35 @@ func RunDirectSupervisor(arguments []string) int {
 	runDirectory := filepath.Dir(specPath)
 	state := directSupervisorState{
 		Schema: directSupervisorStateSchema, OperationID: spec.OperationID,
-		Status: RuntimeStateStarting, SupervisorPID: os.Getpid(), SupervisorStart: processStartIdentity(os.Getpid()),
+		Status: RuntimeStateStarting, SupervisorPID: os.Getpid(), SupervisorStart: processStartIdentity(os.Getpid()), SpecSHA256: spec.SpecSHA256,
 	}
 	_ = writeDirectState(runDirectory, state)
+	workingDirectoryFile, err := directSupervisorWorkingDirectory(arguments, spec.WorkingDirectory)
+	if err != nil {
+		state.Status, state.Diagnostic = directStateStartFailed, "open pinned direct runtime working directory: "+err.Error()
+		_ = writeDirectState(runDirectory, state)
+		return 1
+	}
+	if err := unix.Fchdir(int(workingDirectoryFile.Fd())); err != nil {
+		_ = workingDirectoryFile.Close()
+		state.Status, state.Diagnostic = directStateStartFailed, "enter pinned direct runtime working directory: "+err.Error()
+		_ = writeDirectState(runDirectory, state)
+		return 1
+	}
+	if err := workingDirectoryFile.Close(); err != nil {
+		state.Status, state.Diagnostic = directStateStartFailed, "close pinned direct runtime working directory: "+err.Error()
+		_ = writeDirectState(runDirectory, state)
+		return 1
+	}
 
-	stdoutFile, err := os.OpenFile(filepath.Join(runDirectory, "stdout.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	stdoutFile, err := openDirectCaptureFile(filepath.Join(runDirectory, "stdout.log"))
 	if err != nil {
 		state.Status, state.Diagnostic = directStateStartFailed, "open bounded stdout capture: "+err.Error()
 		_ = writeDirectState(runDirectory, state)
 		return 1
 	}
 	defer stdoutFile.Close()
-	stderrFile, err := os.OpenFile(filepath.Join(runDirectory, "stderr.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	stderrFile, err := openDirectCaptureFile(filepath.Join(runDirectory, "stderr.log"))
 	if err != nil {
 		state.Status, state.Diagnostic = directStateStartFailed, "open bounded stderr capture: "+err.Error()
 		_ = writeDirectState(runDirectory, state)
@@ -669,12 +1289,12 @@ func RunDirectSupervisor(arguments []string) int {
 	defer stderrFile.Close()
 
 	command := exec.Command(spec.Executable, spec.Arguments...)
-	command.Dir = spec.WorkingDirectory
 	command.Env = append([]string(nil), spec.Environment...)
 	command.Stdin = bytes.NewReader(spec.StandardInput)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdoutCapture := &boundedCapture{writer: stdoutFile, limit: spec.OutputByteLimit}
-	stderrCapture := &boundedCapture{writer: stderrFile, limit: spec.OutputByteLimit}
+	stdoutHash, stderrHash := sha256.New(), sha256.New()
+	stdoutCapture := &boundedCapture{writer: io.MultiWriter(stdoutFile, stdoutHash), limit: spec.OutputByteLimit}
+	stderrCapture := &boundedCapture{writer: io.MultiWriter(stderrFile, stderrHash), limit: spec.OutputByteLimit}
 	command.Stdout = stdoutCapture
 	command.Stderr = stderrCapture
 
@@ -730,11 +1350,50 @@ func RunDirectSupervisor(arguments []string) int {
 	state.Status, state.Forced, state.Diagnostic = finalStatus, forced, diagnostic
 	state.StdoutCapturedBytes, state.StdoutOmittedBytes = stdoutCapture.captured, stdoutCapture.omitted
 	state.StderrCapturedBytes, state.StderrOmittedBytes = stderrCapture.captured, stderrCapture.omitted
+	state.StdoutSHA256, state.StderrSHA256 = fmt.Sprintf("%x", stdoutHash.Sum(nil)), fmt.Sprintf("%x", stderrHash.Sum(nil))
 	if finalStatus != RuntimeStateUnknown {
 		state.ExitCode, state.ExitKnown = directExitCode(command, waitErr)
 	}
 	_ = writeDirectState(runDirectory, state)
 	return 0
+}
+
+func directSupervisorWorkingDirectory(arguments []string, path string) (*os.File, error) {
+	if len(arguments) == 1 {
+		return openDirectWorkingDirectory(path)
+	}
+	if arguments[1] != strconv.Itoa(directSupervisorWorkingDirFD) {
+		return nil, errors.New("direct supervisor working directory descriptor is invalid")
+	}
+	file := os.NewFile(uintptr(directSupervisorWorkingDirFD), path)
+	if file == nil {
+		return nil, errors.New("direct supervisor working directory descriptor is unavailable")
+	}
+	info, err := file.Stat()
+	if err != nil || !info.IsDir() {
+		_ = file.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("direct supervisor working directory descriptor is not a directory")
+	}
+	return file, nil
+}
+
+func openDirectCaptureFile(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		_ = file.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("direct runtime output capture must be a regular file")
+	}
+	return file, nil
 }
 
 type boundedCapture struct {
@@ -777,15 +1436,23 @@ func minInt64(left, right int64) int64 {
 }
 
 func readDirectStopRequest(path string) (directStopRequest, error) {
-	data, err := os.ReadFile(path)
+	data, err := readBoundedRegularFile(path, directMaximumStopBytes)
 	if err != nil {
 		return directStopRequest{}, err
 	}
+	if int64(len(data)) > directMaximumStopBytes {
+		return directStopRequest{}, errors.New("direct stop request exceeds 4 KiB")
+	}
 	var request directStopRequest
-	if err := json.Unmarshal(data, &request); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
 		return directStopRequest{}, err
 	}
-	if request.Schema != directStopRequestSchema {
+	if err := requireJSONEOF(decoder); err != nil {
+		return directStopRequest{}, err
+	}
+	if request.Schema != directStopRequestSchema || request.GraceMillis <= 0 || request.GraceMillis > directMaximumStopGrace.Milliseconds() {
 		return directStopRequest{}, errors.New("invalid direct stop request schema")
 	}
 	return request, nil

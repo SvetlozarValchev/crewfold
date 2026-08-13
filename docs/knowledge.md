@@ -5,7 +5,7 @@
 Crewfold's knowledge system supplies the smallest trustworthy context needed for a
 task. It is not a transcript archive disguised as memory.
 
-The canonical knowledge core and context-packet v4 contract are implemented and
+The canonical knowledge core and current context-packet contract are implemented and
 their acceptance/review gate has passed. The current implementation supports:
 
 - canonical `decision` and `finding` items with immutable content revisions;
@@ -99,11 +99,10 @@ owner inspected.
 ## Exact knowledge in context packets
 
 The packet builder snapshots the assigned role, exact task and checkout
-revisions, direct dependencies, policy, reporting instructions, and a bounded
-project inbox summary. Packet v3 introduced explicit canonical knowledge; new
-packet-v4 builds preserve that exact knowledge contract while adding the event
-cursor, reverse dependents, participant rosters, and bounded live policy. Active
-claim snapshots and full message bodies remain excluded.
+revisions, direct dependencies, policy, reporting instructions, explicit
+canonical knowledge, a bounded project inbox summary, the event cursor, reverse
+dependents, participant rosters, and bounded live policy. Active claim snapshots
+and full message bodies remain excluded.
 
 `crewfold context build ... --include krev_...` accepts at most 16 unique revision
 IDs. Requests remain in caller order in `requested_knowledge_revision_ids`. There
@@ -132,15 +131,15 @@ limit, used, and remaining bytes. `context explain --output json` also exposes t
 exact included and excluded entities and revisions.
 
 Eligibility is evaluated inside the packet-build transaction, and the resulting
-bytes are immutable. If `run.start` later names that prebuilt v4 packet, the bind
+bytes are immutable. If `run.start` later names that prebuilt packet, the bind
 transaction revalidates its frozen run authority and requires every embedded
 knowledge revision still to be accepted, current, fresh, applicable, and
 undisputed. Failure leaves the packet unchanged but unbound; the owner must build
 a new one. A packet built and bound atomically has no intervening window. After a
 successful binding, later governance does not rewrite or invalidate the base;
-explicit refresh carries withdrawals or rebase. Context-packet schemas v1 through
-v3 remain readable historical formats; new builds use v4, and only v4 freezes an
-event high-water, bounded reverse dependents/participant rosters, and live policy.
+explicit refresh carries withdrawals or a visible rebase. The one current packet
+schema freezes the event high-water, bounded reverse dependents and participant
+rosters, and live policy.
 
 Raw terminal and provider transcript text is not a packet input and is recorded as
 an explicit exclusion. The replacement-agent path combines a durable handoff or
@@ -228,7 +227,7 @@ Future curator rules may cover structured handoffs, review findings, test eviden
 explicit owner decisions, but each requires its own frozen transform and authority
 contract; no general curator self-approval exists.
 
-Long-running packet-v4 sessions can receive explicit context deltas without
+Long-running current-packet sessions can receive explicit context deltas without
 mutating their base. The local owner triggers `context refresh`; accepted
 applicable decisions become complete `knowledge_accepted` changes only at that
 point. A pending immutable delta blocks another scan until the exact authenticated
@@ -267,7 +266,7 @@ retains these planned types:
 | Project brief | Purpose, users, current objective | Owner or manager |
 | Constraint | “Server remains offline-capable” | Owner or accepted decision |
 | Glossary | Domain meaning of “run” | Curator with review rule |
-| Risk | Migration may invalidate old clients | Any agent proposes; owner triages |
+| Risk | A dependency change may invalidate an integration | Any agent proposes; owner triages |
 | Runbook | How to execute a reliable operation | Maintainer or reviewer |
 | Summary | Current state of a component | Curator; freshness-limited |
 

@@ -167,6 +167,10 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 		fmt.Fprintln(diagnostics, err)
 		return 1
 	}
+	if err := runFixtureCheckWatch(ctx, client, scenario.CheckWatch, briefing); err != nil {
+		fmt.Fprintln(diagnostics, err)
+		return 1
+	}
 	for index, step := range scenario.Steps {
 		result, err := reportFixtureStep(ctx, client, index, step)
 		if err != nil || result.IsError {
@@ -254,8 +258,8 @@ func runFixtureManagement(ctx context.Context, client fixtureToolClient, plan do
 		return nil
 	}
 	grant := briefing.Packet.ManagementGrant
-	if briefing.Packet.Schema != domain.ContextPacketSchemaV5 || grant == nil || grant.GrantID == "" {
-		return errors.New("fixture manager proposals require an exact packet-v5 grant")
+	if briefing.Packet.Schema != domain.ContextPacketSchema || grant == nil || briefing.Packet.CheckWatchGrant != nil || grant.GrantID == "" {
+		return errors.New("fixture manager proposals require an exact context grant")
 	}
 	proposalIDs := make([]string, 0, len(plan.Proposals))
 	for index, proposal := range plan.Proposals {
@@ -297,6 +301,128 @@ func runFixtureManagement(ctx context.Context, client fixtureToolClient, plan do
 		denied, err := callFixtureManagerProposal(ctx, client, plan.Proposals[0], "fixture-manager-"+briefing.Run.ID+"-revoked-probe")
 		if !fixtureCallDeniedByPolicy(denied, err) {
 			return fmt.Errorf("revoked fixture manager grant probe was not denied: %s", fixtureCallDiagnostic(denied, err))
+		}
+	}
+	return nil
+}
+
+func runFixtureCheckWatch(ctx context.Context, client fixtureToolClient, plan domain.FixtureCheckWatch, briefing domain.RunBriefing) error {
+	if emptyFixtureCheckWatch(plan) {
+		return nil
+	}
+	watchTools := []string{"crewfold_run_check", "crewfold_list_check_results", "crewfold_inspect_check_result", "crewfold_propose_check_repair"}
+	if plan.ExpectToolsDenied {
+		for _, tool := range watchTools {
+			result, err := client.CallTool(ctx, tool, map[string]any{})
+			if err != nil || !result.IsError || fixtureToolErrorCode(result) != "denied_by_policy" {
+				return fmt.Errorf("ungranted fixture check-watch tool %s was not denied", tool)
+			}
+		}
+		return nil
+	}
+	grant := briefing.Packet.CheckWatchGrant
+	if briefing.Packet.Schema != domain.ContextPacketSchema || grant == nil || grant.GrantID == "" || briefing.Packet.ManagementGrant != nil {
+		return errors.New("fixture check-watch operations require an exact context grant and no manager authority")
+	}
+	var requestedRunID string
+	if plan.RunRequirementID != "" {
+		result, err := client.CallTool(ctx, "crewfold_run_check", map[string]any{
+			"requirement_id": plan.RunRequirementID, "idempotency_key": "fixture-check-watch-run-" + briefing.Run.ID,
+		})
+		if err != nil || result.IsError {
+			return fmt.Errorf("request fixture granted check failed: %s", fixtureCallDiagnostic(result, err))
+		}
+		var checkRun domain.CheckRun
+		if err := json.Unmarshal(result.StructuredContent, &checkRun); err != nil || checkRun.ID == "" ||
+			checkRun.ProjectID != briefing.Run.ProjectID || checkRun.RequirementID != plan.RunRequirementID ||
+			checkRun.Source.Type != domain.CheckRunSourceAgentRun || checkRun.Source.AgentRunID != briefing.Run.ID ||
+			checkRun.Source.AgentID != briefing.Run.AgentID || checkRun.Source.GrantID != grant.GrantID ||
+			checkRun.Source.GrantRevision != grant.GrantRevision {
+			return errors.New("fixture granted check response escaped exact packet authority")
+		}
+		requestedRunID = checkRun.ID
+	}
+	if plan.ListResults {
+		result, err := client.CallTool(ctx, "crewfold_list_check_results", map[string]any{"limit": 50})
+		if err != nil || result.IsError {
+			return fmt.Errorf("list fixture granted check results failed: %s", fixtureCallDiagnostic(result, err))
+		}
+		var page struct {
+			Items      []domain.CheckRunListItem `json:"items"`
+			NextCursor string                    `json:"next_cursor,omitempty"`
+		}
+		if err := json.Unmarshal(result.StructuredContent, &page); err != nil || len(page.Items) > 50 {
+			return errors.New("decode fixture granted check result page failed")
+		}
+		for _, item := range page.Items {
+			if item.Run.ProjectID != briefing.Run.ProjectID {
+				return errors.New("fixture granted check result page escaped its project")
+			}
+		}
+	}
+	inspectRunID := plan.InspectCheckRunID
+	if inspectRunID == "" {
+		inspectRunID = requestedRunID
+	}
+	if plan.InspectCheckRunID != "" {
+		result, err := client.CallTool(ctx, "crewfold_inspect_check_result", map[string]any{"check_run_id": inspectRunID})
+		if err != nil || result.IsError {
+			return fmt.Errorf("inspect fixture granted check result failed: %s", fixtureCallDiagnostic(result, err))
+		}
+		var detail domain.CheckRunDetail
+		if err := json.Unmarshal(result.StructuredContent, &detail); err != nil || detail.Run.ID != inspectRunID || detail.Run.ProjectID != briefing.Run.ProjectID {
+			return errors.New("fixture granted check inspection escaped its exact scope")
+		}
+	}
+	var proposalID string
+	if plan.ProposeRepairResultID != "" {
+		result, err := client.CallTool(ctx, "crewfold_propose_check_repair", map[string]any{
+			"check_result_id": plan.ProposeRepairResultID, "rationale": plan.RepairRationale,
+			"idempotency_key": "fixture-check-watch-repair-" + briefing.Run.ID,
+		})
+		if err != nil || result.IsError {
+			return fmt.Errorf("propose fixture granted check repair failed: %s", fixtureCallDiagnostic(result, err))
+		}
+		var proposal domain.CheckRepairProposal
+		if err := json.Unmarshal(result.StructuredContent, &proposal); err != nil || proposal.ID == "" ||
+			proposal.ProjectID != briefing.Run.ProjectID || proposal.CheckResultID != plan.ProposeRepairResultID ||
+			proposal.SourceGrantID != grant.GrantID || proposal.SourceGrantRevision != grant.GrantRevision || proposal.Status != domain.CheckRepairPending {
+			return errors.New("fixture granted repair proposal escaped exact packet authority")
+		}
+		proposalID = proposal.ID
+	}
+	if plan.ProbeReservedAcceptance {
+		denied, err := client.CallTool(ctx, "crewfold_accept_check_repair", map[string]any{
+			"repair": proposalID, "expected_revision": 1, "idempotency_key": "fixture-check-watch-accept-" + briefing.Run.ID,
+		})
+		if err != nil || !denied.IsError || fixtureToolErrorCode(denied) != "denied_by_policy" {
+			return errors.New("reserved fixture check-repair acceptance probe was not denied")
+		}
+	}
+	if plan.ProbeRevokedGrant {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(plan.RevocationProbeDelayMillis) * time.Millisecond):
+		}
+		var tool string
+		var arguments map[string]any
+		switch {
+		case plan.RunRequirementID != "":
+			tool, arguments = "crewfold_run_check", map[string]any{"requirement_id": plan.RunRequirementID, "idempotency_key": "fixture-check-watch-revoked-" + briefing.Run.ID}
+		case plan.InspectCheckRunID != "":
+			tool, arguments = "crewfold_inspect_check_result", map[string]any{"check_run_id": plan.InspectCheckRunID}
+		case plan.ListResults:
+			tool, arguments = "crewfold_list_check_results", map[string]any{"limit": 1}
+		default:
+			tool, arguments = "crewfold_propose_check_repair", map[string]any{
+				"check_result_id": plan.ProposeRepairResultID, "rationale": plan.RepairRationale,
+				"idempotency_key": "fixture-check-watch-revoked-" + briefing.Run.ID,
+			}
+		}
+		denied, err := client.CallTool(ctx, tool, arguments)
+		if !fixtureCallDeniedByPolicy(denied, err) {
+			return fmt.Errorf("revoked fixture check-watch grant probe was not denied: %s", fixtureCallDiagnostic(denied, err))
 		}
 	}
 	return nil
@@ -441,20 +567,6 @@ func runFixtureContextDelta(ctx context.Context, client fixtureToolClient, plan 
 			return ctx.Err()
 		case <-time.After(time.Duration(plan.InitialDelayMillis) * time.Millisecond):
 		}
-	}
-	if plan.ExpectToolsDenied {
-		result, err := client.CallTool(ctx, "crewfold_get_context_delta", map[string]any{})
-		if err != nil || !result.IsError || fixtureToolErrorCode(result) != "denied_by_policy" {
-			return errors.New("legacy fixture context delta fetch was not denied by immutable policy")
-		}
-		result, err = client.CallTool(ctx, "crewfold_acknowledge_context_delta", map[string]any{
-			"delta_id": "cdelta_00000000000000000000000000000000", "expected_sequence": 1,
-			"idempotency_key": "fixture-legacy-context-delta-ack",
-		})
-		if err != nil || !result.IsError || fixtureToolErrorCode(result) != "denied_by_policy" {
-			return errors.New("legacy fixture context delta acknowledgement was not denied by immutable policy")
-		}
-		return nil
 	}
 	if plan.ExpectNoPending {
 		result, err := client.CallTool(ctx, "crewfold_get_context_delta", map[string]any{})

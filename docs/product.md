@@ -238,17 +238,24 @@ The first meaningful release passes this scenario:
 6. Detect a deliberately overlapping claim and create a two-agent coordination
    thread or meeting.
 7. Stop one run and resume the same durable agent and task in a new session.
-8. Generate enough concurrent activity that reading every transcript is not a
+8. Give exactly one arbitrarily named agent a current-packet check-watch grant, run a
+   clean-HEAD named check through fail/repair/pass, and route the failure to the
+   exact task owner and evidence duty without reading any role/purpose string.
+   A daemon restart reconciles one child/result or explicit unknown, and a later
+   HEAD/dirty observation makes old evidence visibly stale.
+9. Prove that check evidence changes no task-completion, policy-acceptance,
+   commit/push/merge/deploy, or integration-order state.
+10. Generate enough concurrent activity that reading every transcript is not a
    viable way to understand the project.
-9. Show a bounded project briefing that separates attempted work from accepted
+11. Show a bounded project briefing that separates attempted work from accepted
    outcomes and captures material decisions and compatibility effects.
-10. Identify missing, stale, self-reported, and independently verified evidence;
+12. Identify missing, stale, self-reported, and independently verified evidence;
     never describe weakly supported work as reliable.
-11. Surface duplicated or contradictory work, unresolved risk, and the available
+13. Surface duplicated or contradictory work, unresolved risk, and the available
     consolidation or escalation path.
-12. Answer what changed, why, how much to trust it, what remains, and what needs
+14. Answer what changed, why, how much to trust it, what remains, and what needs
     the owner without requiring session transcripts.
-13. Drill every material briefing claim into durable records and its auditable
+15. Drill every material briefing claim into durable records and its auditable
     event trail.
 
 ## Explicitly deferred

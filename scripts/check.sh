@@ -91,6 +91,9 @@ printf 'Live context delta black-box acceptance\n'
 printf 'Manager proposals and deterministic supervisor public smoke\n'
 "$repo_root/test/scenarios/manager-supervisor/run.sh"
 
+printf 'Owner-granted local checks and arbitrary-role check-watch acceptance\n'
+"$repo_root/test/scenarios/local-checks/run.sh"
+
 printf 'Herdr runtime black-box acceptance\n'
 "$repo_root/test/scenarios/herdr-runtime/run.sh"
 

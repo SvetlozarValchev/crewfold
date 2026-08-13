@@ -1,0 +1,31 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:domain:check-run-source:v1",
+  "type":"object","additionalProperties":false,
+  "required":["type","actor_id"],
+  "allOf":[
+    {
+      "if":{"properties":{"type":{"const":"agent_run"}},"required":["type"]},
+      "then":{
+        "required":["agent_id","agent_revision","agent_run_id","grant_id","grant_revision"],
+        "properties":{"actor_id":{"pattern":"^run_[0-9a-f]{32}$"}}
+      },
+      "else":{
+        "properties":{"actor_id":{"const":"local-owner"}},
+        "not":{"anyOf":[
+          {"required":["agent_id"]},{"required":["agent_revision"]},{"required":["agent_run_id"]},
+          {"required":["grant_id"]},{"required":["grant_revision"]}
+        ]}
+      }
+    }
+  ],
+  "properties":{
+    "type":{"enum":["owner","agent_run"]},
+    "actor_id":{"type":"string","minLength":1,"maxLength":128},
+    "agent_id":{"type":"string","pattern":"^agent_[0-9a-f]{32}$"},
+    "agent_revision":{"type":"integer","minimum":1},
+    "agent_run_id":{"type":"string","pattern":"^run_[0-9a-f]{32}$"},
+    "grant_id":{"type":"string","pattern":"^checkgrant_[0-9a-f]{32}$"},
+    "grant_revision":{"type":"integer","minimum":1}
+  }
+}

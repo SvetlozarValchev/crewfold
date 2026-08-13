@@ -479,7 +479,7 @@ may propose task-sourced knowledge through `crewfold_propose_knowledge`, but onl
 the local owner may govern it.
 
 `--include` is repeatable and accepts at most 16 unique exact knowledge revision
-IDs in caller order. Context packet v4 includes a complete snapshot only when the
+IDs in caller order. The current context packet includes a complete snapshot only when the
 requested revision is accepted, current, fresh, and applicable to `NEXT_TASK`.
 Proposed, rejected, stale, superseded, out-of-scope, and over-budget revisions are
 excluded with reasons. An unknown ID fails the build. A superseded pin is never
@@ -597,7 +597,7 @@ curator proof rows, or command idempotency. See
 [ADR-0013](decisions/0013-portable-project-knowledge-snapshots.md).
 
 The fixed packet budget is 32 KiB with a 12 KiB whole-knowledge sub-budget and an
-8 KiB whole participant-roster sub-budget. Packet v4 also freezes the journal
+8 KiB whole participant-roster sub-budget. The current packet also freezes the journal
 high-water, up to 32 same-project reverse dependents, up to eight authorized
 participant-thread snapshots, and the live delivery policy.
 `context show --output json` preserves the exact ordered request list and embedded
@@ -627,10 +627,10 @@ intentionally has no delta-acknowledge command.
 The run receives an owner-built pending delta through argument-free
 `crewfold_get_context_delta` and acknowledges only its exact ID and sequence with
 `crewfold_acknowledge_context_delta`. One delta is capped at 16 KiB, the chain at
-64 KiB, and one refresh scans at most 1,000 potentially applicable events. An old
-packet or an unsafe/oversized incremental change returns status
+64 KiB, and one refresh scans at most 1,000 potentially applicable events. An
+unsafe or oversized incremental change returns status
 `rebase_required` with a stable reason; it is not an error response. Stop or hand
-off that run and start a replacement with a new packet-v4 base. See [Context
+off that run and start a replacement with a new current-packet base. See [Context
 packets and live deltas](context.md).
 
 ## Manager proposals and launch profiles
@@ -671,7 +671,7 @@ crewfold manager propose-tasks --workspace personal --objective "$OBJECTIVE" \
 ```
 
 `manager propose-tasks` invokes the exact already-assigned planning task; proposals themselves come
-from its packet-v5 scoped MCP tools. Omitted planning tuple fields resolve only
+from its current-packet scoped MCP tools. Omitted planning tuple fields resolve only
 when exactly one current tuple is compatible. Role and purpose strings are
 arbitrary descriptive metadata. Two agents may share `--role constellation
 cartographer`; only the exact grant/task/assignment/profile/packet binding gains
@@ -747,6 +747,142 @@ crewfold approval deny "$APPROVAL" --workspace personal --expected-revision 1 \
 The approval decision result includes both the approval and its bound supervisor
 action. Expected revisions make a race or second decision fail rather than apply
 twice.
+
+## Local checks and check-watch grants
+
+The owner first creates an exact local command allowlist entry and one named task
+criterion:
+
+```sh
+crewfold check definition create unit \
+  --workspace personal \
+  --project world-engine \
+  --executable /usr/local/bin/go \
+  --arg test --arg ./... \
+  --working-directory . \
+  --timeout 10m \
+  --output-byte-limit 65536 \
+  --socket "$SOCKET"
+
+crewfold check requirement create \
+  --workspace personal \
+  --task "$TASK" \
+  --criterion unit \
+  --statement 'The unit suite passes at a clean repository HEAD' \
+  --definition unit \
+  --definition-revision 1 \
+  --expected-task-revision "$TASK_REVISION" \
+  --socket "$SOCKET"
+```
+
+The definition is an executable plus fixed ordered argv, never a shell command.
+There are no stdin, environment, credential, provider, MCP, agent-role, or
+launch-profile-purpose options. The local owner trusts the executable: direct
+checks are not a no-network or no-Git sandbox.
+
+The owner may run and inspect it directly:
+
+```sh
+crewfold check run unit --task "$TASK" --workspace personal \
+  --checkout "$CHECKOUT" --socket "$SOCKET"
+crewfold check inspect "$CHECK_RUN" --workspace personal --socket "$SOCKET"
+crewfold check logs "$CHECK_RUN" --workspace personal --socket "$SOCKET"
+crewfold check watch --workspace personal --project world-engine --socket "$SOCKET"
+```
+
+When `--checkout` is omitted, the server selects the task's currently reserved run
+checkout, then its latest run checkout in a stable order, or fails closed. `check
+run` returns durable asynchronous intent. `inspect` keeps command outcome,
+launch/terminal HEAD and dirty observations, current freshness, named criterion
+state, bounded artifact metadata, mechanical evidence, notification routing, and
+repair state separate. `logs` returns only bounded redacted retained output.
+
+Only a latest exact-definition pass whose launch and terminal observations have
+the same clean nonempty HEAD is `verified`. A dirty pass is diagnostic and
+`unknown`; a later HEAD change or dirty observation is monotonically `stale`.
+Returning to the old HEAD does not revive it.
+
+`check watch` is one bounded reconciliation/freshness/routing pass. It does not
+launch every missing check. Missing, running, failed, stale, and unknown criteria
+remain visible in `check requirement list` and JSON output.
+
+An agent receives the watcher surface only through an exact owner grant:
+
+```sh
+crewfold check grant create \
+  --workspace personal \
+  --project world-engine \
+  --agent "$WATCH_AGENT" \
+  --expected-agent-revision "$WATCH_AGENT_REVISION" \
+  --definition unit@1 \
+  --operation run \
+  --operation inspect \
+  --operation propose_repair \
+  --max-pending 8 \
+  --max-in-flight 2 \
+  --socket "$SOCKET"
+
+crewfold check grant show "$CHECK_GRANT" --workspace personal --socket "$SOCKET"
+crewfold check grant revoke "$CHECK_GRANT" --workspace personal \
+  --expected-revision 1 --reason 'Rotate watcher authority' --socket "$SOCKET"
+```
+
+The current-packet agent run derives project, actor, checkout resolution,
+definitions, and operations from that exact current grant. It cannot also carry
+manager authority. `AgentDefinition.Role` and `LaunchProfile.Purpose` never confer check
+authority; arbitrary same-role agents without the grant are denied.
+
+Explicit evidence-review and coordination duties are exact routes:
+
+```sh
+crewfold check route create \
+  --workspace personal \
+  --project world-engine \
+  --definition unit \
+  --trigger nonpass \
+  --duty evidence_review \
+  --agent "$EVIDENCE_AGENT" \
+  --expected-agent-revision "$EVIDENCE_AGENT_REVISION" \
+  --socket "$SOCKET"
+crewfold check route retire "$ROUTE" --workspace personal \
+  --expected-revision 1 --socket "$SOCKET"
+```
+
+Every nonpass also routes to the exact current task assignment. With no current
+assignment, Crewfold records `unroutable`; it never guesses from role or history.
+Delivered inbox messages identify subsystem sender `crewfold-check-worker`, not
+the owner or an agent run.
+
+Repair proposals default to disabled:
+
+```sh
+crewfold check policy configure \
+  --workspace personal \
+  --project world-engine \
+  --repair-proposals enabled \
+  --repair-profile "$REPAIR_PROFILE" \
+  --repair-profile-revision "$REPAIR_PROFILE_REVISION" \
+  --max-open-repairs 4 \
+  --expected-revision 1 \
+  --socket "$SOCKET"
+
+crewfold check repair list --workspace personal --project world-engine \
+  --status pending --socket "$SOCKET"
+crewfold check repair inspect "$REPAIR" --workspace personal --socket "$SOCKET"
+crewfold check repair accept "$REPAIR" --workspace personal \
+  --expected-revision 1 --decision-note 'Create the bounded repair task' \
+  --socket "$SOCKET"
+crewfold check repair reject "$REPAIR" --workspace personal \
+  --expected-revision 1 --decision-note 'No repair task' --socket "$SOCKET"
+```
+
+An agent proposal is inert and cannot choose the repair agent, profile, command,
+budget, or task effect. Only owner acceptance can create the one exact-profile
+repair task and scheduling intent. A later fresh pass makes a pending proposal
+stale.
+
+No check command completes a task, records policy acceptance, commits, pushes,
+merges, deploys, or chooses integration order.
 
 ## Outcomes and management briefings
 

@@ -7,7 +7,42 @@ import (
 	"net"
 	"path/filepath"
 	"testing"
+
+	"crewfold/internal/domain"
 )
+
+func TestInboxResultPreservesHonestCheckSubsystemSenderWithoutAgentIdentity(t *testing.T) {
+	t.Parallel()
+	payload := []byte(`{"schema":"urn:crewfold:schema:local-api:inbox-list-result:v1","type":"inbox","agent":"change-agent","items":[{"message":{"id":"msg_00000000000000000000000000000000","workspace_id":"ws_00000000000000000000000000000000","thread_id":"thread_00000000000000000000000000000000","project_id":"prj_00000000000000000000000000000000","task_id":"task_00000000000000000000000000000000","sender_type":"subsystem","sender_id":"crewfold-check-worker","kind":"inform","body":"The exact local check failed.","artifact_ids":[],"created_at":"2026-08-13T20:00:00Z"},"delivery":{"message_id":"msg_00000000000000000000000000000000","recipient_agent_id":"agent_00000000000000000000000000000000","recipient_name":"change-agent","status":"queued","queued_at":"2026-08-13T20:00:00Z","wake_status":"not_requested"}}]}`)
+	var result InboxListResult
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("inbox items = %d", len(result.Items))
+	}
+	message := result.Items[0].Message
+	if message.SenderType != "subsystem" || message.SenderID != "crewfold-check-worker" ||
+		message.SenderAgentID != "" || message.SenderAgentName != "" || message.SenderRunID != "" ||
+		message.Kind != domain.MessageInform {
+		t.Fatalf("subsystem message = %#v", message)
+	}
+	roundTrip, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(roundTrip, &object); err != nil {
+		t.Fatal(err)
+	}
+	items := object["items"].([]any)
+	wireMessage := items[0].(map[string]any)["message"].(map[string]any)
+	for _, absent := range []string{"sender_agent_id", "sender_agent_name", "sender_run_id"} {
+		if _, exists := wireMessage[absent]; exists {
+			t.Errorf("subsystem message exposes %s", absent)
+		}
+	}
+}
 
 func TestParticipantThreadClientsDefaultStableKeysAndPreserveBindings(t *testing.T) {
 	t.Parallel()

@@ -1,0 +1,14 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:local-api:check-route-query-params:v1",
+  "type":"object","additionalProperties":false,"required":["workspace"],
+  "properties":{
+    "workspace":{"type":"string","minLength":1,"maxLength":128},
+    "project":{"type":"string","minLength":1,"maxLength":128},
+    "definition":{"type":"string","minLength":1,"maxLength":128},
+    "trigger":{"enum":["pass","nonpass","stale"]},
+    "duty":{"enum":["evidence_review","coordination"]},
+    "status":{"enum":["active","retired"]},
+    "limit":{"type":"integer","minimum":1,"maximum":100}
+  }
+}

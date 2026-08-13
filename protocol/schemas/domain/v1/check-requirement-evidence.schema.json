@@ -1,0 +1,17 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:domain:check-requirement-evidence:v1",
+  "type":"object","additionalProperties":false,
+  "required":["id","requirement_id","requirement_revision","check_result_id","freshness_revision","class","effect","created_at","created_by"],
+  "properties":{
+    "id":{"type":"string","pattern":"^checkevidence_[0-9a-f]{32}$"},
+    "requirement_id":{"type":"string","pattern":"^checkreq_[0-9a-f]{32}$"},
+    "requirement_revision":{"type":"integer","minimum":1},
+    "check_result_id":{"type":"string","pattern":"^checkresult_[0-9a-f]{32}$"},
+    "freshness_revision":{"type":"integer","minimum":1},
+    "class":{"enum":["agent_self_report","mechanical_check","independent_review","policy_acceptance"]},
+    "effect":{"enum":["supports","contradicts","inconclusive"]},
+    "created_at":{"type":"string","format":"date-time"},
+    "created_by":{"type":"string","minLength":1}
+  }
+}

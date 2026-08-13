@@ -82,8 +82,7 @@ identity, not authenticity or a cross-organization signature.
 Portable task applicability is not an operational task. Crewfold persists an
 immutable task-scope anchor containing the exact task ID and its workspace/project
 binding plus original creation time/actor identity. A native task-scoped proposal
-creates or reuses that anchor; migration backfills anchors for existing scoped
-items. Imported item bindings refer to the anchor rather than requiring a row in
+creates or reuses that anchor. Imported item bindings refer to the anchor rather than requiring a row in
 the operational task table.
 
 This preserves fail-closed behavior: project-only retrieval still cannot expose a

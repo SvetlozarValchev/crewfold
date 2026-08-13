@@ -40,8 +40,10 @@ type Config struct {
 	StoreOptions              store.Options
 	GitInspector              gitstate.Inspector
 	RuntimeDrivers            map[string]execution.RuntimeDriver
+	CheckRuntimeDriver        execution.RuntimeDriver
 	ProviderAdapters          map[string]execution.ProviderAdapter
 	RunWorkerHook             func(string, domain.Run) error
+	CheckWorkerHook           func(string, domain.CheckRun) error
 	MessageWake               func(context.Context, domain.MessageWakeJob) error
 	HerdrExecutable           string
 	HerdrSession              string
@@ -55,6 +57,9 @@ type Config struct {
 	ClaudeMaxBudgetUSD        string
 	ClaudeExternallySandboxed bool
 	DisableRunWorker          bool
+	DisableCheckWorker        bool
+	DisableCheckWatcher       bool
+	CheckWatchScanInterval    time.Duration
 	DisableClaimWatcher       bool
 	ClaimScanInterval         time.Duration
 	DisableSupervisor         bool
@@ -78,10 +83,15 @@ type server struct {
 	store          *store.Store
 	gitInspector   gitstate.Inspector
 	runtimes       map[string]execution.RuntimeDriver
+	checkRuntime   execution.RuntimeDriver
 	providers      map[string]execution.ProviderAdapter
 	capabilities   *runCapabilityManager
 	claimWatcherID string
-	supervisorPass atomic.Uint64
+	checkWatchMu   sync.Mutex
+	checkWatchPass atomic.Uint64
+	// Only the check-watch worker accesses this scope keyset cursor.
+	checkWatchScopeCursor string
+	supervisorPass        atomic.Uint64
 	// Only the supervisor worker goroutine accesses this keyset cursor. It
 	// bounds each daemon tick while rotating across every enabled workspace.
 	supervisorWorkspaceCursor string
@@ -106,6 +116,13 @@ func Run(ctx context.Context, config Config) error {
 		return &StartupError{Code: CodeDatabaseUnavailable, Message: "initialize Crewfold database", Cause: err}
 	}
 	defer storage.Close()
+	// The data-directory lock proves that no prior daemon can still own a
+	// check-job lease. Requeue those durable jobs before any worker starts so a
+	// crash after the pre-effect receipt resumes the same operation immediately
+	// instead of waiting for a wall-clock lease to expire.
+	if err := storage.RecoverCheckJobLeases(ctx); err != nil {
+		return &StartupError{Code: CodeDatabaseUnavailable, Message: "recover durable check jobs", Cause: err}
+	}
 	capabilities, err := newRunCapabilityManager(resolved.DataDir, resolved.SocketPath)
 	if err != nil {
 		return &StartupError{Code: CodeInvalidConfiguration, Message: "initialize scoped run capabilities", Cause: err}
@@ -181,12 +198,15 @@ func Run(ctx context.Context, config Config) error {
 		store:          storage,
 		gitInspector:   resolved.GitInspector,
 		runtimes:       resolved.RuntimeDrivers,
+		checkRuntime:   resolved.CheckRuntimeDriver,
 		providers:      resolved.ProviderAdapters,
 		capabilities:   capabilities,
 		claimWatcherID: fmt.Sprintf("watcher-%d-%d", os.Getpid(), time.Now().UTC().UnixNano()),
 	}
 	defer instance.cleanupSocket()
 	instance.startRunWorker()
+	instance.startCheckWorker()
+	instance.startCheckWatcher()
 	instance.processMessageWakeJobs()
 	instance.startClaimWatcher()
 	instance.startSupervisor()
@@ -240,6 +260,12 @@ func resolveConfig(config Config) (Config, error) {
 	if config.ClaimScanInterval == 0 {
 		config.ClaimScanInterval = 2 * time.Second
 	}
+	if config.CheckWatchScanInterval == 0 {
+		config.CheckWatchScanInterval = 2 * time.Second
+	}
+	if config.CheckWatchScanInterval < 100*time.Millisecond && !config.DisableCheckWatcher {
+		return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "check-watch scan interval must be at least 100ms"}
+	}
 	if config.ClaimScanInterval < 100*time.Millisecond && !config.DisableClaimWatcher {
 		return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "claim scan interval must be at least 100ms"}
 	}
@@ -282,6 +308,18 @@ func resolveConfig(config Config) (Config, error) {
 			herdrRuntime.Name():  herdrRuntime,
 		}
 	}
+	if config.CheckRuntimeDriver == nil {
+		executable, executableErr := os.Executable()
+		if executableErr != nil {
+			return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "resolve daemon executable for check runtime", Cause: executableErr}
+		}
+		config.CheckRuntimeDriver = execution.NewDirectRuntime(execution.DirectRuntimeOptions{
+			StateRoot: filepath.Join(dataDir, "check-runtime"), SupervisorExecutable: executable,
+			InheritedEnvironment:           checkRuntimeEnvironment(os.Environ()),
+			OperationIDEnvironmentVariable: execution.DirectCheckRunIDEnvironmentVariable,
+			OutputByteLimit:                1024 * 1024,
+		})
+	}
 	if config.ProviderAdapters == nil {
 		config.defaultProviders = true
 		fakeProvider := execution.FakeProvider{}
@@ -296,6 +334,15 @@ func resolveConfig(config Config) (Config, error) {
 			return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "runtime driver registry contains an invalid entry"}
 		}
 	}
+	if config.CheckRuntimeDriver == nil || config.CheckRuntimeDriver.Name() != "direct" {
+		return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "check runtime must be the dedicated direct runtime"}
+	}
+	if _, ok := config.CheckRuntimeDriver.(execution.RuntimeLaunchPreparer); !ok {
+		return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "check runtime must support side-effect-free launch preparation"}
+	}
+	if _, ok := config.CheckRuntimeDriver.(execution.RuntimeStatusInspector); !ok {
+		return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "check runtime must support status-only inspection"}
+	}
 	for name, adapter := range config.ProviderAdapters {
 		if adapter == nil || strings.TrimSpace(name) == "" || name != adapter.Name() {
 			return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "provider adapter registry contains an invalid entry"}
@@ -305,6 +352,21 @@ func resolveConfig(config Config) (Config, error) {
 	config.DataDir = dataDir
 	config.SocketPath = socketPath
 	return config, nil
+}
+
+func checkRuntimeEnvironment(environment []string) []string {
+	result := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		switch {
+		case name == "PATH", name == "LANG", name == "TMPDIR", name == "TZ", strings.HasPrefix(name, "LC_"):
+			result = append(result, entry)
+		}
+	}
+	return result
 }
 
 func prepareSocketPath(socketPath string) error {
@@ -717,6 +779,56 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleApprovalDecision(request, true), false
 	case localapi.MethodApprovalDeny:
 		return s.handleApprovalDecision(request, false), false
+	case localapi.MethodCheckDefinitionCreate:
+		return s.handleCheckDefinitionCreate(request), false
+	case localapi.MethodCheckDefinitionRetire:
+		return s.handleCheckDefinitionRetire(request), false
+	case localapi.MethodCheckDefinitionShow:
+		return s.handleCheckDefinitionShow(request), false
+	case localapi.MethodCheckDefinitionList:
+		return s.handleCheckDefinitionList(request), false
+	case localapi.MethodCheckRequirementCreate:
+		return s.handleCheckRequirementCreate(request), false
+	case localapi.MethodCheckRequirementRetire:
+		return s.handleCheckRequirementRetire(request), false
+	case localapi.MethodCheckRequirementList:
+		return s.handleCheckRequirementList(request), false
+	case localapi.MethodCheckGrantCreate:
+		return s.handleCheckGrantCreate(request), false
+	case localapi.MethodCheckGrantRevoke:
+		return s.handleCheckGrantRevoke(request), false
+	case localapi.MethodCheckGrantShow:
+		return s.handleCheckGrantShow(request), false
+	case localapi.MethodCheckGrantList:
+		return s.handleCheckGrantList(request), false
+	case localapi.MethodCheckRouteCreate:
+		return s.handleCheckRouteCreate(request), false
+	case localapi.MethodCheckRouteRetire:
+		return s.handleCheckRouteRetire(request), false
+	case localapi.MethodCheckRouteList:
+		return s.handleCheckRouteList(request), false
+	case localapi.MethodCheckPolicyShow:
+		return s.handleCheckPolicyShow(request), false
+	case localapi.MethodCheckPolicyConfigure:
+		return s.handleCheckPolicyConfigure(request), false
+	case localapi.MethodCheckRun:
+		return s.handleCheckRun(request), false
+	case localapi.MethodCheckList:
+		return s.handleCheckList(request), false
+	case localapi.MethodCheckInspect:
+		return s.handleCheckInspect(request), false
+	case localapi.MethodCheckLogs:
+		return s.handleCheckLogs(request), false
+	case localapi.MethodCheckWatch:
+		return s.handleCheckWatch(request), false
+	case localapi.MethodCheckRepairList:
+		return s.handleCheckRepairList(request), false
+	case localapi.MethodCheckRepairInspect:
+		return s.handleCheckRepairInspect(request), false
+	case localapi.MethodCheckRepairAccept:
+		return s.handleCheckRepairDecision(request, true), false
+	case localapi.MethodCheckRepairReject:
+		return s.handleCheckRepairDecision(request, false), false
 	case localapi.MethodEventsList:
 		return s.handleEventsList(request), false
 	default:

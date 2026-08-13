@@ -594,7 +594,7 @@ func TestContextDeltaAckAndRebaseRollBackAtMutationBoundaries(t *testing.T) {
 func TestVersionFourContextPacketCanonicalSnapshotsBlockForgedRunBinding(t *testing.T) {
 	t.Parallel()
 	storage := openTestStore(t, t.TempDir(), Options{})
-	workspace, _, agent, checkout, assigned := initializeRunTest(t, storage, "forged v4 bind")
+	workspace, _, agent, checkout, assigned := initializeRunTest(t, storage, "forged current bind")
 	built, err := storage.BuildContextPacket(context.Background(), BuildContextCommand{WorkspaceIdentifier: workspace.ID,
 		TaskID: assigned.Task.ID, AgentIdentifier: agent.ID, CheckoutIdentifier: checkout.ID,
 		ExpectedTaskRevision: assigned.Task.Revision, IdempotencyKey: "build-canonical", CorrelationID: "request-build-canonical"})
@@ -1010,12 +1010,6 @@ func TestContextDeltaExactByteBoundariesRemainClassifiable(t *testing.T) {
 	atLimit, err := makeDelta(bodyBytes, 0)
 	if err != nil || atLimit.ByteSize != maximumContextDeltaBytes {
 		t.Fatalf("exact delta size=%d body=%d err=%v", atLimit.ByteSize, bodyBytes, err)
-	}
-	v5 := atLimit
-	v5.BasePacketSchema = domain.ContextPacketSchemaV5
-	v5.ContentHash, v5.ByteSize, v5.Budget = "", 0, domain.ContextDeltaBudget{}
-	if _, err := finalizeContextDelta(&v5, 0); err != nil || validateContextDelta(v5) != nil {
-		t.Fatalf("packet-v5 delta did not satisfy the same live-context contract: %#v, %v", v5, err)
 	}
 	overLimit, err := makeDelta(bodyBytes+1, 0)
 	if err != nil || overLimit.ByteSize != maximumContextDeltaBytes+1 {
@@ -1530,64 +1524,6 @@ func TestContextDeltaStaleWithdrawalAndBaseContractRebase(t *testing.T) {
 	if err != nil || !replayedRebase.Replayed || replayedRebase.ScannedFromEventSequence != rebase.ScannedFromEventSequence ||
 		replayedRebase.ScannedThroughEventSequence != rebase.ScannedThroughEventSequence || replayedRebase.EventSequence != rebase.EventSequence {
 		t.Fatalf("RefreshContext(rebase replay)=%#v,%v", replayedRebase, err)
-	}
-}
-
-func TestContextDeltaLegacyRefreshAndStorageIntegrity(t *testing.T) {
-	t.Parallel()
-	storage := openTestStore(t, t.TempDir(), Options{})
-	_, _, _, run := startContextDeltaTestRun(t, storage, "legacy delta")
-	var packetJSON string
-	if err := storage.db.QueryRow("SELECT packet_json FROM context_packets WHERE id = ?", run.ContextPacketID).Scan(&packetJSON); err != nil {
-		t.Fatalf("read packet JSON: %v", err)
-	}
-	var packet domain.ContextPacket
-	if err := json.Unmarshal([]byte(packetJSON), &packet); err != nil {
-		t.Fatalf("decode packet JSON: %v", err)
-	}
-	legacy := packet
-	legacy.ID = "ctx_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-	legacy.Schema = domain.ContextPacketSchemaV3
-	legacy.Dependents, legacy.ParticipantThreads = nil, nil
-	legacy.LiveContext, legacy.Budget.Collaboration = domain.ContextLivePolicy{}, domain.ContextBudgetUsage{}
-	legacy.AsOfEventSequence, legacy.ByteSize = 0, 0
-	legacy.ContentHash = packet.ContentHash
-	for range 8 {
-		encoded, _ := json.Marshal(legacy)
-		if len(encoded) == legacy.ByteSize {
-			packetJSON = string(encoded)
-			break
-		}
-		legacy.ByteSize = len(encoded)
-	}
-	if _, err := storage.db.Exec(`INSERT INTO context_packets(id,workspace_id,project_id,task_id,agent_id,checkout_id,packet_json,content_hash,byte_size,created_at,created_by)
-VALUES (?,?,?,?,?,?,?,?,?,?,?)`, legacy.ID, legacy.WorkspaceID, legacy.ProjectID, legacy.TaskID, legacy.AgentID, legacy.CheckoutID,
-		packetJSON, legacy.ContentHash, legacy.ByteSize, legacy.CreatedAt, legacy.CreatedBy); err != nil {
-		t.Fatalf("insert legacy packet: %v", err)
-	}
-	if _, err := storage.db.Exec("UPDATE run_context_bindings SET context_packet_id = ? WHERE run_id = ?", legacy.ID, run.ID); err == nil {
-		t.Fatal("immutable context binding update unexpectedly succeeded")
-	}
-	// Row/JSON integrity rejects a forged version-four packet before any run can
-	// bind it.
-	forged := packet
-	forged.ID = "ctx_ffffffffffffffffffffffffffffffff"
-	forged.Task.Title = "forged semantic content"
-	forged.ByteSize = 0
-	var encoded []byte
-	for range 8 {
-		encoded, _ = json.Marshal(forged)
-		if len(encoded) == forged.ByteSize {
-			break
-		}
-		forged.ByteSize = len(encoded)
-		forged.Budget.Total.UsedBytes = len(encoded)
-		forged.Budget.Total.RemainingBytes = maximumContextBytes - len(encoded)
-	}
-	if _, err := storage.db.Exec(`INSERT INTO context_packets(id,workspace_id,project_id,task_id,agent_id,checkout_id,packet_json,content_hash,byte_size,created_at,created_by)
-VALUES (?,?,?,?,?,?,?,?,?,?,?)`, forged.ID, forged.WorkspaceID, forged.ProjectID, forged.TaskID, forged.AgentID, forged.CheckoutID,
-		string(encoded), forged.ContentHash, forged.ByteSize, forged.CreatedAt, forged.CreatedBy); err == nil {
-		t.Fatal("semantically forged context packet insert unexpectedly succeeded")
 	}
 }
 

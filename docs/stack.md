@@ -19,7 +19,7 @@ until their capability is implemented.
 | Daemon and CLI | Go, current supported stable release | Single binary, strong process/concurrency support, low idle cost |
 | Local database | SQLite in WAL mode through `github.com/ncruces/go-sqlite3` | Transactional, CGO-free, portable, and operationally trivial at personal scale |
 | SQL access | Pinned `sqlc` generated Go over explicit SQL | Compile-time query types while schema and transaction behavior stay visible |
-| Migrations | Ordered embedded SQL migrations | Reproducible upgrades and simple backups |
+| Database schema | One embedded current baseline | Reproducible initialization and simple backups |
 | Local transport | JSON messages over a Unix domain socket | Inspectable, stream-capable, user-local by default |
 | Schema | JSON Schema with generated language types | Versioned contracts for CLI, adapters, SDKs, and fixtures |
 | Agent tools | MCP server hosted by the daemon | Common provider-neutral coordination surface |
@@ -59,7 +59,7 @@ One SQLite database initially contains:
 - command idempotency records;
 - durable worker queues and leases;
 - full-text indexes for accepted knowledge;
-- schema migration state.
+- current schema-baseline metadata.
 
 Use WAL mode, foreign keys, busy timeouts, and short transactions. Blob-sized
 artifacts belong in a content-addressed local directory with metadata in SQLite.
@@ -82,7 +82,7 @@ adapters can use the native local API without pretending to be MCP clients.
 crewfold/
 ├─ cmd/crewfold/              # single CLI/daemon entry point
 ├─ internal/                  # core Go packages, private by default
-├─ protocol/                  # JSON Schemas and compatibility fixtures
+├─ protocol/                  # Current JSON Schemas and conformance fixtures
 ├─ integrations/
 │  ├─ herdr/                  # runtime driver
 │  └─ providers/              # provider adapters and conformance fixtures

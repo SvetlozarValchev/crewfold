@@ -34,7 +34,8 @@ knowledge revision.
 
 Contradiction state is `proposed`, `open`, `dismissed`, or `resolved`, with its own
 optimistic state revision. Knowledge review and currency remain unchanged. The
-knowledge-revision v1 schema and context-packet v3 schema are not extended.
+knowledge-revision schema is unchanged, and contradiction lifecycle state is not
+embedded into the immutable context-packet base.
 
 ### Reporting and governance authority
 
@@ -88,7 +89,7 @@ first 16 sorted unique authorized contradiction IDs and the exact `(+N more)`
 suffix when needed. No packet, event, or idempotency result is committed on
 failure, so the same request can succeed after resolution.
 
-Previously built packet-v3 bytes are immutable. Opening, dismissing, resolving,
+Previously built packet bytes are immutable. Opening, dismissing, resolving,
 or discovering a contradiction never rewrites an existing packet or briefing.
 
 ### Terminal resolution
@@ -120,7 +121,7 @@ generated through the pinned `sqlc` boundary.
 - An agent can raise a conflict without gaining the power to quarantine accepted
   knowledge.
 - Search and explicit context assembly fail closed from the same relational open
-  state while historical packets remain explainable and immutable.
+  state while already-built packets remain explainable and immutable.
 - A broad claim may temporarily disappear from unrelated tasks. Owners resolve
   that conservative blast radius by dismissing the report or governing a new
   revision, not by hidden ranking.
@@ -144,5 +145,5 @@ generated through the pinned `sqlc` boundary.
   project-wide claim authoritative elsewhere without a new scoped revision.
 - Resolve conflicts by search score or a model: makes discovery or prose an
   implicit governance mechanism.
-- Rewrite old packets after confirmation: destroys replayability and the record
+- Rewrite already-built packets after confirmation: destroys replayability and the record
   of what an earlier run was actually told.

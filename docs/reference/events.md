@@ -12,9 +12,10 @@ implemented. Canonical knowledge proposal/governance, authority-denial, and
 context-packet build, live-context delta, and acknowledgement facts are also
 implemented. Owner-granted manager authority/profile lifecycle and manager
 proposal submission/decision facts are implemented; supervisor/approval facts
-listed below are part of the M16 durable contract as their store lane lands.
-Names for checks and external integrations remain proposals; the catalogue
-defines intended coverage, not a frozen schema.
+listed below are part of the M16 durable contract. The M17 local-check fact set
+below is frozen by ADR-0016. Names for remote checks and external integrations
+remain proposals; the catalogue defines their intended coverage, not a frozen
+schema.
 
 ## Envelope
 
@@ -227,7 +228,7 @@ reach that boundary: its unadvertised governance-tool probe is instead captured 
 `run.tool_denied` by capability policy.
 `context.packet_built` identifies the immutable packet, task, agent, checkout,
 semantic hash, and final byte size. Selection details and exact requested knowledge
-IDs live in packet v4 rather than being duplicated into the event.
+IDs live in the current packet rather than being duplicated into the event.
 
 `context_delta.built` identifies the exact run/base packet, immutable delta ID and
 run-local sequence, exclusive/inclusive event interval, content hash, byte size,
@@ -389,6 +390,90 @@ was authorized. Runtime launch occurs only after their transaction commits, so a
 crash before launch creates no invented `run.started` fact and restart reconciles
 the same durable run.
 
+## Local checks
+
+The M17 fact set is:
+
+```text
+check.definition_created
+check.definition_retired
+check.requirement_created
+check.requirement_retired
+check.grant_created
+check.grant_revoked
+check.policy_configured
+check.route_created
+check.route_retired
+check.run_requested
+check.run_starting
+check.run_runtime_observed
+check.run_started
+check.run_finished
+check.result_recorded
+check.freshness_observed
+check.freshness_stale
+check.notification_queued
+check.notification_unroutable
+check.repair_proposed
+check.repair_accepted
+check.repair_rejected
+check.repair_stale
+check.watch_completed
+```
+
+Owner definition, requirement, grant, policy, and route facts identify their
+exact typed entity revision and canonical content hash; raw argv and output do
+not need to be copied into event payloads. Role and launch-profile purpose strings
+are absent because they are not check authority.
+
+`check.run_requested` commits with the run, job, and idempotency result.
+`check.run_starting` commits with the exact immutable launch receipt before the
+runtime effect. `check.run_runtime_observed` commits the exact stable direct-runtime
+handle after launch or replay, while `check.run_started` records the transition to
+running after that binding has reconciled. A terminal
+transaction emits `check.run_finished` and `check.result_recorded` with one closed
+outcome, plus the initial freshness, mechanical evidence, and routing facts.
+Runtime text remains in bounded redacted artifacts.
+
+`check.freshness_observed` records an available or unavailable fresh
+`GitInspector` observation, its timestamp, and reason. A different HEAD or any
+dirty tree emits `check.freshness_stale`; staleness is monotonic and the event is
+never undone if the old HEAD returns. Missing requirements produce no invented
+pass event and remain visible in projection. Each freshness revision also keeps
+one immutable mechanical-evidence link for the exact requirement/result tuple:
+the initial link stays historical and a later stale revision adds a distinct
+`inconclusive` link.
+
+`check.notification_queued` identifies the exact result or freshness revision,
+route/policy, explicit duty, recipient agent revision, and current assignment
+revision when applicable. The corresponding message has subsystem sender
+`crewfold-check-worker` and a one-to-one receipt.
+`check.notification_unroutable` records the absence of a current task assignment;
+it does not guess a recipient.
+
+Repair proposal is an agent-run or local-owner evidence fact with no work effect.
+`check.repair_accepted` is a local-owner fact committed with the exact repair
+task, scheduling intent, decision, effect receipt, and current policy/profile
+proof. Reject and stale have no task effect.
+
+The public `check.watch` command retains an idempotency receipt and emits
+`check.watch_completed` for the exact requested pass, including an exact no-op,
+so its nonzero event sequence and replay result remain a valid public contract.
+An internal daemon pass persists the receipt and event only when material; its
+exact no-op emits neither. A pass considers at most 100 candidates and cannot act
+until its closed-union journal cursor reaches the captured cutoff. M17 facts are
+added explicitly to the M16 supervisor and live-context event classifiers; an
+unknown event returns `unsupported_check_event` or
+`unsupported_supervisor_event` without advancing the relevant cursor or applying
+effects.
+
+`check.watch_completed` says that the owner-requested bounded pass and its
+receipt committed. It does not by itself say that freshness changed; the
+receipt counters and any separate freshness facts carry that meaning.
+
+None of these events is task completion, policy acceptance, Git push/merge,
+deployment, or integration ordering.
+
 ## Policy, budgets, and approvals
 
 ```text
@@ -430,9 +515,6 @@ runtime.operation_failed
 provider.probed
 provider.session_bound
 provider.usage_observed
-check.started
-check.completed
-check.invalidated
 external_status.observed
 ```
 

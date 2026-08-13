@@ -18,7 +18,7 @@ copy, the owner can govern exact-revision contradictions, and project knowledge
 can be exported and imported without restoring operational tasks, meetings, runs,
 or provider state.
 
-Packet v4 adds an immutable journal cursor, bounded reverse dependents, exact
+The current packet carries an immutable journal cursor, bounded reverse dependents, exact
 participant rosters, and a frozen live-context policy. The owner explicitly scans
 for changes; the exact live run fetches and acknowledges at most one pending
 immutable delta. Unsafe drift, an unsupported event, or a byte/event limit never
@@ -30,8 +30,8 @@ truncates authority: it produces a durable, explainable rebase requirement.
   diagnostics use deterministic, scope-filtered FTS5 ranking over a rebuildable
   projection.
 - `thread create`, `thread invite`, and participant inspection bind every
-  collaborator to one immutable agent/task/project identity while legacy direct
-  mail remains project-isolated.
+  collaborator to one immutable agent/task/project identity while direct mail
+  remains project-isolated.
 - `curator queue`, rule configuration, and bounded processing derive only the
   frozen exact-copy rule and retain owner governance.
 - Exact contradiction report/confirm/dismiss/list/show/dispute surfaces preserve
@@ -65,18 +65,17 @@ truncates authority: it produces a durable, explainable rebase requirement.
   rebase projection changes commit atomically. Failure injection after projection
   and event boundaries leaves no partial mutation and retry succeeds.
 
-## Bounds and compatibility
+## Bounds and current contract
 
-- Packet v4 remains within 32 KiB, with 12 KiB knowledge and 8 KiB collaboration
+- The current packet remains within 32 KiB, with 12 KiB knowledge and 8 KiB collaboration
   sub-budgets, at most 32 reverse dependents, and at most eight complete rosters.
 - One refresh inspects at most 1,000 potentially relevant events. Known inert
   lifecycle noise is pruned before the bound; unknown authority-sensitive facts
   fail closed.
 - Freshness is evaluated with exact RFC3339 nanosecond ordering. Expiry can create
   a withdrawal at an unchanged event cursor without inventing a journal cause.
-- Packet v1 through v3 remain readable and immutable. Their policy never gains the
-  new MCP tools; owner refresh returns an explicit rebase requirement and creates
-  no v4 state.
+- A packet's frozen policy never gains ungranted MCP tools; a changed base contract
+  yields an explicit rebase requirement and creates no delta state.
 - Provider execution stays explicit-pull. M15 adds no native provider steering,
   model call, network dependency, or transcript ingestion.
 
@@ -96,7 +95,8 @@ The final stable tree passed:
 The live-context scenario proves pending delivery, daemon restart, exact-run
 fetch/ack and idempotent replay, wrong-task and wrong-run denial, preview bounds,
 dispute suppression tombstones and final-close re-offer, no-op cursor advancement,
-pagination, packet-v3 compatibility, trigger restoration, and exact event counts.
+pagination, current-packet frozen-tool enforcement, trigger integrity, and exact
+event counts.
 Independent adversarial review and a separate final-gate audit found no unresolved
 high- or medium-severity defect.
 

@@ -21,32 +21,32 @@ needs to audit directly.
 ## Decision
 
 Use pinned `sqlc` to generate the Go persistence boundary from named SQLite query
-files. Keep ordered SQL migrations as the authoritative schema. Generated code is
+files. Keep the embedded current SQL baseline as the authoritative schema. Generated code is
 checked in; handwritten domain services construct typed query parameters and own
 transaction boundaries, policy validation, event ordering, and conversion into
 domain records.
 
-New persistence work uses generated queries by default. Existing direct SQL is
-migrated incrementally when its subsystem is changed. Exceptional dynamic or
+New persistence work uses generated queries by default. Remaining direct SQL is
+converted when its subsystem is changed. Exceptional dynamic or
 transaction-specific SQL may remain handwritten only when a generated query is
 not a clearer representation, and it requires focused tests.
 
 The repository pins the generator version in `.sqlc-version`. Normal builds and
 the complete offline gate do not download or execute the generator: a deterministic
-hash detects changes to migration/query sources without refreshed checked-in
+hash detects changes to baseline/query sources without refreshed checked-in
 output. Contributors run `./scripts/generate-db.sh` after changing those sources.
 
-The generator reads an ordered temporary projection of the migrations with
+The generator reads a temporary projection of the current baseline with
 `CREATE TRIGGER` bodies removed. Triggers are runtime integrity programs rather
 than query result schemas, and sufficiently large SQLite trigger expressions can
-make the pinned parser pathologically slow. The authoritative migration files,
+make the pinned parser pathologically slow. The authoritative baseline SQL,
 including every trigger byte, remain part of the source hash and are executed and
 tested unchanged by Crewfold; only sqlc's development-time schema input omits
 them.
 
-### Schema-17 supervision exception
+### Manager/supervision transaction exception
 
-Schema 17's management/supervision service is an explicit transaction-specific
+The management/supervision service is an explicit transaction-specific
 exception to the default. Its writes are not independent CRUD operations: one
 proposal decision or placement interleaves optimistic revision checks, normalized
 authority children, graph and capacity reads, projection writes, immutable
@@ -56,7 +56,7 @@ handwritten query objects made the security ordering harder—not easier—to au
 so `internal/store/management.go` keeps the complete fixed SQL program together
 for M16. It does not construct SQL from caller data; only values are parameters.
 
-This exception is bounded to schema-17 tables and their atomic orchestration. It
+This exception is bounded to manager/supervision tables and their atomic orchestration. It
 is covered by strict row scanners and canonical-hash checks on every read,
 direct-SQL substitution/partial-graph tests, transaction fault barriers,
 concurrent supervisor and proposal tests, restart tests, the generated schema
@@ -73,5 +73,5 @@ security matrix; it is not a license for a second dynamic persistence layer.
 - SQL and transaction behavior remain visible and reviewable.
 - Generated code adds repository volume but removes handwritten scan boilerplate.
 - Schema/query changes require the pinned generator before committing.
-- The codebase temporarily contains older direct SQL alongside generated access;
-  this is an explicit migration state, not a second preferred pattern.
+- The bounded manager/supervision transaction keeps fixed direct SQL alongside
+  generated access; it is an audited exception, not a second preferred pattern.

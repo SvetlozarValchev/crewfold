@@ -47,12 +47,16 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	key := strings.TrimSpace(command.IdempotencyKey)
 	correlationID := strings.TrimSpace(command.CorrelationID)
 	contextPacketID := strings.TrimSpace(command.ContextPacketID)
+	checkWatchGrantID := strings.TrimSpace(command.CheckWatchGrantID)
 	capabilityTTL := command.CapabilityTTL
 	if capabilityTTL == 0 {
 		capabilityTTL = defaultRunCapabilityTTL
 	}
 	if workspaceIdentifier == "" || taskID == "" || runtimeName == "" || providerName == "" || command.ExpectedTaskRevision < 1 || !validStoredScenario(command.Scenario) {
 		return RunMutationResult{}, &Error{Code: CodeInvalidRun, Message: "run start requires workspace, task, runtime, provider, a valid scenario, and expected task revision"}
+	}
+	if (checkWatchGrantID == "") != (command.ExpectedCheckWatchGrantRevision == 0) || checkWatchGrantID != "" && contextPacketID != "" {
+		return RunMutationResult{}, &Error{Code: CodeInvalidRun, Message: "run start requires both-or-neither exact check-watch grant fields and forbids combining them with a supplied context packet"}
 	}
 	if capabilityTTL < time.Second || capabilityTTL > maximumRunCapabilityTTL {
 		return RunMutationResult{}, &Error{Code: CodeInvalidRun, Message: "run capability lifetime must be between one second and 24 hours"}
@@ -64,6 +68,7 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	command.TaskID = taskID
 	command.CheckoutIdentifier = checkoutIdentifier
 	command.ContextPacketID = contextPacketID
+	command.CheckWatchGrantID = checkWatchGrantID
 	command.Runtime = runtimeName
 	command.Provider = providerName
 	command.CapabilityTTL = capabilityTTL
@@ -144,20 +149,18 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 		if err != nil {
 			return RunMutationResult{}, err
 		}
-		// A v5 packet carries owner-granted manager authority and is only safe
+		// A delegated packet is only safe
 		// when the store derives the run recipe from the exact grant-linked
 		// launch profile. The public run.start command accepts a caller supplied
-		// recipe, so it must never be used to bind manager authority.
-		if packet.Schema == domain.ContextPacketSchemaV5 {
-			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "manager context packets can only be launched through manager invoke"}
+		// recipe, so it must never bind delegated authority.
+		if packet.ManagementGrant != nil || packet.CheckWatchGrant != nil {
+			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "delegated-authority context packets can only be launched through their explicit owner-authorized path"}
 		}
 		if packet.ProjectID != task.ProjectID || packet.TaskID != task.ID || packet.AgentID != agent.ID || packet.Task.Revision != task.Revision || packet.Role.Revision != agent.Revision {
 			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "context packet no longer matches the task assignment or its revisions"}
 		}
-		if domain.IsLiveContextPacketSchema(packet.Schema) {
-			if err := s.validateLiveContextPacketAgainstCanonical(ctx, tx, packet); err != nil {
-				return RunMutationResult{}, err
-			}
+		if err := s.validateLiveContextPacketAgainstCanonical(ctx, tx, packet); err != nil {
+			return RunMutationResult{}, err
 		}
 		if checkoutIdentifier != "" && checkoutIdentifier != packet.CheckoutID {
 			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "requested checkout differs from the context packet checkout"}
@@ -180,6 +183,19 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 		if !errors.Is(err, sql.ErrNoRows) {
 			return RunMutationResult{}, storageFailure("check context packet binding", err)
 		}
+	} else if checkWatchGrantID != "" {
+		grant, err := queryContextCheckWatchGrantAuthority(ctx, tx, workspace.ID, checkWatchGrantID)
+		if err != nil {
+			return RunMutationResult{}, err
+		}
+		if grant.Revision != command.ExpectedCheckWatchGrantRevision {
+			return RunMutationResult{}, revisionConflict("check-watch grant", grant.ID, command.ExpectedCheckWatchGrantRevision, grant.Revision)
+		}
+		packet, _, err = s.buildCheckWatchContextPacketInTransaction(ctx, tx, workspace.ID, task, agent, checkout, grant, correlationID+"-context", s.nowText())
+		if err != nil {
+			return RunMutationResult{}, err
+		}
+		contextPacketID = packet.ID
 	} else {
 		packet, _, err = s.buildContextPacketInTransaction(ctx, tx, workspace.ID, task, agent, checkout, correlationID+"-context", s.nowText())
 		if err != nil {
@@ -228,13 +244,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?)`,
 	if _, err := tx.ExecContext(ctx, "INSERT INTO run_context_bindings(run_id, context_packet_id, bound_at) VALUES (?, ?, ?)", run.ID, contextPacketID, now); err != nil {
 		return RunMutationResult{}, storageFailure("bind run context packet", err)
 	}
-	if domain.IsLiveContextPacketSchema(packet.Schema) {
-		if err := dbgen.New(tx).InsertRunContextDeltaState(ctx, dbgen.InsertRunContextDeltaStateParams{
-			RunID: run.ID, ContextPacketID: contextPacketID, ScanEventSequence: packet.AsOfEventSequence,
-			CreatedAt: now, UpdatedAt: now,
-		}); err != nil {
-			return RunMutationResult{}, storageFailure("initialize run context delta state", err)
-		}
+	if err := dbgen.New(tx).InsertRunContextDeltaState(ctx, dbgen.InsertRunContextDeltaStateParams{
+		RunID: run.ID, ContextPacketID: contextPacketID, ScanEventSequence: packet.AsOfEventSequence,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		return RunMutationResult{}, storageFailure("initialize run context delta state", err)
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO run_capabilities(run_id, expires_at, created_at) VALUES (?, ?, ?)", run.ID, s.clock().UTC().Add(capabilityTTL).Format(time.RFC3339Nano), now); err != nil {
 		return RunMutationResult{}, storageFailure("create run capability", err)
@@ -459,7 +473,7 @@ OR EXISTS (
       AND profile.agent_id=run.agent_id AND profile.runtime=run.runtime AND profile.provider=run.provider
       AND (profile.checkout_id IS NULL OR profile.checkout_id=run.checkout_id)
       AND lower(hex(sha256(CAST(run.scenario_json AS BLOB))))=profile.scenario_sha256
-      AND json_extract(packet.packet_json,'$.schema')='urn:crewfold:schema:domain:context-packet:v4'
+      AND json_extract(packet.packet_json,'$.schema')='urn:crewfold:schema:domain:context-packet:v1'
       AND json_extract(packet.packet_json,'$.workspace_id')=run.workspace_id
       AND json_extract(packet.packet_json,'$.project_id')=run.project_id
       AND json_extract(packet.packet_json,'$.task_id')=run.task_id

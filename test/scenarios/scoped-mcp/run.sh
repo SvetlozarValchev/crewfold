@@ -150,7 +150,7 @@ grep -Fq 'CREWFOLD_MCP_CAPABILITY_FILE' "$scenario_root/logs.json"
 grep -Fq 'CREWFOLD_MCP_SOCKET' "$scenario_root/logs.json"
 if grep -Fq 'urn:crewfold:fixture-report' "$scenario_root/logs.json" || grep -Eq 'cf1\.run_[0-9a-f]{32}\.' "$scenario_root/logs.json"
 then
-  printf 'scoped runtime logs exposed legacy reports or a capability token\n' >&2
+  printf 'scoped runtime logs exposed structured reports or a capability token\n' >&2
   exit 1
 fi
 

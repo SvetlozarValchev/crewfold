@@ -4,6 +4,248 @@
 
 package dbgen
 
+type CheckArtifact struct {
+	ID            string `json:"id"`
+	CheckResultID string `json:"check_result_id"`
+	Kind          string `json:"kind"`
+	ContentSha256 string `json:"content_sha256"`
+	CapturedBytes int64  `json:"captured_bytes"`
+	OmittedBytes  int64  `json:"omitted_bytes"`
+	Truncated     int64  `json:"truncated"`
+	CreatedAt     string `json:"created_at"`
+}
+
+type CheckJob struct {
+	ID             string  `json:"id"`
+	CheckRunID     string  `json:"check_run_id"`
+	Status         string  `json:"status"`
+	AvailableAt    string  `json:"available_at"`
+	LeaseExpiresAt *string `json:"lease_expires_at"`
+	Attempts       int64   `json:"attempts"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
+}
+
+type CheckLaunchReceipt struct {
+	ID                         string  `json:"id"`
+	CheckRunID                 string  `json:"check_run_id"`
+	CheckJobID                 string  `json:"check_job_id"`
+	OperationID                string  `json:"operation_id"`
+	EffectiveSpecSha256        string  `json:"effective_spec_sha256"`
+	EffectiveWorkingDirectory  string  `json:"effective_working_directory"`
+	Launchable                 int64   `json:"launchable"`
+	PreflightFailureCode       *string `json:"preflight_failure_code"`
+	PreflightFailureDiagnostic *string `json:"preflight_failure_diagnostic"`
+	DefinitionSha256           string  `json:"definition_sha256"`
+	SourceType                 string  `json:"source_type"`
+	SourceActorID              string  `json:"source_actor_id"`
+	SourceAgentID              *string `json:"source_agent_id"`
+	SourceAgentRevision        *int64  `json:"source_agent_revision"`
+	SourceRunID                *string `json:"source_run_id"`
+	SourceGrantID              *string `json:"source_grant_id"`
+	SourceGrantRevision        *int64  `json:"source_grant_revision"`
+	ObservationAvailable       int64   `json:"observation_available"`
+	RepositoryID               string  `json:"repository_id"`
+	ObjectFormat               string  `json:"object_format"`
+	CheckoutID                 string  `json:"checkout_id"`
+	Branch                     *string `json:"branch"`
+	HeadCommit                 *string `json:"head_commit"`
+	Dirty                      int64   `json:"dirty"`
+	DirtyPathsJson             string  `json:"dirty_paths_json"`
+	ObservedAt                 string  `json:"observed_at"`
+	DiagnosticCode             *string `json:"diagnostic_code"`
+	Diagnostic                 *string `json:"diagnostic"`
+	CreatedAt                  string  `json:"created_at"`
+	CreatedBy                  string  `json:"created_by"`
+}
+
+type CheckPolicy struct {
+	WorkspaceID                 string  `json:"workspace_id"`
+	ProjectID                   string  `json:"project_id"`
+	RepairProposalsEnabled      int64   `json:"repair_proposals_enabled"`
+	RepairLaunchProfileID       *string `json:"repair_launch_profile_id"`
+	RepairLaunchProfileRevision *int64  `json:"repair_launch_profile_revision"`
+	MaxOpenRepairProposals      int64   `json:"max_open_repair_proposals"`
+	Revision                    int64   `json:"revision"`
+	CreatedAt                   string  `json:"created_at"`
+	UpdatedAt                   string  `json:"updated_at"`
+	CreatedBy                   string  `json:"created_by"`
+	UpdatedBy                   string  `json:"updated_by"`
+}
+
+type CheckRepairDecision struct {
+	ID               string  `json:"id"`
+	RepairProposalID string  `json:"repair_proposal_id"`
+	Decision         string  `json:"decision"`
+	ProposalRevision int64   `json:"proposal_revision"`
+	Note             *string `json:"note"`
+	CreatedAt        string  `json:"created_at"`
+	CreatedBy        string  `json:"created_by"`
+}
+
+type CheckRepairEffect struct {
+	ID                 string `json:"id"`
+	RepairProposalID   string `json:"repair_proposal_id"`
+	RepairTaskID       string `json:"repair_task_id"`
+	SchedulingIntentID string `json:"scheduling_intent_id"`
+	CreatedAt          string `json:"created_at"`
+}
+
+type CheckRepairProposal struct {
+	ID                          string `json:"id"`
+	WorkspaceID                 string `json:"workspace_id"`
+	ProjectID                   string `json:"project_id"`
+	ObjectiveID                 string `json:"objective_id"`
+	ObjectiveRevision           int64  `json:"objective_revision"`
+	TaskID                      string `json:"task_id"`
+	TaskRevision                int64  `json:"task_revision"`
+	RequirementID               string `json:"requirement_id"`
+	RequirementRevision         int64  `json:"requirement_revision"`
+	CheckResultID               string `json:"check_result_id"`
+	FreshnessRevision           int64  `json:"freshness_revision"`
+	SourceRepositoryID          string `json:"source_repository_id"`
+	SourceCheckoutID            string `json:"source_checkout_id"`
+	SourceHeadCommit            string `json:"source_head_commit"`
+	PolicyRevision              int64  `json:"policy_revision"`
+	RepairLaunchProfileID       string `json:"repair_launch_profile_id"`
+	RepairLaunchProfileRevision int64  `json:"repair_launch_profile_revision"`
+	SourceRunID                 string `json:"source_run_id"`
+	SourceAgentID               string `json:"source_agent_id"`
+	SourceAgentRevision         int64  `json:"source_agent_revision"`
+	SourceGrantID               string `json:"source_grant_id"`
+	SourceGrantRevision         int64  `json:"source_grant_revision"`
+	Rationale                   string `json:"rationale"`
+	RepairTaskTitle             string `json:"repair_task_title"`
+	RepairTaskDescription       string `json:"repair_task_description"`
+	RepairTaskPriority          int64  `json:"repair_task_priority"`
+	RepairBudgetTokens          int64  `json:"repair_budget_tokens"`
+	RepairBudgetCostCents       int64  `json:"repair_budget_cost_cents"`
+	RepairBudgetTimeSeconds     int64  `json:"repair_budget_time_seconds"`
+	RecipeSha256                string `json:"recipe_sha256"`
+	Status                      string `json:"status"`
+	Revision                    int64  `json:"revision"`
+	CreatedAt                   string `json:"created_at"`
+	UpdatedAt                   string `json:"updated_at"`
+	CreatedBy                   string `json:"created_by"`
+	UpdatedBy                   string `json:"updated_by"`
+}
+
+type CheckRequirementEvidence struct {
+	ID                  string `json:"id"`
+	RequirementID       string `json:"requirement_id"`
+	RequirementRevision int64  `json:"requirement_revision"`
+	CheckResultID       string `json:"check_result_id"`
+	FreshnessRevision   int64  `json:"freshness_revision"`
+	Class               string `json:"class"`
+	Effect              string `json:"effect"`
+	CreatedAt           string `json:"created_at"`
+	CreatedBy           string `json:"created_by"`
+}
+
+type CheckResult struct {
+	ID                        string  `json:"id"`
+	CheckRunID                string  `json:"check_run_id"`
+	RequirementID             string  `json:"requirement_id"`
+	RequirementRevision       int64   `json:"requirement_revision"`
+	DefinitionID              string  `json:"definition_id"`
+	DefinitionContentRevision int64   `json:"definition_content_revision"`
+	Outcome                   string  `json:"outcome"`
+	ExitCode                  *int64  `json:"exit_code"`
+	Forced                    int64   `json:"forced"`
+	DiagnosticCode            *string `json:"diagnostic_code"`
+	Diagnostic                *string `json:"diagnostic"`
+	ObservationAvailable      int64   `json:"observation_available"`
+	RepositoryID              string  `json:"repository_id"`
+	ObjectFormat              string  `json:"object_format"`
+	CheckoutID                string  `json:"checkout_id"`
+	Branch                    *string `json:"branch"`
+	HeadCommit                *string `json:"head_commit"`
+	Dirty                     int64   `json:"dirty"`
+	DirtyPathsJson            string  `json:"dirty_paths_json"`
+	ObservedAt                string  `json:"observed_at"`
+	ObservationDiagnosticCode *string `json:"observation_diagnostic_code"`
+	ObservationDiagnostic     *string `json:"observation_diagnostic"`
+	CreatedAt                 string  `json:"created_at"`
+	CreatedBy                 string  `json:"created_by"`
+}
+
+type CheckResultFreshness struct {
+	ID                   string  `json:"id"`
+	CheckResultID        string  `json:"check_result_id"`
+	Revision             int64   `json:"revision"`
+	Status               string  `json:"status"`
+	Reason               string  `json:"reason"`
+	InitiallyEligible    int64   `json:"initially_eligible"`
+	EverStale            int64   `json:"ever_stale"`
+	ObservationAvailable int64   `json:"observation_available"`
+	RepositoryID         string  `json:"repository_id"`
+	ObjectFormat         string  `json:"object_format"`
+	CheckoutID           string  `json:"checkout_id"`
+	Branch               *string `json:"branch"`
+	HeadCommit           *string `json:"head_commit"`
+	Dirty                int64   `json:"dirty"`
+	DirtyPathsJson       string  `json:"dirty_paths_json"`
+	ObservedAt           string  `json:"observed_at"`
+	DiagnosticCode       *string `json:"diagnostic_code"`
+	Diagnostic           *string `json:"diagnostic"`
+	CreatedAt            string  `json:"created_at"`
+	CreatedBy            string  `json:"created_by"`
+}
+
+type CheckRoute struct {
+	ID                        string  `json:"id"`
+	WorkspaceID               string  `json:"workspace_id"`
+	ProjectID                 string  `json:"project_id"`
+	DefinitionID              *string `json:"definition_id"`
+	DefinitionContentRevision *int64  `json:"definition_content_revision"`
+	Trigger                   string  `json:"trigger"`
+	Duty                      string  `json:"duty"`
+	AgentID                   string  `json:"agent_id"`
+	AgentRevision             int64   `json:"agent_revision"`
+	Status                    string  `json:"status"`
+	Revision                  int64   `json:"revision"`
+	CreatedAt                 string  `json:"created_at"`
+	UpdatedAt                 string  `json:"updated_at"`
+	CreatedBy                 string  `json:"created_by"`
+	UpdatedBy                 string  `json:"updated_by"`
+}
+
+type CheckRun struct {
+	ID                        string  `json:"id"`
+	WorkspaceID               string  `json:"workspace_id"`
+	ProjectID                 string  `json:"project_id"`
+	TaskID                    string  `json:"task_id"`
+	TaskRevision              int64   `json:"task_revision"`
+	RequirementID             string  `json:"requirement_id"`
+	RequirementRevision       int64   `json:"requirement_revision"`
+	DefinitionID              string  `json:"definition_id"`
+	DefinitionContentRevision int64   `json:"definition_content_revision"`
+	DefinitionSha256          string  `json:"definition_sha256"`
+	CheckoutID                string  `json:"checkout_id"`
+	CheckoutRevision          int64   `json:"checkout_revision"`
+	RepositoryID              string  `json:"repository_id"`
+	RepositoryObjectFormat    string  `json:"repository_object_format"`
+	CheckoutPath              string  `json:"checkout_path"`
+	CheckoutWriteMode         string  `json:"checkout_write_mode"`
+	SourceType                string  `json:"source_type"`
+	SourceActorID             string  `json:"source_actor_id"`
+	SourceAgentID             *string `json:"source_agent_id"`
+	SourceAgentRevision       *int64  `json:"source_agent_revision"`
+	SourceRunID               *string `json:"source_run_id"`
+	SourceGrantID             *string `json:"source_grant_id"`
+	SourceGrantRevision       *int64  `json:"source_grant_revision"`
+	SourceMaxInFlight         int64   `json:"source_max_in_flight"`
+	Status                    string  `json:"status"`
+	RuntimeHandle             *string `json:"runtime_handle"`
+	Revision                  int64   `json:"revision"`
+	CreatedAt                 string  `json:"created_at"`
+	UpdatedAt                 string  `json:"updated_at"`
+	StartedAt                 *string `json:"started_at"`
+	FinishedAt                *string `json:"finished_at"`
+	CreatedBy                 string  `json:"created_by"`
+	UpdatedBy                 string  `json:"updated_by"`
+}
+
 type ContextDelta struct {
 	ID                   string  `json:"id"`
 	RunID                string  `json:"run_id"`
@@ -244,6 +486,19 @@ type MeetingProposal struct {
 	DecisionNote *string `json:"decision_note"`
 }
 
+type Repository struct {
+	ID              string `json:"id"`
+	WorkspaceID     string `json:"workspace_id"`
+	Fingerprint     string `json:"fingerprint"`
+	ObjectFormat    string `json:"object_format"`
+	RootCommitsJson string `json:"root_commits_json"`
+	Revision        int64  `json:"revision"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
+	CreatedBy       string `json:"created_by"`
+	UpdatedBy       string `json:"updated_by"`
+}
+
 type RunContextDeltaState struct {
 	RunID                   string  `json:"run_id"`
 	ContextPacketID         string  `json:"context_packet_id"`
@@ -260,6 +515,24 @@ type RunContextDeltaState struct {
 	RebaseEventSequence     *int64  `json:"rebase_event_sequence"`
 	CreatedAt               string  `json:"created_at"`
 	UpdatedAt               string  `json:"updated_at"`
+}
+
+type TaskCheckRequirement struct {
+	ID                        string `json:"id"`
+	WorkspaceID               string `json:"workspace_id"`
+	ProjectID                 string `json:"project_id"`
+	TaskID                    string `json:"task_id"`
+	TaskRevisionAtCreation    int64  `json:"task_revision_at_creation"`
+	CriterionKey              string `json:"criterion_key"`
+	Statement                 string `json:"statement"`
+	DefinitionID              string `json:"definition_id"`
+	DefinitionContentRevision int64  `json:"definition_content_revision"`
+	Status                    string `json:"status"`
+	Revision                  int64  `json:"revision"`
+	CreatedAt                 string `json:"created_at"`
+	UpdatedAt                 string `json:"updated_at"`
+	CreatedBy                 string `json:"created_by"`
+	UpdatedBy                 string `json:"updated_by"`
 }
 
 type ThreadParticipant struct {

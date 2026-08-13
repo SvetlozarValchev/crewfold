@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:mcp:propose-check-repair-input:v1",
+  "title": "Crewfold propose granted check repair input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["check_result_id", "rationale", "idempotency_key"],
+  "properties": {
+    "check_result_id": {"type": "string", "pattern": "^checkresult_[0-9a-f]{32}$"},
+    "rationale": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000]*$", "description": "Canonical UTF-8 without NUL, bounded to 4096 encoded bytes."},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

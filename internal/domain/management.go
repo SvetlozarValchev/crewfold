@@ -276,28 +276,29 @@ type TaskClaimRequirement struct {
 }
 
 type SchedulingIntent struct {
-	ID                         string `json:"id"`
-	WorkspaceID                string `json:"workspace_id"`
-	ProjectID                  string `json:"project_id"`
-	ObjectiveID                string `json:"objective_id"`
-	TaskID                     string `json:"task_id"`
-	AgentID                    string `json:"agent_id"`
-	LaunchProfileID            string `json:"launch_profile_id"`
-	SourceProposalID           string `json:"source_proposal_id"`
-	SourceActionID             string `json:"source_action_id"`
-	Status                     string `json:"status"`
-	Reason                     string `json:"reason,omitempty"`
-	AssignmentID               string `json:"assignment_id,omitempty"`
-	RunID                      string `json:"run_id,omitempty"`
-	SupervisorActionID         string `json:"supervisor_action_id,omitempty"`
-	Attempts                   int    `json:"attempts"`
-	LastEvaluatedEventSequence int64  `json:"-"`
-	Revision                   int64  `json:"revision"`
-	CreatedAt                  string `json:"created_at"`
-	UpdatedAt                  string `json:"updated_at"`
-	NextAttemptAt              string `json:"next_attempt_at,omitempty"`
-	CreatedBy                  string `json:"created_by"`
-	UpdatedBy                  string `json:"updated_by"`
+	ID                          string `json:"id"`
+	WorkspaceID                 string `json:"workspace_id"`
+	ProjectID                   string `json:"project_id"`
+	ObjectiveID                 string `json:"objective_id"`
+	TaskID                      string `json:"task_id"`
+	AgentID                     string `json:"agent_id"`
+	LaunchProfileID             string `json:"launch_profile_id"`
+	SourceProposalID            string `json:"source_proposal_id"`
+	SourceActionID              string `json:"source_action_id"`
+	SourceCheckRepairProposalID string `json:"source_check_repair_proposal_id,omitempty"`
+	Status                      string `json:"status"`
+	Reason                      string `json:"reason,omitempty"`
+	AssignmentID                string `json:"assignment_id,omitempty"`
+	RunID                       string `json:"run_id,omitempty"`
+	SupervisorActionID          string `json:"supervisor_action_id,omitempty"`
+	Attempts                    int    `json:"attempts"`
+	LastEvaluatedEventSequence  int64  `json:"-"`
+	Revision                    int64  `json:"revision"`
+	CreatedAt                   string `json:"created_at"`
+	UpdatedAt                   string `json:"updated_at"`
+	NextAttemptAt               string `json:"next_attempt_at,omitempty"`
+	CreatedBy                   string `json:"created_by"`
+	UpdatedBy                   string `json:"updated_by"`
 }
 
 type SupervisorLimits struct {

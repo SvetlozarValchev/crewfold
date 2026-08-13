@@ -63,7 +63,8 @@
   socket paths.
 - Reconciliation outcome: the dead socket is distinguished from a reachable live
   daemon, revalidated, removed, rebound, and removed again on graceful shutdown.
-- Migration fixture added: N/A; SQLite and migrations begin in M2.
+- Persistent storage is outside this scenario; the current baseline is exercised
+  by the persistent-workspace scenario.
 - Backup/restore impact: none; the lock file is not application data.
 
 ## Security and autonomy
@@ -83,16 +84,16 @@ Newly created data directories use mode `0700`; socket and lock files use mode
 `0600`. Lock opening rejects symlinks, and socket cleanup removes a path only when
 it still identifies the socket created by this process.
 
-## Compatibility
+## Current contract
 
 - API/schema changes: introduced newline-delimited local API protocol version 1,
-  request/response envelopes, protocol negotiation, `system.status`, and
+  request/response envelopes, exact protocol selection, `system.status`, and
   `system.stop`, with stable schema URNs and structured error codes.
 - Adapter/runtime compatibility changes: none; no runtime or provider adapter is
   implemented.
 - Earlier milestone scenarios rerun: M0 passes unchanged as part of every check.
-- Upgrade/rollback impact: no persistent domain state exists. An M1 client fails
-  explicitly when its supported protocol range does not overlap the daemon's.
+- A client fails explicitly when it does not support the daemon's one current
+  protocol version.
 
 ## Known limitations and deferrals
 
@@ -102,7 +103,8 @@ it still identifies the socket created by this process.
   access to the owner-only socket; there is no multi-user or remote transport.
 - One request is handled per connection. Subscriptions, events, streaming,
   request idempotency, and durable command recovery are not implemented.
-- SQLite, workspace state, an event journal, and migrations are deferred to M2.
+- SQLite, workspace state, an event journal, and the current storage baseline are
+  exercised by the persistent-workspace capability.
 - Projects, agents, tasks, runtimes, MCP, Herdr, and providers remain deferred to
   their roadmap milestones.
 

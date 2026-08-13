@@ -1,0 +1,11 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:local-api:check-run-mutation-result:v1",
+  "type":"object","additionalProperties":false,"required":["schema","type","run","event_sequence"],
+  "properties":{
+    "schema":{"const":"urn:crewfold:schema:local-api:check-run-mutation-result:v1"},
+    "type":{"const":"check_run_mutation"},
+    "run":{"$ref":"../../domain/v1/check-run.schema.json"},
+    "event_sequence":{"type":"integer","minimum":1}
+  }
+}

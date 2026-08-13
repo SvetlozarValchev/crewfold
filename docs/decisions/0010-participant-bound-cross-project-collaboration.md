@@ -52,10 +52,10 @@ spoofing.
 The existing MCP tools remain the complete agent surface:
 `crewfold_send_message`, `crewfold_list_inbox`, `crewfold_read_message`, and
 `crewfold_acknowledge_message`. Supplying an owner-created `thread_id` selects the
-participant-bound exception. Context packet v3 is unchanged: its bounded inbox
-summary may contain messages authorized by an exact participant binding, while
-full bodies remain explicit MCP reads. Roster reads and live context deltas are
-deferred to the later context-delta contract.
+participant-bound exception. The current packet's bounded inbox summary may
+contain messages authorized by an exact participant binding, while full bodies
+remain explicit MCP reads. Exact participant rosters and later changes use the
+bounded live-context contract.
 
 The owner socket adds explicit create, invite, and participant-list operations.
 Thread/participant events and message origin fields make authority decisions

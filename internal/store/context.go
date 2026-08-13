@@ -64,6 +64,15 @@ var managerProposalTools = []struct {
 	{kind: domain.ManagerProposalTaskDecomposition, tool: "crewfold_propose_tasks"},
 }
 
+var checkWatchOperationTools = []struct {
+	operation string
+	tools     []string
+}{
+	{operation: domain.CheckWatchOperationRun, tools: []string{"crewfold_run_check"}},
+	{operation: domain.CheckWatchOperationInspect, tools: []string{"crewfold_list_check_results", "crewfold_inspect_check_result"}},
+	{operation: domain.CheckWatchOperationProposeRepair, tools: []string{"crewfold_propose_check_repair"}},
+}
+
 func containsContextString(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {
@@ -180,21 +189,45 @@ func (s *Store) buildManagerContextPacketInTransaction(ctx context.Context, tx *
 		ManagerAgentID: grant.AgentID, ManagerAgentRevision: grant.AgentRevision,
 		ManagerTaskID: grant.TaskID, ManagerTaskRevision: grant.TaskRevision,
 		AllowedProposalKinds: append([]string(nil), grant.ProposalKinds...), LaunchProfiles: launchProfiles,
-		// Preserve an authorized empty set as JSON [] rather than null. The packet-v5
+		// Preserve an authorized empty set as JSON [] rather than null. The manager
 		// contract requires an array, and SQL validates it against the grant's
 		// canonical [] mirror.
 		AllowedClaimKinds: append([]string{}, grant.AllowedClaimKinds...), MaxOpenProposals: grant.Limits.MaxOpenProposals,
 		MaxActions: grant.Limits.MaxActions, MaxTasks: grant.Limits.MaxTasks, MaxDependencies: grant.Limits.MaxDependencies,
 		MaxClaimRequirements: grant.Limits.MaxClaimRequirements, Budget: grant.Limits.Budget, ExpiresAt: grant.ExpiresAt,
 	}
-	return s.buildContextPacketWithAuthorityInTransaction(ctx, tx, workspaceID, task, agent, checkout, nil, managementGrant, correlationID, now)
+	return s.buildContextPacketWithAuthorityInTransaction(ctx, tx, workspaceID, task, agent, checkout, nil, managementGrant, nil, correlationID, now)
+}
+
+func (s *Store) buildCheckWatchContextPacketInTransaction(ctx context.Context, tx *sql.Tx, workspaceID string, task domain.Task, agent domain.AgentDefinition, checkout domain.Checkout, grant domain.CheckWatchGrant, correlationID, now string) (domain.ContextPacket, int64, error) {
+	if grant.Status != domain.CheckWatchGrantActive || grant.WorkspaceID != workspaceID || grant.ProjectID != task.ProjectID ||
+		grant.AgentID != agent.ID || grant.AgentRevision != agent.Revision || !agent.Enabled {
+		return domain.ContextPacket{}, 0, &Error{Code: CodeInvalidContext, Message: "check-watch packet requires the exact current active grant and enabled agent revision"}
+	}
+	if grant.ExpiresAt != "" {
+		expiresAt, err := time.Parse(time.RFC3339Nano, grant.ExpiresAt)
+		if err != nil || !s.clock().UTC().Before(expiresAt) {
+			return domain.ContextPacket{}, 0, &Error{Code: CodeInvalidContext, Message: "check-watch grant has expired", Cause: err}
+		}
+	}
+	snapshot := &domain.ContextCheckWatchGrant{
+		Schema: domain.ContextCheckWatchGrantSchema, GrantID: grant.ID, GrantRevision: grant.Revision,
+		WorkspaceID: workspaceID, ProjectID: grant.ProjectID,
+		WatcherAgentID: grant.AgentID, WatcherAgentRevision: grant.AgentRevision,
+		Operations: append([]string(nil), grant.Operations...), Definitions: append([]domain.CheckWatchGrantDefinition(nil), grant.Definitions...),
+		MaxPending: grant.MaxPending, MaxInFlight: grant.MaxInFlight, ExpiresAt: grant.ExpiresAt, ContentSHA256: grant.ContentSHA256,
+	}
+	return s.buildContextPacketWithAuthorityInTransaction(ctx, tx, workspaceID, task, agent, checkout, nil, nil, snapshot, correlationID, now)
 }
 
 func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context, tx *sql.Tx, workspaceID string, task domain.Task, agent domain.AgentDefinition, checkout domain.Checkout, knowledgeRevisionIDs []string, correlationID, now string) (domain.ContextPacket, int64, error) {
-	return s.buildContextPacketWithAuthorityInTransaction(ctx, tx, workspaceID, task, agent, checkout, knowledgeRevisionIDs, nil, correlationID, now)
+	return s.buildContextPacketWithAuthorityInTransaction(ctx, tx, workspaceID, task, agent, checkout, knowledgeRevisionIDs, nil, nil, correlationID, now)
 }
 
-func (s *Store) buildContextPacketWithAuthorityInTransaction(ctx context.Context, tx *sql.Tx, workspaceID string, task domain.Task, agent domain.AgentDefinition, checkout domain.Checkout, knowledgeRevisionIDs []string, managementGrant *domain.ContextManagerGrant, correlationID, now string) (domain.ContextPacket, int64, error) {
+func (s *Store) buildContextPacketWithAuthorityInTransaction(ctx context.Context, tx *sql.Tx, workspaceID string, task domain.Task, agent domain.AgentDefinition, checkout domain.Checkout, knowledgeRevisionIDs []string, managementGrant *domain.ContextManagerGrant, checkWatchGrant *domain.ContextCheckWatchGrant, correlationID, now string) (domain.ContextPacket, int64, error) {
+	if managementGrant != nil && checkWatchGrant != nil {
+		return domain.ContextPacket{}, 0, &Error{Code: CodeInvalidContext, Message: "one context packet cannot carry manager and check-watch authority"}
+	}
 	project, err := queryProject(ctx, tx, workspaceID, task.ProjectID)
 	if err != nil {
 		return domain.ContextPacket{}, 0, err
@@ -232,18 +265,19 @@ func (s *Store) buildContextPacketWithAuthorityInTransaction(ctx context.Context
 	if err != nil {
 		return domain.ContextPacket{}, 0, storageFailure("generate context packet id", err)
 	}
-	packetSchema := domain.ContextPacketSchemaV4
 	allowedTools := append([]string(nil), runScopedTools...)
 	if managementGrant != nil {
-		packetSchema = domain.ContextPacketSchemaV5
 		for _, candidate := range managerProposalTools {
 			if containsContextString(managementGrant.AllowedProposalKinds, candidate.kind) {
 				allowedTools = append(allowedTools, candidate.tool)
 			}
 		}
 	}
+	if checkWatchGrant != nil {
+		allowedTools = checkWatchAllowedTools(checkWatchGrant.Operations)
+	}
 	packet := domain.ContextPacket{
-		Schema: packetSchema, ID: packetID, WorkspaceID: workspaceID,
+		Schema: domain.ContextPacketSchema, ID: packetID, WorkspaceID: workspaceID,
 		ProjectID: task.ProjectID, TaskID: task.ID, AgentID: agent.ID, CheckoutID: checkout.ID,
 		Role: domain.ContextRole{AgentID: agent.ID, Name: agent.Name, Role: agent.Role, Provider: agent.Provider, Runtime: agent.Runtime, Revision: agent.Revision},
 		Task: domain.ContextTask{TaskID: task.ID, AssignmentID: task.AssignmentID, ObjectiveID: task.ObjectiveID, Title: task.Title, Description: task.Description, Priority: task.Priority, Budget: task.Budget, Revision: task.Revision},
@@ -268,7 +302,7 @@ func (s *Store) buildContextPacketWithAuthorityInTransaction(ctx context.Context
 			MaxRelevantEvents: maximumContextDeltaEvents, PerDeltaLimitBytes: maximumContextDeltaBytes,
 			CumulativeDeltaLimitBytes: maximumContextDeltaTotal,
 		},
-		ManagementGrant: managementGrant,
+		ManagementGrant: managementGrant, CheckWatchGrant: checkWatchGrant,
 		Reporting: domain.ContextReporting{
 			Progress:   "Report concise completed work, next work, risks, and evidence through crewfold_report_progress.",
 			Blocked:    "Stop unsafe work and report the blocking reason and requested resolution through crewfold_report_blocked.",
@@ -306,6 +340,12 @@ func (s *Store) buildContextPacketWithAuthorityInTransaction(ctx context.Context
 		packet.Included = append(packet.Included, domain.ContextSelection{
 			Section: "management_grant", EntityType: "manager_grant", EntityID: managementGrant.GrantID,
 			Revision: managementGrant.GrantRevision, Reason: "the exact current owner grant bound to this manager run",
+		})
+	}
+	if checkWatchGrant != nil {
+		packet.Included = append(packet.Included, domain.ContextSelection{
+			Section: "check_watch_grant", EntityType: "check_watch_grant", EntityID: checkWatchGrant.GrantID,
+			Revision: checkWatchGrant.GrantRevision, Reason: "the exact current owner grant bound to this check-watcher run",
 		})
 	}
 	for _, dependency := range dependencies {
@@ -728,58 +768,55 @@ func queryContextPacket(ctx context.Context, database dbgen.DBTX, workspaceID, p
 	if err != nil {
 		return domain.ContextPacket{}, storageFailure("query context packet", err)
 	}
-	var packet domain.ContextPacket
-	if err := json.Unmarshal([]byte(row.PacketJson), &packet); err != nil {
-		return domain.ContextPacket{}, storageFailure("decode context packet", err)
+	decoder := json.NewDecoder(bytes.NewBufferString(row.PacketJson))
+	decoder.DisallowUnknownFields()
+	var strict domain.ContextPacket
+	if err := decoder.Decode(&strict); err != nil {
+		return domain.ContextPacket{}, storageFailure("strictly decode context packet", err)
 	}
-	if domain.IsLiveContextPacketSchema(packet.Schema) {
-		decoder := json.NewDecoder(bytes.NewBufferString(row.PacketJson))
-		decoder.DisallowUnknownFields()
-		var strict domain.ContextPacket
-		if err := decoder.Decode(&strict); err != nil {
-			return domain.ContextPacket{}, storageFailure("strictly decode context packet", err)
-		}
-		var trailing any
-		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-			return domain.ContextPacket{}, storageFailure("strictly decode context packet", errors.New("packet has trailing JSON content"))
-		}
-		packet = strict
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return domain.ContextPacket{}, storageFailure("strictly decode context packet", errors.New("packet has trailing JSON content"))
 	}
-	if (packet.Schema != domain.ContextPacketSchemaV1 && packet.Schema != domain.ContextPacketSchemaV2 && packet.Schema != domain.ContextPacketSchemaV3 && !domain.IsLiveContextPacketSchema(packet.Schema)) ||
+	packet := strict
+	if packet.Schema != domain.ContextPacketSchema ||
 		packet.ID != packetID || packet.WorkspaceID != workspaceID || packet.ProjectID != row.ProjectID || packet.TaskID != row.TaskID ||
 		packet.AgentID != row.AgentID || packet.CheckoutID != row.CheckoutID || packet.ContentHash != row.ContentHash ||
 		packet.ByteSize != int(row.ByteSize) || packet.ByteSize != len([]byte(row.PacketJson)) {
 		return domain.ContextPacket{}, storageFailure("validate context packet", errors.New("stored packet identity or size is invalid"))
 	}
-	if domain.IsLiveContextPacketSchema(packet.Schema) {
-		if packet.AsOfEventSequence < 0 || packet.LiveContext != (domain.ContextLivePolicy{
-			Schema: domain.ContextLivePolicySchema, Delivery: domain.ContextLiveDeliveryExplicitPull,
-			AckAuthority: domain.ContextLiveAckBoundRun, MaxPending: 1,
-			MaxRelevantEvents: maximumContextDeltaEvents, PerDeltaLimitBytes: maximumContextDeltaBytes,
-			CumulativeDeltaLimitBytes: maximumContextDeltaTotal,
-		}) {
-			return domain.ContextPacket{}, storageFailure("validate context packet live policy", errors.New("stored live-context policy is invalid"))
+	if packet.AsOfEventSequence < 0 || packet.LiveContext != (domain.ContextLivePolicy{
+		Schema: domain.ContextLivePolicySchema, Delivery: domain.ContextLiveDeliveryExplicitPull,
+		AckAuthority: domain.ContextLiveAckBoundRun, MaxPending: 1,
+		MaxRelevantEvents: maximumContextDeltaEvents, PerDeltaLimitBytes: maximumContextDeltaBytes,
+		CumulativeDeltaLimitBytes: maximumContextDeltaTotal,
+	}) {
+		return domain.ContextPacket{}, storageFailure("validate context packet live policy", errors.New("stored live-context policy is invalid"))
+	}
+	semanticHash, err := contextPacketSemanticHash(packet)
+	if err != nil || semanticHash != packet.ContentHash {
+		if err == nil {
+			err = errors.New("stored packet semantic hash differs")
 		}
-		semanticHash, err := contextPacketSemanticHash(packet)
-		if err != nil || semanticHash != packet.ContentHash {
-			if err == nil {
-				err = errors.New("stored packet semantic hash differs")
-			}
-			return domain.ContextPacket{}, storageFailure("validate context packet semantic hash", err)
+		return domain.ContextPacket{}, storageFailure("validate context packet semantic hash", err)
+	}
+	if err := validateLiveContextPacket(packet); err != nil {
+		return domain.ContextPacket{}, storageFailure("validate live context packet", err)
+	}
+	if packet.ManagementGrant != nil {
+		if err := validateStoredManagerGrantAgainstCanonical(ctx, database, packet); err != nil {
+			return domain.ContextPacket{}, storageFailure("validate stored manager grant authority", err)
 		}
-		if err := validateLiveContextPacket(packet); err != nil {
-			return domain.ContextPacket{}, storageFailure("validate live context packet", err)
-		}
-		if packet.Schema == domain.ContextPacketSchemaV5 {
-			if err := validateStoredManagerGrantAgainstCanonical(ctx, database, packet); err != nil {
-				return domain.ContextPacket{}, storageFailure("validate stored manager grant authority", err)
-			}
+	}
+	if packet.CheckWatchGrant != nil {
+		if err := validateStoredCheckWatchGrantAgainstCanonical(ctx, database, packet); err != nil {
+			return domain.ContextPacket{}, storageFailure("validate stored check-watch grant authority", err)
 		}
 	}
 	return packet, nil
 }
 
-// Stored v5 reads prove the immutable grant authority against normalized rows
+// Stored reads prove immutable manager authority against normalized rows
 // without requiring the grant or target profiles to remain active. Current
 // lifecycle/expiry checks happen again at invoke, bind, and proposal calls.
 func validateStoredManagerGrantAgainstCanonical(ctx context.Context, database queryRower, packet domain.ContextPacket) error {
@@ -813,25 +850,102 @@ func validateStoredManagerGrantAgainstCanonical(ctx context.Context, database qu
 	return nil
 }
 
-func validateVersionFourContextPacket(packet domain.ContextPacket) error {
-	if packet.Schema != domain.ContextPacketSchemaV4 || packet.ManagementGrant != nil {
-		return errors.New("version-four packet cannot carry manager authority")
+// Stored reads prove immutable check-watch authority against its normalized
+// header and child rows without treating later revocation or expiry as packet
+// corruption. Current lifecycle and enabled-agent checks happen again at bind,
+// discovery, and every check-watch operation.
+func validateStoredCheckWatchGrantAgainstCanonical(ctx context.Context, database dbgen.DBTX, packet domain.ContextPacket) error {
+	snapshot := packet.CheckWatchGrant
+	if snapshot == nil {
+		return errors.New("stored check-watch grant snapshot is missing")
 	}
-	return validateLiveContextPacketBase(packet, runScopedTools)
+	grant, err := queryContextCheckWatchGrantAuthority(ctx, database, packet.WorkspaceID, snapshot.GrantID)
+	if err != nil {
+		return err
+	}
+	if !contextCheckWatchGrantMatchesCanonical(snapshot, grant, true) {
+		return errors.New("stored check-watch grant differs from normalized authority")
+	}
+	return nil
+}
+
+func queryContextCheckWatchGrantAuthority(ctx context.Context, database dbgen.DBTX, workspaceID, grantID string) (domain.CheckWatchGrant, error) {
+	queries := dbgen.New(database)
+	row, err := queries.GetContextCheckWatchGrant(ctx, dbgen.GetContextCheckWatchGrantParams{WorkspaceID: workspaceID, ID: grantID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.CheckWatchGrant{}, &Error{Code: CodeCheckWatchGrantNotFound, Message: fmt.Sprintf("check-watch grant %q was not found", grantID)}
+	}
+	if err != nil {
+		return domain.CheckWatchGrant{}, storageFailure("query context check-watch grant", err)
+	}
+	operations, err := queries.ListContextCheckWatchGrantOperations(ctx, grantID)
+	if err != nil {
+		return domain.CheckWatchGrant{}, storageFailure("query context check-watch grant operations", err)
+	}
+	definitionRows, err := queries.ListContextCheckWatchGrantDefinitions(ctx, grantID)
+	if err != nil {
+		return domain.CheckWatchGrant{}, storageFailure("query context check-watch grant definitions", err)
+	}
+	definitions := make([]domain.CheckWatchGrantDefinition, len(definitionRows))
+	for index, definition := range definitionRows {
+		definitions[index] = domain.CheckWatchGrantDefinition{
+			DefinitionID: definition.DefinitionID, ContentRevision: definition.DefinitionContentRevision,
+			DefinitionSHA256: definition.DefinitionSha256,
+		}
+	}
+	return domain.CheckWatchGrant{
+		ID: row.ID, WorkspaceID: row.WorkspaceID, ProjectID: row.ProjectID, AgentID: row.AgentID,
+		AgentRevision: row.AgentRevision, Operations: operations, Definitions: definitions,
+		MaxPending: int(row.MaxPending), MaxInFlight: int(row.MaxInFlight), ExpiresAt: row.ExpiresAt,
+		ContentSHA256: row.ContentSha256, Status: row.Status, Revision: row.Revision,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, CreatedBy: row.CreatedBy, UpdatedBy: row.UpdatedBy,
+	}, nil
+}
+
+func contextCheckWatchGrantMatchesCanonical(snapshot *domain.ContextCheckWatchGrant, grant domain.CheckWatchGrant, allowLaterLifecycleRevision bool) bool {
+	validRevision := snapshot.GrantRevision == grant.Revision
+	if allowLaterLifecycleRevision {
+		validRevision = grant.Status == domain.CheckWatchGrantActive && snapshot.GrantRevision == grant.Revision ||
+			snapshot.GrantRevision > 0 && snapshot.GrantRevision+1 == grant.Revision &&
+				(grant.Status == domain.CheckWatchGrantRevoked || grant.Status == domain.CheckWatchGrantExpired)
+	}
+	return validRevision && grant.WorkspaceID == snapshot.WorkspaceID && grant.ProjectID == snapshot.ProjectID &&
+		grant.AgentID == snapshot.WatcherAgentID && grant.AgentRevision == snapshot.WatcherAgentRevision &&
+		reflect.DeepEqual(grant.Operations, snapshot.Operations) && reflect.DeepEqual(grant.Definitions, snapshot.Definitions) &&
+		grant.MaxPending == snapshot.MaxPending && grant.MaxInFlight == snapshot.MaxInFlight &&
+		grant.ExpiresAt == snapshot.ExpiresAt && grant.ContentSHA256 == snapshot.ContentSHA256
 }
 
 func validateLiveContextPacket(packet domain.ContextPacket) error {
-	switch packet.Schema {
-	case domain.ContextPacketSchemaV4:
-		return validateVersionFourContextPacket(packet)
-	case domain.ContextPacketSchemaV5:
+	if packet.Schema != domain.ContextPacketSchema {
+		return errors.New("packet does not use the current context schema")
+	}
+	if packet.ManagementGrant != nil && packet.CheckWatchGrant != nil {
+		return errors.New("packet cannot carry both delegated authority families")
+	}
+	if packet.ManagementGrant != nil {
 		if err := validateContextManagerGrant(packet); err != nil {
 			return err
 		}
 		return validateLiveContextPacketBase(packet, managerAllowedTools(packet.ManagementGrant.AllowedProposalKinds))
-	default:
-		return errors.New("packet does not use a live-context schema")
 	}
+	if packet.CheckWatchGrant != nil {
+		if err := validateContextCheckWatchGrant(packet); err != nil {
+			return err
+		}
+		return validateLiveContextPacketBase(packet, checkWatchAllowedTools(packet.CheckWatchGrant.Operations))
+	}
+	return validateLiveContextPacketBase(packet, runScopedTools)
+}
+
+func checkWatchAllowedTools(operations []string) []string {
+	result := append([]string(nil), runScopedTools...)
+	for _, candidate := range checkWatchOperationTools {
+		if containsContextString(operations, candidate.operation) {
+			result = append(result, candidate.tools...)
+		}
+	}
+	return result
 }
 
 func managerAllowedTools(proposalKinds []string) []string {
@@ -1029,6 +1143,66 @@ func validateContextManagerGrant(packet domain.ContextPacket) error {
 	return nil
 }
 
+func validateContextCheckWatchGrant(packet domain.ContextPacket) error {
+	grant := packet.CheckWatchGrant
+	if grant == nil || grant.Schema != domain.ContextCheckWatchGrantSchema || grant.GrantID == "" || grant.GrantRevision < 1 ||
+		grant.WorkspaceID != packet.WorkspaceID || grant.ProjectID != packet.ProjectID ||
+		grant.WatcherAgentID != packet.AgentID || grant.WatcherAgentRevision != packet.Role.Revision ||
+		len(grant.Operations) < 1 || len(grant.Operations) > len(checkWatchOperationTools) ||
+		len(grant.Definitions) < 1 || len(grant.Definitions) > 64 || grant.MaxPending < 1 || grant.MaxPending > 100 ||
+		grant.MaxInFlight < 1 || grant.MaxInFlight > grant.MaxPending || !validContextLowerHex(grant.ContentSHA256, 64) {
+		return errors.New("packet check-watch grant identity, scope, bounds, or seal is invalid")
+	}
+	lastOperation := -1
+	for _, operation := range grant.Operations {
+		order := -1
+		for index, candidate := range checkWatchOperationTools {
+			if candidate.operation == operation {
+				order = index
+				break
+			}
+		}
+		if order <= lastOperation {
+			return errors.New("packet check-watch operations are invalid or not canonically ordered")
+		}
+		lastOperation = order
+	}
+	for index, definition := range grant.Definitions {
+		if definition.DefinitionID == "" || definition.ContentRevision < 1 || !validContextLowerHex(definition.DefinitionSHA256, 64) ||
+			index > 0 && grant.Definitions[index-1].DefinitionID >= definition.DefinitionID {
+			return errors.New("packet check-watch definitions are invalid or not canonically ordered")
+		}
+	}
+	if grant.ExpiresAt != "" {
+		if _, err := time.Parse(time.RFC3339Nano, grant.ExpiresAt); err != nil {
+			return errors.New("packet check-watch grant expiry is invalid")
+		}
+	}
+	foundSelection := false
+	for _, selection := range packet.Included {
+		if selection.Section == "check_watch_grant" && selection.EntityType == "check_watch_grant" &&
+			selection.EntityID == grant.GrantID && selection.Revision == grant.GrantRevision {
+			foundSelection = true
+		}
+	}
+	if !foundSelection {
+		return errors.New("packet check-watch grant inclusion evidence is missing")
+	}
+	return nil
+}
+
+func validContextLowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func validateContextParticipantThread(thread domain.ParticipantThread, workspaceID, projectID, taskID, agentID string) error {
 	if thread.Kind != domain.ThreadKindParticipantBound || thread.Thread.ID == "" || thread.Thread.WorkspaceID != workspaceID ||
 		thread.Thread.ProjectID != "" || thread.Thread.TaskID != "" || thread.Thread.Status != domain.ThreadOpen ||
@@ -1176,26 +1350,31 @@ WHERE message.id = ? AND recipient.recipient_agent_id = ? AND recipient.status I
 			}
 		}
 	}
-	if packet.Schema == domain.ContextPacketSchemaV5 {
-		if err := s.validateVersionFiveManagerGrantAgainstCanonical(ctx, tx, packet); err != nil {
+	if packet.ManagementGrant != nil {
+		if err := s.validateManagerGrantAgainstCanonical(ctx, tx, packet); err != nil {
+			return err
+		}
+	}
+	if packet.CheckWatchGrant != nil {
+		if err := s.validateCheckWatchGrantAgainstCanonical(ctx, tx, packet); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Store) validateVersionFiveManagerGrantAgainstCanonical(ctx context.Context, tx *sql.Tx, packet domain.ContextPacket) error {
+func (s *Store) validateManagerGrantAgainstCanonical(ctx context.Context, tx *sql.Tx, packet domain.ContextPacket) error {
 	if packet.ManagementGrant == nil {
-		return &Error{Code: CodeInvalidContext, Message: "version-five context packet is missing manager authority"}
+		return &Error{Code: CodeInvalidContext, Message: "context packet is missing manager authority"}
 	}
 	snapshot := packet.ManagementGrant
 	grant, err := queryManagerGrant(ctx, tx, packet.WorkspaceID, snapshot.GrantID)
 	if err != nil {
-		return &Error{Code: CodeInvalidContext, Message: "version-five manager grant is not canonical", Cause: err}
+		return &Error{Code: CodeInvalidContext, Message: "manager grant is not canonical", Cause: err}
 	}
 	objective, err := queryObjective(ctx, tx, packet.WorkspaceID, grant.ObjectiveID)
 	if err != nil {
-		return &Error{Code: CodeInvalidContext, Message: "version-five manager objective is not canonical", Cause: err}
+		return &Error{Code: CodeInvalidContext, Message: "manager objective is not canonical", Cause: err}
 	}
 	if grant.Status != domain.ManagerGrantActive || grant.Revision != snapshot.GrantRevision ||
 		grant.WorkspaceID != snapshot.WorkspaceID || grant.ProjectID != snapshot.ProjectID || grant.ObjectiveID != snapshot.ObjectiveID ||
@@ -1207,25 +1386,46 @@ func (s *Store) validateVersionFiveManagerGrantAgainstCanonical(ctx context.Cont
 		grant.Limits.MaxTasks != snapshot.MaxTasks || grant.Limits.MaxDependencies != snapshot.MaxDependencies ||
 		grant.Limits.MaxClaimRequirements != snapshot.MaxClaimRequirements || grant.Limits.Budget != snapshot.Budget ||
 		grant.ExpiresAt != snapshot.ExpiresAt || len(grant.LaunchProfiles) != len(snapshot.LaunchProfiles) {
-		return &Error{Code: CodeInvalidContext, Message: "version-five manager grant differs from current exact authority"}
+		return &Error{Code: CodeInvalidContext, Message: "manager grant differs from current exact authority"}
 	}
 	if grant.ExpiresAt != "" {
 		expiresAt, err := time.Parse(time.RFC3339Nano, grant.ExpiresAt)
 		if err != nil || !s.clock().UTC().Before(expiresAt) {
-			return &Error{Code: CodeInvalidContext, Message: "version-five manager grant has expired", Cause: err}
+			return &Error{Code: CodeInvalidContext, Message: "manager grant has expired", Cause: err}
 		}
 	}
 	for index, frozen := range snapshot.LaunchProfiles {
 		current := grant.LaunchProfiles[index]
 		if current.LaunchProfileID != frozen.LaunchProfileID || current.Revision != frozen.Revision ||
 			current.AgentID != frozen.AgentID || current.AgentRevision != frozen.AgentRevision {
-			return &Error{Code: CodeInvalidContext, Message: "version-five manager launch-profile snapshot differs from current grant authority"}
+			return &Error{Code: CodeInvalidContext, Message: "manager launch-profile snapshot differs from current grant authority"}
 		}
 		profile, err := queryLaunchProfile(ctx, tx, packet.WorkspaceID, frozen.LaunchProfileID)
 		if err != nil || profile.Status != domain.LaunchProfileActive || profile.ProjectID != packet.ProjectID ||
 			profile.Revision != frozen.Revision || profile.AgentID != frozen.AgentID || profile.AgentRevision != frozen.AgentRevision ||
 			profile.ManagerGrantID != "" {
-			return &Error{Code: CodeInvalidContext, Message: "version-five manager target profile is no longer exact and active", Cause: err}
+			return &Error{Code: CodeInvalidContext, Message: "manager target profile is no longer exact and active", Cause: err}
+		}
+	}
+	return nil
+}
+
+func (s *Store) validateCheckWatchGrantAgainstCanonical(ctx context.Context, tx *sql.Tx, packet domain.ContextPacket) error {
+	snapshot := packet.CheckWatchGrant
+	if snapshot == nil {
+		return &Error{Code: CodeInvalidContext, Message: "context packet is missing check-watch authority"}
+	}
+	grant, err := queryContextCheckWatchGrantAuthority(ctx, tx, packet.WorkspaceID, snapshot.GrantID)
+	if err != nil {
+		return &Error{Code: CodeInvalidContext, Message: "check-watch grant is not canonical", Cause: err}
+	}
+	if grant.Status != domain.CheckWatchGrantActive || !contextCheckWatchGrantMatchesCanonical(snapshot, grant, false) {
+		return &Error{Code: CodeInvalidContext, Message: "check-watch grant differs from current exact authority"}
+	}
+	if grant.ExpiresAt != "" {
+		expiresAt, err := time.Parse(time.RFC3339Nano, grant.ExpiresAt)
+		if err != nil || !s.clock().UTC().Before(expiresAt) {
+			return &Error{Code: CodeInvalidContext, Message: "check-watch grant has expired", Cause: err}
 		}
 	}
 	return nil
@@ -1246,12 +1446,16 @@ func contextPacketSemanticHash(packet domain.ContextPacket) (string, error) {
 }
 
 func (s *Store) AuthorizeRunCapability(ctx context.Context, runID string) (domain.RunBriefing, error) {
-	run, err := queryRun(ctx, s.db, "", strings.TrimSpace(runID))
+	return s.authorizeRunCapability(ctx, s.db, runID)
+}
+
+func (s *Store) authorizeRunCapability(ctx context.Context, database dbgen.DBTX, runID string) (domain.RunBriefing, error) {
+	run, err := queryRun(ctx, database, "", strings.TrimSpace(runID))
 	if err != nil {
 		return domain.RunBriefing{}, err
 	}
 	var packetID, expiresAt string
-	if err := s.db.QueryRowContext(ctx, `SELECT b.context_packet_id, c.expires_at
+	if err := database.QueryRowContext(ctx, `SELECT b.context_packet_id, c.expires_at
 FROM run_context_bindings b JOIN run_capabilities c ON c.run_id = b.run_id
 WHERE b.run_id = ?`, run.ID).Scan(&packetID, &expiresAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1271,15 +1475,74 @@ WHERE b.run_id = ?`, run.ID).Scan(&packetID, &expiresAt); err != nil {
 	default:
 		return domain.RunBriefing{}, &Error{Code: CodeCapabilityInactive, Message: fmt.Sprintf("run capability is inactive while run is %s", run.Status)}
 	}
-	packet, err := queryContextPacket(ctx, s.db, run.WorkspaceID, packetID)
+	packet, err := queryContextPacket(ctx, database, run.WorkspaceID, packetID)
 	if err != nil {
 		return domain.RunBriefing{}, err
 	}
-	task, err := queryTask(ctx, s.db, run.WorkspaceID, run.TaskID)
+	task, err := queryTask(ctx, database, run.WorkspaceID, run.TaskID)
 	if err != nil {
 		return domain.RunBriefing{}, err
 	}
 	return domain.RunBriefing{Run: run, Task: task, Packet: packet, ExpiresAt: expiresAt, Resource: "crewfold://runs/" + run.ID + "/briefing"}, nil
+}
+
+// AuthorizeRunCheckWatchGrant resolves only the exact grant frozen into a
+// run and intersects it with current authority. Role and launch-profile purpose
+// are deliberately absent. The packet remains historically readable after
+// revocation, while discovery and every operation call through this gate fail
+// closed against the current grant and enabled agent revision.
+func (s *Store) AuthorizeRunCheckWatchGrant(ctx context.Context, sourceRunID, requiredOperation string) (domain.CheckWatchGrant, error) {
+	return s.authorizeRunCheckWatchGrant(ctx, s.db, sourceRunID, requiredOperation)
+}
+
+// authorizeRunCheckWatchGrant accepts a transaction so check mutations can
+// perform current authorization in the same transaction and before their
+// idempotency lookup.
+func (s *Store) authorizeRunCheckWatchGrant(ctx context.Context, database dbgen.DBTX, sourceRunID, requiredOperation string) (domain.CheckWatchGrant, error) {
+	briefing, err := s.authorizeRunCapability(ctx, database, strings.TrimSpace(sourceRunID))
+	if err != nil {
+		return domain.CheckWatchGrant{}, err
+	}
+	packet := briefing.Packet
+	snapshot := packet.CheckWatchGrant
+	if packet.Schema != domain.ContextPacketSchema || snapshot == nil || packet.ManagementGrant != nil {
+		return domain.CheckWatchGrant{}, &Error{Code: CodeCheckWatchGrantDenied, Message: "run has no check-watch grant authority"}
+	}
+	requiredOperation = strings.TrimSpace(requiredOperation)
+	if requiredOperation != "" && requiredOperation != domain.CheckWatchOperationRun &&
+		requiredOperation != domain.CheckWatchOperationInspect && requiredOperation != domain.CheckWatchOperationProposeRepair {
+		return domain.CheckWatchGrant{}, &Error{Code: CodeCheckWatchGrantDenied, Message: "requested check-watch operation is unsupported"}
+	}
+	grant, err := queryContextCheckWatchGrantAuthority(ctx, database, packet.WorkspaceID, snapshot.GrantID)
+	if err != nil {
+		if ErrorCode(err) == CodeCheckWatchGrantNotFound {
+			return domain.CheckWatchGrant{}, &Error{Code: CodeCheckWatchGrantDenied, Message: "run check-watch grant is no longer current", Cause: err}
+		}
+		return domain.CheckWatchGrant{}, err
+	}
+	agent, err := queryAgent(ctx, database, packet.WorkspaceID, packet.AgentID)
+	if err != nil {
+		if ErrorCode(err) == CodeAgentNotFound {
+			return domain.CheckWatchGrant{}, &Error{Code: CodeCheckWatchGrantDenied, Message: "check-watch agent is no longer current", Cause: err}
+		}
+		return domain.CheckWatchGrant{}, err
+	}
+	if grant.Status != domain.CheckWatchGrantActive || !contextCheckWatchGrantMatchesCanonical(snapshot, grant, false) ||
+		grant.WorkspaceID != briefing.Run.WorkspaceID || grant.ProjectID != briefing.Run.ProjectID ||
+		grant.AgentID != briefing.Run.AgentID || agent.ID != grant.AgentID || agent.Revision != grant.AgentRevision || !agent.Enabled ||
+		(requiredOperation != "" && !containsContextString(grant.Operations, requiredOperation)) {
+		return domain.CheckWatchGrant{}, &Error{Code: CodeCheckWatchGrantDenied, Message: "run check-watch grant is revoked, stale, or does not allow the requested operation"}
+	}
+	if grant.ExpiresAt != "" {
+		expiresAt, err := time.Parse(time.RFC3339Nano, grant.ExpiresAt)
+		if err != nil {
+			return domain.CheckWatchGrant{}, storageFailure("parse check-watch grant expiry", err)
+		}
+		if !s.clock().UTC().Before(expiresAt) {
+			return domain.CheckWatchGrant{}, &Error{Code: CodeCheckWatchGrantDenied, Message: "run check-watch grant has expired"}
+		}
+	}
+	return grant, nil
 }
 
 func (s *Store) SubmitRunReport(ctx context.Context, command CreateRunReportCommand) (domain.RunReport, error) {

@@ -17,7 +17,7 @@
   moved location as unavailable under its durable identity.
 - Acceptance scenario path: `test/scenarios/projects-checkouts/run.sh`
 - Exact command: `./scripts/check.sh`
-- Expected result: formatting, vet, unit, migration, protocol, race, and M0–M3
+- Expected result: formatting, vet, unit, schema, protocol, race, and M0–M3
   black-box checks pass; the source scenario prints `Projects and checkouts acceptance: PASS`; no source
   content, daemon, socket, or temporary fixture remains.
 - Observed result: passed on Linux/amd64 with Go 1.26.5 and the installed Git CLI.
@@ -32,7 +32,7 @@
 | Unit/store | `go test ./...` via check script | passed | Domain records, CLI, store, daemon, Git observer, protocol, and prior packages |
 | Race | `go test -race ./...` via check script | passed | New Git/store/API paths and prior crash harness are race-clean |
 | Git observer | `go test ./internal/gitstate` | passed | Adjacent clones, linked worktree, path normalization, dirty state, absent Git, malformed output, bounded command allowlist, content digest, and hostile fsmonitor suppression |
-| Store/migration | `go test ./internal/store` | passed | Schema v2, representative v1 upgrade, atomic registration, shared repository identity, duplicate path, unavailable retention, events, and idempotency |
+| Store/schema | `go test ./internal/store` | passed | Current-baseline integrity, atomic registration, shared repository identity, duplicate path, unavailable retention, events, and idempotency |
 | Protocol | `go test ./protocol` | passed | Unique valid schema IDs/references and M3 result-constant agreement |
 | Component | `go test ./internal/daemon` | passed | Real Git/Unix socket/SQLite flow, standalone and linked checkouts, dirty/moved refresh, restart, non-repository rejection, and fake Git failures |
 | Black-box acceptance | Projects and checkouts scenario via check script | passed | Public CLI registers four locations, proves content digest unchanged, refreshes state, restarts, and restores the same checkout list |
@@ -69,7 +69,7 @@ If a registered path later resolves to another history, refresh records
 
 ## Persistence and recovery
 
-- Durable state introduced or changed: schema version 2 adds `projects`,
+- Durable state exercised: `projects`,
   `repositories`, `project_repositories`, and `checkouts`; successful mutations
   add `project.registered`, `repository.registered`, `checkout.registered`, and
   changed refreshes add `checkout.git_observed`.
@@ -79,10 +79,9 @@ If a registered path later resolves to another history, refresh records
 - Reconciliation outcome: four checkout identities and their one shared
   repository identity survive restart. Missing paths remain unavailable rather
   than being deleted.
-- Migration fixture added: `internal/store/testdata/schema-v001.sql` contains a
-  representative M2 workspace/event/idempotency record and upgrades to migration
-  `002_projects_repositories_checkouts.sql` without losing it.
-- Backup/restore impact: unchanged from M2; an online backup must include the live
+- Current-baseline tests cover representative workspace/event/idempotency and
+  project/repository/checkout rows without fabricated state.
+- Backup/restore impact: an online backup must include the live
   WAL state. There is no M3 backup command.
 
 ## Security and autonomy
@@ -113,14 +112,14 @@ creates a dirty file and renames one fixture checkout.
 - API/schema changes: additive protocol-v1 methods `project.add`,
   `project.inspect`, `checkout.add`, and `checkout.list`; eight parameter/result
   schemas and three domain schemas.
-- Storage changes: forward-only schema migration 1→2 with exact migration-name
-  validation. Older M2 binaries refuse the newer database via `user_version`.
+- Storage evidence: fresh-baseline creation validates the exact tables, indexes,
+  and canonical identity rules.
 - Adapter/runtime compatibility changes: none; no runtime/provider adapter exists.
 - Earlier milestone scenarios rerun: M0, M1, and M2 pass. M2's storage-health
   assertion now intentionally accepts the binary's latest schema rather than
   freezing the historical version number.
-- Upgrade/rollback impact: v0 and representative v1 databases migrate forward.
-  There is no down migration; rollback requires a compatible backup.
+- Restore impact: restore targets a new data directory and must pass current
+  canonical integrity before serving.
 
 ## Known limitations and deferrals
 

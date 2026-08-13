@@ -33,7 +33,7 @@ Choose after testing:
 - FTS5 availability;
 - backup API support;
 - cancellation and busy behavior;
-- generated query ergonomics and migration testing.
+- generated query ergonomics and current-baseline testing.
 
 ### Terminal TUI library
 

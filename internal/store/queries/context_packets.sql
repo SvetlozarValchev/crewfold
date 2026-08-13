@@ -44,3 +44,22 @@ ORDER BY crewfold_timestamp_key(thread.updated_at) DESC, thread.id ASC LIMIT ?;
 
 -- name: GetContextEventCursor :one
 SELECT CAST(COALESCE(MAX(sequence), 0) AS INTEGER) FROM events;
+
+-- name: GetContextCheckWatchGrant :one
+SELECT id, workspace_id, project_id, agent_id, agent_revision,
+       max_pending, max_in_flight, COALESCE(expires_at, '') AS expires_at,
+       content_sha256, status, revision, created_at, updated_at, created_by, updated_by
+FROM check_watch_grants
+WHERE workspace_id = ? AND id = ?;
+
+-- name: ListContextCheckWatchGrantOperations :many
+SELECT operation
+FROM check_watch_grant_operations
+WHERE grant_id = ?
+ORDER BY ordinal;
+
+-- name: ListContextCheckWatchGrantDefinitions :many
+SELECT definition_id, definition_content_revision, definition_sha256
+FROM check_watch_grant_definitions
+WHERE grant_id = ?
+ORDER BY ordinal;

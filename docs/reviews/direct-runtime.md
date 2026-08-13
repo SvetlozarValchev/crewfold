@@ -17,7 +17,7 @@
   process identity; and reconcile a child that continues across daemon restart.
 - Acceptance scenario path: `test/scenarios/direct-runtime/run.sh`
 - Exact command: `./scripts/check.sh`
-- Expected result: formatting, vet, unit, migration, protocol, race, and all seven
+- Expected result: formatting, vet, unit, schema, protocol, race, and all seven
   capability-named built-binary scenarios pass; direct execution prints
   `Direct subprocess acceptance: PASS`; no model, credential, remote, or network
   service is required.
@@ -33,7 +33,7 @@
 | --- | --- | --- | --- |
 | Complete local gate | `./scripts/check.sh` | passed | `gofmt`, vet, all Go tests, race detector, and seven built-binary scenarios |
 | Unit | `go test ./internal/execution` | passed | Environment allowlist, output bounds, API redaction, strict fixture reports, start failure, timeout propagation, missing supervisor identity, and fake-runtime command rejection |
-| Store/migration | `go test ./internal/store` | passed | Stop/lost invariants, retained capacity, schema 4→5 upgrade, and preservation of a queued active run and timeline |
+| Store/schema | `go test ./internal/store` | passed | Stop/lost invariants, retained capacity, and preservation of a queued active run and timeline in the current baseline |
 | Protocol | `go test ./protocol` | passed | Unique valid schema IDs/references, result-constant agreement, and semantic validation of all direct-runtime fixtures |
 | Component | `go test ./internal/daemon` | passed | Real child completion/crash/timeout/forced stop, bounded output, cleanup before provider-bind failure, and fresh-driver restart reconciliation |
 | CLI | `go test ./internal/cli` | passed | Stop/log argument bounds, explicit graceful intent, and structured log/stop requests |
@@ -67,7 +67,7 @@
 
 ## Persistence and recovery
 
-- Durable state introduced or changed: schema version 5 adds `stopping`, `stopped`,
+- Durable state exercised: `stopping`, `stopped`,
   and `lost` run states plus stop-grace and forced-stop facts. The run-owned tables
   and live-run indexes are rebuilt to preserve uncertainty as capacity-consuming.
 - Runtime state: each direct run has an owner-only directory containing an
@@ -81,13 +81,10 @@
 - Reconciliation outcome: final state is accepted only from matching run/schema
   identity and, while live, matching Linux PID start identity. Missing identity or
   an unacknowledged stop cannot become success and does not release capacity.
-- Migration fixture: the store test constructs representative schema-v4 run,
-  queue, and timeline records, upgrades them through the checked-in
-  `005_direct_runtime.sql`, and proves the active work remains claimable.
+- Current-baseline tests construct representative run, queue, and timeline records
+  and prove active work remains claimable across restart.
 - Backup/restore impact: a coherent live backup must include SQLite through its
-  online backup mechanism and the direct-runtime state directory. There is no
-  backup command or down migration; rollback requires a compatible pre-upgrade
-  backup.
+  online backup mechanism and the direct-runtime state directory.
 
 ## Security and autonomy
 
@@ -117,8 +114,8 @@
 - API/schema changes: additive protocol-v1 `run.logs` and `run.stop` methods;
   bounded-log schemas; new run states and stop fields; and optional bounded process
   controls in the testing scenario contract.
-- Storage changes: forward-only schema migration 4→5. Older binaries refuse the
-  newer `user_version`; rollback requires a pre-upgrade backup.
+- Storage evidence: fresh-baseline creation and canonical reads cover the complete
+  direct-runtime state machine.
 - Adapter compatibility: runtime drivers now expose inspect, stop, and logs;
   provider observation receives a runtime snapshot. The runtime/provider axes
   remain independent, while incompatible launch specifications fail explicitly

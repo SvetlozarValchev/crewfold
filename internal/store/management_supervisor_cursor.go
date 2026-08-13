@@ -69,7 +69,7 @@ ORDER BY sequence LIMIT ?`, workspaceID, result.From, result.Cutoff, maximumSupe
 // This is intentionally a closed union. A binary that does not understand a
 // newly introduced workspace fact must not silently advance automation beyond
 // it. Command names and test-only types do not belong here: these are only the
-// immutable event facts emitted by supported Store paths through schema 17.
+// immutable event facts emitted by every supported current-schema Store path.
 func knownSupervisorJournalEvent(value string) bool {
 	switch value {
 	case
@@ -105,11 +105,25 @@ func knownSupervisorJournalEvent(value string) bool {
 		"supervisor.policy_configured", "supervisor.intent_created", "supervisor.intent_satisfied",
 		"supervisor.intent_failed", "supervisor.intent_cancelled", "supervisor.action_recorded",
 		"supervisor.action_applied", "supervisor.scan_completed",
-		"approval.requested", "approval.granted", "approval.denied", "approval.consumed", "approval.expired":
+		"approval.requested", "approval.granted", "approval.denied", "approval.consumed", "approval.expired",
+		"check.definition_created", "check.definition_retired", "check.requirement_created", "check.requirement_retired",
+		"check.grant_created", "check.grant_revoked", "check.policy_configured", "check.route_created", "check.route_retired",
+		"check.run_requested", "check.run_starting", "check.run_runtime_observed", "check.run_started", "check.run_finished", "check.result_recorded",
+		"check.freshness_observed", "check.freshness_stale",
+		"check.notification_queued", "check.notification_unroutable",
+		"check.repair_proposed", "check.repair_accepted", "check.repair_rejected", "check.repair_stale",
+		"check.watch_completed":
 		return true
 	default:
 		return false
 	}
+}
+
+// The M17 check watcher crosses the same workspace journal as the supervisor.
+// Keeping a separately named classifier makes its raw cursor proof explicit
+// while preserving one closed fact vocabulary for a given schema binary.
+func knownCheckWatchJournalEvent(value string) bool {
+	return knownSupervisorJournalEvent(value)
 }
 
 func advanceSupervisorJournalCursor(ctx context.Context, tx *sql.Tx, workspaceID string, through int64, now string) error {

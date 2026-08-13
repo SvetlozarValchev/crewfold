@@ -223,15 +223,15 @@ grant_id=$(extract_id mgrgrant "$scenario_root/grant.json")
 "$binary" launch-profile create --workspace personal --project demo --agent constellation-granted --expected-agent-revision 1 --purpose 'planning workflow metadata only' --runtime direct --provider fixture-mcp --scenario "$scenario_root/manager-plan.json" --assignment-lease-seconds 900 --capability-ttl-seconds 900 --manager-grant "$grant_id" --socket "$socket_path" --idempotency-key manager-supervisor-planning-profile --output json >"$scenario_root/planning-profile.json"
 planning_profile=$(extract_id lprof "$scenario_root/planning-profile.json")
 
-# An identical Role label under packet v4 receives none of the four manager tools.
+# An identical Role label without a grant receives none of the four manager tools.
 "$binary" run start "$ungranted_task" --workspace personal --runtime direct --provider fixture-mcp --scenario "$repo_root/test/fixtures/manager-supervisor/ungranted-role-probe.json" --expected-task-revision 2 --socket "$socket_path" --idempotency-key manager-supervisor-ungranted-run --output json >"$scenario_root/ungranted-run.json"
 ungranted_run=$(extract_id run "$scenario_root/ungranted-run.json")
 ungranted_context=$(extract_context_packet "$scenario_root/ungranted-run.json")
 "$binary" context show "$ungranted_context" --workspace personal --socket "$socket_path" --output json >"$scenario_root/ungranted-context.json"
-grep -Fq 'urn:crewfold:schema:domain:context-packet:v4' "$scenario_root/ungranted-context.json"
+grep -Fq 'urn:crewfold:schema:domain:context-packet:v1' "$scenario_root/ungranted-context.json"
 if grep -Eq 'crewfold_propose_(tasks|assignment|review|escalation)' "$scenario_root/ungranted-context.json" || grep -Fq '"management_grant"' "$scenario_root/ungranted-context.json"
 then
-  printf 'ungranted packet-v4 run received manager authority\n' >&2
+  printf 'ungranted run received manager authority\n' >&2
   exit 1
 fi
 wait_run_terminal "$ungranted_run" "$scenario_root/ungranted-final.json"
@@ -241,7 +241,7 @@ grep -Fq '"status":"completed"' "$scenario_root/ungranted-final.json"
 manager_run=$(extract_id run "$scenario_root/manager-run.json")
 manager_context=$(extract_context_packet "$scenario_root/manager-run.json")
 "$binary" context show "$manager_context" --workspace personal --socket "$socket_path" --output json >"$scenario_root/manager-context.json"
-grep -Fq 'urn:crewfold:schema:domain:context-packet:v5' "$scenario_root/manager-context.json"
+grep -Fq 'urn:crewfold:schema:domain:context-packet:v1' "$scenario_root/manager-context.json"
 grep -Fq 'crewfold_propose_tasks' "$scenario_root/manager-context.json"
 grep -Fq "$grant_id" "$scenario_root/manager-context.json"
 wait_run_terminal "$manager_run" "$scenario_root/manager-final.json"
@@ -305,7 +305,7 @@ grep -Fq '"status":"applied"' "$scenario_root/supervisor-actions.json"
 "$binary" supervisor explain --workspace personal --task "$task_b" --socket "$socket_path" --output json >"$scenario_root/supervisor-explain.json"
 grep -Fq '"type":"supervisor_explanation"' "$scenario_root/supervisor-explain.json"
 
-# A live packet-v5 snapshot does not survive owner revocation for later calls.
+# A frozen grant snapshot does not override current owner revocation for later calls.
 "$binary" task create --workspace personal --project demo --objective "$objective_id" --title 'Revocation assignment target' --priority 20 --budget-tokens 1000 --budget-cents 50 --budget-seconds 300 --socket "$socket_path" --idempotency-key manager-supervisor-revocation-target --output json >"$scenario_root/revocation-target.json"
 revocation_target=$(extract_id task "$scenario_root/revocation-target.json")
 "$binary" task create --workspace personal --project demo --objective "$objective_id" --title 'Revocation planning task' --priority 20 --budget-tokens 1000 --budget-cents 50 --budget-seconds 300 --socket "$socket_path" --idempotency-key manager-supervisor-revocation-planning --output json >"$scenario_root/revocation-planning.json"

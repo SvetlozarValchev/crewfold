@@ -13,7 +13,7 @@
     "scanned_through_event_sequence": {"type": "integer", "minimum": 0},
     "chain": {"$ref": "context-delta-chain.schema.json"},
     "delta": {"$ref": "context-delta.schema.json"},
-    "rebase_reason": {"enum": ["unsupported_packet", "base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]}
+    "rebase_reason": {"enum": ["base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]}
   },
   "allOf": [
     {"if": {"properties": {"status": {"const": "pending"}}}, "then": {"$ref": "context-refresh-result.schema.json#/$defs/pending_chain", "required": ["delta"], "not": {"required": ["rebase_reason"]}}},

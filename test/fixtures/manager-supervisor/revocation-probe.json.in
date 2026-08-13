@@ -9,7 +9,7 @@
       "kind": "completion",
       "message": "A proposal call after owner revocation was denied.",
       "evidence": ["revocation_enforced"],
-      "handoff": "The live packet-v5 snapshot did not outlive its current grant."
+      "handoff": "The live packet snapshot did not outlive its current grant."
     }
   ],
   "management": {

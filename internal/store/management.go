@@ -528,7 +528,7 @@ func (s *Store) LaunchProfiles(ctx context.Context, query ListLaunchProfilesQuer
 }
 
 // InvokeManager atomically resolves an exact owner grant/planning-profile
-// tuple, builds the sole bindable packet-v5 form, and enqueues its run using
+// tuple, builds the sole bindable manager-authority packet, and enqueues its run using
 // the immutable profile recipe. Empty tuple identifiers are accepted only
 // when their scope has exactly one candidate.
 func (s *Store) InvokeManager(ctx context.Context, command InvokeManagerCommand) (ManagerInvocationResult, error) {
@@ -1252,7 +1252,7 @@ func (s *Store) decideManagerProposal(ctx context.Context, command AcceptManager
 		packetErr := tx.QueryRowContext(ctx, `SELECT json_extract(packet.packet_json,'$.management_grant.grant_id'),
 json_extract(packet.packet_json,'$.management_grant.grant_revision'),json_extract(packet.packet_json,'$.management_grant.objective_revision')
 FROM run_context_bindings binding JOIN context_packets packet ON packet.id=binding.context_packet_id
-WHERE binding.run_id=? AND json_extract(packet.packet_json,'$.schema')=?`, proposal.SourceRunID, domain.ContextPacketSchemaV5).
+WHERE binding.run_id=? AND json_extract(packet.packet_json,'$.schema')=?`, proposal.SourceRunID, domain.ContextPacketSchema).
 			Scan(&sourcePacketGrantID, &sourcePacketGrantRevision, &sourcePacketObjectiveRevision)
 		grantCurrent = grantCurrent && packetErr == nil && sourcePacketGrantID == proposal.GrantID &&
 			sourcePacketGrantRevision == proposal.GrantRevision && sourcePacketObjectiveRevision == proposal.ObjectiveRevision
@@ -3078,7 +3078,7 @@ func mustParseManagementTime(value string) time.Time {
 func scanSchedulingIntent(row rowScanner) (domain.SchedulingIntent, error) {
 	var value domain.SchedulingIntent
 	err := row.Scan(&value.ID, &value.WorkspaceID, &value.ProjectID, &value.ObjectiveID, &value.TaskID, &value.AgentID, &value.LaunchProfileID,
-		&value.SourceProposalID, &value.SourceActionID, &value.Status, &value.Reason, &value.AssignmentID, &value.RunID,
+		&value.SourceProposalID, &value.SourceActionID, &value.SourceCheckRepairProposalID, &value.Status, &value.Reason, &value.AssignmentID, &value.RunID,
 		&value.SupervisorActionID, &value.Attempts, &value.LastEvaluatedEventSequence, &value.Revision, &value.CreatedAt, &value.UpdatedAt, &value.NextAttemptAt,
 		&value.CreatedBy, &value.UpdatedBy)
 	return value, err
@@ -3536,7 +3536,7 @@ JOIN run_capabilities capability ON capability.run_id=binding.run_id
 WHERE binding.run_id=? AND crewfold_timestamp_key(capability.expires_at)>crewfold_timestamp_key(?)`, run.ID, now).Scan(&packetSchema, &packetGrantID, &packetGrantRevision, &packetAsOf); err != nil {
 		return &Error{Code: CodeManagerProposalDenied, Message: "run has no current manager capability", Cause: err}
 	}
-	if packetSchema != domain.ContextPacketSchemaV5 || packetGrantID != grant.ID || packetGrantRevision != grant.Revision || command.AsOfEventSequence != packetAsOf {
+	if packetSchema != domain.ContextPacketSchema || packetGrantID != grant.ID || packetGrantRevision != grant.Revision || command.AsOfEventSequence != packetAsOf {
 		return &Error{Code: CodeManagerProposalDenied, Message: "run packet does not carry the current exact manager grant"}
 	}
 	var open int
@@ -3864,7 +3864,7 @@ func queryLaunchProfile(ctx context.Context, database queryRower, workspaceID, p
 	return value, err
 }
 
-const schedulingIntentSelect = `SELECT id,workspace_id,project_id,objective_id,task_id,agent_id,launch_profile_id,source_proposal_id,source_action_id,status,COALESCE(reason,''),COALESCE(assignment_id,''),COALESCE(run_id,''),COALESCE(supervisor_action_id,''),attempts,last_evaluated_event_sequence,revision,created_at,updated_at,COALESCE(next_attempt_at,''),created_by,updated_by FROM scheduling_intents`
+const schedulingIntentSelect = `SELECT id,workspace_id,project_id,objective_id,task_id,agent_id,launch_profile_id,COALESCE(source_proposal_id,''),COALESCE(source_action_id,''),COALESCE(source_check_repair_proposal_id,''),status,COALESCE(reason,''),COALESCE(assignment_id,''),COALESCE(run_id,''),COALESCE(supervisor_action_id,''),attempts,last_evaluated_event_sequence,revision,created_at,updated_at,COALESCE(next_attempt_at,''),created_by,updated_by FROM scheduling_intents`
 
 func querySchedulingIntent(ctx context.Context, database queryRower, workspaceID, intentID string) (domain.SchedulingIntent, error) {
 	value, err := scanSchedulingIntent(database.QueryRowContext(ctx, schedulingIntentSelect+` WHERE workspace_id=? AND id=?`, workspaceID, intentID))

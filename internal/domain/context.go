@@ -1,22 +1,17 @@
 package domain
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+)
 
 const (
-	ContextPacketSchemaV1 = "urn:crewfold:schema:domain:context-packet:v1"
-	ContextPacketSchemaV2 = "urn:crewfold:schema:domain:context-packet:v2"
-	ContextPacketSchemaV3 = "urn:crewfold:schema:domain:context-packet:v3"
-	// ContextPacketSchema remains the packet-v4 identifier for source and wire
-	// compatibility with the M15 API. Manager runs use the explicitly separate
-	// v5 schema below; ordinary packets are not silently upgraded into a wider
-	// capability.
-	ContextPacketSchema   = "urn:crewfold:schema:domain:context-packet:v4"
-	ContextPacketSchemaV4 = ContextPacketSchema
-	ContextPacketSchemaV5 = "urn:crewfold:schema:domain:context-packet:v5"
+	ContextPacketSchema = "urn:crewfold:schema:domain:context-packet:v1"
 
-	ContextLivePolicySchema   = "urn:crewfold:schema:domain:live-context-policy:v1"
-	ContextManagerGrantSchema = "urn:crewfold:schema:domain:context-manager-grant:v1"
-	ContextDeltaSchema        = "urn:crewfold:schema:domain:context-delta:v1"
+	ContextLivePolicySchema      = "urn:crewfold:schema:domain:live-context-policy:v1"
+	ContextManagerGrantSchema    = "urn:crewfold:schema:domain:context-manager-grant:v1"
+	ContextCheckWatchGrantSchema = "urn:crewfold:schema:domain:context-check-watch-grant:v1"
+	ContextDeltaSchema           = "urn:crewfold:schema:domain:context-delta:v1"
 
 	ContextLiveDeliveryExplicitPull = "explicit_pull"
 	ContextLiveAckBoundRun          = "bound_run"
@@ -39,7 +34,6 @@ const (
 	ContextDeltaDependentUpdated         = "dependent_updated"
 	ContextDeltaParticipantRosterUpdated = "participant_roster_updated"
 
-	ContextRebaseUnsupportedPacket       = "unsupported_packet"
 	ContextRebaseBaseContractChanged     = "base_contract_changed"
 	ContextRebaseDependencySetChanged    = "dependency_set_changed"
 	ContextRebaseEventWindowExceeded     = "event_window_exceeded"
@@ -47,12 +41,6 @@ const (
 	ContextRebaseCumulativeLimitExceeded = "cumulative_limit_exceeded"
 	ContextRebaseUnsupportedEventType    = "unsupported_event_type"
 )
-
-// IsLiveContextPacketSchema reports whether a packet carries the frozen bounded
-// live-context contract. It deliberately excludes v1-v3 compatibility packets.
-func IsLiveContextPacketSchema(schema string) bool {
-	return schema == ContextPacketSchemaV4 || schema == ContextPacketSchemaV5
-}
 
 type ContextRole struct {
 	AgentID  string `json:"agent_id"`
@@ -142,7 +130,7 @@ type ContextBudget struct {
 }
 
 // ContextLivePolicy freezes the delivery, acknowledgement, and byte bounds for
-// a run. A daemon upgrade cannot silently widen a packet's live authority.
+// a run. Later daemon behavior cannot silently widen a packet's live authority.
 type ContextLivePolicy struct {
 	Schema                    string `json:"schema"`
 	Delivery                  string `json:"delivery"`
@@ -163,7 +151,7 @@ type ContextManagerLaunchProfile struct {
 	AgentRevision   int64  `json:"agent_revision"`
 }
 
-// ContextManagerGrant is the immutable v5 capability snapshot. Each proposal
+// ContextManagerGrant is the immutable manager capability snapshot. Each proposal
 // call still revalidates the current canonical grant; this copy explains the
 // exact authority with which the run was launched.
 type ContextManagerGrant struct {
@@ -190,108 +178,80 @@ type ContextManagerGrant struct {
 	ExpiresAt            string                        `json:"expires_at,omitempty"`
 }
 
-type ContextPacket struct {
-	Schema                        string               `json:"schema"`
-	ID                            string               `json:"id"`
-	WorkspaceID                   string               `json:"workspace_id"`
-	ProjectID                     string               `json:"project_id"`
-	TaskID                        string               `json:"task_id"`
-	AgentID                       string               `json:"agent_id"`
-	CheckoutID                    string               `json:"checkout_id"`
-	Role                          ContextRole          `json:"role"`
-	Task                          ContextTask          `json:"task"`
-	Checkout                      ContextCheckout      `json:"checkout"`
-	Dependencies                  []ContextDependency  `json:"dependencies"`
-	Dependents                    []ContextDependency  `json:"dependents"`
-	DependentTaskCount            int                  `json:"dependent_task_count"`
-	Inbox                         InboxSummary         `json:"inbox,omitzero"`
-	ParticipantThreads            []ParticipantThread  `json:"participant_threads"`
-	RequestedKnowledgeRevisionIDs []string             `json:"requested_knowledge_revision_ids,omitzero"`
-	AcceptedKnowledge             []KnowledgeRevision  `json:"accepted_knowledge,omitzero"`
-	Policy                        ContextPolicy        `json:"policy"`
-	LiveContext                   ContextLivePolicy    `json:"live_context"`
-	ManagementGrant               *ContextManagerGrant `json:"management_grant,omitempty"`
-	Reporting                     ContextReporting     `json:"reporting"`
-	Included                      []ContextSelection   `json:"included"`
-	Excluded                      []ContextExclusion   `json:"excluded"`
-	Budget                        ContextBudget        `json:"budget,omitzero"`
-	AsOfEventSequence             int64                `json:"as_of_event_sequence"`
-	ContentHash                   string               `json:"content_hash"`
-	ByteSize                      int                  `json:"byte_size"`
-	CreatedAt                     string               `json:"created_at"`
-	CreatedBy                     string               `json:"created_by"`
+// ContextCheckWatchGrant is the immutable check-watch capability snapshot. It
+// explains the exact owner grant bound to the run; every watcher call still
+// revalidates the current canonical grant, enabled agent revision, project,
+// requested operation, and definition revision.
+type ContextCheckWatchGrant struct {
+	Schema               string                      `json:"schema"`
+	GrantID              string                      `json:"grant_id"`
+	GrantRevision        int64                       `json:"grant_revision"`
+	WorkspaceID          string                      `json:"workspace_id"`
+	ProjectID            string                      `json:"project_id"`
+	WatcherAgentID       string                      `json:"watcher_agent_id"`
+	WatcherAgentRevision int64                       `json:"watcher_agent_revision"`
+	Operations           []string                    `json:"operations"`
+	Definitions          []CheckWatchGrantDefinition `json:"definitions"`
+	MaxPending           int                         `json:"max_pending"`
+	MaxInFlight          int                         `json:"max_in_flight"`
+	ExpiresAt            string                      `json:"expires_at,omitempty"`
+	ContentSHA256        string                      `json:"content_sha256"`
 }
 
-// MarshalJSON keeps v1-v3 wire shapes free of fields introduced by packet v4,
-// keeps packet v4 byte-compatible, and makes every v4/v5 bounded collection
-// explicit.
+type ContextPacket struct {
+	Schema                        string                  `json:"schema"`
+	ID                            string                  `json:"id"`
+	WorkspaceID                   string                  `json:"workspace_id"`
+	ProjectID                     string                  `json:"project_id"`
+	TaskID                        string                  `json:"task_id"`
+	AgentID                       string                  `json:"agent_id"`
+	CheckoutID                    string                  `json:"checkout_id"`
+	Role                          ContextRole             `json:"role"`
+	Task                          ContextTask             `json:"task"`
+	Checkout                      ContextCheckout         `json:"checkout"`
+	Dependencies                  []ContextDependency     `json:"dependencies"`
+	Dependents                    []ContextDependency     `json:"dependents"`
+	DependentTaskCount            int                     `json:"dependent_task_count"`
+	Inbox                         InboxSummary            `json:"inbox,omitzero"`
+	ParticipantThreads            []ParticipantThread     `json:"participant_threads"`
+	RequestedKnowledgeRevisionIDs []string                `json:"requested_knowledge_revision_ids,omitzero"`
+	AcceptedKnowledge             []KnowledgeRevision     `json:"accepted_knowledge,omitzero"`
+	Policy                        ContextPolicy           `json:"policy"`
+	LiveContext                   ContextLivePolicy       `json:"live_context"`
+	ManagementGrant               *ContextManagerGrant    `json:"management_grant,omitempty"`
+	CheckWatchGrant               *ContextCheckWatchGrant `json:"check_watch_grant,omitempty"`
+	Reporting                     ContextReporting        `json:"reporting"`
+	Included                      []ContextSelection      `json:"included"`
+	Excluded                      []ContextExclusion      `json:"excluded"`
+	Budget                        ContextBudget           `json:"budget,omitzero"`
+	AsOfEventSequence             int64                   `json:"as_of_event_sequence"`
+	ContentHash                   string                  `json:"content_hash"`
+	ByteSize                      int                     `json:"byte_size"`
+	CreatedAt                     string                  `json:"created_at"`
+	CreatedBy                     string                  `json:"created_by"`
+}
+
+// MarshalJSON makes bounded collections explicit and rejects mixed delegated
+// authority. Every packet uses this one current wire shape.
 func (packet ContextPacket) MarshalJSON() ([]byte, error) {
 	type plainContextPacket ContextPacket
-	if IsLiveContextPacketSchema(packet.Schema) {
-		copy := packet
-		if copy.Dependencies == nil {
-			copy.Dependencies = []ContextDependency{}
-		}
-		if copy.Dependents == nil {
-			copy.Dependents = []ContextDependency{}
-		}
-		if copy.ParticipantThreads == nil {
-			copy.ParticipantThreads = []ParticipantThread{}
-		}
-		return json.Marshal(plainContextPacket(copy))
+	if packet.Schema != ContextPacketSchema {
+		return nil, errors.New("context packet does not use the current schema")
 	}
-	type legacyContextTask struct {
-		TaskID      string `json:"task_id"`
-		ObjectiveID string `json:"objective_id,omitempty"`
-		Title       string `json:"title"`
-		Description string `json:"description,omitempty"`
-		Priority    int    `json:"priority"`
-		Budget      Budget `json:"budget"`
-		Revision    int64  `json:"revision"`
+	if packet.ManagementGrant != nil && packet.CheckWatchGrant != nil {
+		return nil, errors.New("context packet cannot carry both delegated authority families")
 	}
-	type legacyContextBudget struct {
-		Total     ContextBudgetUsage `json:"total"`
-		Knowledge ContextBudgetUsage `json:"knowledge"`
+	copy := packet
+	if copy.Dependencies == nil {
+		copy.Dependencies = []ContextDependency{}
 	}
-	legacy := struct {
-		Schema                        string              `json:"schema"`
-		ID                            string              `json:"id"`
-		WorkspaceID                   string              `json:"workspace_id"`
-		ProjectID                     string              `json:"project_id"`
-		TaskID                        string              `json:"task_id"`
-		AgentID                       string              `json:"agent_id"`
-		CheckoutID                    string              `json:"checkout_id"`
-		Role                          ContextRole         `json:"role"`
-		Task                          legacyContextTask   `json:"task"`
-		Checkout                      ContextCheckout     `json:"checkout"`
-		Dependencies                  []ContextDependency `json:"dependencies"`
-		Inbox                         InboxSummary        `json:"inbox,omitzero"`
-		RequestedKnowledgeRevisionIDs []string            `json:"requested_knowledge_revision_ids,omitzero"`
-		AcceptedKnowledge             []KnowledgeRevision `json:"accepted_knowledge,omitzero"`
-		Policy                        ContextPolicy       `json:"policy"`
-		Reporting                     ContextReporting    `json:"reporting"`
-		Included                      []ContextSelection  `json:"included"`
-		Excluded                      []ContextExclusion  `json:"excluded"`
-		Budget                        legacyContextBudget `json:"budget,omitzero"`
-		ContentHash                   string              `json:"content_hash"`
-		ByteSize                      int                 `json:"byte_size"`
-		CreatedAt                     string              `json:"created_at"`
-		CreatedBy                     string              `json:"created_by"`
-	}{
-		Schema: packet.Schema, ID: packet.ID, WorkspaceID: packet.WorkspaceID,
-		ProjectID: packet.ProjectID, TaskID: packet.TaskID, AgentID: packet.AgentID,
-		CheckoutID: packet.CheckoutID, Role: packet.Role,
-		Task: legacyContextTask{TaskID: packet.Task.TaskID, ObjectiveID: packet.Task.ObjectiveID,
-			Title: packet.Task.Title, Description: packet.Task.Description, Priority: packet.Task.Priority,
-			Budget: packet.Task.Budget, Revision: packet.Task.Revision},
-		Checkout: packet.Checkout, Dependencies: packet.Dependencies, Inbox: packet.Inbox,
-		RequestedKnowledgeRevisionIDs: packet.RequestedKnowledgeRevisionIDs,
-		AcceptedKnowledge:             packet.AcceptedKnowledge, Policy: packet.Policy, Reporting: packet.Reporting,
-		Included: packet.Included, Excluded: packet.Excluded,
-		Budget:      legacyContextBudget{Total: packet.Budget.Total, Knowledge: packet.Budget.Knowledge},
-		ContentHash: packet.ContentHash, ByteSize: packet.ByteSize, CreatedAt: packet.CreatedAt, CreatedBy: packet.CreatedBy,
+	if copy.Dependents == nil {
+		copy.Dependents = []ContextDependency{}
 	}
-	return json.Marshal(legacy)
+	if copy.ParticipantThreads == nil {
+		copy.ParticipantThreads = []ParticipantThread{}
+	}
+	return json.Marshal(plainContextPacket(copy))
 }
 
 type ContextDeltaCause struct {

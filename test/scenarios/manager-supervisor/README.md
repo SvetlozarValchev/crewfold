@@ -5,9 +5,9 @@ basic accepted-plan progression while the full adversarial acceptance gate is
 still being completed.
 
 The fixture deliberately gives two agents the same arbitrary descriptive role
-string. Only the agent whose exact planning task, active assignment, packet-v5
+string. Only the agent whose exact planning task, active assignment, current-packet
 run, and current manager grant all agree can call a proposal tool. The other agent
-and a packet-v4 run are denied. Retiring a launch profile or revoking the grant
+and a current packet without a grant are denied. Retiring a launch profile or revoking the grant
 also denies later use; no role or profile-purpose string changes that result.
 
 The current public smoke path:
@@ -22,7 +22,7 @@ The current public smoke path:
 5. manually runs the supervisor under bounded policy, completes A, B, and review,
    and proves one run per task with an inspectable dependency-ready explanation;
    and
-6. revokes a grant while its packet-v5 run remains live and proves the later
+6. revokes a grant while its granted run remains live and proves the later
    proposal call is denied while historical state remains readable.
 
 This smoke path is not the M16 exit gate. The final scenario must still exercise

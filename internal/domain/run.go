@@ -53,6 +53,7 @@ type FakeScenario struct {
 	Contradiction FixtureContradiction `json:"contradiction,omitempty"`
 	ContextDelta  FixtureContextDelta  `json:"context_delta,omitempty"`
 	Management    FixtureManagement    `json:"management,omitempty"`
+	CheckWatch    FixtureCheckWatch    `json:"check_watch,omitempty"`
 }
 
 // FixtureProcess describes deterministic operating-system behavior for the
@@ -133,7 +134,6 @@ type FixtureContextDelta struct {
 	ExpectNoPending        bool                             `json:"expect_no_pending,omitempty"`
 	DeniedDeltaID          string                           `json:"denied_delta_id,omitempty"`
 	DeniedExpectedSequence int64                            `json:"denied_expected_sequence,omitempty"`
-	ExpectToolsDenied      bool                             `json:"expect_tools_denied,omitempty"`
 }
 
 // FixtureContextDeltaExpectation describes only assertions over a delta the
@@ -148,7 +148,7 @@ type FixtureContextDeltaExpectation struct {
 	DependentTaskID       string   `json:"dependent_task_id,omitempty"`
 }
 
-// FixtureManagement exercises packet-v5 proposal authority and its revocation
+// FixtureManagement exercises current-packet proposal authority and its revocation
 // boundary without allowing the provider fixture to choose trusted run scope.
 type FixtureManagement struct {
 	Proposals                  []FixtureManagerProposal `json:"proposals,omitempty"`
@@ -162,6 +162,21 @@ type FixtureManagerProposal struct {
 	Kind    string                  `json:"kind"`
 	Summary string                  `json:"summary"`
 	Actions []ManagerProposalAction `json:"actions"`
+}
+
+// FixtureCheckWatch exercises current-packet check authority without allowing the
+// provider fixture to choose trusted workspace, project, agent, grant,
+// checkout, command, definition, evidence class, or recipient scope.
+type FixtureCheckWatch struct {
+	RunRequirementID           string `json:"run_requirement_id,omitempty"`
+	ListResults                bool   `json:"list_results,omitempty"`
+	InspectCheckRunID          string `json:"inspect_check_run_id,omitempty"`
+	ProposeRepairResultID      string `json:"propose_repair_result_id,omitempty"`
+	RepairRationale            string `json:"repair_rationale,omitempty"`
+	ProbeReservedAcceptance    bool   `json:"probe_reserved_acceptance,omitempty"`
+	ExpectToolsDenied          bool   `json:"expect_tools_denied,omitempty"`
+	ProbeRevokedGrant          bool   `json:"probe_revoked_grant,omitempty"`
+	RevocationProbeDelayMillis int    `json:"revocation_probe_delay_millis,omitempty"`
 }
 
 type Run struct {

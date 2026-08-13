@@ -18,7 +18,7 @@
     "last_acknowledged_sequence": {"type": "integer", "minimum": 0},
     "delta_count": {"type": "integer", "minimum": 0},
     "cumulative_byte_size": {"type": "integer", "minimum": 0, "maximum": 65536},
-    "rebase_reason": {"enum": ["unsupported_packet", "base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]},
+    "rebase_reason": {"enum": ["base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]},
     "rebase_event_sequence": {"type": "integer", "minimum": 1},
     "revision": {"type": "integer", "minimum": 0}
   },
@@ -29,7 +29,6 @@
     {
       "oneOf": [
         {"not": {"anyOf": [{"required": ["rebase_reason"]}, {"required": ["rebase_event_sequence"]}]}},
-        {"properties": {"pending_sequence": {"const": 0}, "rebase_reason": {"const": "unsupported_packet"}}, "required": ["rebase_reason"], "not": {"anyOf": [{"required": ["pending_delta_id"]}, {"required": ["rebase_event_sequence"]}]}},
         {"properties": {"pending_sequence": {"const": 0}, "rebase_reason": {"enum": ["base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]}}, "required": ["rebase_reason", "rebase_event_sequence"], "not": {"required": ["pending_delta_id"]}}
       ]
     }

@@ -42,7 +42,7 @@ cleanup() {
   if [ "$status" -ne 0 ]
   then
     printf 'live context delta acceptance failed; collected diagnostics follow\n' >&2
-    for diagnostic in "$daemon_log" "$scenario_root/main-packet.json" "$scenario_root/refresh-created.json" "$scenario_root/refresh-pending.json" "$scenario_root/refresh-two.json" "$scenario_root/refresh-three.json" "$scenario_root/delta-before-restart.json" "$scenario_root/delta-after-restart.json" "$scenario_root/deltas-final.json" "$scenario_root/wrong-refresh.json" "$scenario_root/noop-refresh.json" "$scenario_root/legacy-refresh.json" "$scenario_root/events-final.json" "$scenario_root/main-show.json" "$scenario_root/wrong-show.json" "$scenario_root/legacy-show.json"
+    for diagnostic in "$daemon_log" "$scenario_root/main-packet.json" "$scenario_root/refresh-created.json" "$scenario_root/refresh-pending.json" "$scenario_root/refresh-two.json" "$scenario_root/refresh-three.json" "$scenario_root/delta-before-restart.json" "$scenario_root/delta-after-restart.json" "$scenario_root/deltas-final.json" "$scenario_root/wrong-refresh.json" "$scenario_root/noop-refresh.json" "$scenario_root/events-final.json" "$scenario_root/main-show.json" "$scenario_root/wrong-show.json"
     do
       if [ -f "$diagnostic" ]
       then
@@ -187,7 +187,6 @@ start_daemon
 
 "$binary" agent create main-agent --workspace personal --role implementer --provider fixture-mcp --runtime direct --max-concurrency 2 --socket "$socket_path" --idempotency-key live-context-main-agent --output json >"$scenario_root/main-agent.json"
 "$binary" agent create library-agent --workspace personal --role maintainer --provider fixture-mcp --runtime direct --socket "$socket_path" --idempotency-key live-context-library-agent --output json >"$scenario_root/library-agent.json"
-"$binary" agent create legacy-agent --workspace personal --role compatibility-reviewer --provider fixture-mcp --runtime direct --socket "$socket_path" --idempotency-key live-context-legacy-agent --output json >"$scenario_root/legacy-agent.json"
 
 "$binary" task create --workspace personal --project main --title 'Main live task' --socket "$socket_path" --idempotency-key live-context-main-task --output json >"$scenario_root/main-task.json"
 "$binary" task create --workspace personal --project main --title 'Same agent wrong task' --socket "$socket_path" --idempotency-key live-context-wrong-task --output json >"$scenario_root/wrong-task.json"
@@ -220,7 +219,7 @@ base_thread=$(extract_id thread "$scenario_root/base-thread.json")
 
 "$binary" context build "$main_task" --workspace personal --agent main-agent --include "$revision_a" --include "$revision_b" --expected-task-revision 2 --socket "$socket_path" --idempotency-key live-context-main-packet --output json >"$scenario_root/main-packet.json"
 main_context=$(extract_id ctx "$scenario_root/main-packet.json")
-grep -Fq 'urn:crewfold:schema:domain:context-packet:v4' "$scenario_root/main-packet.json"
+grep -Fq 'urn:crewfold:schema:domain:context-packet:v1' "$scenario_root/main-packet.json"
 grep -Eq '"as_of_event_sequence":[1-9][0-9]*' "$scenario_root/main-packet.json"
 grep -Fq '"delivery":"explicit_pull"' "$scenario_root/main-packet.json"
 grep -Fq '"ack_authority":"bound_run"' "$scenario_root/main-packet.json"
@@ -401,33 +400,6 @@ grep -Fq '"next_sequence":2' "$scenario_root/deltas-page-one.json"
 grep -Fq '"delta_count":3' "$scenario_root/deltas-final.json"
 grep -Fq '"last_acknowledged_sequence":3' "$scenario_root/deltas-final.json"
 
-# Finally simulate an exact v3 bound run in this isolated database. The hidden
-# fixture modifies only the stopped acceptance database and removes the v4-only
-# policy/state; production code never exposes this operation.
-"$binary" task create --workspace personal --project main --title 'Legacy packet run' --socket "$socket_path" --idempotency-key live-context-legacy-task --output json >"$scenario_root/legacy-task.json"
-legacy_task=$(extract_id task "$scenario_root/legacy-task.json")
-"$binary" task assign "$legacy_task" legacy-agent --lease-seconds 900 --workspace personal --expected-revision 1 --socket "$socket_path" --idempotency-key live-context-legacy-assign --output json >"$scenario_root/legacy-assigned.json"
-"$binary" context build "$legacy_task" --workspace personal --agent legacy-agent --expected-task-revision 2 --socket "$socket_path" --idempotency-key live-context-legacy-packet --output json >"$scenario_root/legacy-packet.json"
-legacy_context=$(extract_id ctx "$scenario_root/legacy-packet.json")
-"$binary" run start "$legacy_task" --workspace personal --context "$legacy_context" --runtime direct --provider fixture-mcp --scenario "$repo_root/test/fixtures/live-context-deltas/legacy-v3.json" --expected-task-revision 2 --socket "$socket_path" --idempotency-key live-context-legacy-run --output json >"$scenario_root/legacy-run.json"
-legacy_run=$(extract_id run "$scenario_root/legacy-run.json")
-wait_run_active "$legacy_run" "$scenario_root/legacy-show.json"
-stop_daemon
-GOTOOLCHAIN=local GOPROXY=off "$go_runner" run "$repo_root/test/fixtures/live-context-deltas/legacy-packet" "$data_dir/crewfold.db" "$legacy_context"
-start_daemon
-"$binary" context show "$legacy_context" --workspace personal --socket "$socket_path" --output json >"$scenario_root/legacy-context.json"
-grep -Fq 'urn:crewfold:schema:domain:context-packet:v3' "$scenario_root/legacy-context.json"
-if grep -Fq 'crewfold_get_context_delta' "$scenario_root/legacy-context.json" || grep -Fq 'crewfold_acknowledge_context_delta' "$scenario_root/legacy-context.json"
-then
-  printf 'legacy packet unexpectedly retained live tools\n' >&2
-  exit 1
-fi
-"$binary" context refresh "$legacy_run" --workspace personal --socket "$socket_path" --idempotency-key live-context-legacy-refresh --output json >"$scenario_root/legacy-refresh.json"
-grep -Fq '"status":"rebase_required"' "$scenario_root/legacy-refresh.json"
-grep -Fq '"rebase_reason":"unsupported_packet"' "$scenario_root/legacy-refresh.json"
-GOTOOLCHAIN=local GOPROXY=off "$go_runner" run "$repo_root/test/fixtures/live-context-deltas/legacy-packet" verify "$data_dir/crewfold.db" "$legacy_context"
-wait_run_message "$legacy_run" 'legacy live tools denied' "$scenario_root/legacy-show.json"
-
 "$binary" events list --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events-final.json"
 for event_link in "$created_event_one:$delta_one" "$created_event_two:$(extract_id cdelta "$scenario_root/refresh-two.json")" "$created_event_three:$(extract_id cdelta "$scenario_root/refresh-three.json")"
 do
@@ -441,11 +413,6 @@ ack_count=$(grep -o '"type":"context_delta.acknowledged"' "$scenario_root/events
 if [ "$built_count" -ne 3 ] || [ "$ack_count" -ne 3 ]
 then
   printf 'context delta event counts built=%s acknowledged=%s, want 3/3\n' "$built_count" "$ack_count" >&2
-  exit 1
-fi
-if grep -Fq '"type":"context_delta.rebase_required"' "$scenario_root/events-final.json"
-then
-  printf 'legacy compatibility rebase invented a durable state/event\n' >&2
   exit 1
 fi
 

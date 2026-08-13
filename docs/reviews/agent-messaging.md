@@ -18,7 +18,7 @@
   completes without using terminal output as communication authority.
 - Acceptance scenario path: `test/scenarios/agent-messaging/run.sh`
 - Exact command: `./scripts/check.sh`
-- Expected result: formatting, vet, package, migration, protocol, race, and all
+- Expected result: formatting, vet, package, schema, protocol, race, and all
   nine capability-named built-binary scenarios pass; the final scenario prints
   `Durable agent messaging acceptance: PASS` without a model, credential, remote,
   network service, or Git remote.
@@ -32,9 +32,9 @@
 | Suite | Command | Result | Evidence |
 | --- | --- | --- | --- |
 | Complete local gate | `./scripts/check.sh` | passed | Formatting, vet, all Go tests, race detector, and nine built-binary scenarios |
-| Store/migration | `go test ./internal/store` | passed | Offline queueing, packet summary, delivery/read/ack transitions, reply, exact replay after recipient disable, changed-payload conflict, failed wake, project scope, recovery revalidation, and schema 7 migration |
-| Domain | `go test ./internal/domain` | passed | A legacy context-packet v1 omits the v2 inbox while a new packet emits a bounded empty inbox |
-| Protocol | `go test ./protocol` | passed | Unique valid schema IDs/references, v1/v2 context contracts, provider-neutral message methods, and both mailbox fixture contracts |
+| Store/schema | `go test ./internal/store` | passed | Offline queueing, packet summary, delivery/read/ack transitions, reply, exact replay after recipient disable, changed-payload conflict, failed wake, project scope, recovery revalidation, and current-baseline integrity |
+| Domain | `go test ./internal/domain` | passed | The current context packet emits a bounded inbox and freezes its exact allowed tools |
+| Protocol | `go test ./protocol` | passed | Unique valid schema IDs/references, current context contract, provider-neutral message methods, and both mailbox fixture contracts |
 | Component | `go test ./internal/daemon ./internal/execution` | passed | Packet allowlist filtering, strict required message-tool inputs, MCP dispatch, reconnecting fixture client, bounded wake hook, and fixture validation |
 | CLI | `go test ./internal/cli` | passed | Message send, artifact/reply/thread options, inbox inspection, and thread display parse into versioned local API calls |
 | Black-box acceptance | Agent messaging scenario via check script | passed | Offline send, byte-equivalent inbox across daemon restart, two direct MCP agents, adjacent clone placement, request/reply, two acknowledgements, and explicit wake failure |
@@ -66,10 +66,10 @@
 
 ## Persistence and recovery
 
-- Durable state introduced or changed: schema version 7 adds `message_threads`,
+- Durable state exercised: `message_threads`,
   immutable `messages`, mutable `message_recipients`, and a separate durable
-  `message_wake_jobs` queue. New context packets use domain schema v2 for the
-  bounded inbox snapshot.
+  `message_wake_jobs` queue. The current context packet includes the bounded inbox
+  snapshot.
 - Atomic boundaries: creating a thread when needed, inserting one message and
   recipient, appending its audit facts, recording idempotency, and optionally
   enqueueing wake intent commit together. Wake effect and wake completion happen
@@ -84,12 +84,8 @@
   wake failure is terminal diagnostic state for that attempt, not delivery
   failure. A queued message remains available until an applicable run lists or
   transitions it.
-- Migration fixture: representative schema-v4 state upgrades through 5, 6, and 7
-  with its prior run/timeline facts intact. All four message tables are empty,
-  proving Crewfold invents no communication or wake authority for old state.
 - Backup/restore impact: SQLite now owns all message/thread/delivery/wake facts.
   A live backup still also needs direct-runtime state and the private node key.
-  There is no down migration; rollback requires a compatible pre-upgrade backup.
 
 ## Security and autonomy
 
@@ -104,10 +100,9 @@
 - Bounds: bodies contain 1–4096 valid UTF-8 bytes, subjects 1–160 bytes, artifact
   lists at most 16 unique IDs, owner/agent inbox pages at most 50 items, packet
   summaries at most ten previews, and wake diagnostics at most 1024 bytes.
-- Immutable authority: existing context-packet v1 records remain readable with
-  their original hash/size and omit inbox/tool additions. MCP tool discovery and
-  calls are intersected with the packet's recorded allowlist, so an upgraded
-  daemon cannot grant mailbox authority to an old live run.
+- Immutable authority: MCP tool discovery and calls are intersected with the
+  current packet's frozen allowlist, so a later process restart cannot grant
+  mailbox authority that the packet did not contain.
 - Audit: thread creation, send, delivery, read, acknowledgement, wake success, and
   wake failure are bounded journal facts. Agent mutations use `agent_run` actors;
   wake outcomes use a subsystem actor. Tool audit excludes bodies and credentials.
@@ -123,10 +118,9 @@
 
 - API/schema changes: additive local methods `message.send`, `inbox.list`, and
   `thread.show`; four additive MCP tools; message/thread/delivery result schemas;
-  fixture mailbox controls; context-packet v2; and context build/show result v2.
-  Preserved v1 packet and result schemas remain checked in.
-- Storage changes: forward-only schema migration 6→7. Older binaries refuse the
-  newer `user_version`; rollback requires a pre-upgrade backup.
+  fixture mailbox controls; and the current context packet/build/show contracts.
+- Storage evidence: fresh-baseline creation and canonical reads cover all
+  message/thread/delivery/wake relationships.
 - Adapter/runtime compatibility: message persistence is runtime-independent. The
   daemon exposes one bounded wake hook; the current direct fixture deliberately
   reports that live wake is unavailable. Herdr can implement the hook without

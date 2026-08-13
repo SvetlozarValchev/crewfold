@@ -52,6 +52,7 @@ type App struct {
 }
 
 type daemonClient interface {
+	checkDaemonClient
 	Status(context.Context) (localapi.StatusResult, error)
 	Stop(context.Context) (localapi.StopResult, error)
 	DatabaseStatus(context.Context) (localapi.DatabaseStatusResult, error)
@@ -256,6 +257,8 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runSupervisor(ctx, mode, args[1:])
 	case "approval":
 		return a.runApproval(ctx, mode, args[1:])
+	case "check":
+		return a.runCheck(ctx, mode, args[1:])
 	case "events":
 		return a.runEvents(ctx, mode, args[1:])
 	default:
@@ -878,6 +881,8 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, supervisorHelp)
 	case "approval":
 		fmt.Fprint(a.stdout, approvalHelp)
+	case "check":
+		fmt.Fprint(a.stdout, checkHelp)
 	case "events":
 		fmt.Fprint(a.stdout, eventsHelp)
 	case "help":
@@ -1550,6 +1555,7 @@ Commands:
   proposal       Inspect and decide manager proposals
   supervisor     Configure, run, and explain deterministic scheduling
   approval       Decide supervisor actions requiring local-owner authority
+  check          Define, run, inspect, route, and govern local checks
   events         Inspect the durable event journal
   help [command] Show command help
 

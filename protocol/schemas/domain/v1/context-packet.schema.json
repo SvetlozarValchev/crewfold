@@ -1,10 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:crewfold:schema:domain:context-packet:v1",
-  "title": "Crewfold immutable context packet v1",
+  "title": "Crewfold immutable context packet",
+  "$comment": "The single current packet may carry no delegated grant, one management_grant, or one check_watch_grant. The grant families are mutually exclusive and descriptive role/purpose values never authorize tools.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "id", "workspace_id", "project_id", "task_id", "agent_id", "checkout_id", "role", "task", "checkout", "dependencies", "policy", "reporting", "included", "excluded", "content_hash", "byte_size", "created_at", "created_by"],
+  "required": [
+    "schema", "id", "workspace_id", "project_id", "task_id", "agent_id", "checkout_id",
+    "role", "task", "checkout", "dependencies", "dependents", "dependent_task_count", "inbox", "participant_threads",
+    "requested_knowledge_revision_ids", "accepted_knowledge", "policy", "live_context", "reporting", "included", "excluded",
+    "budget", "as_of_event_sequence", "content_hash", "byte_size", "created_at", "created_by"
+  ],
   "properties": {
     "schema": {"const": "urn:crewfold:schema:domain:context-packet:v1"},
     "id": {"type": "string", "pattern": "^ctx_[0-9a-f]{32}$"},
@@ -17,15 +23,70 @@
     "task": {"$ref": "#/$defs/task"},
     "checkout": {"$ref": "#/$defs/checkout"},
     "dependencies": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/dependency"}},
+    "dependents": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/dependency"}},
+    "dependent_task_count": {"type": "integer", "minimum": 0},
+    "inbox": {"$ref": "#/$defs/inbox"},
+    "participant_threads": {"type": "array", "maxItems": 8, "items": {"$ref": "participant-thread.schema.json"}},
+    "requested_knowledge_revision_ids": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"}},
+    "accepted_knowledge": {"type": "array", "maxItems": 16, "items": {"$ref": "knowledge-revision.schema.json"}},
     "policy": {"$ref": "#/$defs/policy"},
+    "live_context": {"$ref": "live-context-policy.schema.json"},
+    "management_grant": {"$ref": "context-manager-grant.schema.json"},
+    "check_watch_grant": {"$ref": "context-check-watch-grant.schema.json"},
     "reporting": {"$ref": "#/$defs/reporting"},
-    "included": {"type": "array", "minItems": 3, "maxItems": 35, "items": {"$ref": "#/$defs/selection"}},
-    "excluded": {"type": "array", "items": {"$ref": "#/$defs/exclusion"}},
+    "included": {"type": "array", "minItems": 3, "maxItems": 128, "items": {"$ref": "#/$defs/selection"}},
+    "excluded": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/exclusion"}},
+    "budget": {"$ref": "#/$defs/budget"},
+    "as_of_event_sequence": {"type": "integer", "minimum": 0},
     "content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "byte_size": {"type": "integer", "minimum": 1, "maximum": 32768},
     "created_at": {"type": "string", "format": "date-time"},
-    "created_by": {"type": "string", "minLength": 1}
+    "created_by": {"const": "local-owner"}
   },
+  "allOf": [
+    {"not": {"required": ["management_grant", "check_watch_grant"]}},
+    {
+      "if": {"required": ["management_grant"], "properties": {"management_grant": {"properties": {"allowed_proposal_kinds": {"contains": {"const": "assignment"}}}}}},
+      "then": {"properties": {"policy": {"properties": {"allowed_tools": {"contains": {"const": "crewfold_propose_assignment"}}}}}},
+      "else": {"properties": {"policy": {"properties": {"allowed_tools": {"not": {"contains": {"const": "crewfold_propose_assignment"}}}}}}}
+    },
+    {
+      "if": {"required": ["management_grant"], "properties": {"management_grant": {"properties": {"allowed_proposal_kinds": {"contains": {"const": "escalation"}}}}}},
+      "then": {"properties": {"policy": {"properties": {"allowed_tools": {"contains": {"const": "crewfold_propose_escalation"}}}}}},
+      "else": {"properties": {"policy": {"properties": {"allowed_tools": {"not": {"contains": {"const": "crewfold_propose_escalation"}}}}}}}
+    },
+    {
+      "if": {"required": ["management_grant"], "properties": {"management_grant": {"properties": {"allowed_proposal_kinds": {"contains": {"const": "review"}}}}}},
+      "then": {"properties": {"policy": {"properties": {"allowed_tools": {"contains": {"const": "crewfold_propose_review"}}}}}},
+      "else": {"properties": {"policy": {"properties": {"allowed_tools": {"not": {"contains": {"const": "crewfold_propose_review"}}}}}}}
+    },
+    {
+      "if": {"required": ["management_grant"], "properties": {"management_grant": {"properties": {"allowed_proposal_kinds": {"contains": {"const": "task_decomposition"}}}}}},
+      "then": {"properties": {"policy": {"properties": {"allowed_tools": {"contains": {"const": "crewfold_propose_tasks"}}}}}},
+      "else": {"properties": {"policy": {"properties": {"allowed_tools": {"not": {"contains": {"const": "crewfold_propose_tasks"}}}}}}}
+    },
+    {
+      "if": {"required": ["check_watch_grant"], "properties": {"check_watch_grant": {"properties": {"operations": {"contains": {"const": "run"}}}}}},
+      "then": {"properties": {"policy": {"properties": {"allowed_tools": {"contains": {"const": "crewfold_run_check"}}}}}},
+      "else": {"properties": {"policy": {"properties": {"allowed_tools": {"not": {"contains": {"const": "crewfold_run_check"}}}}}}}
+    },
+    {
+      "if": {"required": ["check_watch_grant"], "properties": {"check_watch_grant": {"properties": {"operations": {"contains": {"const": "inspect"}}}}}},
+      "then": {"properties": {"policy": {"properties": {"allowed_tools": {"allOf": [
+        {"contains": {"const": "crewfold_list_check_results"}},
+        {"contains": {"const": "crewfold_inspect_check_result"}}
+      ]}}}}},
+      "else": {"properties": {"policy": {"properties": {"allowed_tools": {"allOf": [
+        {"not": {"contains": {"const": "crewfold_list_check_results"}}},
+        {"not": {"contains": {"const": "crewfold_inspect_check_result"}}}
+      ]}}}}}
+    },
+    {
+      "if": {"required": ["check_watch_grant"], "properties": {"check_watch_grant": {"properties": {"operations": {"contains": {"const": "propose_repair"}}}}}},
+      "then": {"properties": {"policy": {"properties": {"allowed_tools": {"contains": {"const": "crewfold_propose_check_repair"}}}}}},
+      "else": {"properties": {"policy": {"properties": {"allowed_tools": {"not": {"contains": {"const": "crewfold_propose_check_repair"}}}}}}}
+    }
+  ],
   "$defs": {
     "role": {
       "type": "object", "additionalProperties": false,
@@ -37,11 +98,11 @@
     },
     "task": {
       "type": "object", "additionalProperties": false,
-      "required": ["task_id", "title", "priority", "budget", "revision"],
+      "required": ["task_id", "assignment_id", "title", "priority", "budget", "revision"],
       "properties": {
-        "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"}, "objective_id": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
-        "title": {"type": "string", "minLength": 1}, "description": {"type": "string"}, "priority": {"type": "integer", "minimum": 0},
-        "budget": {"$ref": "budget.schema.json"}, "revision": {"type": "integer", "minimum": 1}
+        "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"}, "assignment_id": {"type": "string", "pattern": "^asg_[0-9a-f]{32}$"},
+        "objective_id": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"}, "title": {"type": "string", "minLength": 1}, "description": {"type": "string"},
+        "priority": {"type": "integer", "minimum": 0}, "budget": {"$ref": "budget.schema.json"}, "revision": {"type": "integer", "minimum": 1}
       }
     },
     "checkout": {
@@ -59,9 +120,40 @@
       "type": "object", "additionalProperties": false, "required": ["task_id", "title", "status", "revision"],
       "properties": {"task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"}, "title": {"type": "string", "minLength": 1}, "status": {"type": "string", "minLength": 1}, "revision": {"type": "integer", "minimum": 1}}
     },
+    "inbox": {
+      "type": "object", "additionalProperties": false, "required": ["unseen_count", "items"],
+      "properties": {"unseen_count": {"type": "integer", "minimum": 0}, "items": {"type": "array", "maxItems": 10, "items": {"$ref": "#/$defs/inbox_item"}}}
+    },
+    "inbox_item": {
+      "type": "object", "additionalProperties": false,
+      "required": ["message_id", "thread_id", "kind", "body_preview", "status", "created_at"],
+      "properties": {
+        "message_id": {"type": "string", "pattern": "^msg_[0-9a-f]{32}$"}, "thread_id": {"type": "string", "pattern": "^thread_[0-9a-f]{32}$"},
+        "kind": {"enum": ["inform", "question", "request", "review_request", "handoff", "decision_notice", "risk", "conflict", "approval_request"]},
+        "sender_agent_id": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"}, "sender_agent_name": {"type": "string", "minLength": 1, "maxLength": 63},
+        "body_preview": {"type": "string", "minLength": 1, "maxLength": 163}, "status": {"enum": ["queued", "delivered"]}, "created_at": {"type": "string", "format": "date-time"}
+      }
+    },
     "policy": {
       "type": "object", "additionalProperties": false, "required": ["allowed_tools", "denied_operations", "approval_required"],
-      "properties": {"allowed_tools": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}, "denied_operations": {"type": "array", "items": {"type": "string", "minLength": 1}}, "approval_required": {"type": "array", "items": {"type": "string", "minLength": 1}}}
+      "properties": {
+        "allowed_tools": {
+          "type": "array", "minItems": 14, "maxItems": 18, "uniqueItems": true,
+          "prefixItems": [
+            {"const": "crewfold_acknowledge_context_delta"}, {"const": "crewfold_acknowledge_message"}, {"const": "crewfold_get_briefing"},
+            {"const": "crewfold_get_context_delta"}, {"const": "crewfold_get_status"}, {"const": "crewfold_list_inbox"},
+            {"const": "crewfold_propose_knowledge"}, {"const": "crewfold_propose_completion"}, {"const": "crewfold_publish_artifact"},
+            {"const": "crewfold_read_message"}, {"const": "crewfold_report_blocked"}, {"const": "crewfold_report_contradiction"},
+            {"const": "crewfold_report_progress"}, {"const": "crewfold_send_message"}
+          ],
+          "items": {"enum": [
+            "crewfold_propose_assignment", "crewfold_propose_escalation", "crewfold_propose_review", "crewfold_propose_tasks",
+            "crewfold_run_check", "crewfold_list_check_results", "crewfold_inspect_check_result", "crewfold_propose_check_repair"
+          ]}
+        },
+        "denied_operations": {"const": ["change another run or task", "push or merge source", "deploy", "message a person or broadcast", "read unscoped context"]},
+        "approval_required": {"const": ["shared repository mutation", "external side effect", "destructive operation"]}
+      }
     },
     "reporting": {
       "type": "object", "additionalProperties": false, "required": ["progress", "blocked", "artifact", "completion"],
@@ -73,7 +165,25 @@
     },
     "exclusion": {
       "type": "object", "additionalProperties": false, "required": ["section", "reason"],
-      "properties": {"section": {"type": "string", "minLength": 1}, "reason": {"type": "string", "minLength": 1}}
+      "properties": {
+        "section": {"type": "string", "minLength": 1}, "entity_type": {"type": "string", "minLength": 1}, "entity_id": {"type": "string", "minLength": 1},
+        "revision": {"type": "integer", "minimum": 1}, "requested_revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+        "replacement_revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+        "reason_code": {"enum": ["proposed", "rejected", "stale", "superseded", "out_of_scope", "over_item_limit", "over_budget"]},
+        "reason": {"type": "string", "minLength": 1}, "byte_size": {"type": "integer", "minimum": 1}
+      }
+    },
+    "budget_usage": {
+      "type": "object", "additionalProperties": false, "required": ["limit_bytes", "used_bytes", "remaining_bytes"],
+      "properties": {"limit_bytes": {"type": "integer", "minimum": 1}, "used_bytes": {"type": "integer", "minimum": 0}, "remaining_bytes": {"type": "integer", "minimum": 0}}
+    },
+    "budget": {
+      "type": "object", "additionalProperties": false, "required": ["total", "knowledge", "collaboration"],
+      "properties": {
+        "total": {"allOf": [{"$ref": "#/$defs/budget_usage"}, {"properties": {"limit_bytes": {"const": 32768}}}]},
+        "knowledge": {"allOf": [{"$ref": "#/$defs/budget_usage"}, {"properties": {"limit_bytes": {"const": 12288}}}]},
+        "collaboration": {"allOf": [{"$ref": "#/$defs/budget_usage"}, {"properties": {"limit_bytes": {"const": 8192}}}]}
+      }
     }
   }
 }

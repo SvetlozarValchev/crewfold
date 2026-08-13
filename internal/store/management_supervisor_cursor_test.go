@@ -210,7 +210,14 @@ func supervisorCursorForTest(t *testing.T, storage *Store, workspaceID string) i
 }
 
 func TestKnownSupervisorJournalEventUnion(t *testing.T) {
-	for _, eventType := range []string{"workspace.created", "task.completed", "manager.proposal_accepted", "supervisor.scan_completed"} {
+	for _, eventType := range []string{
+		"workspace.created", "task.completed", "manager.proposal_accepted", "supervisor.scan_completed",
+		"check.definition_created", "check.definition_retired", "check.requirement_created", "check.requirement_retired",
+		"check.grant_created", "check.grant_revoked", "check.policy_configured", "check.route_created", "check.route_retired",
+		"check.run_requested", "check.run_starting", "check.run_runtime_observed", "check.run_started", "check.run_finished", "check.result_recorded",
+		"check.freshness_observed", "check.freshness_stale", "check.notification_queued", "check.notification_unroutable",
+		"check.repair_proposed", "check.repair_accepted", "check.repair_rejected", "check.repair_stale", "check.watch_completed",
+	} {
 		if !knownSupervisorJournalEvent(eventType) {
 			t.Fatalf("known event %q was rejected", eventType)
 		}

@@ -14,7 +14,7 @@
     "scanned_through_event_sequence": {"type": "integer", "minimum": 0},
     "chain": {"$ref": "context-delta-chain.schema.json"},
     "delta": {"$ref": "context-delta.schema.json"},
-    "rebase_reason": {"enum": ["unsupported_packet", "base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]},
+    "rebase_reason": {"enum": ["base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]},
     "event_sequence": {"type": "integer", "minimum": 0}
   },
   "$defs": {
@@ -45,18 +45,6 @@
       "type": "object",
       "required": ["rebase_reason", "chain"],
       "oneOf": [
-        {
-          "properties": {
-            "rebase_reason": {"const": "unsupported_packet"},
-            "event_sequence": {"const": 0},
-            "chain": {
-              "type": "object",
-              "required": ["rebase_reason"],
-              "properties": {"pending_sequence": {"const": 0}, "rebase_reason": {"const": "unsupported_packet"}},
-              "not": {"anyOf": [{"required": ["pending_delta_id"]}, {"required": ["rebase_event_sequence"]}]}
-            }
-          }
-        },
         {
           "properties": {
             "rebase_reason": {"const": "base_contract_changed"},

@@ -40,6 +40,13 @@ const (
 	toolProposeReview         = "crewfold_propose_review"
 	toolProposeEscalation     = "crewfold_propose_escalation"
 	toolCompletion            = "crewfold_propose_completion"
+	toolRunCheck              = "crewfold_run_check"
+	toolListCheckResults      = "crewfold_list_check_results"
+	toolInspectCheckResult    = "crewfold_inspect_check_result"
+	toolProposeCheckRepair    = "crewfold_propose_check_repair"
+	// Repair acceptance remains local-owner-only. Recognizing the name makes a
+	// probe auditable while the immutable packet allowlist always denies it.
+	toolCheckRepairAccept = "crewfold_accept_check_repair"
 )
 
 func (s *server) handleMCPRequest(request mcp.Request) mcp.Response {
@@ -81,7 +88,13 @@ func (s *server) handleMCPRequest(request mcp.Request) mcp.Response {
 	case "ping":
 		return mcp.Success(request.ID, map[string]any{})
 	case "tools/list":
-		return mcp.Success(request.ID, map[string]any{"tools": allowedMCPTools(briefing.Packet.Policy.AllowedTools)})
+		allowed := briefing.Packet.Policy.AllowedTools
+		if briefing.Packet.CheckWatchGrant != nil {
+			if _, err := s.store.AuthorizeRunCheckWatchGrant(context.Background(), briefing.Run.ID, ""); err != nil {
+				allowed = withoutCheckWatchTools(allowed)
+			}
+		}
+		return mcp.Success(request.ID, map[string]any{"tools": allowedMCPTools(allowed)})
 	case "resources/list":
 		return mcp.Success(request.ID, map[string]any{"resources": scopedMCPResources(briefing)})
 	case "resources/read":
@@ -164,13 +177,11 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 	case toolStatus:
 		err = decodeEmptyToolArguments(params.Arguments)
 		if err == nil {
-			contextStatus := legacyContextStatus(briefing.Packet)
-			if domain.IsLiveContextPacketSchema(briefing.Packet.Schema) {
-				var contextState domain.ContextDeltaFetchResult
-				contextState, err = s.store.FetchRunContextDelta(context.Background(), briefing.Run.ID)
-				if err == nil {
-					contextStatus = liveContextStatus(briefing.Packet, contextState)
-				}
+			var contextState domain.ContextDeltaFetchResult
+			contextState, err = s.store.FetchRunContextDelta(context.Background(), briefing.Run.ID)
+			contextStatus := map[string]any(nil)
+			if err == nil {
+				contextStatus = liveContextStatus(briefing.Packet, contextState)
 			}
 			if err == nil {
 				value = map[string]any{
@@ -331,6 +342,80 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 		value, err = s.submitManagerProposal(request, briefing, params.Arguments, domain.ManagerProposalReview)
 	case toolProposeEscalation:
 		value, err = s.submitManagerProposal(request, briefing, params.Arguments, domain.ManagerProposalEscalation)
+	case toolRunCheck:
+		var arguments runCheckArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			err = arguments.validate()
+		}
+		var grant *domain.ContextCheckWatchGrant
+		if err == nil {
+			grant, err = checkWatchGrantForOperation(briefing, domain.CheckWatchOperationRun)
+		}
+		if err == nil {
+			_, err = s.store.AuthorizeRunCheckWatchGrant(context.Background(), briefing.Run.ID, domain.CheckWatchOperationRun)
+		}
+		if err == nil {
+			var result store.MutationResult[domain.CheckRun]
+			result, err = s.store.RunGrantedCheck(context.Background(), store.RequestGrantedCheckRunCommand{
+				SourceRunID: briefing.Run.ID, CheckWatchGrantID: grant.GrantID, ExpectedGrantRevision: grant.GrantRevision,
+				RequirementID: arguments.RequirementID, IdempotencyKey: arguments.IdempotencyKey,
+				CorrelationID: "mcp-" + mcpRequestID(request.ID),
+			})
+			value = result.Value
+		}
+	case toolListCheckResults:
+		var arguments listCheckResultsArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			err = arguments.validate()
+		}
+		if err == nil {
+			_, err = checkWatchGrantForOperation(briefing, domain.CheckWatchOperationInspect)
+		}
+		if err == nil {
+			_, err = s.store.AuthorizeRunCheckWatchGrant(context.Background(), briefing.Run.ID, domain.CheckWatchOperationInspect)
+		}
+		if err == nil {
+			value, err = s.store.ListGrantedCheckResults(context.Background(), store.ListGrantedCheckResultsQuery{
+				SourceRunID: briefing.Run.ID, After: arguments.Cursor, Limit: arguments.Limit,
+			})
+		}
+	case toolInspectCheckResult:
+		var arguments inspectCheckResultArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			err = arguments.validate()
+		}
+		if err == nil {
+			_, err = checkWatchGrantForOperation(briefing, domain.CheckWatchOperationInspect)
+		}
+		if err == nil {
+			_, err = s.store.AuthorizeRunCheckWatchGrant(context.Background(), briefing.Run.ID, domain.CheckWatchOperationInspect)
+		}
+		if err == nil {
+			value, err = s.store.InspectGrantedCheckResult(context.Background(), briefing.Run.ID, arguments.CheckRunID)
+		}
+	case toolProposeCheckRepair:
+		var arguments proposeCheckRepairArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			err = arguments.validate()
+		}
+		if err == nil {
+			_, err = checkWatchGrantForOperation(briefing, domain.CheckWatchOperationProposeRepair)
+		}
+		if err == nil {
+			_, err = s.store.AuthorizeRunCheckWatchGrant(context.Background(), briefing.Run.ID, domain.CheckWatchOperationProposeRepair)
+		}
+		if err == nil {
+			var result store.MutationResult[domain.CheckRepairProposal]
+			result, err = s.store.ProposeGrantedCheckRepair(context.Background(), store.ProposeGrantedCheckRepairCommand{
+				SourceRunID: briefing.Run.ID, CheckResultID: arguments.CheckResultID, Rationale: arguments.Rationale,
+				IdempotencyKey: arguments.IdempotencyKey, CorrelationID: "mcp-" + mcpRequestID(request.ID),
+			})
+			value = result.Value
+		}
 	default:
 		return s.mcpDenied(request, briefing.Run.ID, name, "out_of_scope", "tool is outside this run capability", "denied")
 	}
@@ -361,18 +446,6 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 	return mcp.Success(request.ID, mcp.ToolCallResult{
 		Content: []mcp.Content{{Type: "text", Text: message}}, StructuredContent: structured,
 	})
-}
-
-func legacyContextStatus(packet domain.ContextPacket) map[string]any {
-	return map[string]any{
-		"base_packet_id": packet.ID, "base_schema": packet.Schema,
-		"base_as_of_event_sequence": packet.AsOfEventSequence,
-		"state_revision":            0, "scanned_through_event_sequence": 0,
-		"latest_delta_sequence": 0, "acknowledged_delta_sequence": 0,
-		"delta_count": 0, "cumulative_byte_size": 0,
-		"status": domain.ContextDeltaRebaseRequired, "rebase_required": true,
-		"rebase_reason": domain.ContextRebaseUnsupportedPacket,
-	}
 }
 
 func liveContextStatus(packet domain.ContextPacket, state domain.ContextDeltaFetchResult) map[string]any {
@@ -483,6 +556,10 @@ func scopedMCPTools() []mcp.Tool {
 		{Name: toolProposeReview, Description: "Propose a review task through one exact owner-authored launch profile. This does not create or launch the review until local-owner acceptance and supervision.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionRequestReview})},
 		{Name: toolProposeTasks, Description: "Propose a bounded task decomposition using only exact owner-allowed launch profiles. This does not create tasks until the local owner accepts it.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionCreateTask, domain.ProposalActionAddDependency, domain.ProposalActionDeclareClaimRequirement})},
 		{Name: toolCompletion, Description: "Propose completion with an executive handoff and evidence.", InputSchema: objectSchema([]string{"summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "handoff": stringSchema(1, 4096), "evidence_ids": stringArraySchema(), "changed_paths": stringArraySchema(), "checks": stringArraySchema(), "remaining_risks": stringArraySchema(), "unknowns": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
+		{Name: toolRunCheck, Description: "Request one exact active project requirement whose frozen definition revision is present in this run's check-watch grant.", InputSchema: objectSchema([]string{"requirement_id", "idempotency_key"}, map[string]any{"requirement_id": checkEntityIDSchema("checkreq_"), "idempotency_key": stringSchema(1, 128)})},
+		{Name: toolListCheckResults, Description: "List a bounded page of check results visible through this run's exact check-watch grant.", InputSchema: objectSchema([]string{"limit"}, map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 50}, "cursor": stringSchema(1, 256)})},
+		{Name: toolInspectCheckResult, Description: "Inspect one check run and its bounded structured evidence when visible through this run's exact grant.", InputSchema: objectSchema([]string{"check_run_id"}, map[string]any{"check_run_id": checkEntityIDSchema("checkrun_")})},
+		{Name: toolProposeCheckRepair, Description: "Propose one inert repair for an exact latest nonpass check result. Only the local owner may accept it.", InputSchema: objectSchema([]string{"check_result_id", "rationale", "idempotency_key"}, map[string]any{"check_result_id": checkEntityIDSchema("checkresult_"), "rationale": stringSchema(1, 4096), "idempotency_key": stringSchema(1, 128)})},
 	}
 }
 
@@ -496,8 +573,18 @@ func allowedMCPTools(allowed []string) []mcp.Tool {
 	return result
 }
 
+func withoutCheckWatchTools(allowed []string) []string {
+	result := make([]string, 0, len(allowed))
+	for _, name := range allowed {
+		if name != toolRunCheck && name != toolListCheckResults && name != toolInspectCheckResult && name != toolProposeCheckRepair {
+			result = append(result, name)
+		}
+	}
+	return result
+}
+
 func knownMCPTool(name string) bool {
-	if name == toolKnowledgeAccept || name == toolContradictionConfirm || name == toolManagerProposalAccept {
+	if name == toolKnowledgeAccept || name == toolContradictionConfirm || name == toolManagerProposalAccept || name == toolCheckRepairAccept {
 		return true
 	}
 	for _, tool := range scopedMCPTools() {
@@ -619,6 +706,10 @@ func contextDeltaIDSchema() map[string]any {
 }
 
 func managerEntityIDSchema(prefix string) map[string]any {
+	return map[string]any{"type": "string", "pattern": "^" + prefix + "[0-9a-f]{32}$"}
+}
+
+func checkEntityIDSchema(prefix string) map[string]any {
 	return map[string]any{"type": "string", "pattern": "^" + prefix + "[0-9a-f]{32}$"}
 }
 
@@ -938,8 +1029,8 @@ func (s *server) submitManagerProposal(request mcp.Request, briefing domain.RunB
 		return nil, err
 	}
 	grant := briefing.Packet.ManagementGrant
-	if briefing.Packet.Schema != domain.ContextPacketSchemaV5 || grant == nil || grant.Schema != domain.ContextManagerGrantSchema {
-		return nil, &store.Error{Code: store.CodeManagerGrantDenied, Message: "manager proposals require an exact packet-v5 grant snapshot"}
+	if briefing.Packet.Schema != domain.ContextPacketSchema || grant == nil || briefing.Packet.CheckWatchGrant != nil || grant.Schema != domain.ContextManagerGrantSchema {
+		return nil, &store.Error{Code: store.CodeManagerGrantDenied, Message: "manager proposals require an exact context grant snapshot"}
 	}
 	if !containsString(grant.AllowedProposalKinds, kind) {
 		return nil, &store.Error{Code: store.CodeManagerGrantDenied, Message: "proposal kind is absent from this exact manager grant"}
@@ -986,6 +1077,87 @@ func managerActionAllowedForKind(kind, actionType string) bool {
 	default:
 		return false
 	}
+}
+
+func checkWatchGrantForOperation(briefing domain.RunBriefing, operation string) (*domain.ContextCheckWatchGrant, error) {
+	grant := briefing.Packet.CheckWatchGrant
+	if briefing.Packet.Schema != domain.ContextPacketSchema || grant == nil || briefing.Packet.ManagementGrant != nil || grant.Schema != domain.ContextCheckWatchGrantSchema ||
+		grant.GrantID == "" || grant.GrantRevision < 1 ||
+		grant.WorkspaceID != briefing.Run.WorkspaceID || grant.ProjectID != briefing.Run.ProjectID ||
+		grant.WatcherAgentID != briefing.Run.AgentID || grant.WatcherAgentRevision != briefing.Packet.Role.Revision {
+		return nil, &store.Error{Code: store.CodeCheckWatchGrantDenied, Message: "check tools require an exact context check-watch grant snapshot"}
+	}
+	if !containsString(grant.Operations, operation) {
+		return nil, &store.Error{Code: store.CodeCheckWatchGrantDenied, Message: "check operation is absent from this exact check-watch grant"}
+	}
+	return grant, nil
+}
+
+type runCheckArguments struct {
+	RequirementID  string `json:"requirement_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+func (arguments runCheckArguments) validate() error {
+	if !validMCPCheckEntityID(arguments.RequirementID, "checkreq_") || !validMCPIdempotencyKey(arguments.IdempotencyKey) {
+		return errors.New("check run requires an exact requirement ID and bounded idempotency key")
+	}
+	return nil
+}
+
+type listCheckResultsArguments struct {
+	Limit  int    `json:"limit"`
+	Cursor string `json:"cursor,omitempty"`
+}
+
+func (arguments listCheckResultsArguments) validate() error {
+	if arguments.Limit < 1 || arguments.Limit > 50 || len(arguments.Cursor) > 256 ||
+		!utf8.ValidString(arguments.Cursor) || strings.ContainsRune(arguments.Cursor, '\x00') || strings.TrimSpace(arguments.Cursor) != arguments.Cursor {
+		return errors.New("check result pagination requires limit 1 through 50 and an optional bounded opaque cursor")
+	}
+	return nil
+}
+
+type inspectCheckResultArguments struct {
+	CheckRunID string `json:"check_run_id"`
+}
+
+func (arguments inspectCheckResultArguments) validate() error {
+	if !validMCPCheckEntityID(arguments.CheckRunID, "checkrun_") {
+		return errors.New("check inspection requires one exact check run ID")
+	}
+	return nil
+}
+
+type proposeCheckRepairArguments struct {
+	CheckResultID  string `json:"check_result_id"`
+	Rationale      string `json:"rationale"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+func (arguments proposeCheckRepairArguments) validate() error {
+	if !validMCPCheckEntityID(arguments.CheckResultID, "checkresult_") || strings.TrimSpace(arguments.Rationale) == "" ||
+		len(arguments.Rationale) > 4096 || !utf8.ValidString(arguments.Rationale) || strings.ContainsRune(arguments.Rationale, '\x00') ||
+		!validMCPIdempotencyKey(arguments.IdempotencyKey) {
+		return errors.New("check repair proposal requires an exact result, bounded rationale, and bounded idempotency key")
+	}
+	return nil
+}
+
+func validMCPCheckEntityID(value, prefix string) bool {
+	if strings.TrimSpace(value) != value || len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	for _, character := range value[len(prefix):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validMCPIdempotencyKey(value string) bool {
+	return strings.TrimSpace(value) != "" && strings.TrimSpace(value) == value && len(value) <= 128 && utf8.ValidString(value) && !strings.ContainsRune(value, '\x00')
 }
 
 type inboxArguments struct {
@@ -1189,13 +1361,15 @@ func mcpErrorFromStore(err error) mcp.ToolError {
 	switch code {
 	case store.CodeInvalidContext, store.CodeInvalidContextDelta, store.CodeInvalidReport, store.CodeInvalidRun, store.CodeInvalidMessage, store.CodeInvalidKnowledge,
 		store.CodeKnowledgeConflict, store.CodeContradictionConflict, store.CodeInvalidManagerProposal, store.CodeManagerProposalConflict,
-		store.CodeInvalidManagerGrant, store.CodeIdempotencyConflict:
+		store.CodeInvalidManagerGrant, store.CodeInvalidCheckRequirement, store.CodeInvalidCheckWatchGrant,
+		store.CodeCheckRequirementConflict, store.CodeCheckRunConflict, store.CodeCheckRepairConflict, store.CodeIdempotencyConflict:
 		result.Code = "invalid_input"
 	case store.CodeContextNotFound, store.CodeContextDeltaNotFound, store.CodeRunNotFound, store.CodeMessageNotFound, store.CodeKnowledgeNotFound, store.CodeContradictionNotFound,
-		store.CodeManagerGrantNotFound, store.CodeManagerProposalNotFound:
+		store.CodeManagerGrantNotFound, store.CodeManagerProposalNotFound, store.CodeCheckRequirementNotFound,
+		store.CodeCheckWatchGrantNotFound, store.CodeCheckRunNotFound, store.CodeCheckRepairNotFound:
 		result.Code = "out_of_scope"
 	case store.CodeCapabilityExpired, store.CodeCapabilityInactive, store.CodeRunConflict, store.CodeMessageDenied, store.CodeKnowledgeDenied, store.CodeContradictionDenied,
-		store.CodeManagerGrantDenied, store.CodeManagerProposalDenied:
+		store.CodeManagerGrantDenied, store.CodeManagerProposalDenied, store.CodeCheckWatchGrantDenied, store.CodeCheckRepairDenied:
 		result.Code = "denied_by_policy"
 	default:
 		result.Code, result.Retryable = "temporarily_unavailable", true

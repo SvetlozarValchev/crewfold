@@ -11,8 +11,8 @@
 ## Demonstrable outcome
 
 Crewfold can grant one exact planning run a bounded proposal capability without
-delegating owner or launch authority. A packet-v5 manager may submit a closed,
-typed plan for tasks, dependencies, claim requirements, exact-profile
+delegating owner or launch authority. A manager with an exact current-packet
+grant may submit a closed, typed plan for tasks, dependencies, claim requirements, exact-profile
 assignments, review, or escalation. The plan is immutable and inert until the
 local owner accepts its exact revision. Acceptance either applies the complete
 validated action graph and durable scheduling intents or applies nothing.
@@ -33,7 +33,7 @@ control.
 - `manager propose-tasks` invokes the exact grant-bound planning tuple;
   `proposal list|inspect|accept|reject` keeps model proposal and owner decision
   separate.
-- Packet v5 advertises only `crewfold_propose_tasks`,
+- A current packet with the exact manager grant advertises only `crewfold_propose_tasks`,
   `crewfold_propose_assignment`, `crewfold_propose_review`, and
   `crewfold_propose_escalation` when their exact kinds are granted. The recognized
   `crewfold_accept_manager_proposal` name is always denied.
@@ -46,13 +46,14 @@ control.
 - Owner-selected `AgentDefinition.Role` values are descriptive strings, not an
   enum or authority source. The acceptance fixture uses the same arbitrary role
   label for two agents; only the exact grant/task/assignment/planning-profile/
-  packet-v5 run receives proposal tools.
+  current-packet run with the exact grant receives proposal tools.
 - Target launch profiles exist before the grant and are frozen as exact
   project-agent scheduling eligibility. The planning profile binds to the grant
   and cannot also be a target profile. No hidden eligibility table, role match,
   or candidate rank exists.
 - Every proposal call rechecks the active unexpired grant, live run/capability,
-  packet-v5 snapshot, exact planning binding, kind, target profile revisions,
+  current-packet grant snapshot, exact planning binding, kind, target profile
+  revisions,
   claim kinds, open count, and quantitative limits. Revocation makes a later
   call from an already-live run fail closed.
 - Submission stores no work effect. Acceptance rechecks exact current scope,
@@ -60,7 +61,7 @@ control.
   claim shape/allowlist, count caps, finite/unlimited budget semantics, and the
   49,152-byte encoded action bound in one immediate transaction.
 - A sealed pending proposal remains owner-decidable after its planning run
-  completes, but acceptance still proves the immutable source packet-v5/grant
+  completes, but acceptance still proves the immutable source packet/grant
   tuple, active unexpired grant, current frozen source-agent revision, and exact
   active objective revision; it neither requires nor restores the released
   planning assignment.
@@ -111,7 +112,7 @@ control.
 - RFC3339 expiry comparisons use canonical instant keys, so equivalent instants
   and non-UTC offsets cannot invert grant, capability, packet, or approval
   authority.
-- Schema-17's fixed management SQL is the reviewed transaction-specific
+- The bounded fixed management SQL is the reviewed transaction-specific
   exception recorded in ADR-0007: it is parameterized, kept beside the atomic
   policy/event/receipt ordering it implements, and covered by canonical-read,
   direct-SQL, rollback, race, restart, and schema-manifest tests. It does not
@@ -127,7 +128,7 @@ control.
 The final gate is the matrix in
 [ADR-0015](../decisions/0015-owner-granted-manager-proposals-and-deterministic-supervision.md#executable-acceptance-matrix).
 The provider-free `test/scenarios/manager-supervisor/run.sh` path now covers inert
-submission, arbitrary same-role separation, packet-v4 denial/packet-v5 grant,
+submission, arbitrary same-role separation, current-packet no-grant denial and exact grant,
 owner acceptance/replay, restart with durable pending intents, one explicit
 schedule followed by background `A -> B -> independent review` progression, and
 live revocation without a second proposal.
@@ -155,19 +156,19 @@ The exact implementation tree passed:
 - formatting, `go vet ./...`, `go test ./...`, and `go test -race ./...`;
 - every M0–M16 black-box scenario through `scripts/check.sh`; and
 - independent final audit with no unresolved high- or medium-severity authority,
-  transaction, recovery, or compatibility defect.
+  transaction, recovery, or conformance defect.
 
 The independent final audit reported zero unresolved high-, medium-, or
-low-severity functional defects. The uncached focused compatibility, queue,
+low-severity functional defects. The uncached focused conformance, queue,
 authority, recovery, and protocol matrices also passed after the full gate, so
 this review records M16 as complete rather than treating earlier partial evidence
 as a completion mark.
 
-## Compatibility and deferrals
+## Boundaries and deferrals
 
-Packets v1 through v4 remain readable, immutable, and unable to propose manager
-actions. Existing runs gain no authority after upgrade. M16 makes no network or
-model call and does not add provider transcript authority, organization-wide
+The current packet grants manager actions only through its exact optional grant;
+ordinary runs gain no authority. M16 makes no network or model call and does not
+add provider transcript authority, organization-wide
 roles, adaptive/model-driven scheduling, arbitrary manager commands, automatic
 reassignment, check-watch execution, outcome scoring, or deployment/push
 authority. Check observation is a reusable capability for a later milestone and

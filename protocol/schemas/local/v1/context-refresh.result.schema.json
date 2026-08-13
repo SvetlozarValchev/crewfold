@@ -16,7 +16,7 @@
     "scanned_through_event_sequence": {"type": "integer", "minimum": 0},
     "chain": {"$ref": "../../domain/v1/context-delta-chain.schema.json"},
     "delta": {"$ref": "../../domain/v1/context-delta.schema.json"},
-    "rebase_reason": {"enum": ["unsupported_packet", "base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]},
+    "rebase_reason": {"enum": ["base_contract_changed", "dependency_set_changed", "event_window_exceeded", "delta_limit_exceeded", "cumulative_limit_exceeded", "unsupported_event_type"]},
     "event_sequence": {"type": "integer", "minimum": 0}
   },
   "allOf": [

@@ -1,0 +1,15 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:domain:check-repair-decision:v1",
+  "type":"object","additionalProperties":false,
+  "required":["id","repair_proposal_id","decision","proposal_revision","created_at","created_by"],
+  "properties":{
+    "id":{"type":"string","pattern":"^checkdecision_[0-9a-f]{32}$"},
+    "repair_proposal_id":{"type":"string","pattern":"^checkrepair_[0-9a-f]{32}$"},
+    "decision":{"enum":["accepted","rejected"]},
+    "proposal_revision":{"type":"integer","minimum":1},
+    "note":{"type":"string","maxLength":4096,"pattern":"^[^\\u0000]*$","description":"Canonical UTF-8 without NUL; persistence bounds the encoded value to 4096 bytes."},
+    "created_at":{"type":"string","format":"date-time"},
+    "created_by":{"const":"local-owner"}
+  }
+}

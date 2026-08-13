@@ -68,11 +68,11 @@ func TestContextDeltaCLIListsAndQueriesOwnerInspection(t *testing.T) {
 	}
 }
 
-func TestContextRefreshCLIExplainsRebaseWithoutTreatingItAsFailure(t *testing.T) {
+func TestContextRefreshCLIExplainsCurrentRebaseWithoutTreatingItAsFailure(t *testing.T) {
 	t.Parallel()
 	client := &fakeDaemonClient{contextRefresh: localapi.ContextRefreshResult{
 		Schema: localapi.ContextRefreshSchema, Type: "context_refresh",
-		ContextRefreshResult: domain.ContextRefreshResult{Status: domain.ContextRefreshRebaseRequired, RunID: testContextDeltaRun, ContextPacketID: testContextDeltaPacket, RebaseReason: domain.ContextRebaseUnsupportedPacket},
+		ContextRefreshResult: domain.ContextRefreshResult{Status: domain.ContextRefreshRebaseRequired, RunID: testContextDeltaRun, ContextPacketID: testContextDeltaPacket, RebaseReason: domain.ContextRebaseBaseContractChanged},
 	}}
 	app, stdout, stderr := newTestApp()
 	app.newClient = func(string) daemonClient { return client }

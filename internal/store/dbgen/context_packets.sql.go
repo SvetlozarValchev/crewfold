@@ -58,6 +58,60 @@ func (q *Queries) CountContextParticipantThreads(ctx context.Context, arg CountC
 	return count, err
 }
 
+const getContextCheckWatchGrant = `-- name: GetContextCheckWatchGrant :one
+SELECT id, workspace_id, project_id, agent_id, agent_revision,
+       max_pending, max_in_flight, COALESCE(expires_at, '') AS expires_at,
+       content_sha256, status, revision, created_at, updated_at, created_by, updated_by
+FROM check_watch_grants
+WHERE workspace_id = ? AND id = ?
+`
+
+type GetContextCheckWatchGrantParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	ID          string `json:"id"`
+}
+
+type GetContextCheckWatchGrantRow struct {
+	ID            string `json:"id"`
+	WorkspaceID   string `json:"workspace_id"`
+	ProjectID     string `json:"project_id"`
+	AgentID       string `json:"agent_id"`
+	AgentRevision int64  `json:"agent_revision"`
+	MaxPending    int64  `json:"max_pending"`
+	MaxInFlight   int64  `json:"max_in_flight"`
+	ExpiresAt     string `json:"expires_at"`
+	ContentSha256 string `json:"content_sha256"`
+	Status        string `json:"status"`
+	Revision      int64  `json:"revision"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
+	CreatedBy     string `json:"created_by"`
+	UpdatedBy     string `json:"updated_by"`
+}
+
+func (q *Queries) GetContextCheckWatchGrant(ctx context.Context, arg GetContextCheckWatchGrantParams) (GetContextCheckWatchGrantRow, error) {
+	row := q.db.QueryRowContext(ctx, getContextCheckWatchGrant, arg.WorkspaceID, arg.ID)
+	var i GetContextCheckWatchGrantRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.AgentID,
+		&i.AgentRevision,
+		&i.MaxPending,
+		&i.MaxInFlight,
+		&i.ExpiresAt,
+		&i.ContentSha256,
+		&i.Status,
+		&i.Revision,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+	)
+	return i, err
+}
+
 const getContextEventCursor = `-- name: GetContextEventCursor :one
 SELECT CAST(COALESCE(MAX(sequence), 0) AS INTEGER) FROM events
 `
@@ -156,6 +210,72 @@ func (q *Queries) InsertContextPacket(ctx context.Context, arg InsertContextPack
 		arg.CreatedBy,
 	)
 	return err
+}
+
+const listContextCheckWatchGrantDefinitions = `-- name: ListContextCheckWatchGrantDefinitions :many
+SELECT definition_id, definition_content_revision, definition_sha256
+FROM check_watch_grant_definitions
+WHERE grant_id = ?
+ORDER BY ordinal
+`
+
+type ListContextCheckWatchGrantDefinitionsRow struct {
+	DefinitionID              string `json:"definition_id"`
+	DefinitionContentRevision int64  `json:"definition_content_revision"`
+	DefinitionSha256          string `json:"definition_sha256"`
+}
+
+func (q *Queries) ListContextCheckWatchGrantDefinitions(ctx context.Context, grantID string) ([]ListContextCheckWatchGrantDefinitionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listContextCheckWatchGrantDefinitions, grantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListContextCheckWatchGrantDefinitionsRow{}
+	for rows.Next() {
+		var i ListContextCheckWatchGrantDefinitionsRow
+		if err := rows.Scan(&i.DefinitionID, &i.DefinitionContentRevision, &i.DefinitionSha256); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listContextCheckWatchGrantOperations = `-- name: ListContextCheckWatchGrantOperations :many
+SELECT operation
+FROM check_watch_grant_operations
+WHERE grant_id = ?
+ORDER BY ordinal
+`
+
+func (q *Queries) ListContextCheckWatchGrantOperations(ctx context.Context, grantID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listContextCheckWatchGrantOperations, grantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var operation string
+		if err := rows.Scan(&operation); err != nil {
+			return nil, err
+		}
+		items = append(items, operation)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listContextDependencies = `-- name: ListContextDependencies :many

@@ -22,7 +22,7 @@
   `Canonical knowledge and provider-switch acceptance: PASS`; all earlier offline,
   race, and black-box gates pass without credentials, inference, or network access.
 - Public surface: `knowledge propose`, `show`, `list`, `accept`, `reject`, and
-  `mark-stale`; repeatable `context build --include`; context packet v3; and the
+  `mark-stale`; repeatable `context build --include`; the current context packet; and the
   run-scoped `crewfold_propose_knowledge` tool.
 
 ## Knowledge, authority, and provenance contract
@@ -70,7 +70,7 @@ Known ineligible candidates are explained individually as `proposed`, `rejected`
 its current replacement, but only an explicitly requested replacement is included.
 Unknown IDs fail the build.
 
-Packet v3 records the ordered request, complete selected snapshots, selections,
+The current packet records the ordered request, complete selected snapshots, selections,
 exclusions, and byte accounting. The total limit is 32 KiB and the accepted-
 knowledge sub-budget is 12 KiB. Revisions are included whole or excluded; no body
 is truncated. Eligibility freezes at build time. Later acceptance, expiry,
@@ -83,9 +83,9 @@ binding; a new build re-evaluates current state.
 | --- | --- | --- | --- |
 | Store/state machine | `./scripts/go.sh test ./internal/store` | passed | proposal/accept/reject/stale/supersede lifecycle, exact history, task/meeting provenance, scope derivation, state conflicts, idempotency, owner and denial authority |
 | Integrity and rollback | store tests | passed | sealed sources, strict IDs, legal-only governance transitions, immutable packets, predecessor/successor rollback after injected projection/event failures |
-| Context and compatibility | store/domain/protocol tests | passed | packet v3 exact selection, all exclusion reasons, stable hashes/budgets/order, v1/v2 reads, restart-stable show/explain |
+| Context contract | store/domain/protocol tests | passed | current-packet exact selection, all exclusion reasons, stable hashes/budgets/order, restart-stable show/explain |
 | Daemon/CLI/MCP | `./scripts/go.sh test ./internal/daemon ./internal/cli` | passed | strict local methods, repeated includes, agent proposal, absent governance tool, policy-denial audit, project-scoped listing |
-| Typed persistence | generated database consistency gate | passed | migration v10, checked-in `sqlc` accessors, source and generated-output hashes |
+| Typed persistence | generated database consistency gate | passed | current baseline, checked-in `sqlc` accessors, source and generated-output hashes |
 | Black-box acceptance | `test/scenarios/canonical-knowledge/run.sh` | passed | real binary/socket/SQLite, recorded Codex handoff, daemon restart, explicit packet binding, recorded Claude replacement, supersession, sentinel exclusion |
 | Full offline/race gate | `./scripts/check.sh` | passed | vet, all tests, race tests, and all fifteen capability scenarios |
 
@@ -115,7 +115,7 @@ binding; a new build re-evaluates current state.
 
 ## Persistence and recovery
 
-- Schema v10 adds knowledge items, immutable content revisions, ordered sources,
+- The current schema includes knowledge items, immutable content revisions, ordered sources,
   and append-only authority checks. It also enforces the previously documented
   immutability of stored context packets.
 - The `knowledge.proposed` event seals a revision's source set. Accepted/rejected/
@@ -135,7 +135,7 @@ The store retains transaction, authority, validation, and event ownership. The
 generated-source and output hashes are part of the normal offline gate, so builds
 do not require a locally installed generator while stale generated code fails CI.
 
-The migration uses SQLite checks, unique indexes, and triggers for item/revision/
+The baseline uses SQLite checks, unique indexes, and triggers for item/revision/
 source/authority and context-packet invariants. Runtime reads never assemble
 canonical state from ad-hoc terminal logs or a second persistence system.
 
@@ -143,7 +143,7 @@ canonical state from ad-hoc terminal logs or a second persistence system.
 
 - The local API remains owner-only and exposes no actor/approver field.
 - Run capabilities expose proposal only; task/project/source identity cannot be
-  forged in MCP arguments, and older immutable packets do not gain the new tool.
+  forged in MCP arguments, and a frozen packet does not gain an ungranted tool.
 - Knowledge title/body, notes, sources, list sizes, include counts, and packet
   bytes are bounded. IDs and enums are strict in both JSON Schema and SQLite.
 - Exact pins make briefing input reproducible and prevent retrieval or a new
@@ -153,16 +153,12 @@ canonical state from ad-hoc terminal logs or a second persistence system.
 - No knowledge operation edits source, performs Git writes, pushes, merges,
   deploys, contacts people, or grants task-completion authority.
 
-## Compatibility
+## Current contract
 
-- Storage advances additively from schema v9 to v10. Existing workspaces, runs,
-  meetings, and packet rows are unchanged; no historical knowledge is fabricated.
-- Context packets v1 and v2 remain readable and immutable. New builds use v3 with
+- Fresh storage contains no fabricated knowledge. The current context packet uses
   explicit empty knowledge arrays when no revisions are requested.
-- Local API v1 gains additive knowledge methods and versioned context results.
-  Existing envelopes, provider adapters, and all M0–M13 scenarios pass unchanged.
-- An older binary safely refuses schema v10 as newer. Downgrade requires restoring
-  a schema-v9 backup rather than deleting knowledge or packet authority.
+- Local API v1 exposes knowledge methods and current context results under the
+  same exact envelope used by provider adapters and all M0–M13 scenarios.
 
 ## Known limitations and deferrals
 

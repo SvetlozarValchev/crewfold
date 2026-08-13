@@ -10,7 +10,7 @@ import (
 	"crewfold/internal/execution"
 )
 
-func TestInvokeManagerDerivesPacketV5AuthorityFromExactGrant(t *testing.T) {
+func TestInvokeManagerDerivesAuthorityFromExactGrant(t *testing.T) {
 	t.Parallel()
 	storage, fixture, profile := createManagerInvocationFixture(t)
 	command := InvokeManagerCommand{
@@ -41,7 +41,7 @@ func TestInvokeManagerDerivesPacketV5AuthorityFromExactGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ContextPacket() = %v", err)
 	}
-	if packet.Schema != domain.ContextPacketSchemaV5 || packet.ManagementGrant == nil ||
+	if packet.Schema != domain.ContextPacketSchema || packet.ManagementGrant == nil ||
 		packet.ManagementGrant.GrantID != fixture.grant.ID || packet.ManagementGrant.ManagerTaskID != fixture.planning.Task.ID ||
 		packet.ManagementGrant.ManagerAgentID != fixture.manager.ID {
 		t.Fatalf("manager packet authority = %#v", packet)
@@ -96,7 +96,7 @@ func TestInvokeManagerRollsBackPacketRunAndJob(t *testing.T) {
 			storage.mutationHook = nil
 			for name, query := range map[string]string{
 				"runs":    "SELECT COUNT(*) FROM runs WHERE assignment_id=?",
-				"packets": "SELECT COUNT(*) FROM context_packets WHERE task_id=? AND json_extract(packet_json,'$.schema')='urn:crewfold:schema:domain:context-packet:v5'",
+				"packets": "SELECT COUNT(*) FROM context_packets WHERE task_id=? AND json_extract(packet_json,'$.schema')='urn:crewfold:schema:domain:context-packet:v1'",
 				"jobs":    "SELECT COUNT(*) FROM run_jobs WHERE run_id IN (SELECT id FROM runs WHERE assignment_id=?)",
 			} {
 				var count int
@@ -112,7 +112,7 @@ func createManagerInvocationFixture(t *testing.T) (*Store, managerGrantAdversari
 	t.Helper()
 	storage, fixture := createManagerGrantAdversarialFixture(t)
 	// Exercise the valid empty claim-kind authority set. This previously became
-	// JSON null while building packet v5 and was rejected by the SQL authority
+	// JSON null while building manager authority and was rejected by the SQL authority
 	// seal, even though the immutable grant correctly stored canonical JSON [].
 	grantResult, err := storage.CreateManagerGrant(context.Background(), CreateManagerGrantCommand{
 		WorkspaceIdentifier: fixture.workspace.ID, ProjectIdentifier: fixture.project.ID,

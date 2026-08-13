@@ -50,7 +50,6 @@ return an error. `doctor --self --output json` returns status `failed` and exit 
 - Durable state introduced or changed: none.
 - Restart/crash points tested: N/A.
 - Reconciliation outcome: N/A.
-- Migration fixture added: N/A.
 - Backup/restore impact: N/A.
 
 ## Security and autonomy
@@ -67,13 +66,12 @@ return an error. `doctor --self --output json` returns status `failed` and exit 
 The normal gate sets `GOPROXY=off`. Release metadata is injected by linker flags and
 does not invoke Git or the network at runtime.
 
-## Compatibility
+## Current contract
 
 - API/schema changes: introduced CLI version, error, and self-doctor response
   schemas at version `v1` using stable URNs.
 - Adapter/runtime compatibility changes: none.
 - Earlier milestone scenarios rerun: none exist.
-- Upgrade/rollback impact: none; no persistent state exists.
 - Module path: deliberately temporary local path `crewfold`; no upstream namespace
   is implied.
 

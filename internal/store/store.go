@@ -31,6 +31,7 @@ type Store struct {
 	clock                      func() time.Time
 	restoreActive              *atomic.Bool
 	supervisorActionSealActive *atomic.Bool
+	checkMutationSealActive    *atomic.Bool
 }
 
 func Open(ctx context.Context, dataDir string, options Options) (*Store, error) {
@@ -42,11 +43,22 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 	dsn := databaseDSN(path)
 	restoreActive := new(atomic.Bool)
 	supervisorActionSealActive := new(atomic.Bool)
+	checkMutationSealActive := new(atomic.Bool)
 	database, err := driver.Open(dsn, func(connection *sqlite3.Conn) error {
 		if err := registerSQLiteExtensions(connection); err != nil {
 			return err
 		}
 		if err := registerSQLiteSupervisorActionSealActive(connection, supervisorActionSealActive); err != nil {
+			return err
+		}
+		if err := connection.CreateFunction("crewfold_check_mutation_seal_active", 0, sqlite3.INNOCUOUS,
+			func(functionContext sqlite3.Context, _ ...sqlite3.Value) {
+				if checkMutationSealActive.Load() {
+					functionContext.ResultInt(1)
+					return
+				}
+				functionContext.ResultInt(0)
+			}); err != nil {
 			return err
 		}
 		return connection.CreateFunction("crewfold_restore_active", 0, sqlite3.INNOCUOUS,
@@ -68,7 +80,7 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 	if clock == nil {
 		clock = time.Now
 	}
-	storage := &Store{db: database, path: path, mutationHook: options.MutationHook, clock: clock, restoreActive: restoreActive, supervisorActionSealActive: supervisorActionSealActive}
+	storage := &Store{db: database, path: path, mutationHook: options.MutationHook, clock: clock, restoreActive: restoreActive, supervisorActionSealActive: supervisorActionSealActive, checkMutationSealActive: checkMutationSealActive}
 	if err := database.PingContext(ctx); err != nil {
 		_ = database.Close()
 		return nil, &Error{Code: CodeStorageFailed, Message: "connect to SQLite database", Cause: err}

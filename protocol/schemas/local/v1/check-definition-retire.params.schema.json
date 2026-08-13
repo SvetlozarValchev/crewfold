@@ -1,0 +1,13 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:local-api:check-definition-retire-params:v1",
+  "type":"object","additionalProperties":false,
+  "required":["workspace","definition","expected_revision","reason","idempotency_key"],
+  "properties":{
+    "workspace":{"type":"string","minLength":1,"maxLength":128},
+    "definition":{"type":"string","pattern":"^checkdef_[0-9a-f]{32}$"},
+    "expected_revision":{"type":"integer","minimum":1},
+    "reason":{"type":"string","minLength":1,"maxLength":2048},
+    "idempotency_key":{"type":"string","minLength":1,"maxLength":128}
+  }
+}

@@ -6,17 +6,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"crewfold/internal/domain"
-
-	"github.com/ncruces/go-sqlite3"
-	"github.com/ncruces/go-sqlite3/driver"
 )
 
 const (
@@ -1172,55 +1165,6 @@ accepted_at,accepted_by,accepted_by_type,rejected_at,rejected_by,rejected_by_typ
 	}
 }
 
-func TestPortableKnowledgeMigrationUpgradesPopulatedCanonicalSchema(t *testing.T) {
-	dataDir := t.TempDir()
-	legacy := openPortableKnowledgeSchemaVersionForTest(t, dataDir, 14)
-	workspace, project := initializeWorkTestProject(t, legacy)
-	task := createWorkTestTask(t, legacy, workspace.ID, project.ID, "portable upgrade source", "portable-upgrade-task")
-	left := acceptedContradictionKnowledge(t, legacy, workspace.ID, task.Task.ID, "portable-upgrade-left", "upgrade left", "left claim", task.Task.ID)
-	right := acceptedContradictionKnowledge(t, legacy, workspace.ID, task.Task.ID, "portable-upgrade-right", "upgrade right", "right claim", task.Task.ID)
-	contradiction := openContradiction(t, legacy, workspace.ID, left.Revision.ID, right.Revision.ID, "portable-upgrade-open")
-	// The current binary writes the forward-compatible binding alongside the
-	// legacy task_scope_id. Remove the scaffolding so the file on disk is an
-	// exact populated v14 schema before Open applies migration 015/backfills it.
-	if _, err := legacy.db.Exec(`DROP TABLE knowledge_item_task_scopes; DROP TABLE knowledge_task_scope_anchors`); err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	storage := openTestStore(t, dataDir, Options{})
-	var anchors, bindings, curatorRows int64
-	if err := storage.db.QueryRow(`SELECT
-(SELECT COUNT(*) FROM knowledge_task_scope_anchors WHERE task_id=?),
-(SELECT COUNT(*) FROM knowledge_item_task_scopes WHERE task_id=?),
-(SELECT COUNT(*) FROM curator_rules WHERE workspace_id=? AND revision=1 AND enabled=0)`,
-		task.Task.ID, task.Task.ID, workspace.ID).Scan(&anchors, &bindings, &curatorRows); err != nil {
-		t.Fatal(err)
-	}
-	if anchors != 1 || bindings != 2 || curatorRows != 1 {
-		t.Fatalf("migration backfill anchors/bindings/curator = %d/%d/%d; want 1/2/1", anchors, bindings, curatorRows)
-	}
-	exported, err := storage.ExportKnowledgeBundle(context.Background(), ExportKnowledgeBundleQuery{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if exported.Manifest.Snapshot.Counts.TaskScopeAnchors != 1 || exported.Manifest.Snapshot.Counts.Items != 2 ||
-		exported.Manifest.Snapshot.Counts.Revisions != 2 || exported.Manifest.Snapshot.Counts.Contradictions != 1 ||
-		exported.Manifest.Snapshot.Contradictions[0].ID != contradiction.ID {
-		t.Fatalf("upgraded portable snapshot = %#v", exported.Manifest.Snapshot)
-	}
-	destination := openTestStore(t, t.TempDir(), Options{})
-	if _, err := destination.ImportKnowledgeBundle(context.Background(), ImportKnowledgeBundleCommand{
-		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, ManifestJSON: exported.ManifestJSON, Markdown: exported.Markdown,
-		ExpectedContentSHA256: exported.Manifest.ContentSHA256, CreateScope: true, Actor: OwnerKnowledgeActor(),
-		IdempotencyKey: "portable-upgrade-import", CorrelationID: "portable-upgrade-import-request",
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func portableContradictionSnapshot(status string) domain.PortableKnowledgeSnapshot {
 	left := portableAcceptedRevision(portableTestRevisionA, portableTestItemA, 1, "", portableTestTime0, portableTestTime1)
 	right := portableAcceptedRevision(portableTestRevisionB, portableTestItemB, 1, "", portableTestTime0, portableTestTime1)
@@ -1378,73 +1322,6 @@ budget_tokens,budget_cost_cents,budget_time_seconds,revision,created_at,updated_
 ) VALUES(?,?,?,NULL,'portable raw task',NULL,'ready',NULL,100,0,0,0,1,?,?,?,?)`,
 		taskID, workspaceID, projectID, createdAt, createdAt, createdBy, createdBy)
 	return err
-}
-
-func openPortableKnowledgeSchemaVersionForTest(t *testing.T, dataDir string, version int) *Store {
-	t.Helper()
-	path := filepath.Join(dataDir, databaseFilename)
-	database, err := driver.Open(databaseDSN(path), func(connection *sqlite3.Conn) error {
-		return registerSQLiteExtensions(connection)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	database.SetMaxOpenConns(1)
-	database.SetMaxIdleConns(1)
-	if _, err := database.Exec(`PRAGMA application_id = ` + fmt.Sprint(sqliteApplicationID)); err != nil {
-		_ = database.Close()
-		t.Fatal(err)
-	}
-	if _, err := database.Exec(`CREATE TABLE schema_migrations (
-version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL
-) STRICT`); err != nil {
-		_ = database.Close()
-		t.Fatal(err)
-	}
-	migrations, err := loadMigrations()
-	if err != nil {
-		_ = database.Close()
-		t.Fatal(err)
-	}
-	for _, migration := range migrations[:version] {
-		tx, err := database.BeginTx(context.Background(), nil)
-		if err != nil {
-			_ = database.Close()
-			t.Fatal(err)
-		}
-		if _, err := tx.Exec(migration.sql); err != nil {
-			_ = tx.Rollback()
-			_ = database.Close()
-			t.Fatalf("apply migration %d: %v", migration.version, err)
-		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)`, migration.version, migration.name, portableTestTime0); err != nil {
-			_ = tx.Rollback()
-			_ = database.Close()
-			t.Fatal(err)
-		}
-		if _, err := tx.Exec(`PRAGMA user_version = ` + fmt.Sprint(migration.version)); err != nil {
-			_ = tx.Rollback()
-			_ = database.Close()
-			t.Fatal(err)
-		}
-		if err := tx.Commit(); err != nil {
-			_ = database.Close()
-			t.Fatal(err)
-		}
-	}
-	if version == 14 {
-		// Current proposal/read code understands the v15 forward binding. These
-		// two scaffolding tables let it produce ordinary v14 native rows; callers
-		// drop them before exercising the actual embedded v15 migration.
-		if _, err := database.Exec(`CREATE TABLE knowledge_task_scope_anchors(
-task_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, project_id TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL
-) STRICT;
-CREATE TABLE knowledge_item_task_scopes(item_id TEXT PRIMARY KEY, task_id TEXT NOT NULL) STRICT;`); err != nil {
-			_ = database.Close()
-			t.Fatal(err)
-		}
-	}
-	return &Store{db: database, path: path, clock: time.Now, restoreActive: new(atomic.Bool)}
 }
 
 func insertPortableTestScope(t *testing.T, storage *Store, scope domain.PortableKnowledgeScope) {

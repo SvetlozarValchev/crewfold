@@ -353,7 +353,7 @@ start_daemon
   --output json >"$scenario_root/context-after-restart.json"
 "$binary" contradiction show "$contradiction_id" --workspace personal --socket "$socket_path" \
   --output json >"$scenario_root/dismissed-after-restart.json"
-cmp "$scenario_root/context-before-restart.json" "$scenario_root/context-after-restart.json" || fail 'historical packet changed across restart'
+cmp "$scenario_root/context-before-restart.json" "$scenario_root/context-after-restart.json" || fail 'already-built packet changed across restart'
 cmp "$scenario_root/dismissed-before-restart.json" "$scenario_root/dismissed-after-restart.json" || fail 'contradiction detail changed across restart'
 "$binary" contradiction dismiss "$contradiction_id" --expected-state-revision 2 \
   --note 'Owner dismissed after resolving the false positive.' --workspace personal --socket "$socket_path" \

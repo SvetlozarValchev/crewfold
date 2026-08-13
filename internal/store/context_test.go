@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -38,7 +39,7 @@ func TestContextKnowledgeRevisionIDsAreOrderedBoundedAndUnique(t *testing.T) {
 	}
 }
 
-func TestPacketV5ManagerToolsAreDerivedInCanonicalOrder(t *testing.T) {
+func TestManagerToolsAreDerivedInCanonicalOrder(t *testing.T) {
 	t.Parallel()
 	allKinds := []string{
 		domain.ManagerProposalAssignment,
@@ -54,7 +55,7 @@ func TestPacketV5ManagerToolsAreDerivedInCanonicalOrder(t *testing.T) {
 	}
 	tools := managerAllowedTools(allKinds)
 	if !reflect.DeepEqual(tools[:len(runScopedTools)], runScopedTools) || !reflect.DeepEqual(tools[len(runScopedTools):], wantSuffix) {
-		t.Fatalf("manager tools = %v, want v4 base plus %v", tools, wantSuffix)
+		t.Fatalf("manager tools = %v, want run-scoped base plus %v", tools, wantSuffix)
 	}
 	for index, kind := range allKinds {
 		tools := managerAllowedTools([]string{kind})
@@ -63,14 +64,367 @@ func TestPacketV5ManagerToolsAreDerivedInCanonicalOrder(t *testing.T) {
 		}
 	}
 	if !reflect.DeepEqual(managerAllowedTools(nil), runScopedTools) {
-		t.Fatal("empty manager kinds changed the frozen v4 tool base")
+		t.Fatal("empty manager kinds changed the run-scoped tool base")
 	}
 }
 
-func TestPacketV4MarshalDoesNotExposePacketV5Authority(t *testing.T) {
+func TestCheckWatchToolsAreDerivedInCanonicalOrder(t *testing.T) {
+	t.Parallel()
+	operations := []string{domain.CheckWatchOperationRun, domain.CheckWatchOperationInspect, domain.CheckWatchOperationProposeRepair}
+	wantSuffix := []string{"crewfold_run_check", "crewfold_list_check_results", "crewfold_inspect_check_result", "crewfold_propose_check_repair"}
+	tools := checkWatchAllowedTools(operations)
+	if !reflect.DeepEqual(tools[:len(runScopedTools)], runScopedTools) || !reflect.DeepEqual(tools[len(runScopedTools):], wantSuffix) {
+		t.Fatalf("check-watch tools = %v, want run-scoped base plus %v", tools, wantSuffix)
+	}
+	for index, operation := range operations {
+		tools := checkWatchAllowedTools([]string{operation})
+		want := checkWatchOperationTools[index].tools
+		if !reflect.DeepEqual(tools[:len(runScopedTools)], runScopedTools) || !reflect.DeepEqual(tools[len(runScopedTools):], want) {
+			t.Errorf("check-watch tools for %q = %v, want run-scoped base plus %v", operation, tools, want)
+		}
+	}
+	if !reflect.DeepEqual(checkWatchAllowedTools(nil), runScopedTools) {
+		t.Fatal("empty check-watch operations changed the run-scoped tool base")
+	}
+}
+
+func TestCheckWatchGrantValidationIsExactAndRoleAgnostic(t *testing.T) {
 	t.Parallel()
 	packet := domain.ContextPacket{
-		Schema:       domain.ContextPacketSchemaV4,
+		Schema: domain.ContextPacketSchema, WorkspaceID: "ws_exact", ProjectID: "prj_exact", AgentID: "agent_exact",
+		Role:     domain.ContextRole{AgentID: "agent_exact", Revision: 7, Role: "arbitrary evidence poet"},
+		Included: []domain.ContextSelection{{Section: "check_watch_grant", EntityType: "check_watch_grant", EntityID: "checkgrant_exact", Revision: 3}},
+		CheckWatchGrant: &domain.ContextCheckWatchGrant{
+			Schema: domain.ContextCheckWatchGrantSchema, GrantID: "checkgrant_exact", GrantRevision: 3,
+			WorkspaceID: "ws_exact", ProjectID: "prj_exact", WatcherAgentID: "agent_exact", WatcherAgentRevision: 7,
+			Operations: []string{domain.CheckWatchOperationRun, domain.CheckWatchOperationInspect, domain.CheckWatchOperationProposeRepair},
+			Definitions: []domain.CheckWatchGrantDefinition{
+				{DefinitionID: "checkdef_a", ContentRevision: 2, DefinitionSHA256: strings.Repeat("a", 64)},
+				{DefinitionID: "checkdef_b", ContentRevision: 4, DefinitionSHA256: strings.Repeat("b", 64)},
+			},
+			MaxPending: 8, MaxInFlight: 2, ContentSHA256: strings.Repeat("c", 64),
+		},
+	}
+	if err := validateContextCheckWatchGrant(packet); err != nil {
+		t.Fatalf("valid check-watch grant rejected: %v", err)
+	}
+	packet.Role.Role = "another same arbitrary role"
+	if err := validateContextCheckWatchGrant(packet); err != nil {
+		t.Fatalf("role label affected check-watch authority: %v", err)
+	}
+	for name, mutate := range map[string]func(*domain.ContextCheckWatchGrant){
+		"wrong agent revision": func(grant *domain.ContextCheckWatchGrant) { grant.WatcherAgentRevision++ },
+		"unsorted operations": func(grant *domain.ContextCheckWatchGrant) {
+			grant.Operations = []string{domain.CheckWatchOperationInspect, domain.CheckWatchOperationRun}
+		},
+		"duplicate definition": func(grant *domain.ContextCheckWatchGrant) {
+			grant.Definitions = append(grant.Definitions, grant.Definitions[len(grant.Definitions)-1])
+		},
+		"forged definition hash": func(grant *domain.ContextCheckWatchGrant) {
+			grant.Definitions[0].DefinitionSHA256 = strings.Repeat("g", 64)
+		},
+		"in-flight above pending": func(grant *domain.ContextCheckWatchGrant) { grant.MaxInFlight = grant.MaxPending + 1 },
+		"mixed authority":         func(grant *domain.ContextCheckWatchGrant) {},
+	} {
+		candidate := packet
+		grant := *packet.CheckWatchGrant
+		grant.Operations = append([]string(nil), grant.Operations...)
+		grant.Definitions = append([]domain.CheckWatchGrantDefinition(nil), grant.Definitions...)
+		mutate(&grant)
+		candidate.CheckWatchGrant = &grant
+		if name == "mixed authority" {
+			candidate.ManagementGrant = &domain.ContextManagerGrant{}
+			if err := validateLiveContextPacket(candidate); err == nil {
+				t.Errorf("mixed delegated authority unexpectedly validated")
+			}
+			continue
+		}
+		if err := validateContextCheckWatchGrant(candidate); err == nil {
+			t.Errorf("%s check-watch grant unexpectedly validated", name)
+		}
+	}
+}
+
+func TestCreateRunBuildsCheckWatchAuthorityOnlyFromExplicitExactGrant(t *testing.T) {
+	current := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	storage := openTestStore(t, t.TempDir(), Options{Clock: func() time.Time { return current }})
+	workspace, project, agent, checkout, assigned := initializeRunTest(t, storage, "explicit check authority")
+	grant := insertContextCheckWatchGrantFixture(t, storage, workspace.ID, project.ID, agent, current.Add(6*time.Hour), []string{
+		domain.CheckWatchOperationRun, domain.CheckWatchOperationInspect, domain.CheckWatchOperationProposeRepair,
+	})
+	scenario := domain.FakeScenario{
+		Schema: "urn:crewfold:schema:fixture:fake-run-scenario:v1", Name: "explicit-check-authority",
+		Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "exercise exact watcher authority"}},
+	}
+	created, err := storage.CreateRun(context.Background(), CreateRunCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: assigned.Task.ID, CheckoutIdentifier: checkout.ID,
+		Runtime: "fake", Provider: "fake", Scenario: scenario, ExpectedTaskRevision: assigned.Task.Revision,
+		CheckWatchGrantID: grant.ID, ExpectedCheckWatchGrantRevision: grant.Revision,
+		CapabilityTTL: 12 * time.Hour, IdempotencyKey: "explicit-check-authority", CorrelationID: "request-explicit-check-authority",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(explicit check authority) = %v", err)
+	}
+	packet, err := storage.ContextPacket(context.Background(), workspace.ID, created.Detail.Run.ContextPacketID)
+	if err != nil {
+		t.Fatalf("ContextPacket(check authority) = %v", err)
+	}
+	if packet.Schema != domain.ContextPacketSchema || packet.ManagementGrant != nil || packet.CheckWatchGrant == nil ||
+		packet.CheckWatchGrant.GrantID != grant.ID || packet.CheckWatchGrant.GrantRevision != grant.Revision ||
+		!reflect.DeepEqual(packet.Policy.AllowedTools, checkWatchAllowedTools(grant.Operations)) {
+		t.Fatalf("explicit run did not freeze exact check authority: %#v", packet)
+	}
+	if _, err := storage.CreateRun(context.Background(), CreateRunCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: assigned.Task.ID, Runtime: "fake", Provider: "fake", Scenario: scenario,
+		ExpectedTaskRevision: assigned.Task.Revision, CheckWatchGrantID: grant.ID,
+		IdempotencyKey: "missing-grant-revision", CorrelationID: "request-missing-grant-revision",
+	}); ErrorCode(err) != CodeInvalidRun {
+		t.Fatalf("CreateRun(unpaired grant) error = %v, code = %q", err, ErrorCode(err))
+	}
+	changed := CreateRunCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: assigned.Task.ID, CheckoutIdentifier: checkout.ID,
+		Runtime: "fake", Provider: "fake", Scenario: scenario, ExpectedTaskRevision: assigned.Task.Revision,
+		CheckWatchGrantID: grant.ID, ExpectedCheckWatchGrantRevision: grant.Revision + 1,
+		CapabilityTTL: 12 * time.Hour, IdempotencyKey: "explicit-check-authority", CorrelationID: "request-explicit-check-authority",
+	}
+	if _, err := storage.CreateRun(context.Background(), changed); ErrorCode(err) != CodeIdempotencyConflict {
+		t.Fatalf("CreateRun(changed exact grant under replay key) error = %v, code = %q", err, ErrorCode(err))
+	}
+}
+
+func TestCreateRunRejectsCallerSuppliedCheckWatchAuthorityWithoutExplicitGrant(t *testing.T) {
+	current := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	storage := openTestStore(t, t.TempDir(), Options{Clock: func() time.Time { return current }})
+	workspace, project, agent, checkout, assigned := initializeRunTest(t, storage, "supplied check authority")
+	grant := insertContextCheckWatchGrantFixture(t, storage, workspace.ID, project.ID, agent, current.Add(6*time.Hour), []string{domain.CheckWatchOperationRun})
+	tx, err := storage.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, _, err := storage.buildCheckWatchContextPacketInTransaction(context.Background(), tx, workspace.ID, assigned.Task, agent, checkout, grant, "build-unbound-check-authority", storage.nowText())
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("buildCheckWatchContextPacketInTransaction() = %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit unbound check-authority packet: %v", err)
+	}
+	scenario := domain.FakeScenario{
+		Schema: "urn:crewfold:schema:fixture:fake-run-scenario:v1", Name: "supplied-check-authority",
+		Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "must not ambiently inherit authority"}},
+	}
+	if _, err := storage.CreateRun(context.Background(), CreateRunCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: assigned.Task.ID, ContextPacketID: packet.ID,
+		Runtime: "fake", Provider: "fake", Scenario: scenario, ExpectedTaskRevision: assigned.Task.Revision,
+		IdempotencyKey: "supply-check-authority", CorrelationID: "request-supply-check-authority",
+	}); ErrorCode(err) != CodeInvalidContext {
+		t.Fatalf("CreateRun(supplied check authority without grant) error = %v, code = %q", err, ErrorCode(err))
+	}
+}
+
+func TestCheckWatchLiveAuthorityRevalidationMatrix(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		operations []string
+		operation  string
+		mutate     func(*testing.T, *Store, *time.Time, domain.CheckWatchGrant, domain.AgentDefinition)
+	}{
+		{
+			name: "revoked exact grant", operations: []string{domain.CheckWatchOperationRun}, operation: domain.CheckWatchOperationRun,
+			mutate: func(t *testing.T, storage *Store, current *time.Time, grant domain.CheckWatchGrant, _ domain.AgentDefinition) {
+				*current = current.Add(time.Second)
+				storage.checkMutationSealActive.Store(true)
+				defer storage.checkMutationSealActive.Store(false)
+				if _, err := storage.db.Exec(`UPDATE check_watch_grants SET status='revoked', revision=revision+1,
+updated_at=?, updated_by='local-owner' WHERE id=?`, current.Format(time.RFC3339Nano), grant.ID); err != nil {
+					t.Fatalf("revoke check-watch grant fixture: %v", err)
+				}
+			},
+		},
+		{
+			name: "expired exact grant", operations: []string{domain.CheckWatchOperationRun}, operation: domain.CheckWatchOperationRun,
+			mutate: func(_ *testing.T, _ *Store, current *time.Time, _ domain.CheckWatchGrant, _ domain.AgentDefinition) {
+				*current = current.Add(2 * time.Hour)
+			},
+		},
+		{
+			name: "same role but newer agent revision", operations: []string{domain.CheckWatchOperationRun}, operation: domain.CheckWatchOperationRun,
+			mutate: func(t *testing.T, storage *Store, current *time.Time, _ domain.CheckWatchGrant, agent domain.AgentDefinition) {
+				*current = current.Add(time.Second)
+				sameRole := agent.Role
+				if _, err := storage.UpdateAgent(context.Background(), UpdateAgentCommand{
+					WorkspaceIdentifier: agent.WorkspaceID, AgentIdentifier: agent.ID, Role: &sameRole,
+					ExpectedRevision: agent.Revision, IdempotencyKey: "same-role-new-revision", CorrelationID: "request-same-role-new-revision",
+				}); err != nil {
+					t.Fatalf("UpdateAgent(same role) = %v", err)
+				}
+			},
+		},
+		{
+			name: "operation absent from exact grant", operations: []string{domain.CheckWatchOperationRun}, operation: domain.CheckWatchOperationInspect,
+			mutate: func(_ *testing.T, _ *Store, _ *time.Time, _ domain.CheckWatchGrant, _ domain.AgentDefinition) {},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+			storage := openTestStore(t, t.TempDir(), Options{Clock: func() time.Time { return current }})
+			workspace, project, agent, checkout, assigned := initializeRunTest(t, storage, "check authority revalidation "+test.name)
+			expiresAt := current.Add(time.Hour)
+			grant := insertContextCheckWatchGrantFixture(t, storage, workspace.ID, project.ID, agent, expiresAt, test.operations)
+			scenario := domain.FakeScenario{
+				Schema: "urn:crewfold:schema:fixture:fake-run-scenario:v1", Name: "check-live-revalidation",
+				Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "authority is exact and current"}},
+			}
+			created, err := storage.CreateRun(context.Background(), CreateRunCommand{
+				WorkspaceIdentifier: workspace.ID, TaskID: assigned.Task.ID, CheckoutIdentifier: checkout.ID,
+				Runtime: "fake", Provider: "fake", Scenario: scenario, ExpectedTaskRevision: assigned.Task.Revision,
+				CheckWatchGrantID: grant.ID, ExpectedCheckWatchGrantRevision: grant.Revision,
+				CapabilityTTL: 12 * time.Hour, IdempotencyKey: "check-live-revalidation", CorrelationID: "request-check-live-revalidation",
+			})
+			if err != nil {
+				t.Fatalf("CreateRun(check authority) = %v", err)
+			}
+			if _, err := storage.MarkRunStarting(context.Background(), created.Detail.Run.ID, "check-live-revalidation-starting"); err != nil {
+				t.Fatalf("MarkRunStarting(check authority) = %v", err)
+			}
+			if _, err := storage.AuthorizeRunCheckWatchGrant(context.Background(), created.Detail.Run.ID, domain.CheckWatchOperationRun); err != nil {
+				t.Fatalf("initial exact check-watch authorization = %v", err)
+			}
+			test.mutate(t, storage, &current, grant, agent)
+			if _, err := storage.ContextPacket(context.Background(), workspace.ID, created.Detail.Run.ContextPacketID); err != nil {
+				t.Fatalf("frozen packet became unreadable after authority change: %v", err)
+			}
+			if _, err := storage.AuthorizeRunCapability(context.Background(), created.Detail.Run.ID); err != nil {
+				t.Fatalf("ordinary bound run became invalid after authority change: %v", err)
+			}
+			if _, err := storage.AuthorizeRunCheckWatchGrant(context.Background(), created.Detail.Run.ID, test.operation); ErrorCode(err) != CodeCheckWatchGrantDenied {
+				t.Fatalf("AuthorizeRunCheckWatchGrant(%s) error = %v, code = %q", test.operation, err, ErrorCode(err))
+			}
+		})
+	}
+}
+
+func TestSameRoleDoesNotConferCheckWatchAuthority(t *testing.T) {
+	current := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	storage := openTestStore(t, t.TempDir(), Options{Clock: func() time.Time { return current }})
+	workspace, _, _, _, assigned := initializeRunTest(t, storage, "same role no grant")
+	scenario := domain.FakeScenario{
+		Schema: "urn:crewfold:schema:fixture:fake-run-scenario:v1", Name: "same-role-no-grant",
+		Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "role is metadata"}},
+	}
+	created, err := storage.CreateRun(context.Background(), CreateRunCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: assigned.Task.ID, Runtime: "fake", Provider: "fake", Scenario: scenario,
+		ExpectedTaskRevision: assigned.Task.Revision, IdempotencyKey: "same-role-no-grant", CorrelationID: "request-same-role-no-grant",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(ungranted) = %v", err)
+	}
+	if _, err := storage.MarkRunStarting(context.Background(), created.Detail.Run.ID, "same-role-no-grant-starting"); err != nil {
+		t.Fatalf("MarkRunStarting(ungranted) = %v", err)
+	}
+	if _, err := storage.AuthorizeRunCheckWatchGrant(context.Background(), created.Detail.Run.ID, domain.CheckWatchOperationRun); ErrorCode(err) != CodeCheckWatchGrantDenied {
+		t.Fatalf("same-role ungranted run check-watch authorization error = %v, code = %q", err, ErrorCode(err))
+	}
+}
+
+func insertContextCheckWatchGrantFixture(t *testing.T, storage *Store, workspaceID, projectID string, agent domain.AgentDefinition, expiresAt time.Time, operations []string) domain.CheckWatchGrant {
+	t.Helper()
+	definitionID := "checkdef_00000000000000000000000000000001"
+	grantID := "checkgrant_00000000000000000000000000000001"
+	now := storage.nowText()
+	definitionContent, err := json.Marshal(struct {
+		WorkspaceID      string   `json:"workspace_id"`
+		ProjectID        string   `json:"project_id"`
+		Name             string   `json:"name"`
+		Executable       string   `json:"executable"`
+		Arguments        []string `json:"arguments"`
+		WorkingDirectory string   `json:"working_directory"`
+		TimeoutMillis    int64    `json:"timeout_millis"`
+		OutputByteLimit  int64    `json:"output_byte_limit"`
+	}{
+		WorkspaceID: workspaceID, ProjectID: projectID, Name: "context watcher fixture", Executable: "/bin/true",
+		Arguments: []string{}, WorkingDirectory: ".", TimeoutMillis: 1000, OutputByteLimit: 1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitionDigest := sha256.Sum256(definitionContent)
+	definitionSHA := fmt.Sprintf("%x", definitionDigest)
+	definitions := []domain.CheckWatchGrantDefinition{{DefinitionID: definitionID, ContentRevision: 1, DefinitionSHA256: definitionSHA}}
+	operationsJSON, err := json.Marshal(operations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitionsJSON, err := json.Marshal(definitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAtText := expiresAt.UTC().Format(time.RFC3339Nano)
+	grantContent, err := json.Marshal(struct {
+		WorkspaceID   string                             `json:"workspace_id"`
+		ProjectID     string                             `json:"project_id"`
+		AgentID       string                             `json:"agent_id"`
+		AgentRevision int64                              `json:"agent_revision"`
+		Operations    []string                           `json:"operations"`
+		Definitions   []domain.CheckWatchGrantDefinition `json:"definitions"`
+		MaxPending    int                                `json:"max_pending"`
+		MaxInFlight   int                                `json:"max_in_flight"`
+		ExpiresAt     string                             `json:"expires_at"`
+	}{
+		WorkspaceID: workspaceID, ProjectID: projectID, AgentID: agent.ID, AgentRevision: agent.Revision,
+		Operations: operations, Definitions: definitions, MaxPending: 8, MaxInFlight: 2, ExpiresAt: expiresAtText,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantDigest := sha256.Sum256(grantContent)
+	grantSHA := fmt.Sprintf("%x", grantDigest)
+	storage.checkMutationSealActive.Store(true)
+	defer storage.checkMutationSealActive.Store(false)
+	tx, err := storage.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO check_definitions(
+id,workspace_id,project_id,name,executable,working_directory,timeout_millis,output_byte_limit,arguments_json,content_json,
+content_revision,content_sha256,status,revision,created_at,updated_at,created_by,updated_by)
+VALUES (?,?,?,?,?,?,?,?,?,?,1,?,'active',1,?,?,'local-owner','local-owner')`,
+		definitionID, workspaceID, projectID, "context watcher fixture", "/bin/true", ".", 1000, 1024, "[]", string(definitionContent), definitionSHA, now, now); err != nil {
+		t.Fatalf("insert check definition fixture: %v", err)
+	}
+	for ordinal, operation := range operations {
+		if _, err := tx.Exec("INSERT INTO check_watch_grant_operations(grant_id,ordinal,operation) VALUES (?,?,?)", grantID, ordinal, operation); err != nil {
+			t.Fatalf("insert check-watch operation fixture: %v", err)
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO check_watch_grant_definitions(
+grant_id,ordinal,definition_id,definition_content_revision,definition_sha256) VALUES (?,0,?,1,?)`, grantID, definitionID, definitionSHA); err != nil {
+		t.Fatalf("insert check-watch definition fixture: %v", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO check_watch_grants(
+id,workspace_id,project_id,agent_id,agent_revision,operations_json,definitions_json,max_pending,max_in_flight,expires_at,
+content_json,content_sha256,status,revision,created_at,updated_at,created_by,updated_by)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'active',1,?,?,'local-owner','local-owner')`,
+		grantID, workspaceID, projectID, agent.ID, agent.Revision, string(operationsJSON), string(definitionsJSON), 8, 2,
+		expiresAtText, string(grantContent), grantSHA, now, now); err != nil {
+		t.Fatalf("insert check-watch grant fixture: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit check-watch grant fixture: %v", err)
+	}
+	return domain.CheckWatchGrant{
+		ID: grantID, WorkspaceID: workspaceID, ProjectID: projectID, AgentID: agent.ID, AgentRevision: agent.Revision,
+		Operations: append([]string(nil), operations...), Definitions: definitions, MaxPending: 8, MaxInFlight: 2,
+		ExpiresAt: expiresAtText, ContentSHA256: grantSHA, Status: domain.CheckWatchGrantActive, Revision: 1,
+		CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID,
+	}
+}
+
+func TestOrdinaryPacketMarshalDoesNotExposeDelegatedAuthority(t *testing.T) {
+	t.Parallel()
+	packet := domain.ContextPacket{
+		Schema:       domain.ContextPacketSchema,
 		Dependencies: []domain.ContextDependency{}, Dependents: []domain.ContextDependency{}, ParticipantThreads: []domain.ParticipantThread{},
 		RequestedKnowledgeRevisionIDs: []string{}, AcceptedKnowledge: []domain.KnowledgeRevision{}, Included: []domain.ContextSelection{}, Excluded: []domain.ContextExclusion{},
 	}
@@ -83,19 +437,19 @@ func TestPacketV4MarshalDoesNotExposePacketV5Authority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, exists := fields["management_grant"]; exists {
-		t.Fatalf("packet v4 wire shape gained packet-v5 authority: %s", encoded)
+		t.Fatalf("ordinary packet wire shape gained manager authority: %s", encoded)
 	}
 	for _, required := range []string{"dependencies", "dependents", "participant_threads", "requested_knowledge_revision_ids", "accepted_knowledge"} {
 		if string(fields[required]) != "[]" {
-			t.Errorf("packet v4 explicit collection %s = %s", required, fields[required])
+			t.Errorf("packet explicit collection %s = %s", required, fields[required])
 		}
 	}
 }
 
-func TestPacketV5ManagerGrantValidationIsExactAndRoleAgnostic(t *testing.T) {
+func TestManagerGrantValidationIsExactAndRoleAgnostic(t *testing.T) {
 	t.Parallel()
 	packet := domain.ContextPacket{
-		Schema: domain.ContextPacketSchemaV5, WorkspaceID: "ws_exact", ProjectID: "prj_exact", TaskID: "task_exact", AgentID: "agent_exact",
+		Schema: domain.ContextPacketSchema, WorkspaceID: "ws_exact", ProjectID: "prj_exact", TaskID: "task_exact", AgentID: "agent_exact",
 		Role:     domain.ContextRole{AgentID: "agent_exact", Revision: 7, Role: "constellation cartographer"},
 		Task:     domain.ContextTask{TaskID: "task_exact", ObjectiveID: "obj_exact", Revision: 11},
 		Included: []domain.ContextSelection{{Section: "management_grant", EntityType: "manager_grant", EntityID: "mgrgrant_exact", Revision: 3}},
@@ -138,7 +492,7 @@ func TestPacketV5ManagerGrantValidationIsExactAndRoleAgnostic(t *testing.T) {
 	}
 }
 
-func TestManagerInvocationAloneBuildsPacketV5FromExactGrantAndProfile(t *testing.T) {
+func TestManagerInvocationBuildsAuthorityFromExactGrantAndProfile(t *testing.T) {
 	t.Parallel()
 	storage, fixture := createManagerGrantAdversarialFixture(t)
 	ctx := context.Background()
@@ -150,7 +504,7 @@ func TestManagerInvocationAloneBuildsPacketV5FromExactGrantAndProfile(t *testing
 	if err != nil {
 		t.Fatalf("BuildContextPacket(ordinary) = %v", err)
 	}
-	if ordinary.Value.Schema != domain.ContextPacketSchemaV4 || ordinary.Value.ManagementGrant != nil || !reflect.DeepEqual(ordinary.Value.Policy.AllowedTools, runScopedTools) {
+	if ordinary.Value.Schema != domain.ContextPacketSchema || ordinary.Value.ManagementGrant != nil || !reflect.DeepEqual(ordinary.Value.Policy.AllowedTools, runScopedTools) {
 		t.Fatalf("ordinary context unexpectedly gained manager authority: %#v", ordinary.Value)
 	}
 
@@ -182,7 +536,7 @@ func TestManagerInvocationAloneBuildsPacketV5FromExactGrantAndProfile(t *testing
 		t.Fatalf("ContextPacket(manager) = %v", err)
 	}
 	grant := packet.ManagementGrant
-	if packet.Schema != domain.ContextPacketSchemaV5 || grant == nil || grant.GrantID != fixture.grant.ID || grant.GrantRevision != fixture.grant.Revision ||
+	if packet.Schema != domain.ContextPacketSchema || grant == nil || grant.GrantID != fixture.grant.ID || grant.GrantRevision != fixture.grant.Revision ||
 		grant.ManagerTaskID != fixture.planning.Task.ID || grant.ManagerTaskRevision != fixture.planning.Task.Revision ||
 		grant.ManagerAgentID != fixture.manager.ID || grant.ManagerAgentRevision != fixture.manager.Revision ||
 		len(grant.LaunchProfiles) != 1 || grant.LaunchProfiles[0].LaunchProfileID != fixture.target.ID ||
@@ -496,41 +850,6 @@ func TestContextPacketBindingReportsArtifactsAndScopeAreDurable(t *testing.T) {
 	if err != nil || explanation.ContentHash != packet.ContentHash || explanation.ByteSize != packet.ByteSize || !reflect.DeepEqual(explanation.Included, packet.Included) || !reflect.DeepEqual(explanation.Excluded, packet.Excluded) || !reflect.DeepEqual(explanation.Budget, packet.Budget) {
 		t.Fatalf("ExplainContextPacket() = %#v, %v", explanation, err)
 	}
-	legacy := packet
-	legacy.Schema, legacy.ID = domain.ContextPacketSchemaV2, "ctx_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-	legacy.RequestedKnowledgeRevisionIDs, legacy.AcceptedKnowledge, legacy.Budget = nil, nil, domain.ContextBudget{}
-	legacy.ByteSize = 0
-	var legacyJSON []byte
-	for range 8 {
-		legacyJSON, err = json.Marshal(legacy)
-		if err != nil {
-			t.Fatalf("marshal legacy context packet: %v", err)
-		}
-		if len(legacyJSON) == legacy.ByteSize {
-			break
-		}
-		legacy.ByteSize = len(legacyJSON)
-	}
-	legacyJSON, err = json.Marshal(legacy)
-	if err != nil || len(legacyJSON) != legacy.ByteSize {
-		t.Fatalf("legacy context byte accounting = %d, %d, %v", len(legacyJSON), legacy.ByteSize, err)
-	}
-	if _, err := storage.db.Exec(`INSERT INTO context_packets(
-id, workspace_id, project_id, task_id, agent_id, checkout_id, packet_json,
-content_hash, byte_size, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		legacy.ID, legacy.WorkspaceID, legacy.ProjectID, legacy.TaskID, legacy.AgentID, legacy.CheckoutID,
-		string(legacyJSON), legacy.ContentHash, legacy.ByteSize, legacy.CreatedAt, legacy.CreatedBy); err != nil {
-		t.Fatalf("insert legacy context packet: %v", err)
-	}
-	loadedLegacy, err := storage.ContextPacket(context.Background(), workspace.ID, legacy.ID)
-	if err != nil || loadedLegacy.Schema != domain.ContextPacketSchemaV2 || loadedLegacy.Budget.Total.LimitBytes != 0 {
-		t.Fatalf("ContextPacket(legacy) = %#v, %v", loadedLegacy, err)
-	}
-	legacyExplanation, err := storage.ExplainContextPacket(context.Background(), workspace.ID, legacy.ID)
-	if err != nil || legacyExplanation.Budget.Total.UsedBytes != legacy.ByteSize || legacyExplanation.Budget.Total.LimitBytes != maximumContextBytes || legacyExplanation.Budget.Knowledge.LimitBytes != maximumContextKnowledgeBytes {
-		t.Fatalf("ExplainContextPacket(legacy) = %#v, %v", legacyExplanation, err)
-	}
-
 	otherTask := createWorkTestTask(t, storage, workspace.ID, project.ID, "other scoped task", "other-scoped-task")
 	otherAssigned, err := storage.AssignTask(context.Background(), AssignTaskCommand{WorkspaceIdentifier: workspace.ID, TaskID: otherTask.Task.ID, AgentIdentifier: agent.ID, LeaseSeconds: 300, ExpectedRevision: otherTask.Task.Revision, IdempotencyKey: "assign-other-scoped-task", CorrelationID: "request-assign-other-scoped-task"})
 	if err != nil {

@@ -311,7 +311,7 @@ authority.
 The diagram is an attention hierarchy, not an authorization hierarchy. The owner
 alone creates/revokes management grants, launch profiles, and
 supervisor policy; accepts/rejects proposals; and allows/denies approval requests.
-A packet-v5 grantee can only propose within its exact grant. The deterministic
+A current-packet management grantee can only propose within its exact grant. The deterministic
 supervisor can only execute the closed automatic actions in policy. Two agents may
 have identical arbitrary role strings while holding entirely different grants.
 
@@ -345,3 +345,30 @@ owner grant it can run allowlisted local checks and attach structured results. A
 future remote-CI adapter can observe check runs and commit status. It cannot infer
 merge order from pass/fail alone; dependency and integration policy decide who
 goes after whom.
+
+M17 makes “eligible” exact. A current-packet check-watch grant binds one project, enabled agent
+revision, exact check-definition revisions, closed operations and bounds. It is
+mutually exclusive with management authority for one run.
+`AgentDefinition.Role` and `LaunchProfile.Purpose` are never read for watcher
+authority, task-owner selection, evidence-review/coordination routing, or repair.
+
+Every active task check requirement names one criterion and exact definition
+revision. A same-clean-HEAD pass contributes only `mechanical_check` evidence for
+that requirement. Dirty, missing, unknown, failed, and stale evidence remains
+visible; returning to an old HEAD cannot revive an observed-stale result. No check
+changes task lifecycle or represents independent review or policy acceptance.
+
+A nonpass routes to the exact current task assignment. Extra
+`evidence_review|coordination` duties are owner-authored exact agent-revision
+routes, not role matches. Delivery uses `crewfold-check-worker` subsystem
+provenance and an immutable result/route/recipient receipt. Without a current task
+owner, the subsystem records `unroutable` rather than guessing.
+
+Repair proposals are disabled by default and remain inert. Even a granted watcher
+can supply only the latest exact trusted failed result at the current fresh source
+and bounded rationale; the proposal freezes that authenticated watcher run, agent
+revision, and grant revision. Timed-out, start-failed, or unknown outcomes and
+stale or unknown freshness remain inspectable but cannot seed repair. Only the
+owner under a current exact project policy and repair profile can create a repair task.
+Passing, failing, routing, or repair handling never commits, pushes, merges,
+deploys, or chooses integration order.

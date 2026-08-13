@@ -1,7 +1,7 @@
 # Protocol
 
-This directory will hold versioned JSON Schemas, generated-type configuration,
-conformance fixtures, and compatibility tests for:
+This directory holds the single current JSON Schemas, generated-type
+configuration, conformance fixtures, and strict contract tests for:
 
 - local daemon commands, queries, and event streams;
 - domain event envelopes and payloads;

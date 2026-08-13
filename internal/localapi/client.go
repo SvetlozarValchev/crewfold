@@ -339,11 +339,7 @@ func (c *Client) ContextShow(ctx context.Context, workspace, contextID string) (
 }
 
 func validateContextShowResult(result ContextShowResult) error {
-	expectedSchema := ContextShowSchema
-	if result.Packet.Schema == domain.ContextPacketSchemaV5 {
-		expectedSchema = ContextShowSchemaV5
-	}
-	if result.Schema != expectedSchema || result.Type != "context_packet" {
+	if result.Schema != ContextShowSchema || result.Type != "context_packet" || result.Packet.Schema != domain.ContextPacketSchema {
 		return fmt.Errorf("context.show returned unexpected result schema %q or type %q for packet schema %q", result.Schema, result.Type, result.Packet.Schema)
 	}
 	return nil
@@ -890,7 +886,10 @@ func (c *Client) callParamsStrict(ctx context.Context, method string, paramsValu
 	if err := c.callStrict(ctx, method, params, result); err != nil {
 		return err
 	}
-	return validateManagementResultDiscriminator(method, result)
+	if err := validateManagementResultDiscriminator(method, result); err != nil {
+		return err
+	}
+	return validateCheckResultDiscriminator(method, result)
 }
 
 func (c *Client) callParamsStrictWithTimeout(ctx context.Context, timeout time.Duration, method string, paramsValue, result any) error {

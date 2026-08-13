@@ -2,8 +2,8 @@
 
 Status: implemented run-scoped briefing, reporting, artifact, durable mailbox,
 canonical-knowledge proposal, contradiction report, live-context
-fetch/acknowledgement, and owner-granted manager-proposal tools. Claims, meetings,
-and outcome tools remain planned.
+fetch/acknowledgement, owner-granted manager-proposal tools, and the current
+check-watch surface. Claims, meetings, and outcome tools remain planned.
 
 ## Transport and authentication
 
@@ -25,22 +25,32 @@ Node key, capability directory, and token files use owner-only permissions. A
 malicious same-user provider could still read and print its token; process
 containment is a separate boundary.
 
-Tool discovery and invocation are both intersected with the immutable packet's
-`allowed_tools`. A run created with an older packet therefore does not gain
-mailbox or knowledge-proposal authority merely because the daemon binary was
-upgraded. New v4 packets record both tool sets, the bounded inbox/participant
-snapshot, live bounds, source event cursor, and any explicitly selected accepted
-knowledge. Preserved v1–v3 packets do not gain the live-context tools.
+Tool discovery and invocation are both intersected with the immutable current
+packet's `allowed_tools`. Every packet records the base tools, bounded
+inbox/participant snapshot, live bounds, source event cursor, and any explicitly
+selected accepted knowledge.
 
-Manager runs use packet v5. It contains the complete exact active grant snapshot:
+Manager runs carry the complete exact active `management_grant` snapshot:
 grant/project/objective, manager planning task and agent revisions, proposal kinds,
 target launch-profile/agent revision tuples, allowed claim kinds, quantitative
-limits, content hash, and expiry. Its `allowed_tools` is the v4 base set plus only
-the proposal tools corresponding to those kinds. Packet versions 1 through 4 do
-not gain manager tools after daemon upgrade, even when their agent has the same
-name or arbitrary `role` label as a granted agent. The store rechecks the live
+limits, content hash, and expiry. Their `allowed_tools` is the base set plus only
+the proposal tools corresponding to those kinds. A packet without that exact
+grant receives no manager tools, even when its agent has the same name or
+arbitrary `role` label as a grantee. The store rechecks the live
 grant and exact run binding on every proposal call; revocation or expiry denies a
 later call from an already-running process.
+
+Check-watcher runs carry one complete exact active `check_watch_grant` snapshot:
+grant/project, exact agent revision, exact
+definition revisions, closed `run|inspect|propose_repair` operations, quantitative
+limits, content hash, and expiry. It cannot coexist with a manager grant. A packet
+without it receives no check tools. The store rechecks the live
+run, packet, exact current grant/revision/expiry, enabled agent revision, project,
+operation, and allowlisted definition on every mutation.
+
+`AgentDefinition.Role` and `LaunchProfile.Purpose` are never authorization inputs.
+A role such as `CI watcher`, `reviewer`, or `integrator` grants nothing, and any
+arbitrarily named agent may receive the exact owner grant.
 
 ## Implemented resources
 
@@ -225,7 +235,7 @@ participant-thread binding. Acknowledging also establishes any missing
 delivered/read timestamps; it never changes the immutable message body.
 
 No independent roster tool is exposed to runs. The owner can inspect bindings
-through the local API/CLI. Context packet v4 includes bounded whole authorized
+through the local API/CLI. The current context packet includes bounded whole authorized
 rosters; later thread creation/invitation can arrive as a whole
 `participant_roster_updated` delta. Full message bodies and mailbox state
 transitions remain explicit mailbox tool calls, and the roster grants no authority
@@ -346,17 +356,83 @@ Only the local owner can accept or reject it.
 The known name `crewfold_accept_manager_proposal` is deliberately never
 advertised. Calling it records a denied scoped-tool audit and returns
 `denied_by_policy`; it cannot reach proposal decision state. A manager call also
-fails closed when packet v5, the grant, live run/capability, proposal kind, exact
+fails closed when the packet's grant, live run/capability, proposal kind, exact
 target profile, claim kind, revision, scope, or quantitative envelope differs.
 
 Newly built context packets include a bounded summary of at most ten queued or
 delivered messages for the assigned agent and project. Full message bodies remain
 outside the base packet and are retrieved explicitly through the mailbox tools.
 
+## Check-watch tools
+
+The following tools are advertised only when the exact operation is present in
+the current packet's grant. Their trusted scope always comes from the authenticated run.
+
+### `crewfold_run_check`
+
+Input is exactly:
+
+```json
+{"requirement_id":"checkreq_...","idempotency_key":"watch-unit-1"}
+```
+
+The requirement must be active in the grant's project and bind an exact active
+definition revision listed in the grant. Checkout is derived from the requirement
+task's currently reserved run, then its latest run in stable order. The agent
+cannot select workspace, project, actor, checkout, command, arguments, stdin,
+environment, profile, grant, evidence class, or recipient.
+
+Success returns the one durable requested check run. It does not assert a pass,
+complete a task, or create repair work.
+
+### `crewfold_list_check_results`
+
+Input contains only bounded `limit` and optional opaque `cursor`. The result is
+limited to the authenticated grant project and definitions. Each item keeps
+outcome, current freshness, requirement state, HEAD and observation times
+separate. `missing`, `stale`, and `unknown` are explicit values rather than
+omitted or summarized as verified.
+
+### `crewfold_inspect_check_result`
+
+Input is exactly one `check_run_id`. Scope is accepted only when the check run's
+project and exact definition revision are visible to the current grant. The
+response exposes the frozen criterion, definition, launch receipt, process
+outcome, clean/dirty HEAD observations, append-only freshness, bounded redacted
+artifact metadata, forced `mechanical_check` evidence, and route/repair status.
+It grants no artifact filesystem path and no raw runtime capture.
+
+### `crewfold_propose_check_repair`
+
+Input contains one exact `check_result_id`, bounded `rationale`, and
+`idempotency_key`. It additionally requires the grant operation
+`propose_repair`, an enabled current project policy, the latest exact trusted
+failed result at the current fresh source, and the policy's exact active repair
+profile. Timed-out, start-failed, or unknown outcomes and stale or unknown
+freshness remain inspectable but cannot seed a repair.
+
+The caller cannot name an agent, task, profile, budget, command, dependency,
+claim, or scheduling response. Success creates one inert proposal only. The local
+owner must accept it through the local API before a linked repair task and
+scheduling intent exist. The proposal freezes the exact authenticated watcher
+run, agent revision, and grant revision; no role or purpose label participates.
+
+The known name `crewfold_accept_check_repair` is never advertised. Calling it
+records `run.tool_denied` and returns `denied_by_policy`.
+
+Revocation or expiry denies new calls and mutation replays. An exact launch
+receipt already committed before revocation remains sufficient only to reconcile
+that same sealed direct-runtime operation; it is not a standing grant.
+
+Check results are always mechanical evidence for one named criterion. They never
+become independent review or policy acceptance and cannot push, merge, deploy,
+complete a task, or choose integration order.
+
 ## Idempotency and audit
 
 Report, artifact, message-send, read, acknowledgement, knowledge-proposal,
-contradiction-report, manager-proposal, and context-delta acknowledgement
+contradiction-report, manager-proposal, check-run, check-repair-proposal, and
+context-delta acknowledgement
 idempotency is local to the authenticated actor/run.
 Repeating the same key and
 content returns the same durable record while the capability remains active,
@@ -406,6 +482,8 @@ absent. Their future URIs and tools will use the same scope,
 idempotency, audit, and domain-authority rules. Knowledge governance remains an
 owner-only local API rather than a deferred agent tool. Manager proposal
 acceptance, launch-profile/grant mutation, supervisor policy/action control, and
-approval decisions likewise remain owner-only local API operations. Thread closing,
+approval decisions likewise remain owner-only local API operations. Check
+definition/requirement/grant/route/policy mutation, repair acceptance, and
+task/outcome acceptance likewise remain owner-only. Thread closing,
 multi-recipient conversation, runtime-specific live prompting, and human-directed
 messages are also not exposed by the current mailbox surface.

@@ -2,33 +2,152 @@ package daemon
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
 	"crewfold/internal/domain"
 	"crewfold/internal/mcp"
+	"crewfold/internal/store"
 )
 
 func TestImmutableToolAllowlistHidesLaterCapabilities(t *testing.T) {
 	t.Parallel()
-	legacyAllowed := []string{toolBriefing, toolStatus, toolCompletion, toolArtifact, toolBlocked, toolProgress}
-	tools := allowedMCPTools(legacyAllowed)
-	if len(tools) != len(legacyAllowed) {
-		t.Fatalf("allowedMCPTools(legacy) count = %d, want %d", len(tools), len(legacyAllowed))
+	frozenAllowed := []string{toolBriefing, toolStatus, toolCompletion, toolArtifact, toolBlocked, toolProgress}
+	tools := allowedMCPTools(frozenAllowed)
+	if len(tools) != len(frozenAllowed) {
+		t.Fatalf("allowedMCPTools(frozen) count = %d, want %d", len(tools), len(frozenAllowed))
 	}
 	for _, tool := range tools {
 		if tool.Name == toolInbox || tool.Name == toolRead || tool.Name == toolSend || tool.Name == toolAcknowledge ||
-			tool.Name == toolKnowledge || tool.Name == toolContradictionReport || tool.Name == toolContextDelta || tool.Name == toolContextDeltaAck {
-			t.Fatalf("legacy immutable capability exposed later tool %q", tool.Name)
+			tool.Name == toolKnowledge || tool.Name == toolContradictionReport || tool.Name == toolContextDelta || tool.Name == toolContextDeltaAck ||
+			tool.Name == toolRunCheck || tool.Name == toolListCheckResults || tool.Name == toolInspectCheckResult || tool.Name == toolProposeCheckRepair {
+			t.Fatalf("frozen immutable capability exposed an ungranted tool %q", tool.Name)
 		}
 	}
 	if !knownMCPTool(toolSend) || !knownMCPTool(toolKnowledge) || !knownMCPTool(toolKnowledgeAccept) ||
 		!knownMCPTool(toolContradictionReport) || !knownMCPTool(toolContradictionConfirm) ||
 		!knownMCPTool(toolContextDelta) || !knownMCPTool(toolContextDeltaAck) ||
 		!knownMCPTool(toolProposeAssignment) || !knownMCPTool(toolProposeEscalation) || !knownMCPTool(toolProposeReview) ||
-		!knownMCPTool(toolProposeTasks) || !knownMCPTool(toolManagerProposalAccept) || knownMCPTool("crewfold_unknown_tool") {
+		!knownMCPTool(toolProposeTasks) || !knownMCPTool(toolManagerProposalAccept) ||
+		!knownMCPTool(toolRunCheck) || !knownMCPTool(toolListCheckResults) || !knownMCPTool(toolInspectCheckResult) ||
+		!knownMCPTool(toolProposeCheckRepair) || !knownMCPTool(toolCheckRepairAccept) || knownMCPTool("crewfold_unknown_tool") {
 		t.Fatal("known MCP tool classification is inconsistent")
 	}
+}
+
+func TestCheckWatchToolsAreOperationDerivedAndExposeNoTrustedScope(t *testing.T) {
+	t.Parallel()
+	wantNames := []string{toolRunCheck, toolListCheckResults, toolInspectCheckResult, toolProposeCheckRepair}
+	var found []mcp.Tool
+	for _, tool := range scopedMCPTools() {
+		if containsString(wantNames, tool.Name) {
+			found = append(found, tool)
+		}
+	}
+	if len(found) != len(wantNames) {
+		t.Fatalf("check-watch tools = %d, want %d", len(found), len(wantNames))
+	}
+	for index, tool := range found {
+		if tool.Name != wantNames[index] {
+			t.Fatalf("check-watch tool %d = %q, want %q", index, tool.Name, wantNames[index])
+		}
+		properties := tool.InputSchema["properties"].(map[string]any)
+		for _, forbidden := range []string{"workspace", "project", "agent", "run", "source_run_id", "grant_id", "expected_grant_revision", "checkout", "command", "executable", "arguments", "environment", "profile", "evidence_class", "recipient"} {
+			if _, exists := properties[forbidden]; exists {
+				t.Errorf("%s exposes trusted scope field %q", tool.Name, forbidden)
+			}
+		}
+	}
+
+	base := []string{
+		toolContextDeltaAck, toolAcknowledge, toolBriefing, toolContextDelta, toolStatus, toolInbox,
+		toolKnowledge, toolCompletion, toolArtifact, toolRead, toolBlocked, toolContradictionReport, toolProgress, toolSend,
+	}
+	allowed := allowedMCPTools(append(append([]string(nil), base...), wantNames...))
+	gotSuffix := make([]string, 0, len(wantNames))
+	for _, tool := range allowed {
+		if containsString(wantNames, tool.Name) {
+			gotSuffix = append(gotSuffix, tool.Name)
+		}
+	}
+	if !reflect.DeepEqual(gotSuffix, wantNames) {
+		t.Fatalf("check-watch tool order = %v, want %v", gotSuffix, wantNames)
+	}
+	filtered := withoutCheckWatchTools(append(append([]string(nil), base...), wantNames...))
+	if !reflect.DeepEqual(filtered, base) {
+		t.Fatalf("stale grant discovery filter = %v, want surviving immutable base %v", filtered, base)
+	}
+}
+
+func TestCheckWatchAuthorityIsExactAndNeverDerivedFromRole(t *testing.T) {
+	t.Parallel()
+	const arbitraryRole = "weather-vane and evidence poet"
+	exact := domain.RunBriefing{
+		Run: domain.Run{ID: "run_0123456789abcdef0123456789abcdef", WorkspaceID: "ws_0123456789abcdef0123456789abcdef", ProjectID: "prj_0123456789abcdef0123456789abcdef", AgentID: "agent_0123456789abcdef0123456789abcdef"},
+		Packet: domain.ContextPacket{
+			Schema: domain.ContextPacketSchema, WorkspaceID: "ws_0123456789abcdef0123456789abcdef", ProjectID: "prj_0123456789abcdef0123456789abcdef", AgentID: "agent_0123456789abcdef0123456789abcdef",
+			Role:            domain.ContextRole{AgentID: "agent_0123456789abcdef0123456789abcdef", Revision: 7, Role: arbitraryRole},
+			CheckWatchGrant: &domain.ContextCheckWatchGrant{Schema: domain.ContextCheckWatchGrantSchema, GrantID: "checkgrant_0123456789abcdef0123456789abcdef", GrantRevision: 1, WorkspaceID: "ws_0123456789abcdef0123456789abcdef", ProjectID: "prj_0123456789abcdef0123456789abcdef", WatcherAgentID: "agent_0123456789abcdef0123456789abcdef", WatcherAgentRevision: 7, Operations: []string{domain.CheckWatchOperationInspect}},
+		},
+	}
+	if _, err := checkWatchGrantForOperation(exact, domain.CheckWatchOperationInspect); err != nil {
+		t.Fatalf("exact check-watch grant rejected: %v", err)
+	}
+
+	ungranted := exact
+	ungranted.Run.AgentID = "agent_fedcba9876543210fedcba9876543210"
+	ungranted.Packet = domain.ContextPacket{Schema: domain.ContextPacketSchema, AgentID: ungranted.Run.AgentID, Role: domain.ContextRole{AgentID: ungranted.Run.AgentID, Revision: 7, Role: arbitraryRole}}
+	if _, err := checkWatchGrantForOperation(ungranted, domain.CheckWatchOperationInspect); store.ErrorCode(err) != store.CodeCheckWatchGrantDenied {
+		t.Fatalf("same-role ungranted run error = %v, code = %q", err, store.ErrorCode(err))
+	}
+	for _, tool := range allowedMCPTools(baseRunToolNamesForTest()) {
+		if tool.Name == toolRunCheck || tool.Name == toolListCheckResults || tool.Name == toolInspectCheckResult || tool.Name == toolProposeCheckRepair {
+			t.Fatalf("same-role ungranted run advertised check tool %q", tool.Name)
+		}
+	}
+}
+
+func TestCheckWatchArgumentsRejectCallerOwnedScopeAndUnboundedValues(t *testing.T) {
+	t.Parallel()
+	requirementID := "checkreq_0123456789abcdef0123456789abcdef"
+	checkRunID := "checkrun_0123456789abcdef0123456789abcdef"
+	checkResultID := "checkresult_0123456789abcdef0123456789abcdef"
+	if err := (runCheckArguments{RequirementID: requirementID, IdempotencyKey: "run-one"}).validate(); err != nil {
+		t.Fatalf("valid run-check arguments error = %v", err)
+	}
+	if err := (listCheckResultsArguments{Limit: 50, Cursor: checkRunID}).validate(); err != nil {
+		t.Fatalf("valid list-check arguments error = %v", err)
+	}
+	if err := (inspectCheckResultArguments{CheckRunID: checkRunID}).validate(); err != nil {
+		t.Fatalf("valid inspect-check arguments error = %v", err)
+	}
+	if err := (proposeCheckRepairArguments{CheckResultID: checkResultID, Rationale: "The exact failure needs bounded repair work.", IdempotencyKey: "repair-one"}).validate(); err != nil {
+		t.Fatalf("valid repair arguments error = %v", err)
+	}
+	for name, err := range map[string]error{
+		"padded requirement":  (runCheckArguments{RequirementID: " " + requirementID, IdempotencyKey: "run"}).validate(),
+		"missing key":         (runCheckArguments{RequirementID: requirementID}).validate(),
+		"zero limit":          (listCheckResultsArguments{}).validate(),
+		"oversized cursor":    (listCheckResultsArguments{Limit: 1, Cursor: strings.Repeat("x", 257)}).validate(),
+		"wrong run prefix":    (inspectCheckResultArguments{CheckRunID: requirementID}).validate(),
+		"empty rationale":     (proposeCheckRepairArguments{CheckResultID: checkResultID, IdempotencyKey: "repair"}).validate(),
+		"oversized rationale": (proposeCheckRepairArguments{CheckResultID: checkResultID, Rationale: strings.Repeat("x", 4097), IdempotencyKey: "repair"}).validate(),
+	} {
+		if err == nil {
+			t.Errorf("%s unexpectedly validated", name)
+		}
+	}
+
+	var injected runCheckArguments
+	if err := decodeToolArguments(json.RawMessage(`{"requirement_id":"`+requirementID+`","idempotency_key":"run","project":"prj_0123456789abcdef0123456789abcdef"}`), &injected); err == nil {
+		t.Fatal("run-check decoder accepted caller-selected project scope")
+	}
+}
+
+func baseRunToolNamesForTest() []string {
+	return []string{toolContextDeltaAck, toolAcknowledge, toolBriefing, toolContextDelta, toolStatus, toolInbox,
+		toolKnowledge, toolCompletion, toolArtifact, toolRead, toolBlocked, toolContradictionReport, toolProgress, toolSend}
 }
 
 func TestManagerProposalToolsAreBoundedDerivedScopeAndCanonical(t *testing.T) {
@@ -168,17 +287,6 @@ func TestContextDeltaToolsDeriveScopeAndRequireExactAcknowledgement(t *testing.T
 		if err := value.validate(); err == nil {
 			t.Errorf("%s acknowledgement unexpectedly validated", name)
 		}
-	}
-}
-
-func TestLegacyRunStatusReportsRebaseWithoutFetchingLiveState(t *testing.T) {
-	t.Parallel()
-	packet := domain.ContextPacket{Schema: domain.ContextPacketSchemaV3, ID: "ctx_0123456789abcdef0123456789abcdef"}
-	status := legacyContextStatus(packet)
-	if status["base_packet_id"] != packet.ID || status["base_schema"] != domain.ContextPacketSchemaV3 ||
-		status["status"] != domain.ContextDeltaRebaseRequired || status["rebase_reason"] != domain.ContextRebaseUnsupportedPacket ||
-		status["rebase_required"] != true {
-		t.Fatalf("legacy context status = %#v", status)
 	}
 }
 

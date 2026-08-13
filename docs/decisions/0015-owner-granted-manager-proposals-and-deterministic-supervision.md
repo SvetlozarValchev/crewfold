@@ -52,25 +52,21 @@ outside that closed automatic set becomes an immutable approval request with no
 operational effect. All other runs retain their existing packet-scoped authority
 and acquire no management capability from a role label.
 
-### Packet v5 carries the exact manager grant
+### The current packet optionally carries the exact manager grant
 
-Packets v1 through v4 remain byte-compatible and keep their existing tool sets.
-In particular, a v4 packet does not gain manager tools even when its agent has any
-role label associated with coordination work.
-
-An owner-built manager packet uses
-`urn:crewfold:schema:domain:context-packet:v5`. It extends the v4 live-context
-contract with one complete `management_grant` snapshot. The snapshot fixes the
+An ordinary current packet has no manager authority even when its agent has any
+role label associated with coordination work. An owner-built manager packet uses
+the same current schema with one complete `management_grant` snapshot. The snapshot fixes the
 grant ID and revision, exact manager agent and assigned task, workspace, project,
 objective and their relevant revisions, expiry, allowed proposal kinds, exact
 target launch-profile revisions, and numeric task/action/budget ceilings. Its
-allowed MCP tools are the v4 tools plus only the proposal tools permitted by that
-grant.
+allowed MCP tools are the ordinary tools plus only the proposal tools permitted
+by that grant.
 
 Run binding revalidates the current enabled grant and every exact binding. Each
 manager proposal call repeats that current/revision/expiry check, so owner
 revocation takes effect without trusting a previously decoded packet. Revocation
-does not edit historical packet bytes. A replacement grant requires a new packet
+does not edit the frozen packet bytes. A replacement grant requires a new packet
 and run.
 
 The manager MCP surface is a closed proposal-only set:
@@ -129,7 +125,7 @@ review requirement grants no completion-acceptance authority.
 
 The immutable proposal remains owner-decidable after its planning run completes
 and releases the planning assignment. Acceptance does not revive that execution
-authority: it revalidates the still-active/unexpired grant, frozen source-v5
+authority: it revalidates the still-active/unexpired grant, frozen source
 run/packet/grant tuple, current source-agent revision, active objective revision,
 and all current target profile, graph, claim, and budget references before any
 effect.
@@ -297,9 +293,9 @@ transaction, authority, or recovery failure.
 
 | ID | Adversarial setup | Required observable result |
 | --- | --- | --- |
-| `M16-AUTH-01` | Two enabled agents have the same arbitrary role label; only one exact planning task/assignment/profile/run has a current grant | Only the exact packet-v5 run advertises and can call its granted proposal tools; the other packet-v4 run is denied |
+| `M16-AUTH-01` | Two enabled agents have the same arbitrary role label; only one exact planning task/assignment/profile/run has a current grant | Only the exact granted run advertises and can call its proposal tools; the current packet without a grant is denied |
 | `M16-AUTH-02` | A grantee calls the reserved acceptance tool or selects scope in tool input | The call is denied and audited; no owner decision or work row changes |
-| `M16-AUTH-03` | The owner revokes the grant after packet-v5 launch and the run calls again | The historical packet remains readable, but current call authorization fails |
+| `M16-AUTH-03` | The owner revokes the grant after launch and the run calls again | The frozen packet remains readable, but current call authorization fails |
 | `M16-PROP-01` | A valid typed proposal is submitted | Only proposal/action/audit/idempotency facts exist before acceptance |
 | `M16-PROP-02` | One owner accepts `A -> B -> independent review`, then replays | One atomic effect set exists; replay returns it and creates no duplicate task, edge, requirement, intent, event, or decision |
 | `M16-PROP-03` | Proposed actions form a cycle or cite another project/objective | Acceptance rejects the whole batch with no partial effects |
@@ -324,8 +320,8 @@ transaction, authority, or recovery failure.
   reserving work merely by speaking.
 - The owner approves the plan once; routine ready work can then advance without a
   human click while every placement remains explainable.
-- Packet v5 adds explicit delegated authority without broadening historical v1-v4
-  runs.
+- The optional manager-grant snapshot adds explicit delegated authority without
+  granting it to ordinary current packets.
 - Owner-defined launch profiles make automatic execution reproducible and prevent
   model-selected commands or providers.
 - Keeping `lost` capacity reserved may intentionally halt scheduling, but it
@@ -344,8 +340,8 @@ transaction, authority, or recovery failure.
 
 - Grant authority from `agent.role == manager`, or any other magic role string:
   labels describe work and are not capabilities.
-- Put manager tools into packet v4: this would silently broaden historical run
-  authority and invalidate its exact policy contract.
+- Put manager tools into every packet: this would grant authority without an exact
+  owner grant and invalidate the packet's frozen policy contract.
 - Let a manager provide a scenario or executable: model output cannot define the
   local process boundary.
 - Apply a proposal while it is submitted: proposal authorship and acceptance must

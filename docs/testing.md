@@ -23,19 +23,17 @@ filesystem, process, or network.
 These tests answer: “Given these facts, is this transition valid and which events
 should result?”
 
-### 2. Store and migration tests
+### 2. Store and schema tests
 
 Run against real temporary SQLite databases. They verify transactions, constraints,
-idempotency, event/projection agreement, queue leases, backup, and migrations.
-
-Every released schema version gets a small checked-in database fixture containing
-representative data. Upgrade tests open a copy, migrate it, and validate domain
-queries. Tests never mutate the canonical fixture in place.
+idempotency, event/projection agreement, queue leases, backup, and exact creation
+of the current schema baseline. Canonical-integrity tests open fresh databases,
+exercise representative data, and reject malformed or partial authority graphs.
 
 ### 3. Protocol contract tests
 
 Validate JSON envelopes, JSON Schemas, MCP tools, adapter capabilities, error
-codes, version negotiation, unknown-field behavior, and compatibility fixtures.
+codes, exact current-version selection, unknown-field behavior, and current conformance fixtures.
 
 Golden files are appropriate for stable structured contracts. Human table output
 should use focused rendering assertions rather than brittle full-output snapshots.
@@ -145,11 +143,10 @@ operation and supports controlled failure before/after acknowledgement.
 ### Fixture worker
 
 A hidden provider-free mode of the built Crewfold binary for direct-runtime tests,
-plus a generic MCP-client mode reusable by later Herdr tests. The legacy worker
-emits structured reports for compatibility; `fixture-mcp` instead reads its scoped
-briefing and sends normalized reports/artifacts through MCP. Both expose assigned
-working directory and environment names for safety assertions, support
-deterministic exit/timeout/signal behavior, and never call a model provider.
+plus a generic MCP-client mode reusable by later Herdr tests. `fixture-mcp` reads
+its scoped briefing and sends normalized reports/artifacts through MCP. It exposes
+assigned working-directory and environment names for safety assertions, supports
+deterministic exit/timeout/signal behavior, and never calls a model provider.
 
 ### Fixture Git repository
 
@@ -290,7 +287,7 @@ succeed, while the canonical terminal pair cannot be re-reported. Detail and
 owner-decision replay survive daemon restart.
 
 The unique report-reason sentinel must appear in canonical contradiction detail
-but remain absent from captured provider logs. Store/migration tests additionally
+but remain absent from captured provider logs. Store/schema tests additionally
 cover multi-conflict last-open behavior, stale/supersede automatic resolution,
 more-than-200 dispute/authority histories, first-16 context error disclosure,
 confirm-time revalidation, denied non-owner governance, direct-SQL trigger
@@ -337,7 +334,7 @@ The acceptance matrix is split at observable boundaries:
 
 | Contract | Provider-neutral proof |
 | --- | --- |
-| Packet v4 base | CLI JSON freezes nonzero `as_of_event_sequence`, direct dependencies, bounded reverse dependents, exact participant rosters, collaboration budget, live policy, and the two live MCP tool names |
+| Current packet base | CLI JSON freezes nonzero `as_of_event_sequence`, direct dependencies, bounded reverse dependents, exact participant rosters, collaboration budget, live policy, and the two live MCP tool names |
 | Explicit creation | accepting an applicable decision alone creates no delta; one owner `context refresh` creates exactly one `knowledge_accepted` change |
 | Pending/idempotency | a second refresh key before acknowledgement returns the same delta/sequence/hash and appends no second build event |
 | Restart | stop/restart the daemon while pending; local show/list and the exact run fetch return the byte-identical delta |
@@ -346,7 +343,6 @@ The acceptance matrix is split at observable boundaries:
 | Message and roster scope | owner-created/invited participant state produces a whole roster and bounded message preview for the exact participant task; no full body is in the delta and another task of the same agent remains unaffected |
 | Contradiction/withdrawal/re-offer | owner confirmation produces open/quarantine plus withdrawal of delivered participants; an accepted applicable decision hidden before delivery receives a no-body disputed suppression tombstone; after final closure, eligible decisions from either exact category are re-offered with cause `contradiction_closed_reoffer`, while an open contradiction snapshot alone grants no re-offer and findings/otherwise-ineligible decisions remain absent |
 | Reverse dependent | a legal new same-project task depending on the run task appears as one whole `dependent_added`; it grants no task/cross-project authority |
-| Legacy compatibility | a checked-in upgrade fixture binds a v3 packet; owner refresh returns `rebase_required/unsupported_packet`, both live MCP tool probes are denied by packet policy, no live state/delta/event is invented, and the fixture restores and verifies the immutable SQLite triggers it temporarily bypasses |
 | Bounds/failures | store/protocol tests prove the 1,000-event, 16 KiB delta, 64 KiB chain, one-pending, strict-shape, unsupported-event, direct-dependency drift, rollback, event-link, and cross-run trigger gates; the black box asserts at least one public rebase/failure result |
 
 The fixture waits on public status/delta observations rather than assuming daemon
@@ -401,7 +397,8 @@ checkpoint” assertions without model-dependent prose.
 
 ### Manager/supervisor authority fixture
 
-The provider-free `manager-supervisor` scenario uses a packet-v5 fixture grantee,
+The provider-free `manager-supervisor` scenario uses a fixture grantee with an
+exact current-packet management grant,
 two change-producing agents, one independent evidence agent, owner-defined launch
 profiles, and bounded global/project/provider/agent policy. Role strings are
 deliberately arbitrary: an otherwise equivalent agent with the same role label but
@@ -420,7 +417,7 @@ Store/domain tests cover cycles; cross-project/objective scope; finite and
 unlimited budget semantics; disabled/stale or wrong-agent profile revisions;
 claim conflict; global, project, provider, agent, and checkout contention; stale
 or lost runs before reassignment; concurrent scans; raw-SQL corruption; transaction
-barrier rollback; and packet-v4 denial versus packet-v5 grant/revocation.
+barrier rollback; and current-packet no-grant denial versus exact grant/revocation.
 Every supervisor condition has a named executable case: `dependency_ready`
 auto-applies under the default policy, while `blocked`, `stale`, `failed`,
 wall-time `over_budget`, and `repeated_failure` remain inert and create exactly one
@@ -478,7 +475,7 @@ The suite grows this matrix milestone by milestone:
 | Boundary | Failures |
 | --- | --- |
 | Command/API | duplicate request, disconnect, stale revision, malformed payload |
-| SQLite | busy timeout, failed migration, interrupted transaction, corrupt index |
+| SQLite | busy timeout, failed baseline initialization, interrupted transaction, corrupt index |
 | Queue | duplicate delivery, expired lease, worker crash, poisoned item |
 | Runtime | launch timeout, orphan, unexpected exit, ignored stop, stale handle |
 | Provider | missing binary, incompatible version, blocked UI, malformed result |
@@ -486,9 +483,11 @@ The suite grows this matrix milestone by milestone:
 | Git | missing checkout, changed HEAD, dirty drift, command failure |
 | Messaging | recipient offline, wake failure, duplicate ack, forbidden recipient |
 | Meeting | participant timeout, facilitator crash, stale frozen context |
-| Knowledge/context | contradiction, stale item, missing/corrupt search index, curator rollback, oversized safe-copy source, packet/delta/chain/event-window overflow, old base, unsupported change, pending replay |
+| Knowledge/context | contradiction, stale item, missing/corrupt search index, curator rollback, oversized safe-copy source, packet/delta/chain/event-window overflow, unsafe base, unsupported change, pending replay |
 | Scheduler | proposal cycle/scope/budget/profile rejection, global/project/provider/agent/checkout saturation, claim race, concurrent scan, stale or lost run, restart after intent before launch, bounded journal catch-up/restart, unknown-event fail-closed, public no-op replay |
-| Manager/supervisor authority | packet-v4 denial, packet-v5 exact grant/revocation, same-role ungranted denial, self-accept denial, inert proposal, stale owner decision, approval replay, raw-SQL detached receipt/hash/source |
+| Manager/supervisor authority | current packet without grant denied, exact grant/revocation, same-role ungranted denial, self-accept denial, inert proposal, stale owner decision, approval replay, raw-SQL detached receipt/hash/source |
+| Local checks | fixed-spec replay mismatch, launch/terminal dirty or changed HEAD, timeout, excessive output, vanished supervisor, unavailable Git observation, wrong recipient, orphan artifact, daemon restart while running |
+| Check-watch authority | current packet without grant denied, exact grant/revocation, management/check-watch grant mutual exclusion, same-role ungranted denial, scope/command/checkout injection, forged evidence class/subsystem message, inert repair proposal |
 
 Fault injection should happen at named seams rather than through arbitrary sleeps.
 Tests wait on observable barriers/events so they remain deterministic.
@@ -535,6 +534,62 @@ agent/profile role or purpose text cannot select launch parameters. A same-UID
 process with arbitrary database and node-key write access remains outside the
 authentication threat model; raw-SQL tests instead prove fail-closed constraints
 and read validation for partial or internally detached histories.
+
+For M17, tests additionally prove that `AgentDefinition.Role` and
+`LaunchProfile.Purpose` are never authorization, watcher-selection, routing,
+repair, or evidence inputs. Check definitions have no stdin/environment/shell
+escape surface. The dedicated check child lacks provider and MCP configuration.
+Lifecycle inspection exposes no text, and only the bounded redacted logs path may
+become an artifact.
+
+A clean equal launch/terminal HEAD is required for verification. Dirty checks may
+run only as unknown-freshness diagnostics. A later changed HEAD or dirty
+observation is monotonically stale; returning to an old HEAD cannot revive it.
+The Git observer used by a watch pass is fresh and real rather than only the
+checkout projection's cached observation time.
+
+Check-result, freshness, evidence, route, subsystem-message, and repair tests must
+prove task state, completion acceptance, Git commit/push/merge, deployment, and
+integration order are unchanged. Direct local checks use a trusted
+owner-authored executable boundary, not a sandbox claim; the suite does not infer
+no-network/no-Git confinement from direct execution.
+
+## M17 executable acceptance and security matrix
+
+The following IDs and results are stable. Every row is exercised through the
+lowest relevant store/runtime test and at least one public daemon/CLI/MCP scenario
+where a public surface exists.
+
+| ID | Adversarial setup | Required observable result |
+| --- | --- | --- |
+| `M17-AUTH-01` | same arbitrary Role on two agents, one exact grant | only the exactly granted run advertises/calls tools |
+| `M17-AUTH-02` | Role/Purpose renamed to watcher/manager/integrator | authority/routing unchanged; no query checks those fields |
+| `M17-AUTH-03` | Current packet without a grant, revoked/expired/stale grant, wrong project/definition/revision, scope/command/checkout injection | denied+audited, no check rows/effect |
+| `M17-AUTH-04` | check grant and manager grant cannot coexist in the current packet; reserved repair acceptance denied | packet/call is denied; no delegated or owner effect |
+| `M17-DEF-01` | owner definition freezes exact executable/argv/workdir/timeout/cap; agent cannot inject env/stdin/shell args; retirement blocks new run but not receipted recovery | only the frozen definition executes; no new post-retirement request is accepted |
+| `M17-RUN-01` | clean HEAD pass | exactly named criterion `verified`; no other criterion/task status changes |
+| `M17-RUN-02` | trusted nonzero/signal | failed result+mechanical evidence and exactly correct current task-owner subsystem message |
+| `M17-RUN-03` | timeout/excess output/crash | one outcome plus bounded redacted stdout/stderr/diagnostic artifact with omitted counts/hash |
+| `M17-EVID-01` | caller/raw SQL attempts to label check as independent/policy acceptance or make stale/missing verified | rejected/read fails closed |
+| `M17-FRESH-01` | HEAD change or dirty observation | one monotonic stale revision; return to old HEAD does not revive; rerun needed |
+| `M17-FRESH-02` | dirty-boundary/unavailable/missing result | visible unknown/missing and never verified, even exit 0 |
+| `M17-ROUTE-01` | owner/evidence/coordination recipients have arbitrary identical role strings | exact assignment/route receipts select only intended agents; no active owner records unroutable |
+| `M17-MSG-01` | raw/agent attempt to forge subsystem/owner provenance or detach result/recipient | constraint/read rejection |
+| `M17-REPAIR-01` | failure with disabled/no-op grant | no proposal; enabled exact policy+granted op creates one inert proposal; only owner accept creates one exact-profile repair task/intent; replay/stale pass no duplicate |
+| `M17-REC-01` | inject at every DB barrier | wholly absent or wholly committed/replayable; orphan job/result/message/evidence is never executable/read as valid |
+| `M17-REC-02` | daemon stop while child runs | stable spec/ID reconciles same child and records exactly one result, or explicit unknown, never second execution |
+| `M17-REC-03` | tamper launch.json/effective replay spec/handle/output blob | conflict or unknown/read failure, never trusted pass |
+| `M17-WATCH-01` | >100 facts/restart/unknown event | cursor pages restart-safely, no action across unknown; background no-op emits nothing, public no-op replay returns one receipt and its completion event without implying freshness changed |
+| `M17-ENV-01` | check process environment/status/log seam inspected | process lacks provider/MCP secret env; status API has no captures; only Logs output is persisted and redacted/bounded |
+| `M17-GIT-01` | pass/fail/result/repair handling | creates no commit/push/merge/deploy/integration-order effect |
+| `M17-SQL-01` | raw SQL update/delete/detach/forge of definition/grant/receipt/result/freshness/evidence/route/repair rows | rejected or canonical read fails |
+| `M17-SQL-02` | worker receives job without matching exact launch authority/event/receipt; committed grant/definition later retires | worker refuses orphan; committed recovery remains valid after later definition/grant retirement |
+
+The fail/repair/pass black-box fixture uses arbitrarily named change and evidence
+agents plus exactly one current-packet check-watch grant. It runs without provider,
+network, or remote CI. A daemon is stopped after the child launches and before
+terminal acknowledgement. Restart must reconcile that exact child and produce one
+result or explicit unknown, never a second execution.
 
 ## Test suite commands
 

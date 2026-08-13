@@ -162,30 +162,23 @@ func TestManagementClientsRejectWrongResultDiscriminators(t *testing.T) {
 	}
 }
 
-func TestContextShowResultDiscriminatorTracksPacketSchema(t *testing.T) {
+func TestContextShowResultRequiresTheCurrentPacketSchema(t *testing.T) {
 	t.Parallel()
-	for _, test := range []struct {
-		name         string
-		packetSchema string
-		resultSchema string
-	}{
-		{name: "version four", packetSchema: domain.ContextPacketSchemaV4, resultSchema: ContextShowSchema},
-		{name: "version five", packetSchema: domain.ContextPacketSchemaV5, resultSchema: ContextShowSchemaV5},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			value := ContextShowResult{Schema: test.resultSchema, Type: "context_packet", Packet: domain.ContextPacket{Schema: test.packetSchema}}
-			if err := validateContextShowResult(value); err != nil {
-				t.Fatalf("valid result rejected: %v", err)
-			}
-			value.Schema = "urn:wrong"
-			if err := validateContextShowResult(value); err == nil {
-				t.Fatal("wrong schema accepted")
-			}
-			value.Schema, value.Type = test.resultSchema, "wrong"
-			if err := validateContextShowResult(value); err == nil {
-				t.Fatal("wrong type accepted")
-			}
-		})
+	value := ContextShowResult{Schema: ContextShowSchema, Type: "context_packet", Packet: domain.ContextPacket{Schema: domain.ContextPacketSchema}}
+	if err := validateContextShowResult(value); err != nil {
+		t.Fatalf("valid result rejected: %v", err)
+	}
+	value.Schema = "urn:wrong"
+	if err := validateContextShowResult(value); err == nil {
+		t.Fatal("wrong result schema accepted")
+	}
+	value.Schema, value.Type = ContextShowSchema, "wrong"
+	if err := validateContextShowResult(value); err == nil {
+		t.Fatal("wrong type accepted")
+	}
+	value.Type, value.Packet.Schema = "context_packet", "urn:example:invalid-context-packet"
+	if err := validateContextShowResult(value); err == nil {
+		t.Fatal("noncurrent packet schema accepted")
 	}
 }
 
@@ -198,26 +191,26 @@ func TestContextShowAndExplainClientsRejectWrongDiscriminators(t *testing.T) {
 		result any
 	}{
 		{
-			name: "show v4 schema", method: MethodContextShow,
+			name: "show schema", method: MethodContextShow,
 			call: func(client *Client) error {
 				_, err := client.ContextShow(context.Background(), "personal", "ctx_exact")
 				return err
 			},
-			result: ContextShowResult{Schema: "urn:wrong", Type: "context_packet", Packet: domain.ContextPacket{Schema: domain.ContextPacketSchemaV4}},
+			result: ContextShowResult{Schema: "urn:wrong", Type: "context_packet", Packet: domain.ContextPacket{Schema: domain.ContextPacketSchema}},
 		},
 		{
-			name: "show v5 accepts current schema", method: MethodContextShow,
+			name: "show accepts current schema", method: MethodContextShow,
 			call: func(client *Client) error {
 				result, err := client.ContextShow(context.Background(), "personal", "ctx_exact")
 				if err != nil {
 					return err
 				}
-				if result.Schema != ContextShowSchemaV5 || result.Packet.Schema != domain.ContextPacketSchemaV5 {
-					return fmt.Errorf("unexpected decoded v5 context result")
+				if result.Schema != ContextShowSchema || result.Packet.Schema != domain.ContextPacketSchema {
+					return fmt.Errorf("unexpected decoded current context result")
 				}
 				return nil
 			},
-			result: ContextShowResult{Schema: ContextShowSchemaV5, Type: "context_packet", Packet: domain.ContextPacket{Schema: domain.ContextPacketSchemaV5}},
+			result: ContextShowResult{Schema: ContextShowSchema, Type: "context_packet", Packet: domain.ContextPacket{Schema: domain.ContextPacketSchema}},
 		},
 		{
 			name: "explain type", method: MethodContextExplain,
@@ -231,9 +224,9 @@ func TestContextShowAndExplainClientsRejectWrongDiscriminators(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			err := captureCuratorRequestResultError(t, test.method, test.call, test.result)
-			if test.name == "show v5 accepts current schema" {
+			if test.name == "show accepts current schema" {
 				if err != nil {
-					t.Fatalf("v5 context.show error = %v", err)
+					t.Fatalf("current context.show error = %v", err)
 				}
 				return
 			}

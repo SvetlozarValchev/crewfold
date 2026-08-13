@@ -61,6 +61,40 @@ type RuntimeSnapshot struct {
 	Stderr          domain.CapturedLog
 }
 
+// RuntimeStatus is the lifecycle-only view of a runtime operation. It omits
+// process output so callers that need only mechanical completion state do not
+// receive the provider's raw capture as a side effect of inspection.
+type RuntimeStatus struct {
+	State           string
+	ExitCode        int
+	ExitKnown       bool
+	CompletionReady bool
+	Forced          bool
+	Diagnostic      string
+}
+
+// RuntimeStatusInspector is an optional, narrower runtime capability for
+// lifecycle consumers that must not inspect raw provider output. Text output is
+// available separately through RuntimeDriver.Logs, which applies the runtime's
+// bounds and redaction policy.
+type RuntimeStatusInspector interface {
+	InspectStatus(context.Context, string, string) (RuntimeStatus, error)
+}
+
+// RuntimeLaunchPreparation is the immutable runtime-normalized authority for one
+// launch. Durable workers may record this digest before the external effect and
+// then require Launch to use the same operation, placement, and specification.
+type RuntimeLaunchPreparation struct {
+	SpecSHA256 string
+}
+
+// RuntimeLaunchPreparer is an optional pre-effect capability. PrepareLaunch must
+// be side-effect free: it normalizes and seals the exact effective specification
+// that Launch will use, but it must not create runtime state or start a child.
+type RuntimeLaunchPreparer interface {
+	PrepareLaunch(context.Context, string, domain.RunPlacement, LaunchSpec) (RuntimeLaunchPreparation, error)
+}
+
 type StopSpec struct {
 	GracePeriod time.Duration
 }

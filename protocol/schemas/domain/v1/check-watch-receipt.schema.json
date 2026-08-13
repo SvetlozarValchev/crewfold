@@ -1,0 +1,36 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:domain:check-watch-receipt:v1",
+  "$comment":"Sequence ordering, caught_up cursor equality, and degraded unknown-event bounds require Crewfold semantic validation in addition to this closed wire schema.",
+  "type":"object","additionalProperties":false,
+  "required":["id","workspace_id","project_id","from_event_sequence","through_event_sequence","cutoff_event_sequence","caught_up","degraded","examined_result_ids","freshness_appended","notifications_created","route_failures_created","repairs_marked_stale","content_sha256","created_at","created_by"],
+  "dependentRequired":{"unknown_event_type":["unknown_event_sequence"],"unknown_event_sequence":["unknown_event_type"]},
+  "allOf":[
+    {
+      "if":{"properties":{"degraded":{"const":true}},"required":["degraded"]},
+      "then":{"required":["unknown_event_type","unknown_event_sequence"]},
+      "else":{"not":{"anyOf":[{"required":["unknown_event_type"]},{"required":["unknown_event_sequence"]}]}}
+    }
+  ],
+  "properties":{
+    "id":{"type":"string","pattern":"^checkwatch_[0-9a-f]{32}$"},
+    "workspace_id":{"type":"string","pattern":"^ws_[0-9a-f]{32}$"},
+    "project_id":{"type":"string","pattern":"^prj_[0-9a-f]{32}$"},
+    "from_event_sequence":{"type":"integer","minimum":0},
+    "through_event_sequence":{"type":"integer","minimum":0},
+    "cutoff_event_sequence":{"type":"integer","minimum":0},
+    "caught_up":{"type":"boolean"},
+    "degraded":{"type":"boolean"},
+    "unknown_event_type":{"type":"string","minLength":1,"maxLength":128},
+    "unknown_event_sequence":{"type":"integer","minimum":1},
+    "examined_result_ids":{"type":"array","maxItems":100,"uniqueItems":true,"items":{"type":"string","pattern":"^checkresult_[0-9a-f]{32}$"}},
+    "freshness_appended":{"type":"integer","minimum":0,"maximum":100},
+    "notifications_created":{"type":"integer","minimum":0,"maximum":300},
+    "route_failures_created":{"type":"integer","minimum":0,"maximum":300},
+    "repairs_marked_stale":{"type":"integer","minimum":0,"maximum":100},
+    "next_cursor":{"type":"string","pattern":"^[A-Za-z0-9_-]+$","maxLength":4096},
+    "content_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "created_at":{"type":"string","format":"date-time"},
+    "created_by":{"type":"string","minLength":1}
+  }
+}

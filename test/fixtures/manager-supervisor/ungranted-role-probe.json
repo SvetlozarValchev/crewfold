@@ -7,7 +7,7 @@
   "steps": [
     {
       "kind": "completion",
-      "message": "All manager proposal tools were denied to the ungranted packet-v4 run.",
+      "message": "All manager proposal tools were denied to the current packet without a grant.",
       "evidence": ["manager_tools_denied"],
       "handoff": "The matching descriptive role label conferred no manager authority."
     }

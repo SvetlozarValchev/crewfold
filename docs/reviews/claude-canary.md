@@ -77,7 +77,7 @@ provider-specific CLI configuration; there is no Claude branch in domain policy.
 - Reconciliation outcome: runtime drivers own process reconciliation. Claude
   completion is accepted only after the provider process settles and the existing
   MCP report has passed core evidence rules.
-- Migration and backup impact: none.
+- Storage and backup impact: none.
 
 ## Security and autonomy
 
@@ -119,8 +119,8 @@ provider-specific CLI configuration; there is no Claude branch in domain policy.
   2.x and refuses an untested major. Capability flags are probed independently.
 - Earlier milestone scenarios: all M0–M10 scenarios passed under
   `scripts/check.sh` after the Claude adapter and scope hardening were added.
-- Upgrade/rollback impact: rollback removes Claude registration and doctor; SQLite
-  needs no downgrade.
+- Removal impact: removing Claude registration removes its doctor and launch path
+  without changing SQLite.
 
 ## Known limitations and deferrals
 

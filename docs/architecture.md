@@ -155,13 +155,20 @@ implemented `crewfold_report_contradiction` tool derives the same run authority
 and can report only two accepted/current exact revisions applicable to its project
 and task. Neither tool can accept knowledge or confirm a contradiction.
 
-Packet-v4 runs additionally receive `crewfold_get_context_delta` and
-`crewfold_acknowledge_context_delta`. The first has no arguments and can only
+Runs whose frozen current packet allows live-context delivery additionally receive
+`crewfold_get_context_delta` and `crewfold_acknowledge_context_delta`. The first has no arguments and can only
 fetch a delta already built by the owner for the authenticated run. The second
 accepts only that run's exact pending delta, expected run-local sequence, and an
-idempotency key. It is the sole consumption-attestation path. Packet v1–v3
-capabilities do not advertise either tool, and the local owner cannot acknowledge
-on an agent's behalf.
+idempotency key. It is the sole consumption-attestation path. A packet without
+these tools does not advertise them, and the local owner cannot acknowledge on an
+agent's behalf.
+
+Check-watcher runs carry one exact project grant in the current packet with exact
+definition revisions and closed `run|inspect|propose_repair` operations. A packet
+cannot carry both a check-watch grant and a manager grant. Every call
+revalidates the live run and current grant; no tool argument can select actor,
+project, checkout, command, evidence class, or recipient. Agent role and launch
+profile purpose are not authority inputs.
 
 Project scope remains the mailbox default. An owner-created participant thread is
 the sole cross-project exception: it binds every member to an exact agent, task,
@@ -187,7 +194,7 @@ plus rebuildable projections.
 Named SQLite queries are compiled into typed Go accessors with pinned `sqlc`.
 Generated access owns parameters, nullability, results, and scanning; handwritten
 domain services continue to own short transaction boundaries, policy checks, and
-event/projection ordering. Ordered SQL migrations remain the schema authority.
+event/projection ordering. The embedded current SQL baseline remains the schema authority.
 
 ### Scheduler
 
@@ -229,8 +236,8 @@ rules first and may ask a manager model for a recommendation when judgment is
 useful. Recommendations do not gain more authority because a model generated them.
 
 Management-capable agents and the supervisor have intentionally disjoint
-authority. Packet-v5 runs may submit only the typed proposal kinds in a current
-owner grant; submission is inert and only an owner transaction can accept it. The
+authority. Runs with a current manager grant may submit only its typed proposal
+kinds; submission is inert and only an owner transaction can accept it. The
 supervisor is a subsystem actor whose automatic set initially contains
 `schedule_ready`; every action outside the exact current policy becomes an
 approval request. Neither surface can invent a launch command, derive authority
@@ -254,7 +261,7 @@ authority records, and caller payloads never select the trusted actor. The run
 capability advertises no governance operation; probes of a reserved acceptance
 name stop earlier as audited `run.tool_denied` policy violations.
 
-The context-packet v4 builder starts from the existing role, task, checkout,
+The current context-packet builder starts from the existing role, task, checkout,
 dependency, reverse-dependent, participant-roster, policy, reporting, and
 bounded-inbox snapshot. It then evaluates only
 the caller's ordered exact revision IDs—never a search result. Accepted, current,
@@ -269,14 +276,14 @@ inclusion/exclusion decisions, budget accounting, the journal high-water, and a
 frozen live-delivery policy in the immutable packet. At most 32 reverse
 dependents and eight whole exact-bound participant-thread rosters are selected
 deterministically. Eligibility is evaluated inside the build transaction. A
-prebuilt v4 packet is revalidated once at run binding; after successful binding,
-later governance cannot change its historical bytes and only explicit refresh can
+prebuilt packet is revalidated once at run binding; after successful binding,
+later governance cannot change its immutable bytes and only explicit refresh can
 carry a withdrawal or rebase. Provider transcripts are neither queried nor
 ingested. This is bounded context authority, not RAG or a transcript accumulator.
 An otherwise eligible explicit revision in an
 owner-confirmed open contradiction fails the whole new build before budgeting;
 an already ineligible revision keeps its ordinary exclusion precedence. Existing
-packet-v1–v4 bytes never change.
+packet bytes never change.
 
 The first M15 retrieval slice adds a disposable FTS5 projection over immutable
 revision titles and bodies. Search obtains text candidates from that projection,
@@ -297,7 +304,7 @@ embedding service, or background model is involved.
 
 The second independently testable M15 slice adds participant-bound cross-project
 collaboration. A new packet's bounded inbox summary may include exact authorized
-participant mail, but full bodies stay behind explicit MCP reads. Packet v4 now
+participant mail, but full bodies stay behind explicit MCP reads. The current packet
 delivers bounded whole rosters and later participant/message changes through the
 same exact task binding. The third slice adds a read-projected curator queue over canonical proposals and
 immutable derivations. Every workspace persists the single
@@ -318,7 +325,7 @@ records on a separate lifecycle axis. Agent or owner reports remain proposed;
 only the owner can open the record. Open participants are conservatively
 quarantined everywhere they otherwise apply, search excludes them before limit,
 and exact context assembly fails closed. Dismissal or a participant becoming
-stale/superseded closes effective dispute, while old packets remain immutable.
+stale/superseded closes effective dispute, while already-built packets remain immutable.
 
 The fifth slice adds a deterministic two-file project snapshot. Its manifest
 freezes every canonical item/revision/source, effective task applicability anchor,
@@ -393,6 +400,19 @@ an observation gap. Manual `overlap scan` uses the same code path. The watcher
 never edits Git, turns an adjacent clone into a worktree, or treats repository
 identity as checkout identity.
 
+M17 adds a separate bounded check reconciler. It recovers exact direct-runtime
+children, obtains fresh Git observations for result freshness, routes typed
+notifications, and stales obsolete repair proposals. It processes at most 100
+candidates per pass and stops at an unknown journal fact. It does not auto-launch
+missing checks.
+
+Only the latest exact-revision check whose launch and terminal observations have
+the same clean nonempty HEAD is verification-eligible. A changed HEAD or any
+dirty observation makes prior evidence monotonically stale. Dirty runs remain
+diagnostic, not verified. Results stay mechanical evidence for one named
+criterion and never imply task completion, policy acceptance, push/merge/deploy,
+or integration order.
+
 ### Runtime drivers
 
 Runtime drivers create, attach, prompt, observe, and stop execution environments.
@@ -454,6 +474,21 @@ can reconcile that state after daemon restart while the child continues. The
 runtime never treats terminal text or exit zero as task-completion authority; the
 fixture provider must still emit a structured completion report and pass domain
 acceptance. Current process identity and process-group enforcement are Linux-first.
+
+Local-check execution uses the same intent/effect rule but a separate projection:
+
+1. Commit `check.run_requested`, the check job, and idempotency result.
+2. Obtain a real Git observation and commit `check.run_starting` with the exact
+   immutable launch receipt and effective-spec digest.
+3. Launch or replay the check-run ID through the dedicated direct runtime.
+4. Persist its binding, then inspect status without captures.
+5. Read text only through bounded redacted logs and atomically commit one terminal
+   result, initial freshness, mechanical evidence, and exact routing receipts.
+6. If process identity or outcome is untrustworthy, commit one explicit `unknown`
+   rather than launch a second possible child.
+
+A later definition retirement or check-grant revocation blocks new requests but
+does not alter recovery of the exact already receipted operation.
 
 The same pattern applies to prompts, stops, meetings, and external actions.
 

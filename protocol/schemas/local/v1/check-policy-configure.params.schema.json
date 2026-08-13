@@ -1,0 +1,24 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:local-api:check-policy-configure-params:v1",
+  "type":"object","additionalProperties":false,
+  "required":["workspace","project","repair_proposals_enabled","max_open_repairs","expected_revision","idempotency_key"],
+  "dependentRequired":{"repair_profile":["repair_profile_revision"],"repair_profile_revision":["repair_profile"]},
+  "allOf":[
+    {
+      "if":{"properties":{"repair_proposals_enabled":{"const":true}},"required":["repair_proposals_enabled"]},
+      "then":{"required":["repair_profile","repair_profile_revision"]},
+      "else":{"not":{"anyOf":[{"required":["repair_profile"]},{"required":["repair_profile_revision"]}]}}
+    }
+  ],
+  "properties":{
+    "workspace":{"type":"string","minLength":1,"maxLength":128},
+    "project":{"type":"string","minLength":1,"maxLength":128},
+    "repair_proposals_enabled":{"type":"boolean"},
+    "repair_profile":{"type":"string","pattern":"^lprof_[0-9a-f]{32}$"},
+    "repair_profile_revision":{"type":"integer","minimum":1},
+    "max_open_repairs":{"type":"integer","minimum":1,"maximum":32},
+    "expected_revision":{"type":"integer","minimum":1},
+    "idempotency_key":{"type":"string","minLength":1,"maxLength":128}
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:mcp:run-check-output:v1",
+  "title": "Crewfold run granted check output v1",
+  "$ref": "../../domain/v1/check-run.schema.json"
+}

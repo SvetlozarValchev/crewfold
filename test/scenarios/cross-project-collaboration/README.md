@@ -6,7 +6,7 @@ registered as separate projects. Exact assigned fixture runs in `plugandrev` and
 neither repository is a worktree or clone of the other.
 
 The proof covers default direct-mail isolation, an offline cross-project send,
-daemon restart, packet-v3 inbox summary, a two-way read/acknowledge/reply exchange, exact origin
+daemon restart, current-packet inbox summary, a two-way read/acknowledge/reply exchange, exact origin
 project/task retention, one-recipient delivery after a third participant invite,
 optimistic stale-invite rejection, nonparticipant denial, and wrong-task invisibility
 and wake exclusion. It also asserts the conversation creates no knowledge,

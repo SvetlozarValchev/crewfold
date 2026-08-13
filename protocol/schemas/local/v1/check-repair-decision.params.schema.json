@@ -1,0 +1,13 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:local-api:check-repair-decision-params:v1",
+  "type":"object","additionalProperties":false,
+  "required":["workspace","repair","expected_revision","idempotency_key"],
+  "properties":{
+    "workspace":{"type":"string","minLength":1,"maxLength":128},
+    "repair":{"type":"string","pattern":"^checkrepair_[0-9a-f]{32}$"},
+    "expected_revision":{"type":"integer","minimum":1},
+    "decision_note":{"type":"string","maxLength":4096,"pattern":"^[^\\u0000]*$","description":"Optional canonical UTF-8 without NUL, bounded to 4096 encoded bytes."},
+    "idempotency_key":{"type":"string","minLength":1,"maxLength":128}
+  }
+}

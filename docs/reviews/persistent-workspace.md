@@ -16,7 +16,7 @@
   retrieve byte-identical state.
 - Acceptance scenario path: `test/scenarios/persistent-workspace/run.sh`
 - Exact command: `./scripts/check.sh`
-- Expected result: static, unit, race, schema, migration, component, and all M0–M2
+- Expected result: static, unit, race, schema, component, and all M0–M2
   black-box checks pass; the persistence scenario prints `Persistent workspace acceptance: PASS`; no daemon
   or socket remains.
 - Observed result: passed on Linux/amd64 with Go 1.26.5 and SQLite provided by the
@@ -27,9 +27,9 @@
 | Suite | Command | Result | Evidence |
 | --- | --- | --- | --- |
 | Formatting/static | `./scripts/check.sh` | passed | First-party Go formatting clean; `go vet ./...` passed |
-| Unit/store | `go test ./...` via check script | passed | CLI, store, migration, daemon, protocol, and prior packages |
+| Unit/store | `go test ./...` via check script | passed | CLI, store, current baseline, daemon, protocol, and prior packages |
 | Race | `go test -race ./...` via check script | passed | Store, daemon, and subprocess crash harness are race-clean |
-| Store/migration | `go test ./internal/store` | passed | Fresh schema, v0 fixture upgrade, migration metadata, future-schema refusal, pragmas, permissions, identity, invariants, and restart |
+| Store/schema | `go test ./internal/store` | passed | Fresh current schema, baseline metadata, foreign-schema refusal, pragmas, permissions, identity, invariants, and restart |
 | Protocol | `go test ./protocol` | passed | Unique valid schemas, resolved references, published IDs, and nested actor/entity event envelope |
 | Component | `go test ./internal/daemon` | passed | API, database doctor, idempotency, pagination, restart, startup failure, and forced process-death recovery |
 | Black-box acceptance | Persistent workspace scenario via check script | passed | `Persistent workspace acceptance: PASS` after create/replay/query/stop/restart/restore |
@@ -63,22 +63,22 @@ do not mutate user-owned files.
 
 ## Persistence and recovery
 
-- Durable state introduced or changed: SQLite schema version 1 with
+- Durable state exercised: the SQLite current baseline with
   `workspaces`, append-only `events`, `idempotency_keys`, and
   `schema_migrations`; SQLite's file header carries application ID `CRFD`.
 - Restart/crash points tested: graceful daemon restart after a committed command;
   forced process death after projection insertion and after event insertion.
 - Reconciliation outcome: committed workspace/event/idempotency state returns
   byte-identically after restart; uncommitted transactions are wholly absent.
-- Migration fixture added: `internal/store/testdata/schema-v000.sql`, upgraded to
-  embedded migration `001_workspace_and_events.sql` and verified at startup.
+- Fresh-database initialization applies the embedded current baseline and verifies
+  it at startup.
 - Backup/restore impact: the live database may have WAL/SHM companions. A future
   backup command must use SQLite's online backup API; copying only the open main
   file is explicitly unsupported.
 
 SQLite runs in WAL mode with foreign keys enabled, a 5000 ms busy timeout,
 `synchronous=FULL`, immediate write transactions, one bounded connection, startup
-`quick_check`, and exact migration-metadata validation. Database, lock, event, and
+`quick_check`, and exact baseline-metadata validation. Database, lock, event, and
 idempotency writes use one local authority; there is no distributed state.
 
 ## Security and autonomy
@@ -106,14 +106,13 @@ SQLite database rather than migrating it.
 - API/schema changes: additive protocol-v1 methods `database.status`,
   `workspace.init`, `workspace.show`, and `events.list`; new stable result/parameter
   URNs and domain workspace/event schemas.
-- Storage changes: introduced database schema version 1 and embedded forward-only
-  migration metadata. Databases newer than the binary are refused.
+- Storage evidence: one embedded current baseline and exact identity metadata;
+  foreign schemas are refused.
 - Adapter/runtime compatibility changes: none; no runtime or provider adapter is
   implemented.
 - Earlier milestone scenarios rerun: M0 and M1 pass unchanged in every full gate.
-- Upgrade/rollback impact: version-zero/empty databases migrate forward. M2 has no
-  down migration; an operator must restore a compatible backup to roll storage
-  back after future schema upgrades.
+- Restore impact: backups restore to a new data directory and must satisfy current
+  identity and integrity checks before use.
 
 ## Known limitations and deferrals
 

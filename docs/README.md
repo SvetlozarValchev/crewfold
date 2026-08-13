@@ -73,3 +73,4 @@ explicitly rather than silently treating either as authoritative.
 - [ADR-0013: Portable project knowledge snapshots](decisions/0013-portable-project-knowledge-snapshots.md)
 - [ADR-0014: Explicit bounded live context deltas](decisions/0014-explicit-bounded-live-context-deltas.md)
 - [ADR-0015: Owner-granted manager proposals and deterministic supervision](decisions/0015-owner-granted-manager-proposals-and-deterministic-supervision.md)
+- [ADR-0016: Owner-granted local checks as fresh mechanical evidence](decisions/0016-owner-granted-local-check-evidence.md)

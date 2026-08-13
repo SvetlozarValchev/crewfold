@@ -1,6 +1,6 @@
 # Live context delta acceptance
 
-This provider-free black-box scenario proves the packet-v4 and live-delta contract
+This provider-free black-box scenario proves the current context-packet and live-delta contract
 through the built Crewfold binary. It uses temporary Git repositories, one
 isolated SQLite database, public CLI/local API operations, and the checked-in
 `fixture-mcp` consumer. It makes no model call, opens no network connection, uses
@@ -22,13 +22,7 @@ base stays immutable while the effective live chain regains eligible knowledge.
 
 The final no-op refresh advances the inspected cursor without appending an event
 or empty delta. Local list/show/explain and build/ack/rebase journal counts remain
-inspectable. A test-only isolated database fixture then rewrites one newly built
-packet to its historical v3 shape while the daemon is stopped. Restart proves
-owner refresh returns `rebase_required/unsupported_packet` and the preserved
-packet policy denies both MCP live tools without inventing state or an event. The
-helper restores the exact immutable triggers it temporarily bypasses and verifies
-them, the v3 packet, and absence of live rows after restart.
+inspectable across daemon restart without inventing state or an event.
 
 Per-delta, cumulative-chain, event-window, strict protocol, trigger, and rollback
-bounds are covered by the store/protocol component tests in the same offline gate;
-the black box covers the visible legacy rebase boundary.
+bounds are covered by the store/protocol component tests in the same offline gate.

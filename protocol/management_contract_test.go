@@ -16,7 +16,6 @@ func TestManagerSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 	t.Parallel()
 	for path, expected := range map[string]string{
 		"schemas/domain/v1/context-manager-grant.schema.json":           domain.ContextManagerGrantSchema,
-		"schemas/domain/v1/context-packet-v5.schema.json":               domain.ContextPacketSchemaV5,
 		"schemas/local/v1/manager-grant-mutation.result.schema.json":    localapi.ManagerGrantMutationSchema,
 		"schemas/local/v1/manager-invocation.result.schema.json":        localapi.ManagerInvocationSchema,
 		"schemas/local/v1/manager-proposal-mutation.result.schema.json": localapi.ProposalMutationSchema,
@@ -83,33 +82,34 @@ func TestManagementSchemasCoverEveryGoJSONField(t *testing.T) {
 	}
 }
 
-func TestPacketV5FreezesGrantDerivedToolsWithoutRoleAuthority(t *testing.T) {
+func TestCurrentPacketFreezesManagerGrantDerivedToolsWithoutRoleAuthority(t *testing.T) {
 	t.Parallel()
-	packet := readContextSchema(t, "schemas/domain/v1/context-packet-v5.schema.json")
+	packet := readContextSchema(t, "schemas/domain/v1/context-packet.schema.json")
 	required := contractStringSlice(packet["required"])
-	if !containsContractString(required, "management_grant") {
-		t.Fatal("packet v5 does not require management_grant")
+	if containsContractString(required, "management_grant") {
+		t.Fatal("current packet requires delegated manager authority")
 	}
 	properties := packet["properties"].(map[string]any)
 	if _, exists := properties["role_authority"]; exists {
-		t.Fatal("packet v5 exposes role authority")
+		t.Fatal("current packet exposes role authority")
 	}
 	policy := packet["$defs"].(map[string]any)["policy"].(map[string]any)["properties"].(map[string]any)
 	allowed := policy["allowed_tools"].(map[string]any)
 	suffix := contractStringSlice(allowed["items"].(map[string]any)["enum"])
-	wantSuffix := []string{"crewfold_propose_assignment", "crewfold_propose_escalation", "crewfold_propose_review", "crewfold_propose_tasks"}
-	if !reflect.DeepEqual(suffix, wantSuffix) {
-		t.Fatalf("v5 proposal suffix = %v, want %v", suffix, wantSuffix)
+	for _, wanted := range []string{"crewfold_propose_assignment", "crewfold_propose_escalation", "crewfold_propose_review", "crewfold_propose_tasks"} {
+		if !containsContractString(suffix, wanted) {
+			t.Errorf("current packet proposal suffix omits %q: %v", wanted, suffix)
+		}
 	}
 	grant := readContextSchema(t, "schemas/domain/v1/context-manager-grant.schema.json")
 	grantProperties := grant["properties"].(map[string]any)
 	grantRequired := contractStringSlice(grant["required"])
 	if !containsContractString(grantRequired, "objective_revision") || grantProperties["objective_revision"].(map[string]any)["minimum"] != float64(1) {
-		t.Fatal("packet-v5 manager grant snapshot does not require a positive objective_revision")
+		t.Fatal("current packet manager grant snapshot does not require a positive objective_revision")
 	}
 	packetGrant := properties["management_grant"].(map[string]any)
 	if packetGrant["$ref"] != "context-manager-grant.schema.json" {
-		t.Fatalf("packet-v5 management_grant ref = %v; want exact context-manager-grant schema", packetGrant["$ref"])
+		t.Fatalf("current packet management_grant ref = %v; want exact context-manager-grant schema", packetGrant["$ref"])
 	}
 	for _, forbidden := range []string{"role", "purpose", "eligible_agents", "runtime", "provider", "scenario", "checkout_id"} {
 		if _, exists := grantProperties[forbidden]; exists {

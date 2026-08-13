@@ -116,10 +116,9 @@ const (
 	TaskShowSchema                  = "urn:crewfold:schema:local-api:task-show-result:v1"
 	TaskListSchema                  = "urn:crewfold:schema:local-api:task-list-result:v1"
 	TaskTimelineSchema              = "urn:crewfold:schema:local-api:task-timeline-result:v1"
-	ContextBuildSchema              = "urn:crewfold:schema:local-api:context-build-result:v4"
-	ContextShowSchema               = "urn:crewfold:schema:local-api:context-show-result:v4"
-	ContextShowSchemaV5             = "urn:crewfold:schema:local-api:context-show-result:v5"
-	ContextExplainSchema            = "urn:crewfold:schema:local-api:context-explain-result:v3"
+	ContextBuildSchema              = "urn:crewfold:schema:local-api:context-build-result:v1"
+	ContextShowSchema               = "urn:crewfold:schema:local-api:context-show-result:v1"
+	ContextExplainSchema            = "urn:crewfold:schema:local-api:context-explain-result:v1"
 	ContextRefreshSchema            = "urn:crewfold:schema:local-api:context-refresh-result:v1"
 	ContextDeltaListSchema          = "urn:crewfold:schema:local-api:context-delta-list-result:v1"
 	ContextDeltaShowSchema          = "urn:crewfold:schema:local-api:context-delta-show-result:v1"
@@ -1034,15 +1033,17 @@ type ThreadShowResult struct {
 }
 
 type RunStartParams struct {
-	Workspace            string              `json:"workspace"`
-	Task                 string              `json:"task"`
-	Checkout             string              `json:"checkout,omitempty"`
-	Context              string              `json:"context,omitempty"`
-	Runtime              string              `json:"runtime"`
-	Provider             string              `json:"provider"`
-	Scenario             domain.FakeScenario `json:"scenario"`
-	ExpectedTaskRevision int64               `json:"expected_task_revision"`
-	IdempotencyKey       string              `json:"idempotency_key"`
+	Workspace                       string              `json:"workspace"`
+	Task                            string              `json:"task"`
+	Checkout                        string              `json:"checkout,omitempty"`
+	Context                         string              `json:"context,omitempty"`
+	Runtime                         string              `json:"runtime"`
+	Provider                        string              `json:"provider"`
+	Scenario                        domain.FakeScenario `json:"scenario"`
+	ExpectedTaskRevision            int64               `json:"expected_task_revision"`
+	CheckWatchGrant                 string              `json:"check_watch_grant,omitempty"`
+	ExpectedCheckWatchGrantRevision int64               `json:"expected_check_watch_grant_revision,omitempty"`
+	IdempotencyKey                  string              `json:"idempotency_key"`
 }
 
 type RunQueryParams struct {

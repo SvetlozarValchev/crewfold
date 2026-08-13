@@ -1,0 +1,11 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:local-api:check-watch-result:v1",
+  "type":"object","additionalProperties":false,"required":["schema","type","receipt","event_sequence"],
+  "properties":{
+    "schema":{"const":"urn:crewfold:schema:local-api:check-watch-result:v1"},
+    "type":{"const":"check_watch"},
+    "receipt":{"$ref":"../../domain/v1/check-watch-receipt.schema.json"},
+    "event_sequence":{"type":"integer","minimum":1}
+  }
+}

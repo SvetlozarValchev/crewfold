@@ -1,0 +1,10 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:local-api:check-inspect-result:v1",
+  "type":"object","additionalProperties":false,"required":["schema","type","detail"],
+  "properties":{
+    "schema":{"const":"urn:crewfold:schema:local-api:check-inspect-result:v1"},
+    "type":{"const":"check_run_detail"},
+    "detail":{"$ref":"../../domain/v1/check-run-detail.schema.json"}
+  }
+}

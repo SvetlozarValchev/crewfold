@@ -1,0 +1,13 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:domain:check-repair-effect:v1",
+  "type":"object","additionalProperties":false,
+  "required":["id","repair_proposal_id","repair_task_id","scheduling_intent_id","created_at"],
+  "properties":{
+    "id":{"type":"string","pattern":"^checkeffect_[0-9a-f]{32}$"},
+    "repair_proposal_id":{"type":"string","pattern":"^checkrepair_[0-9a-f]{32}$"},
+    "repair_task_id":{"type":"string","pattern":"^task_[0-9a-f]{32}$"},
+    "scheduling_intent_id":{"type":"string","pattern":"^sintent_[0-9a-f]{32}$"},
+    "created_at":{"type":"string","format":"date-time"}
+  }
+}

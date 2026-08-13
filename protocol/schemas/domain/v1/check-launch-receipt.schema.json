@@ -1,0 +1,32 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:domain:check-launch-receipt:v1",
+  "type":"object","additionalProperties":false,
+  "required":["id","check_run_id","check_job_id","operation_id","effective_spec_sha256","effective_working_directory","launchable","definition_sha256","source","observation","created_at","created_by"],
+  "allOf":[
+    {
+      "if":{"properties":{"launchable":{"const":true}},"required":["launchable"]},
+      "then":{"not":{"anyOf":[{"required":["preflight_failure_code"]},{"required":["preflight_failure_diagnostic"]}]}},
+      "else":{
+        "required":["preflight_failure_code","preflight_failure_diagnostic"],
+        "properties":{"preflight_failure_code":{"enum":["working_directory_invalid","authority_revoked","definition_retired","requirement_retired","checkout_changed"]}}
+      }
+    }
+  ],
+  "properties":{
+    "id":{"type":"string","pattern":"^checklaunch_[0-9a-f]{32}$"},
+    "check_run_id":{"type":"string","pattern":"^checkrun_[0-9a-f]{32}$"},
+    "check_job_id":{"type":"string","pattern":"^checkjob_[0-9a-f]{32}$"},
+    "operation_id":{"type":"string","pattern":"^checkrun_[0-9a-f]{32}$"},
+    "effective_spec_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "effective_working_directory":{"type":"string","pattern":"^/","minLength":2,"maxLength":4096},
+    "launchable":{"type":"boolean"},
+    "preflight_failure_code":{"type":"string","minLength":1,"maxLength":128},
+    "preflight_failure_diagnostic":{"type":"string","minLength":1,"maxLength":4096},
+    "definition_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "source":{"$ref":"check-run-source.schema.json"},
+    "observation":{"$ref":"check-git-observation.schema.json"},
+    "created_at":{"type":"string","format":"date-time"},
+    "created_by":{"type":"string","minLength":1}
+  }
+}

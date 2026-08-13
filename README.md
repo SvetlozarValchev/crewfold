@@ -59,7 +59,7 @@ frozen inputs, explicit authority, restart-safe positions, and atomic task/claim
 actions. The canonical knowledge core now preserves task/meeting-provenanced
 decisions and findings as immutable revisions: authenticated runs may propose,
 while the local owner accepts, rejects, marks stale, or accepts an explicit
-successor. Context packet v4 can deliver exact accepted/current revision snapshots
+successor. The current context packet can deliver exact accepted/current revision snapshots
 to a replacement run under fixed byte budgets without reading provider
 transcripts. It also freezes an event cursor, bounded reverse dependents, exact
 participant rosters, and explicit live-delivery policy. Owner-triggered refresh

@@ -36,7 +36,7 @@ and `676c0bc15a31ef9b2b8233961d2b6eed696bd1c1`.
 M11's [passed implementation audit](reviews/claude-canary.md) covers the Claude
 adapter and deterministic Codex-to-Claude provider switch. The implementation
 commit is `31c8fad1790b738e86516b119c6594293b9c99ba`; the installed-Claude canary is
-retained as optional release/upgrade conformance.
+retained as optional release conformance.
 M12's [claims and overlap review](reviews/claims-overlap.md) covers leased declared
 scope, exact path-glob intersection witnesses, deterministic policy response,
 restart-aware Git drift, and separate checkout attribution. Its implementation
@@ -49,14 +49,14 @@ persistence boundary. Its implementation commit is
 
 M14's [canonical knowledge review](reviews/canonical-knowledge.md) covers immutable
 decision/finding revisions, structured provenance, owner governance, authenticated
-agent proposals, exact-link context packet v3, restart and rollback evidence, and
+agent proposals, exact-link current context packets, restart and rollback evidence, and
 recorded Codex-to-Claude replacement without transcript ingestion. Its
 implementation commit is `e37fdcf32b2e5f69766405d6585ff24277a1ab3c`.
 
 M15's [curation, retrieval, collaboration, and live-context
 review](reviews/curation-retrieval-live-context.md) covers deterministic scoped
 retrieval, participant-bound cross-project mail, bounded curation, exact
-contradictions, portable project knowledge, and packet-v4 live context deltas.
+contradictions, portable project knowledge, and current-packet live context deltas.
 Its final implementation commit is `c975ba4b17856b25c16dc5976d248e09a865d178`.
 
 M16's [passed manager/supervisor review](reviews/manager-supervisor.md) records
@@ -91,7 +91,7 @@ final audit with zero unresolved defects. Its implementation commit is
 | M17 ◐ | Local checks/check-watch capability | Route fresh check evidence without granting merge authority | M16 |
 | M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
 | M19 | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
-| M20 | Personal beta | Back up, recover, upgrade, and load-test 100 registered agent definitions | M19 |
+| M20 | Personal beta | Back up, restore, verify current-baseline integrity, and load-test 100 registered agent definitions | M19 |
 | M21 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M20 |
 
 ## Capability ladder
@@ -123,7 +123,8 @@ buildable binary
 
 Each arrow is a release boundary. Later milestones may not redefine earlier domain
 semantics merely to make an integration easier; they must pass the earlier
-acceptance scenarios unchanged or deliberately migrate their contracts.
+acceptance scenarios under the one current contract or deliberately update those
+scenarios in the same greenfield change.
 
 ## Release landmarks
 
@@ -161,7 +162,9 @@ and explicit refresh without making retrieval or conversation authoritative.
 ### Personal alpha — M16 through M17
 
 Managers propose work, dependencies advance under policy, and local checks route
-fresh evidence to explicitly eligible agents.
+fresh evidence to explicitly eligible agents. Eligibility comes from exact owner
+grants and duty routes, never `AgentDefinition.Role` or
+`LaunchProfile.Purpose`.
 
 ### Management alpha — M18
 
@@ -235,7 +238,23 @@ but they do not carry their implementation cost now.
 
 M17 is active. It adds allowlisted local checks, exact mechanical evidence and
 freshness, and an owner-granted check-watch capability attachable to any eligible
-agent without inventing a `CI watcher` role or granting merge authority. M16 is
+agent without inventing a `CI watcher` role or granting merge authority. Its
+frozen contract is
+[ADR-0016](decisions/0016-owner-granted-local-check-evidence.md): the current
+packet may carry one project-scoped exact check grant, mutually exclusive with
+management authority; checks have a separate durable lifecycle and stable direct
+runtime operation ID; only a latest clean same-HEAD pass verifies its one named
+criterion; dirty work is diagnostic, and observed staleness is monotonic.
+
+Failures route through exact current assignments or exact owner duty routes with
+honest `crewfold-check-worker` subsystem provenance. Repair suggestions are inert
+and disabled by default; only an owner decision under an exact current policy and
+profile creates repair work. Check processing never completes a task, records
+policy acceptance, commits, pushes, merges, deploys, or selects integration order.
+Remote CI, dirty-content fingerprints, and sandbox/no-network enforcement remain
+deferred.
+
+M16 is
 complete at implementation commit
 `3c7639a3ef54f68030e999015b61a45c32825f72`; its
 [passed review](reviews/manager-supervisor.md) records the exact owner grant,
@@ -276,15 +295,15 @@ preserves task-only applicability without ghost tasks and remains independent of
 provider state and FTS. The accepted contract is
 [ADR-0013](decisions/0013-portable-project-knowledge-snapshots.md).
 
-The final M15 slice adds packet-v4 explicit context deltas under
+The final M15 slice adds explicit context deltas to the current packet under
 [ADR-0014](decisions/0014-explicit-bounded-live-context-deltas.md). The immutable
 base freezes a journal cursor, bounded reverse dependents and exact participant
 rosters, and a live policy. Owner refresh constructs at most one pending whole
-delta; the exact run fetches and acknowledges it through MCP. Old packets and
-unsafe or oversized incremental changes require a visible rebase. Acceptance must
+delta; the exact run fetches and acknowledges it through MCP. A changed base
+contract or unsafe or oversized incremental change requires a visible rebase. Acceptance must
 prove pending/replay/restart, no-op cursors, messages/rosters with wrong-task
 isolation, accepted/withdrawn/disputed knowledge and eligible closure re-offer,
-reverse dependents, legacy tool denial/no-state compatibility, and byte/event
+reverse dependents, exact frozen-tool denial with no invented state, and byte/event
 bounds without a provider or network.
 
 Portable v1 moves exact project knowledge/applicability/contradiction snapshots

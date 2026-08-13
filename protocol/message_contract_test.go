@@ -3,6 +3,7 @@ package protocol_test
 import (
 	"encoding/json"
 	"os"
+	"reflect"
 	"testing"
 
 	"crewfold/internal/localapi"
@@ -30,6 +31,75 @@ func TestMessageResultSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 		if header.ID != expectedID {
 			t.Errorf("schema %q ID = %q, want %q", path, header.ID, expectedID)
 		}
+	}
+}
+
+func TestMessageSenderContractIncludesOnlyExactOwnerRunAndCheckSubsystemShapes(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("schemas/domain/v1/message.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+		AllOf []struct {
+			If struct {
+				Properties map[string]struct {
+					Const string `json:"const"`
+				} `json:"properties"`
+			} `json:"if"`
+			Then struct {
+				Required   []string `json:"required"`
+				Properties map[string]struct {
+					Const   string `json:"const"`
+					Pattern string `json:"pattern"`
+				} `json:"properties"`
+				Not struct {
+					AnyOf []struct {
+						Required []string `json:"required"`
+					} `json:"anyOf"`
+				} `json:"not"`
+			} `json:"then"`
+		} `json:"allOf"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := document.Properties["sender_type"].Enum, []string{"owner", "agent_run", "subsystem"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("message sender_type = %v, want exact closed set %v", got, want)
+	}
+	conditions := make(map[string]struct {
+		id        string
+		required  []string
+		forbidden []string
+		pattern   string
+	}, len(document.AllOf))
+	for _, conditional := range document.AllOf {
+		forbidden := make([]string, 0, len(conditional.Then.Not.AnyOf))
+		for _, item := range conditional.Then.Not.AnyOf {
+			forbidden = append(forbidden, item.Required...)
+		}
+		conditions[conditional.If.Properties["sender_type"].Const] = struct {
+			id        string
+			required  []string
+			forbidden []string
+			pattern   string
+		}{
+			id: conditional.Then.Properties["sender_id"].Const, required: conditional.Then.Required,
+			forbidden: forbidden, pattern: conditional.Then.Properties["sender_id"].Pattern,
+		}
+	}
+	privateFields := []string{"sender_agent_id", "sender_agent_name", "sender_run_id"}
+	if got := conditions["owner"]; got.id != "local-owner" || !reflect.DeepEqual(got.forbidden, privateFields) {
+		t.Fatalf("owner sender shape = %#v", got)
+	}
+	if got := conditions["subsystem"]; got.id != "crewfold-check-worker" || !reflect.DeepEqual(got.forbidden, privateFields) {
+		t.Fatalf("check subsystem sender shape = %#v", got)
+	}
+	if got := conditions["agent_run"]; !reflect.DeepEqual(got.required, privateFields) || got.pattern != "^run_[0-9a-f]{32}$" {
+		t.Fatalf("agent-run sender shape = %#v", got)
 	}
 }
 

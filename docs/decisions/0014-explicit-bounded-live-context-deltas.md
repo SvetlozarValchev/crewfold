@@ -26,19 +26,14 @@ authority contract.
 
 ## Decision
 
-### Packet v4 is the immutable base
+### The current packet is the immutable base
 
-New builds use `urn:crewfold:schema:domain:context-packet:v4`. Versions 1 through
-3 remain readable historical packets but cannot acquire live deltas. Refreshing
-one returns `rebase_required` with reason `unsupported_packet`. Migration must not
-invent delivery state for an old run, so this compatibility result creates no
-delta-state row or rebase event. Its run-scoped MCP policy never advertises the
-delta tools. Rebase means stop or hand off the old run and start a replacement
-with a new v4 packet. Crewfold never edits a packet, provider transcript, or
-already delivered delta.
+Crewfold has one current context-packet schema. Rebase means stop or hand off the
+run and start a replacement with a newly built current packet. Crewfold never
+edits a packet, provider transcript, or already delivered delta.
 
 In addition to the prior exact role, task, checkout, dependency, inbox,
-knowledge, policy, and reporting snapshots, v4 freezes:
+knowledge, policy, and reporting snapshots, the packet freezes:
 
 - `as_of_event_sequence`, the global journal high-water observed by the packet
   build transaction before the packet-build event;
@@ -61,15 +56,14 @@ access. Whole snapshots are selected or excluded; Crewfold never truncates a
 roster, message preview, revision, contradiction, or dependency to meet a byte
 budget.
 
-Immutability does not make an arbitrarily old prebuilt v4 packet safe to bind.
+Immutability does not make an arbitrarily old prebuilt packet safe to bind.
 When `run.start` names one, the binding transaction revalidates its frozen run
 authority and requires every embedded knowledge revision still to be accepted,
 current, fresh, applicable, and undisputed. A mismatch fails binding and requires
 a new packet; the old bytes are not edited. Building and binding in one run-start
 transaction has no intervening window. Once binding succeeds, reads preserve the
-base as historical authority and later changes are represented only by explicit
-refresh withdrawals/deltas or durable rebase. Versions 1 through 3 retain their
-separate read-only compatibility behavior and never gain live tools.
+base as immutable authority and later changes are represented only by explicit
+refresh withdrawals/deltas or durable rebase.
 
 ### Owner refresh builds; a run fetches and acknowledges
 
@@ -115,7 +109,7 @@ cumulative byte count, and acknowledgement state.
 Every delta has a monotonically increasing run-local `sequence`, its immutable
 base `context_packet_id`, optional `parent_delta_id`, an exclusive
 `from_event_sequence`, and an inclusive `through_event_sequence`. The first
-`from` cursor is packet v4's `as_of_event_sequence`; later cursors advance only
+`from` cursor is the current packet's `as_of_event_sequence`; later cursors advance only
 through daemon-owned refresh state. A delta's content hash covers its canonical
 content.
 
@@ -180,7 +174,7 @@ checkout, and direct-dependency contract. Crewfold records `rebase_required`
 instead of dropping, truncating, or indefinitely postponing an applicable change
 when:
 
-- the base packet predates v4;
+- the base packet does not use the current packet contract;
 - the bound run/task/agent/project/checkout contract no longer matches;
 - the direct dependency set or any frozen upstream snapshot changed, which should
   be impossible for an assigned task under current task invariants;

@@ -4,9 +4,9 @@ Crewfold context is an immutable, bounded authority snapshot for one task/agent
 run. It is not a transcript, a search result, a shared append-only prompt, or a
 provider session export.
 
-## Base packet v4
+## Current packet
 
-`context build` creates an unbound packet v4; `run.start` may bind that explicit
+`context build` creates an unbound current packet; `run.start` may bind that explicit
 packet once, or build and bind one atomically. The packet contains the exact role,
 task, checkout, direct dependencies, bounded reverse dependents, inbox previews,
 authorized participant-thread rosters, explicitly selected canonical knowledge,
@@ -23,17 +23,28 @@ implicitly. Participant rosters are informational and do not grant thread access
 the authenticated run must still match an exact agent/task/project participant
 binding. Reverse dependents are informational and remain project-scoped.
 
-An explicitly prebuilt v4 packet is revalidated once when `run.start` binds it. If
+An explicitly prebuilt packet is revalidated once when `run.start` binds it. If
 its frozen run authority no longer has canonical provenance, or any embedded
 knowledge is no longer accepted, current, fresh, applicable, and undisputed, the
 binding fails and the owner must build a new packet. Building and binding in the
 same run-start transaction has no intervening window. After a successful binding,
-the base bytes remain historical: reads do not re-evaluate them, and later changes
+the base bytes remain immutable: reads do not re-evaluate them, and later changes
 appear only through an explicit withdrawal/delta or durable rebase.
 
-Packet v1, v2, and v3 remain readable. They cannot gain live tools or deltas. A
-long-running old-packet run must be replaced with a v4 run before it can receive
-incremental context.
+### Optional delegated grants
+
+The same current packet may add one exact manager-grant snapshot or one exact
+project-scoped check-watch grant snapshot. It may contain neither, but cannot
+contain both grant families.
+
+The check-watch snapshot freezes grant/project, exact enabled agent revision, exact
+allowlisted definition revisions, the closed `run|inspect|propose_repair`
+operation subset, quantitative limits, canonical hash, and expiry. Binding and
+every check mutation revalidate the live run and current exact grant. Revocation
+leaves the immutable packet readable and denies later calls.
+
+Agent role and launch-profile purpose remain display/workflow metadata and never
+alter the packet schema, tools, definition set, routing, or repair authority.
 
 ## Refresh and delivery
 
@@ -98,13 +109,13 @@ The packet freezes these live limits:
 
 Crewfold coalesces events to current canonical state and either includes each
 change whole or does not build a delta. It never truncates a revision, preview,
-roster, contradiction, or dependency. An unsupported base packet, changed base
-contract or direct-dependency set, event-window overflow, delta overflow,
+roster, contradiction, or dependency. A changed base contract or direct-dependency
+set, event-window overflow, delta overflow,
 cumulative overflow, or unsupported authority-changing event becomes durable
 `rebase_required` state.
 
 Rebase is an explicit handoff boundary: stop or hand off the existing run, build a
-new v4 packet, and start a replacement run. Crewfold does not mutate the base
+new current packet, and start a replacement run. Crewfold does not mutate the base
 packet or provider transcript in place.
 
 ## Inspection versus consumption

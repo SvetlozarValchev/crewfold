@@ -24,7 +24,7 @@ placeholder. A milestone is not complete while required fields say `pending`.
 | Suite | Command | Result | Artifact/log |
 | --- | --- | --- | --- |
 | Unit | pending | pending | pending |
-| Store/migration | pending or N/A | pending | pending |
+| Store/schema | pending or N/A | pending | pending |
 | Protocol | pending or N/A | pending | pending |
 | Component | pending or N/A | pending | pending |
 | Black-box acceptance | pending | pending | pending |
@@ -43,7 +43,7 @@ placeholder. A milestone is not complete while required fields say `pending`.
 - Durable state introduced or changed:
 - Restart/crash points tested:
 - Reconciliation outcome:
-- Migration fixture added:
+- Current-baseline integrity evidence:
 - Backup/restore impact:
 
 Use `N/A` only when the milestone introduces no durable behavior.
@@ -56,12 +56,12 @@ Use `N/A` only when the milestone introduces no durable behavior.
 - External side effects:
 - Human approval boundary:
 
-## Compatibility
+## Current contract and external conformance
 
 - API/schema changes:
 - Adapter/runtime compatibility changes:
 - Earlier milestone scenarios rerun:
-- Upgrade/rollback impact:
+- Current-baseline/restore impact:
 
 ## Known limitations and deferrals
 

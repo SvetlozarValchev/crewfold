@@ -81,7 +81,7 @@ Implementer and reviewer duties are meeting-scoped workflow metadata, not fixed
 
 ## Persistence and recovery
 
-- Schema v9 adds meetings, participants, contributions, proposals, actions, and
+- The current schema includes meetings, participants, contributions, proposals, actions, and
   provenance-linked task roles.
 - Frozen JSON is canonical state, not a terminal transcript. Its hash and source
   revisions make later acceptance auditable and stale-safe.
@@ -93,8 +93,8 @@ Implementer and reviewer duties are meeting-scoped workflow metadata, not fixed
 
 ## Typed database boundary
 
-ADR-0007 adopts `sqlc` rather than adding a Node/TypeScript ORM runtime. Ordered
-embedded SQL migrations remain authoritative, named queries generate checked-in
+ADR-0007 adopts `sqlc` rather than adding a Node/TypeScript ORM runtime. The
+embedded current SQL baseline remains authoritative, named queries generate checked-in
 Go accessors, and domain services retain transaction and policy ownership. The
 generator is pinned at 1.31.1. Normal builds remain offline; the gate verifies
 both source freshness and generated-output integrity without requiring `sqlc`.
@@ -116,14 +116,12 @@ the same bounded query is already covered by dependency and meeting tests.
   paid model.
 - Recorded Codex and Claude regression scenarios made no network/model call.
 
-## Compatibility
+## Current contract
 
-- Storage advances additively from schema v8 to v9. Existing rows are unchanged;
-  no historical meetings or roles are fabricated.
-- Local API v1 gains additive methods and result schemas. Existing envelopes and
-  all M0–M12 scenarios pass unchanged.
-- An older binary safely refuses schema v9 as newer. Downgrade requires restoring
-  a schema-v8 backup rather than dropping meeting evidence.
+- Storage begins with strict meeting and role relationships; no meeting or role is
+  fabricated before an authorized command creates it.
+- Local API v1 exposes the meeting methods and result schemas. All M0–M12
+  scenarios pass under the same current envelope.
 - Runtime/provider interfaces are unchanged. Meetings currently use deterministic
   fixtures, so live Codex, Claude, and Herdr behavior is unaffected.
 

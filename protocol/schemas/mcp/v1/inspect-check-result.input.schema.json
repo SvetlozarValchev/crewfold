@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:mcp:inspect-check-result-input:v1",
+  "title": "Crewfold inspect granted check result input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["check_run_id"],
+  "properties": {
+    "check_run_id": {"type": "string", "pattern": "^checkrun_[0-9a-f]{32}$"}
+  }
+}

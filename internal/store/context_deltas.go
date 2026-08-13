@@ -80,32 +80,18 @@ func (s *Store) RefreshContext(ctx context.Context, command RefreshContextComman
 	if found, err := lookupIdempotency(ctx, tx, scopedKey, "context.refresh", requestHash, &replay); err != nil {
 		return domain.ContextRefreshResult{}, err
 	} else if found {
-		if domain.IsLiveContextPacketSchema(packet.Schema) {
-			state, stateErr := dbgen.New(tx).GetRunContextDeltaState(ctx, run.ID)
-			if stateErr != nil {
-				return domain.ContextRefreshResult{}, contextDeltaStateError(packet, stateErr)
-			}
-			if err := s.validateContextDeltaStateChain(ctx, tx, packet, state); err != nil {
-				return domain.ContextRefreshResult{}, err
-			}
+		state, stateErr := dbgen.New(tx).GetRunContextDeltaState(ctx, run.ID)
+		if stateErr != nil {
+			return domain.ContextRefreshResult{}, contextDeltaStateError(packet, stateErr)
+		}
+		if err := s.validateContextDeltaStateChain(ctx, tx, packet, state); err != nil {
+			return domain.ContextRefreshResult{}, err
 		}
 		replay.Replayed = true
 		return replay, nil
 	}
 	if !runCanUseMailbox(run.Status) {
 		return domain.ContextRefreshResult{}, &Error{Code: CodeInvalidContextDelta, Message: "context can refresh only for a live run"}
-	}
-	if !domain.IsLiveContextPacketSchema(packet.Schema) {
-		result := domain.ContextRefreshResult{Status: domain.ContextRefreshRebaseRequired, RunID: run.ID,
-			ContextPacketID: packet.ID, RebaseReason: domain.ContextRebaseUnsupportedPacket,
-			Chain: domain.ContextDeltaChain{RunID: run.ID, ContextPacketID: packet.ID, RebaseReason: domain.ContextRebaseUnsupportedPacket}}
-		if err := recordIdempotency(ctx, tx, scopedKey, "context.refresh", requestHash, result, s.nowText()); err != nil {
-			return domain.ContextRefreshResult{}, err
-		}
-		if err := tx.Commit(); err != nil {
-			return domain.ContextRefreshResult{}, storageFailure("commit legacy context refresh", err)
-		}
-		return result, nil
 	}
 	queries := dbgen.New(tx)
 	state, err := queries.GetRunContextDeltaState(ctx, run.ID)
@@ -322,9 +308,6 @@ func (s *Store) ListContextDeltas(ctx context.Context, query ListContextDeltasQu
 	if err != nil {
 		return domain.ContextDeltaList{}, err
 	}
-	if !domain.IsLiveContextPacketSchema(packet.Schema) {
-		return domain.ContextDeltaList{}, &Error{Code: CodeInvalidContextDelta, Message: "context packet has no bounded live delta chain"}
-	}
 	state, err := dbgen.New(tx).GetRunContextDeltaState(ctx, run.ID)
 	if err != nil {
 		return domain.ContextDeltaList{}, contextDeltaStateError(packet, err)
@@ -430,11 +413,6 @@ func (s *Store) FetchRunContextDelta(ctx context.Context, runID string) (domain.
 	if err != nil {
 		return domain.ContextDeltaFetchResult{}, err
 	}
-	if !domain.IsLiveContextPacketSchema(packet.Schema) {
-		return domain.ContextDeltaFetchResult{Status: domain.ContextDeltaRebaseRequired, RunID: run.ID,
-			ContextPacketID: packet.ID, RebaseReason: domain.ContextRebaseUnsupportedPacket,
-			Chain: domain.ContextDeltaChain{RunID: run.ID, ContextPacketID: packet.ID, RebaseReason: domain.ContextRebaseUnsupportedPacket}}, nil
-	}
 	queries := dbgen.New(tx)
 	state, err := queries.GetRunContextDeltaState(ctx, run.ID)
 	if err != nil {
@@ -485,9 +463,6 @@ func (s *Store) AcknowledgeRunContextDelta(ctx context.Context, command Acknowle
 	packet, err := queryContextPacket(ctx, tx, run.WorkspaceID, run.ContextPacketID)
 	if err != nil {
 		return domain.ContextDeltaAcknowledgement{}, err
-	}
-	if !domain.IsLiveContextPacketSchema(packet.Schema) {
-		return domain.ContextDeltaAcknowledgement{}, &Error{Code: CodeContextRebaseRequired, Message: "context packet predates bounded live context and must be rebased"}
 	}
 	queries := dbgen.New(tx)
 	state, err := queries.GetRunContextDeltaState(ctx, run.ID)
@@ -875,7 +850,7 @@ func (s *Store) projectContextChanges(ctx context.Context, tx *sql.Tx, run domai
 		}
 	}
 
-	// Any represented revision can be withdrawn, including v3 findings. A
+	// Any represented revision can be withdrawn, including previously surfaced findings. A
 	// dispute tombstone remains represented authority too: a later terminal or
 	// freshness transition must replace the weaker disputed reason and must
 	// never be accidentally reoffered.
@@ -1420,7 +1395,7 @@ func validateContextDelta(delta domain.ContextDelta) error {
 func validateContextDeltaForFinalize(delta domain.ContextDelta) error {
 	if delta.Schema != domain.ContextDeltaSchema || !validContextDeltaID(delta.ID) || delta.RunID == "" || delta.ContextPacketID == "" ||
 		delta.WorkspaceID == "" || delta.ProjectID == "" || delta.TaskID == "" || delta.AgentID == "" ||
-		!domain.IsLiveContextPacketSchema(delta.BasePacketSchema) || delta.Sequence < 1 ||
+		delta.BasePacketSchema != domain.ContextPacketSchema || delta.Sequence < 1 ||
 		delta.FromEventSequence < 0 || delta.ThroughEventSequence < delta.FromEventSequence || len(delta.Changes) == 0 ||
 		len(delta.Changes) > maximumContextDeltaEvents || delta.CreatedBy != localOwnerActorID || delta.CreatedAt != delta.EvaluatedAt {
 		return errors.New("delta identity, cursor, creator, or change count is invalid")
@@ -1751,11 +1726,8 @@ WHERE binding.run_id = ? AND binding.context_packet_id = ?`, run.ID, run.Context
 }
 
 func contextDeltaStateError(packet domain.ContextPacket, err error) error {
-	if errors.Is(err, sql.ErrNoRows) && !domain.IsLiveContextPacketSchema(packet.Schema) {
-		return &Error{Code: CodeContextRebaseRequired, Message: "context packet predates bounded live context and must be rebased"}
-	}
 	if errors.Is(err, sql.ErrNoRows) {
-		return storageFailure("query run context delta state", errors.New("version-four run has no delta state"))
+		return storageFailure("query run context delta state", errors.New("run has no context delta state"))
 	}
 	return storageFailure("query run context delta state", err)
 }

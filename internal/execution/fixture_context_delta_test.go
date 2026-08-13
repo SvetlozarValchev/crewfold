@@ -285,7 +285,7 @@ func TestFixtureContextDeltaFetchesTypedChangesAndAcknowledgesExactRun(t *testin
 func TestValidateFixtureContextDeltaRejectsAmbiguousOrUnboundedPlans(t *testing.T) {
 	t.Parallel()
 	for name, plan := range map[string]domain.FixtureContextDelta{
-		"ambiguous modes": {ExpectNoPending: true, ExpectToolsDenied: true},
+		"ambiguous modes": {ExpectNoPending: true, Expectations: []domain.FixtureContextDeltaExpectation{{RequiredKinds: []string{domain.ContextDeltaMessageReceived}}}},
 		"delay":           {ExpectNoPending: true, InitialDelayMillis: 30001},
 		"duplicate kind": {Expectations: []domain.FixtureContextDeltaExpectation{{
 			RequiredKinds: []string{domain.ContextDeltaMessageReceived, domain.ContextDeltaMessageReceived},

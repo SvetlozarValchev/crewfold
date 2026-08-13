@@ -13,8 +13,8 @@ import (
 
 func (s *server) handleRunStart(request localapi.Request) localapi.Response {
 	var params localapi.RunStartParams
-	if err := decodeParams(request.Params, &params); err != nil || execution.ValidateScenario(params.Scenario) != nil {
-		return invalidParamsResponse(request, "run.start requires workspace, task, runtime, provider, a valid fake scenario, expected_task_revision, and idempotency_key")
+	if err := decodeParams(request.Params, &params); err != nil || execution.ValidateScenario(params.Scenario) != nil || (params.CheckWatchGrant == "") != (params.ExpectedCheckWatchGrantRevision == 0) || (params.CheckWatchGrant != "" && params.Context != "") {
+		return invalidParamsResponse(request, "run.start requires workspace, task, runtime, provider, a valid fake scenario, expected_task_revision, idempotency_key, and an optional exact check-watch grant/revision pair")
 	}
 	if _, exists := s.runtimes[params.Runtime]; !exists {
 		return storeErrorResponse(request, &store.Error{Code: store.CodeAdapterUnavailable, Message: "requested runtime driver is not registered"})
@@ -23,16 +23,18 @@ func (s *server) handleRunStart(request localapi.Request) localapi.Response {
 		return storeErrorResponse(request, &store.Error{Code: store.CodeAdapterUnavailable, Message: "requested provider adapter is not registered"})
 	}
 	result, err := s.store.CreateRun(context.Background(), store.CreateRunCommand{
-		WorkspaceIdentifier:  params.Workspace,
-		TaskID:               params.Task,
-		CheckoutIdentifier:   params.Checkout,
-		ContextPacketID:      params.Context,
-		Runtime:              params.Runtime,
-		Provider:             params.Provider,
-		Scenario:             params.Scenario,
-		ExpectedTaskRevision: params.ExpectedTaskRevision,
-		IdempotencyKey:       params.IdempotencyKey,
-		CorrelationID:        request.ID,
+		WorkspaceIdentifier:             params.Workspace,
+		TaskID:                          params.Task,
+		CheckoutIdentifier:              params.Checkout,
+		ContextPacketID:                 params.Context,
+		Runtime:                         params.Runtime,
+		Provider:                        params.Provider,
+		Scenario:                        params.Scenario,
+		ExpectedTaskRevision:            params.ExpectedTaskRevision,
+		CheckWatchGrantID:               params.CheckWatchGrant,
+		ExpectedCheckWatchGrantRevision: params.ExpectedCheckWatchGrantRevision,
+		IdempotencyKey:                  params.IdempotencyKey,
+		CorrelationID:                   request.ID,
 	})
 	if err != nil {
 		return storeErrorResponse(request, err)

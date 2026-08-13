@@ -282,7 +282,7 @@ claude_run=$(extract_id run "$scenario_root/claude-run.json")
 assert_contains "$scenario_root/claude-final.json" '"status":"completed"' 'Claude replacement run did not complete'
 assert_contains "$scenario_root/claude-final.json" '"evidence":["implementation_complete","tests_passed","provider_handoff_received","canonical_knowledge_received"]' 'Claude did not complete with handoff and canonical-knowledge evidence'
 
-# Accepting a successor atomically supersedes the old revision. Historical packet
+# Accepting a successor atomically supersedes the old revision. Already-built packet
 # bytes remain unchanged; a new exact-pin request excludes old and includes new.
 propose_finding "$scenario_root/successor-proposed.json" "$producer_task" "$successor_fixture" canonical-successor-proposal --supersedes "$accepted_revision"
 successor_revision=$(extract_id krev "$scenario_root/successor-proposed.json")

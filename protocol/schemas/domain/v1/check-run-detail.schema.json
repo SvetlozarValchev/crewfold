@@ -1,0 +1,22 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:domain:check-run-detail:v1",
+  "type":"object","additionalProperties":false,
+  "required":["run","definition","requirement","job","freshness_history","artifacts","evidence","notifications","route_failures","requirement_state"],
+  "properties":{
+    "run":{"$ref":"check-run.schema.json"},
+    "definition":{"$ref":"check-definition.schema.json"},
+    "requirement":{"$ref":"task-check-requirement.schema.json"},
+    "job":{"$ref":"check-job.schema.json"},
+    "launch_receipt":{"$ref":"check-launch-receipt.schema.json"},
+    "result":{"$ref":"check-result.schema.json"},
+    "freshness_history":{"type":"array","items":{"$ref":"check-result-freshness.schema.json"}},
+    "current_freshness":{"$ref":"check-result-freshness.schema.json"},
+    "artifacts":{"type":"array","maxItems":3,"items":{"$ref":"check-artifact.schema.json"}},
+    "evidence":{"$ref":"check-evidence-buckets.schema.json"},
+    "notifications":{"type":"array","maxItems":100,"items":{"$ref":"check-notification-receipt.schema.json"}},
+    "route_failures":{"type":"array","maxItems":100,"items":{"$ref":"check-route-failure.schema.json"}},
+    "repair_proposal":{"$ref":"check-repair-proposal.schema.json"},
+    "requirement_state":{"enum":["missing","running","verified","failed","stale","unknown"]}
+  }
+}

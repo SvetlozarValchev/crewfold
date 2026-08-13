@@ -9,12 +9,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
-	"time"
 
 	"crewfold/internal/domain"
 )
 
-func TestOpenCreatesHealthyMigratedOwnerOnlyDatabase(t *testing.T) {
+func TestOpenCreatesHealthyCurrentDatabase(t *testing.T) {
 	t.Parallel()
 
 	dataDir := t.TempDir()
@@ -56,288 +55,50 @@ func TestOpenCreatesHealthyMigratedOwnerOnlyDatabase(t *testing.T) {
 	}
 
 	var migrationCount int
-	if err := storage.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
-		t.Fatalf("count schema migrations: %v", err)
+	var migrationName string
+	if err := storage.db.QueryRow("SELECT COUNT(*),MAX(name) FROM schema_migrations").Scan(&migrationCount, &migrationName); err != nil {
+		t.Fatalf("read current schema metadata: %v", err)
 	}
-	if migrationCount != LatestSchemaVersion {
-		t.Fatalf("migration count = %d, want %d", migrationCount, LatestSchemaVersion)
-	}
-}
-
-func TestMigrationUpgradesCheckedInVersionZeroFixture(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	fixture, err := os.ReadFile("testdata/schema-v000.sql")
-	if err != nil {
-		t.Fatalf("os.ReadFile(fixture) error = %v", err)
-	}
-	database, err := sql.Open("sqlite3", filepath.Join(dataDir, databaseFilename))
-	if err != nil {
-		t.Fatalf("sql.Open(fixture) error = %v", err)
-	}
-	if _, err := database.Exec(string(fixture)); err != nil {
-		_ = database.Close()
-		t.Fatalf("apply fixture: %v", err)
-	}
-	if err := database.Close(); err != nil {
-		t.Fatalf("close fixture database: %v", err)
+	if migrationCount != 1 || migrationName != "001_current_schema.sql" {
+		t.Fatalf("schema metadata = %d/%q, want one current baseline", migrationCount, migrationName)
 	}
 
-	storage := openTestStore(t, dataDir, Options{})
-	health, err := storage.Health(context.Background())
+	foreignKeyRows, err := storage.db.Query("PRAGMA foreign_key_check")
 	if err != nil {
-		t.Fatalf("Health() after migration error = %v", err)
+		t.Fatalf("foreign_key_check: %v", err)
 	}
-	if health.SchemaVersion != LatestSchemaVersion {
-		t.Fatalf("schema version = %d, want %d", health.SchemaVersion, LatestSchemaVersion)
+	if foreignKeyRows.Next() {
+		_ = foreignKeyRows.Close()
+		t.Fatal("current baseline has a foreign-key violation")
 	}
-	if _, err := storage.Workspace(context.Background(), "missing"); ErrorCode(err) != CodeWorkspaceNotFound {
-		t.Fatalf("Workspace(missing) error = %v, code = %q", err, ErrorCode(err))
-	}
-}
-
-func TestMigrationUpgradesCheckedInVersionOneFixture(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	fixture, err := os.ReadFile("testdata/schema-v001.sql")
-	if err != nil {
-		t.Fatalf("os.ReadFile(fixture) error = %v", err)
-	}
-	database, err := sql.Open("sqlite3", filepath.Join(dataDir, databaseFilename))
-	if err != nil {
-		t.Fatalf("sql.Open(fixture) error = %v", err)
-	}
-	if _, err := database.Exec(string(fixture)); err != nil {
-		_ = database.Close()
-		t.Fatalf("apply fixture: %v", err)
-	}
-	if err := database.Close(); err != nil {
-		t.Fatalf("close fixture database: %v", err)
+	if err := foreignKeyRows.Close(); err != nil {
+		t.Fatalf("close foreign_key_check: %v", err)
 	}
 
-	storage := openTestStore(t, dataDir, Options{})
-	health, err := storage.Health(context.Background())
+	var criticalTriggers, obsoleteSchema int
+	if err := storage.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger' AND name IN (
+'context_packet_validate_insert','run_context_binding_validate_insert','check_repair_effect_validate_insert','check_watch_state_validate_update')`).Scan(&criticalTriggers); err != nil {
+		t.Fatalf("inspect current boundary triggers: %v", err)
+	}
+	if criticalTriggers != 4 {
+		t.Fatalf("current boundary trigger count = %d, want 4", criticalTriggers)
+	}
+	if err := storage.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE sql GLOB '*context-packet:v[2-9]*'
+OR sql LIKE '%scheduling_intents_m17%' OR sql LIKE '%scheduling_intents_before_%'
+OR sql LIKE '%messages_m17%' OR sql LIKE '%messages_before_%'`).Scan(&obsoleteSchema); err != nil {
+		t.Fatalf("inspect baseline for obsolete schema: %v", err)
+	}
+	if obsoleteSchema != 0 {
+		t.Fatalf("current baseline retains %d obsolete schema objects", obsoleteSchema)
+	}
+	indexTx, err := storage.db.BeginTx(context.Background(), nil)
 	if err != nil {
-		t.Fatalf("Health() after migration error = %v", err)
+		t.Fatalf("begin clean index inspection: %v", err)
 	}
-	if health.SchemaVersion != LatestSchemaVersion {
-		t.Fatalf("schema version = %d, want %d", health.SchemaVersion, LatestSchemaVersion)
-	}
-	workspace, err := storage.Workspace(context.Background(), "fixture-workspace")
-	if err != nil || workspace.ID != "ws_00000000000000000000000000000001" {
-		t.Fatalf("Workspace(fixture after migration) = %#v, %v", workspace, err)
-	}
-	var curatorRevision int64
-	var curatorEnabled int
-	if err := storage.db.QueryRow("SELECT revision, enabled FROM curator_rules WHERE workspace_id = ?", workspace.ID).Scan(&curatorRevision, &curatorEnabled); err != nil || curatorRevision != 1 || curatorEnabled != 0 {
-		t.Fatalf("migrated workspace curator default = revision %d enabled %d, %v", curatorRevision, curatorEnabled, err)
-	}
-	events, err := storage.Events(context.Background(), 0, 100)
-	if err != nil || len(events) != 1 || events[0].EventID != "evt_00000000000000000000000000000001" {
-		t.Fatalf("Events(fixture after migration) = %#v, %v", events, err)
-	}
-	var idempotencyCount int
-	if err := storage.db.QueryRow("SELECT COUNT(*) FROM idempotency_keys WHERE key = 'fixture-workspace-key'").Scan(&idempotencyCount); err != nil || idempotencyCount != 1 {
-		t.Fatalf("fixture idempotency count = %d, %v, want 1", idempotencyCount, err)
-	}
-	for _, table := range []string{"projects", "repositories", "project_repositories", "checkouts"} {
-		var count int
-		if err := storage.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
-			t.Fatalf("query migrated table %s: %v", table, err)
-		}
-	}
-}
-
-func TestMigrationUpgradesCheckedInVersionTwoFixture(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	fixture, err := os.ReadFile("testdata/schema-v002.sql")
-	if err != nil {
-		t.Fatalf("os.ReadFile(fixture) error = %v", err)
-	}
-	database, err := sql.Open("sqlite3", filepath.Join(dataDir, databaseFilename))
-	if err != nil {
-		t.Fatalf("sql.Open(fixture) error = %v", err)
-	}
-	if _, err := database.Exec(string(fixture)); err != nil {
-		_ = database.Close()
-		t.Fatalf("apply fixture: %v", err)
-	}
-	if err := database.Close(); err != nil {
-		t.Fatalf("close fixture database: %v", err)
-	}
-
-	storage := openTestStore(t, dataDir, Options{})
-	health, err := storage.Health(context.Background())
-	if err != nil || health.SchemaVersion != LatestSchemaVersion {
-		t.Fatalf("Health() after v2 migration = %#v, %v", health, err)
-	}
-	inspection, err := storage.InspectProject(context.Background(), "upgrade-fixture", "fixture-project")
-	if err != nil || len(inspection.Checkouts) != 1 || inspection.Checkouts[0].ID != "co_00000000000000000000000000000002" {
-		t.Fatalf("InspectProject(fixture after migration) = %#v, %v", inspection, err)
-	}
-	for _, table := range []string{"agents", "objectives", "tasks", "task_dependencies", "task_assignments"} {
-		var count int
-		if err := storage.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
-			t.Fatalf("migrated table %s count = %d, %v, want 0", table, count, err)
-		}
-	}
-}
-
-func TestRunSchemaUpgradePreservesCoordinationRecords(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	base, err := os.ReadFile("testdata/schema-v002.sql")
-	if err != nil {
-		t.Fatalf("os.ReadFile(base fixture) error = %v", err)
-	}
-	coordinationSchema, err := os.ReadFile("migrations/003_agents_objectives_tasks.sql")
-	if err != nil {
-		t.Fatalf("os.ReadFile(coordination schema) error = %v", err)
-	}
-	coordinationRecords, err := os.ReadFile("testdata/coordination-upgrade.sql")
-	if err != nil {
-		t.Fatalf("os.ReadFile(coordination records) error = %v", err)
-	}
-	database, err := sql.Open("sqlite3", filepath.Join(dataDir, databaseFilename))
-	if err != nil {
-		t.Fatalf("sql.Open(fixture) error = %v", err)
-	}
-	for _, fixturePart := range []struct {
-		name   string
-		script []byte
-	}{{"base", base}, {"coordination schema", coordinationSchema}, {"coordination records", coordinationRecords}} {
-		if _, err := database.Exec(string(fixturePart.script)); err != nil {
-			_ = database.Close()
-			t.Fatalf("apply %s: %v", fixturePart.name, err)
-		}
-	}
-	if err := database.Close(); err != nil {
-		t.Fatalf("close fixture database: %v", err)
-	}
-
-	storage := openTestStore(t, dataDir, Options{})
-	detail, err := storage.TaskDetail(context.Background(), "upgrade-fixture", "task_00000000000000000000000000000032", "inspect-upgraded-task")
-	if err != nil {
-		t.Fatalf("TaskDetail(upgraded fixture) error = %v", err)
-	}
-	if detail.Task.Status != "assigned" || detail.Task.Revision != 2 || detail.Assignment == nil || detail.Assignment.ID != "asg_00000000000000000000000000000003" || len(detail.Dependencies) != 1 {
-		t.Fatalf("upgraded task detail = %#v", detail)
-	}
-	for _, table := range []string{"runs", "run_jobs", "run_timeline", "run_handoffs"} {
-		var count int
-		if err := storage.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
-			t.Fatalf("new table %s count = %d, %v, want 0", table, count, err)
-		}
-	}
-}
-
-func TestDirectRuntimeSchemaUpgradePreservesActiveRunAndQueue(t *testing.T) {
-	t.Parallel()
-
-	dataDir := t.TempDir()
-	parts := make([][]byte, 0, 4)
-	for _, path := range []string{
-		"testdata/schema-v002.sql",
-		"migrations/003_agents_objectives_tasks.sql",
-		"testdata/coordination-upgrade.sql",
-		"migrations/004_runs_and_worker_queue.sql",
-	} {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("os.ReadFile(%q) error = %v", path, err)
-		}
-		parts = append(parts, data)
-	}
-	database, err := sql.Open("sqlite3", filepath.Join(dataDir, databaseFilename))
-	if err != nil {
-		t.Fatalf("sql.Open(fixture) error = %v", err)
-	}
-	for index, script := range parts {
-		if _, err := database.Exec(string(script)); err != nil {
-			_ = database.Close()
-			t.Fatalf("apply fixture part %d: %v", index, err)
-		}
-	}
-	const runID = "run_00000000000000000000000000000004"
-	if _, err := database.Exec("UPDATE tasks SET status = 'active', revision = 3 WHERE id = 'task_00000000000000000000000000000032'"); err != nil {
-		_ = database.Close()
-		t.Fatalf("update active task fixture: %v", err)
-	}
-	if _, err := database.Exec(`INSERT INTO runs(
-    id, workspace_id, project_id, task_id, agent_id, checkout_id, runtime, provider,
-    scenario_name, scenario_json, placement_reasons_json, status, step_cursor,
-    runtime_handle, provider_handle, revision, created_at, updated_at, started_at,
-    created_by, updated_by
-) VALUES (
-    ?, 'ws_00000000000000000000000000000002',
-    'prj_00000000000000000000000000000002',
-    'task_00000000000000000000000000000032',
-    'agent_00000000000000000000000000000003',
-    'co_00000000000000000000000000000002',
-    'fake', 'fake', 'upgrade-active-run',
-    '{"schema":"urn:crewfold:schema:fixture:fake-run-scenario:v1","name":"upgrade-active-run","acceptance":{"required_evidence":[]},"steps":[{"kind":"progress","message":"continue"}]}',
-    '["preserved placement"]', 'active', 0, 'runtime-handle', 'provider-handle', 3,
-    '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z',
-    'local-owner', 'local-owner'
-)
-`, runID); err != nil {
-		_ = database.Close()
-		t.Fatalf("insert active run fixture: %v", err)
-	}
-	for _, statement := range []struct {
-		query string
-		args  []any
-	}{
-		{"INSERT INTO run_jobs VALUES (?, 'pending', '2026-08-12T00:00:00Z', NULL, 2, '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z')", []any{runID}},
-		{"INSERT INTO run_timeline(run_id, kind, message, evidence_json, recorded_at) VALUES (?, 'run.started', 'preserve me', '[]', '2026-08-12T00:00:00Z')", []any{runID}},
-		{"INSERT INTO schema_migrations VALUES (4, '004_runs_and_worker_queue.sql', '2026-08-12T00:00:00Z')", nil},
-		{"PRAGMA user_version = 4", nil},
-	} {
-		if _, err := database.Exec(statement.query, statement.args...); err != nil {
-			_ = database.Close()
-			t.Fatalf("complete active run fixture: %v", err)
-		}
-	}
-	if err := database.Close(); err != nil {
-		t.Fatalf("close fixture database: %v", err)
-	}
-
-	storage := openTestStore(t, dataDir, Options{})
-	detail, err := storage.RunDetail(context.Background(), "upgrade-fixture", runID)
-	if err != nil {
-		t.Fatalf("RunDetail(upgraded direct-runtime schema) error = %v", err)
-	}
-	if detail.Run.Status != "active" || detail.Run.RuntimeHandle != "runtime-handle" || detail.Run.ContextPacketID != "" || detail.Run.StopForced || detail.Run.StopGraceMillis != 0 || len(detail.Timeline) != 1 {
-		t.Fatalf("upgraded run detail = %#v", detail)
-	}
-	const assignmentID = "asg_00000000000000000000000000000003"
-	if detail.Run.AssignmentID != assignmentID {
-		t.Fatalf("upgraded legacy run assignment = %q, want exact unique %q", detail.Run.AssignmentID, assignmentID)
-	}
-	if _, err := storage.db.Exec(`UPDATE task_assignments SET lease_expires_at='2026-08-12T00:00:01Z' WHERE id=?`, assignmentID); err != nil {
-		t.Fatalf("expire upgraded legacy assignment fixture: %v", err)
-	}
-	if count, err := storage.ReconcileExpiredAssignments(context.Background(), "upgrade-fixture", "inspect-upgraded-reservation"); err != nil || count != 0 {
-		t.Fatalf("ReconcileExpiredAssignments(upgraded active run) = %d, %v; want retained reservation", count, err)
-	}
-	var assignmentStatus string
-	if err := storage.db.QueryRow(`SELECT status FROM task_assignments WHERE id=?`, assignmentID).Scan(&assignmentStatus); err != nil || assignmentStatus != domain.AssignmentActive {
-		t.Fatalf("upgraded active-run assignment status = %q, %v; want active", assignmentStatus, err)
-	}
-	for _, table := range []string{"context_packets", "run_context_bindings", "run_capabilities", "run_reports", "run_artifacts", "run_tool_calls", "message_threads", "messages", "message_recipients", "message_wake_jobs"} {
-		var count int
-		if err := storage.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
-			t.Fatalf("migrated scoped table %s count = %d, %v, want 0 without invented authority", table, count, err)
-		}
-	}
-	work, found, err := storage.ClaimRunJob(context.Background(), time.Second)
-	if err != nil || !found || work.Run.ID != runID || work.Scenario.Name != "upgrade-active-run" {
-		t.Fatalf("ClaimRunJob(upgraded run) = %#v, %t, %v", work, found, err)
+	indexStatus := storage.knowledgeIndexStatusInTransaction(context.Background(), indexTx)
+	_ = indexTx.Rollback()
+	if indexStatus.Status != domain.KnowledgeIndexOK || indexStatus.Generation != 1 || indexStatus.SourceCount != 0 {
+		t.Fatalf("clean current knowledge index = %#v, want generation-one empty OK projection", indexStatus)
 	}
 }
 

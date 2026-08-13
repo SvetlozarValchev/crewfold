@@ -37,7 +37,7 @@ attempt commits its denial record without changing the proposal.
 
 Context builds accept an ordered, bounded list of exact knowledge revision IDs.
 They include only accepted, current, fresh, applicable revisions that fit the
-budget, copying complete snapshots into immutable packet v3. Ineligible revisions
+budget, copying complete snapshots into the immutable current packet. Ineligible revisions
 are explained individually. A superseded exact pin is excluded and names its
 current replacement, but Crewfold never follows it silently. Eligibility is
 evaluated when the packet is built; later governance does not mutate or invalidate

@@ -5,13 +5,36 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["id", "workspace_id", "thread_id", "sender_type", "sender_id", "kind", "body", "artifact_ids", "created_at"],
+  "allOf": [
+    {
+      "if": {"properties": {"sender_type": {"const": "owner"}}, "required": ["sender_type"]},
+      "then": {
+        "properties": {"sender_id": {"const": "local-owner"}},
+        "not": {"anyOf": [{"required": ["sender_agent_id"]}, {"required": ["sender_agent_name"]}, {"required": ["sender_run_id"]}]}
+      }
+    },
+    {
+      "if": {"properties": {"sender_type": {"const": "agent_run"}}, "required": ["sender_type"]},
+      "then": {
+        "required": ["sender_agent_id", "sender_agent_name", "sender_run_id"],
+        "properties": {"sender_id": {"pattern": "^run_[0-9a-f]{32}$"}}
+      }
+    },
+    {
+      "if": {"properties": {"sender_type": {"const": "subsystem"}}, "required": ["sender_type"]},
+      "then": {
+        "properties": {"sender_id": {"const": "crewfold-check-worker"}},
+        "not": {"anyOf": [{"required": ["sender_agent_id"]}, {"required": ["sender_agent_name"]}, {"required": ["sender_run_id"]}]}
+      }
+    }
+  ],
   "properties": {
     "id": {"type": "string", "pattern": "^msg_[0-9a-f]{32}$"},
     "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
     "thread_id": {"type": "string", "pattern": "^thread_[0-9a-f]{32}$"},
     "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
     "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
-    "sender_type": {"enum": ["owner", "agent_run"]},
+    "sender_type": {"enum": ["owner", "agent_run", "subsystem"]},
     "sender_id": {"type": "string", "minLength": 1},
     "sender_agent_id": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
     "sender_agent_name": {"type": "string", "minLength": 1, "maxLength": 63},

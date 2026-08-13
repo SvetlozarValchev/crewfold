@@ -7,20 +7,43 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 17
+	LatestSchemaVersion = 1
 
-	MutationAfterProjection          = "after_projection"
-	MutationAfterEvent               = "after_event"
-	MutationAfterProposalActions     = "after_proposal_actions"
-	MutationAfterProposalSubmission  = "after_proposal_submission"
-	MutationAfterProposalEffects     = "after_proposal_effects"
-	MutationAfterProposalDecision    = "after_proposal_decision"
-	MutationAfterSchedulingAuthority = "after_scheduling_authority"
-	MutationAfterSchedulingRun       = "after_scheduling_run"
-	MutationAfterSchedulingAction    = "after_scheduling_action"
-	MutationAfterSchedulingReceipt   = "after_scheduling_receipt"
-	MutationAfterRetryRun            = "after_retry_run"
-	MutationAfterRetryReceipt        = "after_retry_receipt"
+	MutationAfterProjection                     = "after_projection"
+	MutationAfterEvent                          = "after_event"
+	MutationAfterProposalActions                = "after_proposal_actions"
+	MutationAfterProposalSubmission             = "after_proposal_submission"
+	MutationAfterProposalEffects                = "after_proposal_effects"
+	MutationAfterProposalDecision               = "after_proposal_decision"
+	MutationAfterSchedulingAuthority            = "after_scheduling_authority"
+	MutationAfterSchedulingRun                  = "after_scheduling_run"
+	MutationAfterSchedulingAction               = "after_scheduling_action"
+	MutationAfterSchedulingReceipt              = "after_scheduling_receipt"
+	MutationAfterRetryRun                       = "after_retry_run"
+	MutationAfterRetryReceipt                   = "after_retry_receipt"
+	MutationAfterCheckLaunchReceipt             = "after_check_launch_receipt"
+	MutationAfterCheckRuntimeBinding            = "after_check_runtime_binding"
+	MutationAfterCheckResult                    = "after_check_result"
+	MutationAfterCheckFreshness                 = "after_check_freshness"
+	MutationAfterCheckRequestProjection         = "after_check_request_projection"
+	MutationAfterCheckRequestEvent              = "after_check_request_event"
+	MutationAfterCheckRequestJob                = "after_check_request_job"
+	MutationAfterCheckRequestIdempotency        = "after_check_request_idempotency"
+	MutationAfterCheckLaunchEvent               = "after_check_launch_event"
+	MutationAfterCheckArtifact                  = "after_check_artifact"
+	MutationAfterCheckEvidence                  = "after_check_evidence"
+	MutationAfterCheckNotification              = "after_check_notification"
+	MutationAfterCheckMessage                   = "after_check_message"
+	MutationAfterCheckResultEvent               = "after_check_result_event"
+	MutationAfterCheckRepairProposalProjection  = "after_check_repair_proposal_projection"
+	MutationAfterCheckRepairProposalEvent       = "after_check_repair_proposal_event"
+	MutationAfterCheckRepairProposalIdempotency = "after_check_repair_proposal_idempotency"
+	MutationAfterCheckRepairDecision            = "after_check_repair_decision"
+	MutationAfterCheckRepairTask                = "after_check_repair_task"
+	MutationAfterCheckRepairIntent              = "after_check_repair_intent"
+	MutationAfterCheckRepairEffect              = "after_check_repair_effect"
+	MutationAfterCheckRepairEvent               = "after_check_repair_event"
+	MutationAfterCheckRepairIdempotency         = "after_check_repair_idempotency"
 )
 
 type Workspace = domain.Workspace
@@ -203,17 +226,19 @@ type TransitionTaskCommand struct {
 }
 
 type CreateRunCommand struct {
-	WorkspaceIdentifier  string
-	TaskID               string
-	CheckoutIdentifier   string
-	ContextPacketID      string
-	Runtime              string
-	Provider             string
-	Scenario             domain.FakeScenario
-	ExpectedTaskRevision int64
-	CapabilityTTL        time.Duration
-	IdempotencyKey       string
-	CorrelationID        string
+	WorkspaceIdentifier             string
+	TaskID                          string
+	CheckoutIdentifier              string
+	ContextPacketID                 string
+	Runtime                         string
+	Provider                        string
+	Scenario                        domain.FakeScenario
+	ExpectedTaskRevision            int64
+	CapabilityTTL                   time.Duration
+	CheckWatchGrantID               string
+	ExpectedCheckWatchGrantRevision int64
+	IdempotencyKey                  string
+	CorrelationID                   string
 }
 
 type ResumeRunCommand struct {
@@ -815,6 +840,327 @@ type ApprovalMutationResult struct {
 type TaskMutationResult struct {
 	Detail        domain.TaskDetail `json:"detail"`
 	EventSequence int64             `json:"event_sequence"`
+}
+
+type CreateCheckDefinitionCommand struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	Name                string
+	Executable          string
+	Arguments           []string
+	WorkingDirectory    string
+	TimeoutMillis       int64
+	OutputByteLimit     int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type RetireCheckDefinitionCommand struct {
+	WorkspaceIdentifier string
+	CheckDefinitionID   string
+	ExpectedRevision    int64
+	Reason              string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListCheckDefinitionsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	Status              string
+	Limit               int
+}
+
+type CreateTaskCheckRequirementCommand struct {
+	WorkspaceIdentifier       string
+	TaskID                    string
+	CriterionKey              string
+	Statement                 string
+	CheckDefinitionID         string
+	DefinitionContentRevision int64
+	ExpectedTaskRevision      int64
+	IdempotencyKey            string
+	CorrelationID             string
+}
+
+type RetireTaskCheckRequirementCommand struct {
+	WorkspaceIdentifier string
+	RequirementID       string
+	ExpectedRevision    int64
+	Reason              string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListTaskCheckRequirementsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	TaskID              string
+	Status              string
+	Limit               int
+}
+
+type CheckDefinitionRevision struct {
+	DefinitionID    string `json:"definition_id"`
+	ContentRevision int64  `json:"content_revision"`
+}
+
+type CreateCheckWatchGrantCommand struct {
+	WorkspaceIdentifier   string
+	ProjectIdentifier     string
+	AgentIdentifier       string
+	ExpectedAgentRevision int64
+	Operations            []string
+	Definitions           []CheckDefinitionRevision
+	MaxPending            int
+	MaxInFlight           int
+	ExpiresAt             string
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type RevokeCheckWatchGrantCommand struct {
+	WorkspaceIdentifier string
+	CheckWatchGrantID   string
+	ExpectedRevision    int64
+	Reason              string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListCheckWatchGrantsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	AgentIdentifier     string
+	Status              string
+	Limit               int
+}
+
+type CreateCheckRouteCommand struct {
+	WorkspaceIdentifier       string
+	ProjectIdentifier         string
+	CheckDefinitionID         string
+	DefinitionContentRevision int64
+	Trigger                   string
+	Duty                      string
+	AgentIdentifier           string
+	ExpectedAgentRevision     int64
+	IdempotencyKey            string
+	CorrelationID             string
+}
+
+type RetireCheckRouteCommand struct {
+	WorkspaceIdentifier string
+	CheckRouteID        string
+	ExpectedRevision    int64
+	Reason              string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListCheckRoutesQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	DefinitionID        string
+	Trigger             string
+	Duty                string
+	Status              string
+	Limit               int
+}
+
+type ConfigureCheckPolicyCommand struct {
+	WorkspaceIdentifier         string
+	ProjectIdentifier           string
+	RepairProposalsEnabled      bool
+	RepairLaunchProfileID       string
+	RepairLaunchProfileRevision int64
+	MaxOpenRepairProposals      int
+	ExpectedRevision            int64
+	IdempotencyKey              string
+	CorrelationID               string
+}
+
+type RequestCheckRunCommand struct {
+	WorkspaceIdentifier               string
+	TaskID                            string
+	RequirementID                     string
+	CheckDefinitionIdentifier         string
+	CheckoutIdentifier                string
+	ExpectedRequirementRevision       int64
+	ExpectedDefinitionContentRevision int64
+	ExpectedCheckoutRevision          int64
+	IdempotencyKey                    string
+	CorrelationID                     string
+}
+
+type RequestGrantedCheckRunCommand struct {
+	SourceRunID           string
+	CheckWatchGrantID     string
+	ExpectedGrantRevision int64
+	RequirementID         string
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type ListCheckRunsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	TaskID              string
+	RequirementID       string
+	DefinitionID        string
+	Status              string
+	Outcome             string
+	Limit               int
+}
+
+type CheckWork struct {
+	Run           domain.CheckRun
+	Definition    domain.CheckDefinition
+	Requirement   domain.TaskCheckRequirement
+	Job           domain.CheckJob
+	Checkout      domain.Checkout
+	Repository    domain.Repository
+	LaunchReceipt *domain.CheckLaunchReceipt
+}
+
+type MarkCheckStartingCommand struct {
+	CheckRunID                 string
+	OperationID                string
+	EffectiveSpecSHA256        string
+	EffectiveWorkingDirectory  string
+	Launchable                 bool
+	PreflightFailureCode       string
+	PreflightFailureDiagnostic string
+	Observation                domain.CheckGitObservation
+	CorrelationID              string
+}
+
+type PreparedCheckArtifact struct {
+	Kind          string
+	ContentSHA256 string
+	CapturedBytes int64
+	OmittedBytes  int64
+	Truncated     bool
+}
+
+type FinishCheckRunCommand struct {
+	CheckRunID          string
+	Outcome             string
+	ExitCode            *int
+	Forced              bool
+	DiagnosticCode      string
+	Diagnostic          string
+	TerminalObservation domain.CheckGitObservation
+	Artifacts           []PreparedCheckArtifact
+	CorrelationID       string
+}
+
+type ListGrantedCheckResultsQuery struct {
+	SourceRunID string
+	After       string
+	Limit       int
+}
+
+type GrantedCheckResultPage struct {
+	Items      []domain.CheckRunListItem `json:"items"`
+	NextCursor string                    `json:"next_cursor,omitempty"`
+}
+
+type ProposeGrantedCheckRepairCommand struct {
+	SourceRunID    string
+	CheckResultID  string
+	Rationale      string
+	IdempotencyKey string
+	CorrelationID  string
+}
+
+// PrepareCheckWatchCommand identifies one bounded, read-only watch pass. The
+// returned preparation contains the exact database facts which the caller may
+// observe through Git; it conveys no authority to mutate them.
+type PrepareCheckWatchCommand struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	After               string
+	Limit               int
+}
+
+type ListCheckWatchScopesQuery struct {
+	After string
+	Limit int
+}
+
+type CheckWatchScope struct {
+	WorkspaceID   string `json:"workspace_id"`
+	WorkspaceName string `json:"workspace_name"`
+	ProjectID     string `json:"project_id"`
+	ProjectName   string `json:"project_name"`
+}
+
+type CheckWatchScopePage struct {
+	Items      []CheckWatchScope `json:"items"`
+	NextCursor string            `json:"next_cursor,omitempty"`
+}
+
+// CheckWatchCandidate is the immutable source identity for one result selected
+// by a prepared watch pass. RepositoryFingerprint and CheckoutPath are inputs
+// to real Git inspection; Role and Purpose metadata are intentionally absent.
+type CheckWatchCandidate struct {
+	CheckResultID         string `json:"check_result_id"`
+	FreshnessRevision     int64  `json:"freshness_revision"`
+	RepositoryID          string `json:"repository_id"`
+	RepositoryRevision    int64  `json:"repository_revision"`
+	RepositoryFingerprint string `json:"repository_fingerprint"`
+	ObjectFormat          string `json:"object_format"`
+	CheckoutID            string `json:"checkout_id"`
+	CheckoutRevision      int64  `json:"checkout_revision"`
+	CheckoutPath          string `json:"checkout_path"`
+}
+
+type PreparedCheckWatch struct {
+	WorkspaceID          string                `json:"workspace_id"`
+	ProjectID            string                `json:"project_id"`
+	RequestedAfter       string                `json:"requested_after,omitempty"`
+	RequestedLimit       int                   `json:"requested_limit"`
+	RequestSHA256        string                `json:"request_sha256"`
+	FromEventSequence    int64                 `json:"from_event_sequence"`
+	ThroughEventSequence int64                 `json:"through_event_sequence"`
+	CutoffEventSequence  int64                 `json:"cutoff_event_sequence"`
+	FromResultID         string                `json:"from_result_id,omitempty"`
+	ThroughResultID      string                `json:"through_result_id,omitempty"`
+	CaughtUp             bool                  `json:"caught_up"`
+	Candidates           []CheckWatchCandidate `json:"candidates"`
+	PreparationSHA256    string                `json:"preparation_sha256"`
+}
+
+type CheckWatchObservation struct {
+	CheckResultID     string                     `json:"check_result_id"`
+	FreshnessRevision int64                      `json:"freshness_revision"`
+	Observation       domain.CheckGitObservation `json:"observation"`
+}
+
+type ApplyCheckWatchCommand struct {
+	Preparation    PreparedCheckWatch
+	Observations   []CheckWatchObservation
+	IdempotencyKey string
+	CorrelationID  string
+	PersistNoop    bool
+}
+
+type ListCheckRepairProposalsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	TaskID              string
+	Status              string
+	Limit               int
+}
+
+type DecideCheckRepairCommand struct {
+	WorkspaceIdentifier   string
+	CheckRepairProposalID string
+	ExpectedRevision      int64
+	DecisionNote          string
+	IdempotencyKey        string
+	CorrelationID         string
 }
 
 type Options struct {

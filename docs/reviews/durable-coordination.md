@@ -19,7 +19,7 @@
   launching a provider process.
 - Acceptance scenario path: `test/scenarios/durable-coordination/run.sh`
 - Exact command: `./scripts/check.sh`
-- Expected result: formatting, vet, unit, migration, protocol, race, and every
+- Expected result: formatting, vet, unit, schema, protocol, race, and every
   capability-named black-box scenario pass; durable coordination prints
   `Durable coordination acceptance: PASS`; no runtime/provider process starts.
 - Observed result: passed on Linux/amd64 with Go 1.26.5. The public CLI created an
@@ -35,7 +35,7 @@
 | Formatting/static | `./scripts/check.sh` | passed | `gofmt` clean and `go vet ./...` passed |
 | Unit/store | `go test ./...` via check script | passed | Definitions, idempotency, budgets, state validation, readiness, cycles, assignment history, leases, and optimistic revisions |
 | Race | `go test -race ./...` via check script | passed | Concurrent API writers, controlled-clock reconciliation, daemon restart, and prior packages are race-clean |
-| Store/migration | `go test ./internal/store` | passed | Schema v3 plus representative schema-v2 upgrade preserving workspace/project/repository/checkout/event/idempotency data |
+| Store/schema | `go test ./internal/store` | passed | Current-baseline coordination integrity with workspace/project/repository/checkout/event/idempotency data |
 | Protocol | `go test ./protocol` | passed | Unique valid JSON Schema IDs/references, result constant agreement, and provider-neutral method names |
 | Component | `go test ./internal/daemon` | passed | Real Unix socket/SQLite/Git setup, all coordination operations, concurrent writers, controlled lease expiry, and restart persistence |
 | Black-box acceptance | Durable coordination scenario via check script | passed | Public binary exercises happy/failure paths and restart without test-only API access |
@@ -69,7 +69,7 @@
 
 ## Persistence and recovery
 
-- Durable state introduced or changed: schema version 3 adds `agents`,
+- Durable state exercised: `agents`,
   `objectives`, `tasks`, `task_dependencies`, and `task_assignments` plus indexes
   for unique active assignment, project/status ordering, dependency traversal, and
   agent assignment queries.
@@ -79,11 +79,9 @@
 - Reconciliation outcome: definitions, budgets, graph edges, states, revisions,
   assignment history, and events survive restart. Expired leases reconcile once;
   a second pass emits no duplicate event.
-- Migration fixture added: `internal/store/testdata/schema-v002.sql` contains
-  representative schema-v2 source/workspace/event/idempotency data and upgrades
-  to schema version 3 without loss or fabricated coordination rows.
-- Backup/restore impact: online backup must include the live WAL. There is still no
-  backup command or down migration; rollback requires a compatible backup.
+- Current-baseline tests construct representative source/workspace/event/
+  idempotency and coordination rows and prove restart without loss or fabricated
+  authority. A coherent live backup must include the WAL.
 
 ## Security and autonomy
 
@@ -107,8 +105,8 @@
 - API/schema changes: additive protocol-v1 methods for agent/objective/task CRUD,
   dependency/assignment/state mutations, and coordination status. Twenty-three
   local method schemas and nine domain schemas publish the new wire records.
-- Storage changes: forward-only schema migration 2→3. Older binaries correctly
-  refuse the newer `user_version`; rollback requires a pre-upgrade backup.
+- Storage evidence: fresh-baseline creation and canonical integrity cover the
+  coordination tables and indexes.
 - Adapter/runtime compatibility changes: none. Provider and runtime are opaque
   configuration strings; no adapter interface or process exists yet.
 - Earlier capability scenarios rerun: all pass after scenario, protocol-test,
