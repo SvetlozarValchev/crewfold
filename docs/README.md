@@ -53,6 +53,7 @@ explicitly rather than silently treating either as authoritative.
 - [Canonical knowledge milestone review](reviews/canonical-knowledge.md)
 - [Curation, retrieval, collaboration, and live-context milestone review](reviews/curation-retrieval-live-context.md)
 - [Manager proposals and deterministic supervision milestone review](reviews/manager-supervisor.md)
+- [Owner-granted local checks milestone review](reviews/local-checks.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 

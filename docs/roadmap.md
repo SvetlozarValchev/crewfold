@@ -7,7 +7,7 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M16 are complete**. Evidence is recorded in the [M0
+Current status: **M0 through M17 are complete**. Evidence is recorded in the [M0
 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -67,6 +67,12 @@ protocol coverage, the complete stable-tree race/scenario gate, and an independe
 final audit with zero unresolved defects. Its implementation commit is
 `3c7639a3ef54f68030e999015b61a45c32825f72`.
 
+M17's [passed local-check review](reviews/local-checks.md) records exact
+grant-only check authority, the separate recoverable check lifecycle, mechanical
+evidence and monotonic freshness, honest subsystem routing, inert repair
+proposals, the single current schema, and the complete race/scenario gate. Its
+implementation commit is `91d4cb4d3f62f058d20c9b18bc2d408b988e78b8`.
+
 ## Sequence
 
 | Milestone | Increment | Demonstrable outcome | Depends on |
@@ -88,7 +94,7 @@ final audit with zero unresolved defects. Its implementation commit is
 | M14 ✓ | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
 | M15 ✓ | Curator/retrieval | Retrieve, curate, exchange, export, dispute, and incrementally deliver canonical context under bounded authority | M14 |
 | M16 ✓ | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
-| M17 ◐ | Local checks/check-watch capability | Route fresh check evidence without granting merge authority | M16 |
+| M17 ✓ | Local checks/check-watch capability | Route fresh check evidence without granting merge authority | M16 |
 | M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
 | M19 | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
 | M20 | Personal beta | Back up, restore, verify current-baseline integrity, and load-test 100 registered agent definitions | M19 |
@@ -236,23 +242,18 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M17 is active. It adds allowlisted local checks, exact mechanical evidence and
-freshness, and an owner-granted check-watch capability attachable to any eligible
-agent without inventing a `CI watcher` role or granting merge authority. Its
-frozen contract is
-[ADR-0016](decisions/0016-owner-granted-local-check-evidence.md): the current
-packet may carry one project-scoped exact check grant, mutually exclusive with
-management authority; checks have a separate durable lifecycle and stable direct
-runtime operation ID; only a latest clean same-HEAD pass verifies its one named
-criterion; dirty work is diagnostic, and observed staleness is monotonic.
+M18 is active. It adds explicit pre-work deliverable commitments, revisioned
+owner-reviewed outcome assessments, immutable owner checkpoints, and bounded
+deterministic management briefings. Every material briefing claim must retain an
+exact provenance path to durable decisions, evidence, verification freshness,
+risks, unknowns, deviations, or follow-up work. A run, handoff, or check result
+can support an assessment but cannot make delivery accepted by implication.
 
-Failures route through exact current assignments or exact owner duty routes with
-honest `crewfold-check-worker` subsystem provenance. Repair suggestions are inert
-and disabled by default; only an owner decision under an exact current policy and
-profile creates repair work. Check processing never completes a task, records
-policy acceptance, commits, pushes, merges, deploys, or selects integration order.
-Remote CI, dirty-content fingerprints, and sandbox/no-network enforcement remain
-deferred.
+M17 is complete at implementation commit
+`91d4cb4d3f62f058d20c9b18bc2d408b988e78b8`; its
+[passed review](reviews/local-checks.md) records the exact check grant, separate
+runtime saga, evidence/freshness truth, routing, repair, current-schema security,
+race, and public scenario proofs.
 
 M16 is
 complete at implementation commit
