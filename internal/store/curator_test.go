@@ -742,6 +742,119 @@ authority_check_id,knowledge_event_sequence,event_sequence,created_at,actor_id,a
 FROM curator_auto_acceptances WHERE id=?`, "cauto_ffffffffffffffffffffffffffffffff", auto.ID)
 }
 
+func TestCuratorDatabaseRejectsInvalidUTF8AndForgedOutputHashes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		invalidSource bool
+		forgeHash     bool
+	}{
+		{name: "invalid UTF-8 exact copy", invalidSource: true},
+		{name: "forged matching stored output hashes", forgeHash: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			storage := openTestStore(t, t.TempDir(), Options{})
+			setup, proposal := createAcceptedCuratorMeeting(t, storage)
+			if test.invalidSource {
+				invalidSummary := "invalid-" + string([]byte{0xff})
+				if _, err := storage.db.Exec("UPDATE meeting_proposals SET summary = ? WHERE id = ?", invalidSummary, proposal.ID); err != nil {
+					t.Fatalf("make curator source invalid UTF-8: %v", err)
+				}
+			}
+			if err := insertDirectCuratorDerivation(t, storage, setup.workspace.ID, setup.project.ID, proposal.ID, test.forgeHash); err == nil ||
+				!strings.Contains(err.Error(), "invalid curator derivation") {
+				t.Fatalf("direct curator derivation error = %v, want trigger rejection", err)
+			}
+		})
+	}
+}
+
+func insertDirectCuratorDerivation(t *testing.T, storage *Store, workspaceID, projectID, proposalID string, forgeOutputHash bool) error {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := storage.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin direct curator derivation: %v", err)
+	}
+	defer tx.Rollback()
+
+	var ruleID string
+	var ruleRevision int64
+	if err := tx.QueryRowContext(ctx, `
+SELECT id, revision FROM curator_rules
+WHERE workspace_id = ? AND name = ?
+ORDER BY revision DESC LIMIT 1`, workspaceID, domain.CuratorRuleAcceptedMeetingResolutionCopy).Scan(&ruleID, &ruleRevision); err != nil {
+		t.Fatalf("read direct curator rule: %v", err)
+	}
+	var meetingID, agenda, summary, proposalStatus, meetingStatus, outputHash, sourceHash string
+	var proposalRevision int64
+	if err := tx.QueryRowContext(ctx, `
+SELECT m.id, m.agenda, mp.summary, mp.revision, mp.status, m.status,
+       lower(hex(sha256(m.agenda || char(10) || mp.summary))),
+       lower(hex(sha256(
+           m.id || char(10) || mp.id || char(10) || CAST(mp.revision AS TEXT) || char(10) ||
+           m.agenda || char(10) || mp.summary || char(10) || mp.status || char(10) || m.status
+       )))
+FROM meeting_proposals mp JOIN meetings m ON m.id = mp.meeting_id
+WHERE mp.id = ?`, proposalID).Scan(&meetingID, &agenda, &summary, &proposalRevision, &proposalStatus, &meetingStatus, &outputHash, &sourceHash); err != nil {
+		t.Fatalf("read direct curator source: %v", err)
+	}
+	if proposalStatus != domain.MeetingProposalAccepted || meetingStatus != domain.MeetingConcluded {
+		t.Fatalf("direct curator source status = %s/%s", proposalStatus, meetingStatus)
+	}
+	if forgeOutputHash {
+		outputHash = strings.Repeat("f", 64)
+	}
+	itemID, err := randomID("know_")
+	if err != nil {
+		t.Fatalf("generate direct curator item ID: %v", err)
+	}
+	revisionID, err := randomID("krev_")
+	if err != nil {
+		t.Fatalf("generate direct curator revision ID: %v", err)
+	}
+	derivationID, err := randomID("cder_")
+	if err != nil {
+		t.Fatalf("generate direct curator derivation ID: %v", err)
+	}
+	now := storage.nowText()
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO knowledge_items(id,workspace_id,project_id,task_scope_id,type,created_at,created_by,created_by_type)
+VALUES(?,?,?,NULL,'decision',?,'subsystem:curator','subsystem')`, itemID, workspaceID, projectID, now); err != nil {
+		t.Fatalf("insert direct curator item: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO knowledge_revisions(
+    id,item_id,revision_number,state_revision,title,body,content_hash,review_status,currency_status,
+    confidence,verification_status,freshness_policy,proposed_at,proposed_by,proposed_by_type
+) VALUES(?,?,1,1,?,?,?,'proposed','pending','medium','supported','until_superseded',?,'subsystem:curator','subsystem')`,
+		revisionID, itemID, agenda, summary, outputHash, now); err != nil {
+		t.Fatalf("insert direct curator revision: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO knowledge_sources(revision_id,ordinal,source_type,source_id,source_revision,role)
+VALUES(?,0,'meeting_proposal',?,?,'primary')`, revisionID, proposalID, proposalRevision); err != nil {
+		t.Fatalf("insert direct curator source: %v", err)
+	}
+	eventSequence, err := appendEventForActor(ctx, tx, workspaceID, "curator_derivation", derivationID, 1,
+		curatorDerivedEvent, "request-direct-curator-derivation", now, domain.CuratorActorID, domain.KnowledgeActorSubsystem,
+		map[string]any{"knowledge_revision_id": revisionID, "meeting_id": meetingID})
+	if err != nil {
+		t.Fatalf("append direct curator event: %v", err)
+	}
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO curator_derivations(
+    id,workspace_id,project_id,rule_id,rule_name,rule_revision,source_type,source_id,source_revision,
+    source_content_hash,knowledge_revision_id,output_content_hash,created_at,created_by,event_sequence
+) VALUES(?,?,?,?,?,?,'meeting_proposal',?,?,?,?,?,?,'subsystem:curator',?)`,
+		derivationID, workspaceID, projectID, ruleID, domain.CuratorRuleAcceptedMeetingResolutionCopy, ruleRevision,
+		proposalID, proposalRevision, sourceHash, revisionID, outputHash, now, eventSequence)
+	return err
+}
+
 func insertRawCuratorMeetingSources(t *testing.T, storage *Store, workspaceID, projectID string, count int, unsafe bool) {
 	t.Helper()
 	now := storage.nowText()

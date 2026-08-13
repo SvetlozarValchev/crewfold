@@ -169,14 +169,19 @@ WHEN NOT (
           AND kr.proposed_by = 'subsystem:curator'
           AND kr.proposed_by_type = 'subsystem'
           AND kr.content_hash = NEW.output_content_hash
+          AND NEW.output_content_hash = lower(hex(sha256(
+              m.agenda || char(10) || mp.summary
+          )))
           AND NEW.source_content_hash = lower(hex(sha256(
               m.id || char(10) || mp.id || char(10) || CAST(mp.revision AS TEXT) || char(10) ||
               m.agenda || char(10) || mp.summary || char(10) || mp.status || char(10) || m.status
           )))
           AND length(CAST(m.agenda AS BLOB)) BETWEEN 1 AND 160
           AND instr(m.agenda, char(0)) = 0
+          AND crewfold_utf8_valid(m.agenda) = 1
           AND length(CAST(mp.summary AS BLOB)) BETWEEN 1 AND 2048
           AND instr(mp.summary, char(0)) = 0
+          AND crewfold_utf8_valid(mp.summary) = 1
           AND (SELECT COUNT(*) FROM knowledge_sources all_sources
                WHERE all_sources.revision_id = kr.id) = 1
     )
