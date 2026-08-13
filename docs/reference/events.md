@@ -10,8 +10,11 @@ success/failure facts are also implemented. Claim add/release/expiry, overlap
 open/resolution, drift open/resolution, and structured meeting facts are
 implemented. Canonical knowledge proposal/governance, authority-denial, and
 context-packet build, live-context delta, and acknowledgement facts are also
-implemented. Names for policy, checks, and external integrations remain proposals; the
-catalogue defines intended coverage, not a frozen schema.
+implemented. Owner-granted manager authority/profile lifecycle and manager
+proposal submission/decision facts are implemented; supervisor/approval facts
+listed below are part of the M16 durable contract as their store lane lands.
+Names for checks and external integrations remain proposals; the catalogue
+defines intended coverage, not a frozen schema.
 
 ## Envelope
 
@@ -120,6 +123,9 @@ task.retry_requested
 task.cancelled
 task.handoff_recorded
 task.run_stopped
+task.reassigned
+task.role_designated
+task.claim_requirement_created
 ```
 
 ## Claims and overlaps
@@ -303,6 +309,86 @@ or rendering one does not append a fact event. Optional rendering or projector
 failures are operational diagnostics unless they change durable coordination
 state.
 
+## Manager proposals and deterministic supervision
+
+The implemented manager facts are:
+
+```text
+manager.grant_created
+manager.grant_revoked
+manager.launch_profile_created
+manager.launch_profile_retired
+manager.proposal_submitted
+manager.proposal_accepted
+manager.proposal_rejected
+manager.proposal_stale
+task.claim_requirement_created
+supervisor.intent_created
+supervisor.intent_satisfied
+supervisor.intent_failed
+supervisor.intent_cancelled
+```
+
+Grant/profile facts identify the exact entity/revision and minimal scope/hash;
+the immutable normalized authority and scenario remain in their canonical rows.
+`manager.proposal_submitted` is an agent-run fact linked to the sealed proposal
+submission and exact action count/hash. It has no work effect.
+`manager.proposal_accepted` is a local-owner fact committed with the complete
+typed effect set; `manager.proposal_rejected` is a local-owner decision with no
+work effects. Failed current-state revalidation records
+`manager.proposal_stale`, its exact validation diagnostics, and no effects.
+Accepted claim requirements and scheduling intents append their own exact creation
+facts alongside the ordinary task/dependency facts. A definitive completion
+closes the intent with `supervisor.intent_satisfied`; rejected completion or
+runtime failure closes it with `supervisor.intent_failed`; a stopped run closes it
+with `supervisor.intent_cancelled`. A definite `start_failed` retains the original
+`run_requested` intent only while another exact bounded retry remains authorized;
+fresh retry runs keep that intent until the latest receipt-linked successor is
+definitive. Disabling or exhausting retry closes it failed. Owner task
+cancellation closes a pending/deferred intent, or a `run_requested` intent whose
+exact latest retry-chain run is definitively `start_failed`, with one local-owner
+`supervisor.intent_cancelled` in the same task transaction. Invalid proposal
+submission is still an immutable submission fact, not an applied plan. Exact
+idempotent replay appends none of these a second time.
+
+The M16 supervisor fact set is:
+
+```text
+supervisor.policy_configured
+supervisor.action_recorded
+supervisor.action_applied
+supervisor.scan_completed
+approval.requested
+approval.granted
+approval.denied
+approval.consumed
+```
+
+A policy fact identifies the new immutable revision. An action-recorded fact
+freezes condition/response, entity and policy revisions, canonical condition key,
+constraint snapshot hash, and journal cursor; it is evidence, not necessarily an
+effect. `supervisor.action_applied` requires the same action plus either the exact
+automatic dependency-ready scheduling rule or its granted/consumed approval.
+Approval facts always identify one exact supervisor action and approval revision.
+One decision cannot be reused for a second action. Queries, explanations,
+capacity deferrals, and exact idempotent replays append no second fact.
+`supervisor.scan_completed` seals the scan's input/output cursor and bounded result
+receipt when a pass records material action state. A pass first captures a fixed
+journal cutoff and classifies closed-union pages of at most 1,000 events. It may
+advance an understood partial-page cursor without an event, but cannot act until
+it reaches that captured cutoff. An unknown event type fails with
+`unsupported_supervisor_event` before cursor, effect, event, or idempotency
+commit. Owner-facing no-op commands retain a durable idempotency receipt but no
+scan event; internal daemon no-ops retain neither receipt nor event. Read-only
+explanations still append no fact.
+
+The scheduling transaction also emits the ordinary assignment, context-packet,
+run-request, and task facts. Those ordinary facts remain the work-state journal;
+the supervisor action and immutable scheduling receipt explain why that exact run
+was authorized. Runtime launch occurs only after their transaction commits, so a
+crash before launch creates no invented `run.started` fact and restart reconciles
+the same durable run.
+
 ## Policy, budgets, and approvals
 
 ```text
@@ -316,6 +402,7 @@ approval.requested
 approval.granted
 approval.denied
 approval.expired
+approval.consumed
 ```
 
 ## Runtime and integration

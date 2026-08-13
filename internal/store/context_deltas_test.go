@@ -1011,6 +1011,12 @@ func TestContextDeltaExactByteBoundariesRemainClassifiable(t *testing.T) {
 	if err != nil || atLimit.ByteSize != maximumContextDeltaBytes {
 		t.Fatalf("exact delta size=%d body=%d err=%v", atLimit.ByteSize, bodyBytes, err)
 	}
+	v5 := atLimit
+	v5.BasePacketSchema = domain.ContextPacketSchemaV5
+	v5.ContentHash, v5.ByteSize, v5.Budget = "", 0, domain.ContextDeltaBudget{}
+	if _, err := finalizeContextDelta(&v5, 0); err != nil || validateContextDelta(v5) != nil {
+		t.Fatalf("packet-v5 delta did not satisfy the same live-context contract: %#v, %v", v5, err)
+	}
 	overLimit, err := makeDelta(bodyBytes+1, 0)
 	if err != nil || overLimit.ByteSize != maximumContextDeltaBytes+1 {
 		t.Fatalf("over delta size=%d err=%v", overLimit.ByteSize, err)

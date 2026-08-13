@@ -163,6 +163,10 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 		fmt.Fprintln(diagnostics, err)
 		return 1
 	}
+	if err := runFixtureManagement(ctx, client, scenario.Management, briefing); err != nil {
+		fmt.Fprintln(diagnostics, err)
+		return 1
+	}
 	for index, step := range scenario.Steps {
 		result, err := reportFixtureStep(ctx, client, index, step)
 		if err != nil || result.IsError {
@@ -234,6 +238,153 @@ func runFixtureKnowledge(ctx context.Context, client fixtureToolClient, plan dom
 		return errors.New("reserved fixture knowledge acceptance probe was not denied")
 	}
 	return nil
+}
+
+func runFixtureManagement(ctx context.Context, client fixtureToolClient, plan domain.FixtureManagement, briefing domain.RunBriefing) error {
+	if emptyFixtureManagement(plan) {
+		return nil
+	}
+	if plan.ExpectToolsDenied {
+		for _, tool := range []string{"crewfold_propose_assignment", "crewfold_propose_escalation", "crewfold_propose_review", "crewfold_propose_tasks"} {
+			result, err := client.CallTool(ctx, tool, map[string]any{})
+			if err != nil || !result.IsError || fixtureToolErrorCode(result) != "denied_by_policy" {
+				return fmt.Errorf("ungranted fixture manager tool %s was not denied", tool)
+			}
+		}
+		return nil
+	}
+	grant := briefing.Packet.ManagementGrant
+	if briefing.Packet.Schema != domain.ContextPacketSchemaV5 || grant == nil || grant.GrantID == "" {
+		return errors.New("fixture manager proposals require an exact packet-v5 grant")
+	}
+	proposalIDs := make([]string, 0, len(plan.Proposals))
+	for index, proposal := range plan.Proposals {
+		key := fmt.Sprintf("fixture-manager-%s-proposal-%d", briefing.Run.ID, index+1)
+		result, err := callFixtureManagerProposal(ctx, client, proposal, key)
+		if err != nil {
+			return fmt.Errorf("submit fixture manager proposal %d transport failed: %w", index+1, err)
+		}
+		if result.IsError {
+			var body mcp.ToolError
+			if decodeErr := json.Unmarshal(result.StructuredContent, &body); decodeErr != nil {
+				return fmt.Errorf("submit fixture manager proposal %d failed with an unreadable bounded tool error", index+1)
+			}
+			return fmt.Errorf("submit fixture manager proposal %d failed: %s: %s", index+1, boundedFixtureDiagnostic(body.Code, 64), boundedFixtureDiagnostic(body.Message, 512))
+		}
+		var stored domain.ManagerProposal
+		if err := json.Unmarshal(result.StructuredContent, &stored); err != nil || stored.ID == "" ||
+			stored.SourceRunID != briefing.Run.ID || stored.SourceAgentID != briefing.Run.AgentID ||
+			stored.GrantID != grant.GrantID || stored.GrantRevision != grant.GrantRevision ||
+			stored.Kind != proposal.Kind || stored.Status != domain.ManagerProposalPending {
+			return fmt.Errorf("decode fixture manager proposal %d failed", index+1)
+		}
+		proposalIDs = append(proposalIDs, stored.ID)
+	}
+	if plan.ProbeReservedAcceptance {
+		denied, err := client.CallTool(ctx, "crewfold_accept_manager_proposal", map[string]any{
+			"proposal": proposalIDs[0], "expected_revision": 1, "idempotency_key": "fixture-manager-" + briefing.Run.ID + "-accept",
+		})
+		if err != nil || !denied.IsError || fixtureToolErrorCode(denied) != "denied_by_policy" {
+			return errors.New("reserved fixture manager proposal acceptance probe was not denied")
+		}
+	}
+	if plan.ProbeRevokedGrant {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(plan.RevocationProbeDelayMillis) * time.Millisecond):
+		}
+		denied, err := callFixtureManagerProposal(ctx, client, plan.Proposals[0], "fixture-manager-"+briefing.Run.ID+"-revoked-probe")
+		if !fixtureCallDeniedByPolicy(denied, err) {
+			return fmt.Errorf("revoked fixture manager grant probe was not denied: %s", fixtureCallDiagnostic(denied, err))
+		}
+	}
+	return nil
+}
+
+func fixtureCallDeniedByPolicy(result mcp.ToolCallResult, err error) bool {
+	if err != nil {
+		var rpcError *mcp.RPCError
+		return errors.As(err, &rpcError) && rpcError.Data != nil && rpcError.Data.Code == "denied_by_policy"
+	}
+	return result.IsError && fixtureToolErrorCode(result) == "denied_by_policy"
+}
+
+func fixtureCallDiagnostic(result mcp.ToolCallResult, err error) string {
+	if err != nil {
+		var rpcError *mcp.RPCError
+		if errors.As(err, &rpcError) && rpcError.Data != nil {
+			return fmt.Sprintf("rpc_error code=%s message=%s", boundedFixtureDiagnostic(rpcError.Data.Code, 64), boundedFixtureDiagnostic(rpcError.Data.Message, 512))
+		}
+		return "transport_error=" + boundedFixtureDiagnostic(err.Error(), 512)
+	}
+	if !result.IsError {
+		return "tool_result is_error=false"
+	}
+	var body mcp.ToolError
+	if decodeErr := json.Unmarshal(result.StructuredContent, &body); decodeErr != nil {
+		return "tool_result is_error=true body=unreadable"
+	}
+	return fmt.Sprintf("tool_result is_error=true code=%s message=%s", boundedFixtureDiagnostic(body.Code, 64), boundedFixtureDiagnostic(body.Message, 512))
+}
+
+func boundedFixtureDiagnostic(value string, maximum int) string {
+	value = strings.Map(func(character rune) rune {
+		if character < 0x20 || character == 0x7f {
+			return -1
+		}
+		return character
+	}, strings.TrimSpace(value))
+	if len(value) > maximum {
+		return value[:maximum]
+	}
+	return value
+}
+
+func callFixtureManagerProposal(ctx context.Context, client fixtureToolClient, proposal domain.FixtureManagerProposal, idempotencyKey string) (mcp.ToolCallResult, error) {
+	tool := map[string]string{
+		domain.ManagerProposalTaskDecomposition: "crewfold_propose_tasks",
+		domain.ManagerProposalAssignment:        "crewfold_propose_assignment",
+		domain.ManagerProposalReview:            "crewfold_propose_review",
+		domain.ManagerProposalEscalation:        "crewfold_propose_escalation",
+	}[proposal.Kind]
+	actions := make([]map[string]any, 0, len(proposal.Actions))
+	for _, action := range proposal.Actions {
+		input, err := fixtureManagerActionInput(action)
+		if err != nil {
+			return mcp.ToolCallResult{}, err
+		}
+		actions = append(actions, input)
+	}
+	return client.CallTool(ctx, tool, map[string]any{"summary": proposal.Summary, "actions": actions, "idempotency_key": idempotencyKey})
+}
+
+// fixtureManagerActionInput deliberately projects the fixture's domain action
+// into the model-authored MCP input union. ManagerProposalAction is also the
+// durable output type, whose Crewfold-assigned id and ordinal must never be
+// reflected back into proposal input (including ordinal zero).
+func fixtureManagerActionInput(action domain.ManagerProposalAction) (map[string]any, error) {
+	var payload any
+	switch action.Type {
+	case domain.ProposalActionCreateTask:
+		payload = action.CreateTask
+	case domain.ProposalActionAddDependency:
+		payload = action.AddDependency
+	case domain.ProposalActionDeclareClaimRequirement:
+		payload = action.DeclareClaimRequirement
+	case domain.ProposalActionAssignTask:
+		payload = action.AssignTask
+	case domain.ProposalActionRequestReview:
+		payload = action.RequestReview
+	case domain.ProposalActionRequestAction:
+		payload = action.RequestAction
+	default:
+		return nil, fmt.Errorf("fixture manager proposal action type %q is unsupported", action.Type)
+	}
+	if payload == nil {
+		return nil, fmt.Errorf("fixture manager proposal action %q has no payload", action.Type)
+	}
+	return map[string]any{"type": action.Type, action.Type: payload}, nil
 }
 
 func runFixtureContradiction(ctx context.Context, client fixtureToolClient, plan domain.FixtureContradiction) error {

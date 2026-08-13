@@ -7,10 +7,20 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 16
+	LatestSchemaVersion = 17
 
-	MutationAfterProjection = "after_projection"
-	MutationAfterEvent      = "after_event"
+	MutationAfterProjection          = "after_projection"
+	MutationAfterEvent               = "after_event"
+	MutationAfterProposalActions     = "after_proposal_actions"
+	MutationAfterProposalSubmission  = "after_proposal_submission"
+	MutationAfterProposalEffects     = "after_proposal_effects"
+	MutationAfterProposalDecision    = "after_proposal_decision"
+	MutationAfterSchedulingAuthority = "after_scheduling_authority"
+	MutationAfterSchedulingRun       = "after_scheduling_run"
+	MutationAfterSchedulingAction    = "after_scheduling_action"
+	MutationAfterSchedulingReceipt   = "after_scheduling_receipt"
+	MutationAfterRetryRun            = "after_retry_run"
+	MutationAfterRetryReceipt        = "after_retry_receipt"
 )
 
 type Workspace = domain.Workspace
@@ -600,6 +610,206 @@ type RunWork struct {
 type MutationResult[T any] struct {
 	Value         T     `json:"value"`
 	EventSequence int64 `json:"event_sequence"`
+}
+
+type CreateManagerGrantCommand struct {
+	WorkspaceIdentifier   string
+	ProjectIdentifier     string
+	ObjectiveID           string
+	TaskID                string
+	AgentIdentifier       string
+	ExpectedTaskRevision  int64
+	ExpectedAgentRevision int64
+	ProposalKinds         []string
+	LaunchProfileIDs      []string
+	AllowedClaimKinds     []string
+	Limits                domain.ManagerProposalLimits
+	ExpiresAt             string
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type RevokeManagerGrantCommand struct {
+	WorkspaceIdentifier string
+	ManagerGrantID      string
+	ExpectedRevision    int64
+	Reason              string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListManagerGrantsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	ObjectiveID         string
+	TaskID              string
+	AgentIdentifier     string
+	Status              string
+	Limit               int
+}
+
+type CreateLaunchProfileCommand struct {
+	WorkspaceIdentifier    string
+	ProjectIdentifier      string
+	AgentIdentifier        string
+	ExpectedAgentRevision  int64
+	Purpose                string
+	Runtime                string
+	Provider               string
+	CheckoutIdentifier     string
+	Scenario               domain.FakeScenario
+	AssignmentLeaseSeconds int64
+	CapabilityTTLSeconds   int64
+	ManagerGrantID         string
+	IdempotencyKey         string
+	CorrelationID          string
+}
+
+type RetireLaunchProfileCommand struct {
+	WorkspaceIdentifier string
+	LaunchProfileID     string
+	ExpectedRevision    int64
+	Reason              string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListLaunchProfilesQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	AgentIdentifier     string
+	ManagerGrantID      string
+	Status              string
+	Limit               int
+}
+
+type InvokeManagerCommand struct {
+	WorkspaceIdentifier     string
+	ObjectiveID             string
+	TaskID                  string
+	ManagerGrantID          string
+	LaunchProfileID         string
+	ExpectedTaskRevision    int64
+	ExpectedGrantRevision   int64
+	ExpectedProfileRevision int64
+	IdempotencyKey          string
+	CorrelationID           string
+}
+
+type ManagerInvocationResult struct {
+	ManagerGrant  domain.ManagerGrant  `json:"manager_grant"`
+	LaunchProfile domain.LaunchProfile `json:"launch_profile"`
+	Detail        domain.RunDetail     `json:"detail"`
+	EventSequence int64                `json:"event_sequence"`
+}
+
+type SubmitManagerProposalCommand struct {
+	RunID                 string
+	ManagerGrantID        string
+	ExpectedGrantRevision int64
+	Kind                  string
+	Summary               string
+	AsOfEventSequence     int64
+	Actions               []domain.ManagerProposalAction
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type AcceptManagerProposalCommand struct {
+	WorkspaceIdentifier string
+	ManagerProposalID   string
+	ExpectedRevision    int64
+	DecisionNote        string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type RejectManagerProposalCommand = AcceptManagerProposalCommand
+
+type ListManagerProposalsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	ObjectiveID         string
+	SourceRunID         string
+	ManagerGrantID      string
+	Kind                string
+	Status              string
+	Limit               int
+}
+
+type ManagerProposalMutationResult struct {
+	Proposal      domain.ManagerProposal         `json:"proposal"`
+	Effects       []domain.ManagerProposalEffect `json:"effects"`
+	EventSequence int64                          `json:"event_sequence"`
+}
+
+type ConfigureSupervisorPolicyCommand struct {
+	WorkspaceIdentifier  string
+	Enabled              bool
+	Limits               domain.SupervisorLimits
+	AutoSchedule         bool
+	AutoRetryLimit       int
+	RetryCooldownSeconds int64
+	ExpectedRevision     int64
+	IdempotencyKey       string
+	CorrelationID        string
+}
+
+type RunSupervisorCommand struct {
+	WorkspaceIdentifier string
+	Limit               int
+	IdempotencyKey      string
+	CorrelationID       string
+	// PersistNoop is set by the owner-facing command boundary so an exact
+	// successful no-op is replayed forever. The daemon's recurring internal
+	// sweep leaves it false to avoid an unbounded receipt stream while idle.
+	PersistNoop bool
+}
+
+type SupervisorRunResult struct {
+	Policy          domain.SupervisorPolicy   `json:"policy"`
+	Actions         []domain.SupervisorAction `json:"actions"`
+	ScheduledRunIDs []string                  `json:"scheduled_run_ids"`
+	EventSequence   int64                     `json:"event_sequence"`
+}
+
+type ExplainSupervisorQuery struct {
+	WorkspaceIdentifier string
+	IntentID            string
+	TaskID              string
+	Limit               int
+}
+
+type ListSupervisorActionsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	TaskID              string
+	RunID               string
+	Status              string
+	Condition           string
+	Limit               int
+}
+
+type ListApprovalRequestsQuery struct {
+	WorkspaceIdentifier string
+	Status              string
+	ActionID            string
+	Limit               int
+}
+
+type DecideApprovalCommand struct {
+	WorkspaceIdentifier string
+	ApprovalRequestID   string
+	ExpectedRevision    int64
+	DecisionNote        string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ApprovalMutationResult struct {
+	Approval      domain.ApprovalRequest  `json:"approval"`
+	Action        domain.SupervisorAction `json:"action"`
+	EventSequence int64                   `json:"event_sequence"`
 }
 
 type TaskMutationResult struct {

@@ -57,6 +57,8 @@ type Config struct {
 	DisableRunWorker          bool
 	DisableClaimWatcher       bool
 	ClaimScanInterval         time.Duration
+	DisableSupervisor         bool
+	SupervisorScanInterval    time.Duration
 	defaultProviders          bool
 }
 
@@ -79,6 +81,10 @@ type server struct {
 	providers      map[string]execution.ProviderAdapter
 	capabilities   *runCapabilityManager
 	claimWatcherID string
+	supervisorPass atomic.Uint64
+	// Only the supervisor worker goroutine accesses this keyset cursor. It
+	// bounds each daemon tick while rotating across every enabled workspace.
+	supervisorWorkspaceCursor string
 }
 
 // Run owns the daemon lifecycle until the context is cancelled or system.stop is
@@ -183,6 +189,7 @@ func Run(ctx context.Context, config Config) error {
 	instance.startRunWorker()
 	instance.processMessageWakeJobs()
 	instance.startClaimWatcher()
+	instance.startSupervisor()
 
 	resolved.Logger.Info("daemon started",
 		"component", "daemon",
@@ -235,6 +242,12 @@ func resolveConfig(config Config) (Config, error) {
 	}
 	if config.ClaimScanInterval < 100*time.Millisecond && !config.DisableClaimWatcher {
 		return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "claim scan interval must be at least 100ms"}
+	}
+	if config.SupervisorScanInterval == 0 {
+		config.SupervisorScanInterval = 250 * time.Millisecond
+	}
+	if config.SupervisorScanInterval < 20*time.Millisecond && !config.DisableSupervisor {
+		return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "supervisor scan interval must be at least 20ms"}
 	}
 	if config.RuntimeDrivers == nil {
 		fakeRuntime := execution.NewFakeRuntime()
@@ -658,6 +671,52 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleMeetingAccept(request), false
 	case localapi.MethodMeetingTakeover:
 		return s.handleMeetingTakeover(request), false
+	case localapi.MethodManagerGrantCreate:
+		return s.handleManagerGrantCreate(request), false
+	case localapi.MethodManagerGrantRevoke:
+		return s.handleManagerGrantRevoke(request), false
+	case localapi.MethodManagerGrantShow:
+		return s.handleManagerGrantShow(request), false
+	case localapi.MethodManagerGrantList:
+		return s.handleManagerGrantList(request), false
+	case localapi.MethodLaunchProfileCreate:
+		return s.handleLaunchProfileCreate(request), false
+	case localapi.MethodLaunchProfileRetire:
+		return s.handleLaunchProfileRetire(request), false
+	case localapi.MethodLaunchProfileShow:
+		return s.handleLaunchProfileShow(request), false
+	case localapi.MethodLaunchProfileList:
+		return s.handleLaunchProfileList(request), false
+	case localapi.MethodManagerInvoke:
+		return s.handleManagerInvoke(request), false
+	case localapi.MethodProposalList:
+		return s.handleProposalList(request), false
+	case localapi.MethodProposalInspect:
+		return s.handleProposalInspect(request), false
+	case localapi.MethodProposalAccept:
+		return s.handleProposalDecision(request, true), false
+	case localapi.MethodProposalReject:
+		return s.handleProposalDecision(request, false), false
+	case localapi.MethodSupervisorPolicyShow:
+		return s.handleSupervisorPolicyShow(request), false
+	case localapi.MethodSupervisorPolicyConfigure:
+		return s.handleSupervisorPolicyConfigure(request), false
+	case localapi.MethodSupervisorRun:
+		return s.handleSupervisorRun(request), false
+	case localapi.MethodSupervisorActionList:
+		return s.handleSupervisorActionList(request), false
+	case localapi.MethodSupervisorActionShow:
+		return s.handleSupervisorActionShow(request), false
+	case localapi.MethodSupervisorExplain:
+		return s.handleSupervisorExplain(request), false
+	case localapi.MethodApprovalList:
+		return s.handleApprovalList(request), false
+	case localapi.MethodApprovalInspect:
+		return s.handleApprovalInspect(request), false
+	case localapi.MethodApprovalAllow:
+		return s.handleApprovalDecision(request, true), false
+	case localapi.MethodApprovalDeny:
+		return s.handleApprovalDecision(request, false), false
 	case localapi.MethodEventsList:
 		return s.handleEventsList(request), false
 	default:

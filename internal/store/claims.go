@@ -269,7 +269,25 @@ func (s *Store) ReconcileExpiredClaims(ctx context.Context, workspaceIdentifier,
 		return 0, err
 	}
 	now := s.nowText()
-	rows, err := tx.QueryContext(ctx, claimSelect+" WHERE workspace_id = ? AND status = 'active' AND lease_expires_at <= ? ORDER BY id", workspace.ID, now)
+	count, err := expireClaimsInTransaction(ctx, tx, workspace.ID, now, correlationID)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, storageFailure("commit claim lease reconciliation", err)
+	}
+	return count, nil
+}
+
+func expireClaimsInTransaction(ctx context.Context, tx *sql.Tx, workspaceID, now, correlationID string) (int, error) {
+	rows, err := tx.QueryContext(ctx, claimSelect+` WHERE workspace_id = ? AND status = 'active'
+AND crewfold_timestamp_key(lease_expires_at) <= crewfold_timestamp_key(?)
+AND NOT EXISTS (
+    SELECT 1 FROM runs run
+    WHERE run.task_id = work_claims.task_id
+      AND run.status IN ('requested','starting','active','blocked','stopping','lost')
+)
+ORDER BY crewfold_timestamp_key(lease_expires_at), id`, workspaceID, now)
 	if err != nil {
 		return 0, storageFailure("list expired claims", err)
 	}
@@ -284,16 +302,13 @@ func (s *Store) ReconcileExpiredClaims(ctx context.Context, workspaceIdentifier,
 		if _, err := tx.ExecContext(ctx, "UPDATE work_claims SET status = 'expired', revision = ?, updated_at = ?, updated_by = ? WHERE id = ? AND status = 'active'", claim.Revision, now, localOwnerActorID, claim.ID); err != nil {
 			return 0, storageFailure("expire claim", err)
 		}
-		sequence, err = appendEvent(ctx, tx, workspace.ID, "claim", claim.ID, claim.Revision, claimExpiredEvent, correlationID, now, map[string]any{"status": claim.Status, "lease_expires_at": claim.LeaseExpiresAt})
+		sequence, err = appendEvent(ctx, tx, workspaceID, "claim", claim.ID, claim.Revision, claimExpiredEvent, correlationID, now, map[string]any{"status": claim.Status, "lease_expires_at": claim.LeaseExpiresAt})
 		if err != nil {
 			return 0, err
 		}
-		if _, sequence, err = resolveClaimOverlaps(ctx, tx, workspace.ID, claim.ID, "claim lease expired", correlationID, now, sequence); err != nil {
+		if _, sequence, err = resolveClaimOverlaps(ctx, tx, workspaceID, claim.ID, "claim lease expired", correlationID, now, sequence); err != nil {
 			return 0, err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, storageFailure("commit claim lease reconciliation", err)
 	}
 	return len(claims), nil
 }
@@ -376,6 +391,10 @@ func (s *Store) Overlap(ctx context.Context, workspaceIdentifier, overlapID, cor
 }
 
 func insertOverlap(ctx context.Context, tx *sql.Tx, left, right domain.WorkClaim, witness, severity, response, correlationID, now string) (domain.WorkOverlap, int64, error) {
+	return insertOverlapForActor(ctx, tx, left, right, witness, severity, response, correlationID, now, localOwnerActorID, "human")
+}
+
+func insertOverlapForActor(ctx context.Context, tx *sql.Tx, left, right domain.WorkClaim, witness, severity, response, correlationID, now, actorID, actorType string) (domain.WorkOverlap, int64, error) {
 	low, high := left, right
 	if high.ID < low.ID {
 		low, high = high, low
@@ -413,7 +432,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, 1)`,
 			}
 		}
 	}
-	sequence, err := appendEvent(ctx, tx, overlap.WorkspaceID, "overlap", overlap.ID, overlap.Revision, overlapOpenedEvent, correlationID, now, overlap)
+	sequence, err := appendEventForActor(ctx, tx, overlap.WorkspaceID, "overlap", overlap.ID, overlap.Revision, overlapOpenedEvent, correlationID, now, actorID, actorType, overlap)
 	return overlap, sequence, err
 }
 

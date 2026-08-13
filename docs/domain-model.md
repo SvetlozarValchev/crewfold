@@ -95,8 +95,9 @@ An agent definition never means a process is currently running.
 
 The implemented subset stores name, role, provider/runtime preference, enabled
 state, maximum concurrency, revision, and audit metadata. Instructions,
-capabilities, team membership, project eligibility, and action policy arrive with
-the capabilities that consume them. Provider/runtime values remain opaque data.
+capabilities, team membership, and action policy arrive with the capabilities that
+consume them. M16 launch profiles provide exact project/agent scheduling bindings.
+Provider/runtime values remain opaque data.
 
 ### Run
 
@@ -152,7 +153,7 @@ participant agent/task/project binding. Full message bodies remain explicit
 mailbox reads; active claim
 snapshots and provider transcripts are deliberate exclusions.
 
-New builds use context-packet schema v4. The caller may provide up to 16 ordered,
+Ordinary new builds use context-packet schema v4. The caller may provide up to 16 ordered,
 unique knowledge revision IDs. The packet preserves those exact requests and
 includes complete snapshots only for revisions that are accepted, current, fresh,
 and applicable to the task's project and optional task scope. It never searches
@@ -178,6 +179,80 @@ undisputed. A failed binding requires a new packet. After successful binding,
 later changes do not rewrite or silently refresh the base; explicit deltas carry
 withdrawals and durable rebase reports an unsafe base contract. Historical v1–v3
 packets remain readable but cannot acquire live delivery authority.
+
+An owner-authorized management-capability build uses schema v5 instead. It
+preserves the complete v4 contract and adds one exact, immutable manager-grant
+snapshot. Ordinary runs and historical packets never acquire manager proposal
+tools merely because their owner-defined descriptive role labels happen to match.
+
+### Launch profile
+
+A launch profile is an owner-created, revisioned execution recipe. One exact
+revision fixes a project and exact agent revision, runtime/provider selection,
+validated fixture or provider scenario, acceptance contract, process limits, and
+write mode. Its purpose and any task-role match are workflow metadata, not
+authority. A profile is
+the only source from which the supervisor may construct a new run; model text is
+never interpreted as an executable, argument vector, environment, provider, or
+capability set.
+
+The profile itself is the scheduling-eligibility record: it names one exact
+project, agent revision, and checkout/runtime/provider recipe. There is no hidden
+project-agent eligibility table or role-derived rank. Team/workspace membership
+and `AgentDefinition.Role` alone do not make an agent schedulable. Retiring a
+profile prevents a new placement without rewriting an already committed run intent.
+
+### Manager grant and proposal
+
+A manager grant is a bounded owner delegation to one exact agent, assigned task,
+project, and objective. Its revision freezes expiry, allowed proposal kinds,
+exact target profile revisions, and task, action, token, cost, and time ceilings.
+The grantee's role remains arbitrary descriptive metadata. The current grant is
+revalidated both when packet v5 binds and on every proposal call; revocation leaves
+historical packet bytes intact but denies later calls.
+
+A manager proposal is immutable, typed, and inert. It contains at most 32 ordered
+actions and 48 KiB (49,152 encoded bytes) of canonical content covering task creation, same-project
+dependencies, claim requirements, assignment nominations, review requirements,
+and owner escalation. Submission creates proposal/audit state only. In particular,
+it creates no task, dependency, assignment, claim, context packet, or run.
+
+Only the local owner accepts or rejects a proposal. Acceptance revalidates the
+whole proposed graph, exact source revisions, scope, grant/profile binding,
+claims, and finite budgets in one immediate transaction, then applies every action
+or none. A proposed claim is only a later scheduling requirement, a nomination is
+only a preference, and a review requirement grants no completion authority.
+
+### Scheduling intent
+
+An accepted assignment-producing action creates one durable scheduling intent
+for an exact task, agent, and launch profile. The open states are `pending`,
+`deferred`, `awaiting_approval`, and `run_requested`; at most one may exist per
+task, and manual assignment cannot replace it. A committed placement retains the
+original intent across bounded fresh-run retries. Completion produces
+`satisfied`, rejected completion or definitive failure produces `failed`, and a
+stopped run produces `cancelled`. A definite start failure remains open only
+while current policy can still authorize another exact retry. Owner task
+cancellation can close pending/deferred work, or retry-pending work only when its
+exact latest receipt-linked run is definitively `start_failed`.
+
+### Supervisor policy, condition, action, and approval
+
+An owner-revisioned supervisor policy names a closed set of automatic actions and
+global, project, provider, and agent concurrency limits. The initial automatic
+action is `schedule_ready`; an optional exact policy may also permit a same-profile
+`start_failed` retry with an exact zero-through-three limit and cooldown. Each
+retry preserves the failed run and creates a fresh run; its action distinguishes
+`prior_run_id` from the new `run_id`. All other conditions, including wall-time
+over-budget and `manager_escalation`, produce an inert approval request.
+
+A supervisor condition freezes the triggering facts and their revisions. A
+supervisor action freezes the condition, policy, placement proof, capacity counts,
+stable reason codes, and optional run IDs. A manager escalation additionally
+freezes the exact accepted `source_proposal_id`/`source_action_id` pair. One condition/action origin and one
+scheduling receipt make repeated scans idempotent. An approval is a single owner
+decision over one still-current request; it cannot authorize a different target
+after the evidence becomes stale.
 
 ### Context delta and acknowledgement
 
@@ -501,3 +576,19 @@ launched it.
     only its local-owner import attestation authorizes the imported final state.
 14. A live-context bound is never satisfied by truncation. An unsafe or oversized
     incremental change becomes durable rebase state.
+15. Agent role strings are owner-defined descriptive labels, never an authority
+    taxonomy. Only an authenticated packet-v5 run with a current exact owner grant
+    may submit the proposal kinds in that grant, and it may neither accept a
+    proposal nor decide an approval.
+16. Proposal submission is operationally inert. Owner acceptance has exactly one
+    decision/application receipt and applies all revalidated actions or none.
+17. Scheduling commits assignment, claims, context/run intent, worker job,
+    supervisor action, event, receipt, and idempotency result before runtime launch.
+    That receipt freezes authority for the one committed launch: later profile
+    retirement, agent disablement or revision change, or lease-deadline passage
+    affects future placements, not worker recovery of the already receipted run.
+18. Reserved and `lost` runs consume every applicable capacity. Lease expiry never
+    makes their tasks ready before runtime reconciliation, and a lost run cannot be
+    automatically retried, released, or reassigned.
+19. Authority-significant proposal and scheduling facts live in typed constrained
+    rows; canonical JSON hashes are corroboration, not authority by themselves.

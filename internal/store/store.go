@@ -25,11 +25,12 @@ const databaseFilename = "crewfold.db"
 const sqliteApplicationID = 0x43524644
 
 type Store struct {
-	db            *sql.DB
-	path          string
-	mutationHook  func(string) error
-	clock         func() time.Time
-	restoreActive *atomic.Bool
+	db                         *sql.DB
+	path                       string
+	mutationHook               func(string) error
+	clock                      func() time.Time
+	restoreActive              *atomic.Bool
+	supervisorActionSealActive *atomic.Bool
 }
 
 func Open(ctx context.Context, dataDir string, options Options) (*Store, error) {
@@ -40,8 +41,12 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 
 	dsn := databaseDSN(path)
 	restoreActive := new(atomic.Bool)
+	supervisorActionSealActive := new(atomic.Bool)
 	database, err := driver.Open(dsn, func(connection *sqlite3.Conn) error {
 		if err := registerSQLiteExtensions(connection); err != nil {
+			return err
+		}
+		if err := registerSQLiteSupervisorActionSealActive(connection, supervisorActionSealActive); err != nil {
 			return err
 		}
 		return connection.CreateFunction("crewfold_restore_active", 0, sqlite3.INNOCUOUS,
@@ -63,7 +68,7 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 	if clock == nil {
 		clock = time.Now
 	}
-	storage := &Store{db: database, path: path, mutationHook: options.MutationHook, clock: clock, restoreActive: restoreActive}
+	storage := &Store{db: database, path: path, mutationHook: options.MutationHook, clock: clock, restoreActive: restoreActive, supervisorActionSealActive: supervisorActionSealActive}
 	if err := database.PingContext(ctx); err != nil {
 		_ = database.Close()
 		return nil, &Error{Code: CodeStorageFailed, Message: "connect to SQLite database", Cause: err}
@@ -99,6 +104,9 @@ func registerSQLiteExtensions(connection *sqlite3.Conn) error {
 		return err
 	}
 	if err := registerSQLiteTimestampKey(connection); err != nil {
+		return err
+	}
+	if err := registerSQLiteSupervisorEventKnown(connection); err != nil {
 		return err
 	}
 	return registerSQLiteUTF8Valid(connection)

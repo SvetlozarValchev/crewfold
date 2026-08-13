@@ -329,16 +329,33 @@ func (c *Client) ContextBuild(ctx context.Context, paramsValue ContextBuildParam
 
 func (c *Client) ContextShow(ctx context.Context, workspace, contextID string) (ContextShowResult, error) {
 	var result ContextShowResult
-	if err := c.callParams(ctx, MethodContextShow, ContextQueryParams{Workspace: workspace, Context: contextID}, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodContextShow, ContextQueryParams{Workspace: workspace, Context: contextID}, &result); err != nil {
+		return ContextShowResult{}, err
+	}
+	if err := validateContextShowResult(result); err != nil {
 		return ContextShowResult{}, err
 	}
 	return result, nil
 }
 
+func validateContextShowResult(result ContextShowResult) error {
+	expectedSchema := ContextShowSchema
+	if result.Packet.Schema == domain.ContextPacketSchemaV5 {
+		expectedSchema = ContextShowSchemaV5
+	}
+	if result.Schema != expectedSchema || result.Type != "context_packet" {
+		return fmt.Errorf("context.show returned unexpected result schema %q or type %q for packet schema %q", result.Schema, result.Type, result.Packet.Schema)
+	}
+	return nil
+}
+
 func (c *Client) ContextExplain(ctx context.Context, workspace, contextID string) (ContextExplainResult, error) {
 	var result ContextExplainResult
-	if err := c.callParams(ctx, MethodContextExplain, ContextQueryParams{Workspace: workspace, Context: contextID}, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodContextExplain, ContextQueryParams{Workspace: workspace, Context: contextID}, &result); err != nil {
 		return ContextExplainResult{}, err
+	}
+	if result.Schema != ContextExplainSchema || result.Type != "context_explanation" {
+		return ContextExplainResult{}, fmt.Errorf("context.explain returned unexpected result schema %q or type %q", result.Schema, result.Type)
 	}
 	return result, nil
 }
@@ -870,7 +887,10 @@ func (c *Client) callParamsStrict(ctx context.Context, method string, paramsValu
 	if err != nil {
 		return fmt.Errorf("marshal %s parameters: %w", method, err)
 	}
-	return c.callStrict(ctx, method, params, result)
+	if err := c.callStrict(ctx, method, params, result); err != nil {
+		return err
+	}
+	return validateManagementResultDiscriminator(method, result)
 }
 
 func (c *Client) callParamsStrictWithTimeout(ctx context.Context, timeout time.Duration, method string, paramsValue, result any) error {

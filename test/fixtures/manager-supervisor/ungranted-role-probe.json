@@ -1,0 +1,18 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "manager-supervisor-identical-role-ungranted",
+  "acceptance": {
+    "required_evidence": ["manager_tools_denied"]
+  },
+  "steps": [
+    {
+      "kind": "completion",
+      "message": "All manager proposal tools were denied to the ungranted packet-v4 run.",
+      "evidence": ["manager_tools_denied"],
+      "handoff": "The matching descriptive role label conferred no manager authority."
+    }
+  ],
+  "management": {
+    "expect_tools_denied": true
+  }
+}

@@ -1,0 +1,51 @@
+package store
+
+import (
+	"sync/atomic"
+
+	"github.com/ncruces/go-sqlite3"
+)
+
+const sqliteSupervisorEventKnownFunction = "crewfold_supervisor_event_known"
+
+const sqliteSupervisorActionSealActiveFunction = "crewfold_supervisor_action_seal_active"
+
+// registerSQLiteSupervisorActionSealActive is a connection-local construction
+// gate. Store transactions raise it only around insertion of the immutable
+// recording receipt, while direct SQL on the shared handle observes zero.
+func registerSQLiteSupervisorActionSealActive(connection *sqlite3.Conn, active *atomic.Bool) error {
+	return connection.CreateFunction(
+		sqliteSupervisorActionSealActiveFunction,
+		0,
+		sqlite3.INNOCUOUS,
+		func(ctx sqlite3.Context, _ ...sqlite3.Value) {
+			if active.Load() {
+				ctx.ResultInt(1)
+				return
+			}
+			ctx.ResultInt(0)
+		},
+	)
+}
+
+// registerSQLiteSupervisorEventKnown exposes the same closed event union used
+// by the supervisor reader to schema triggers. This prevents a direct cursor
+// update from skipping an event that the current binary cannot classify.
+func registerSQLiteSupervisorEventKnown(connection *sqlite3.Conn) error {
+	return connection.CreateFunction(
+		sqliteSupervisorEventKnownFunction,
+		1,
+		sqlite3.DETERMINISTIC|sqlite3.INNOCUOUS,
+		func(ctx sqlite3.Context, arguments ...sqlite3.Value) {
+			if len(arguments) != 1 || arguments[0].Type() != sqlite3.TEXT {
+				ctx.ResultInt(0)
+				return
+			}
+			if knownSupervisorJournalEvent(arguments[0].Text()) {
+				ctx.ResultInt(1)
+				return
+			}
+			ctx.ResultInt(0)
+		},
+	)
+}

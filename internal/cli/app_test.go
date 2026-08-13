@@ -1569,6 +1569,98 @@ func (client *fakeDaemonClient) MeetingTakeover(context.Context, localapi.Meetin
 	return localapi.MeetingMutationResult{}, nil
 }
 
+func (client *fakeDaemonClient) ManagerGrantCreate(context.Context, localapi.ManagerGrantCreateParams) (localapi.ManagerGrantMutationResult, error) {
+	return localapi.ManagerGrantMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) ManagerGrantRevoke(context.Context, localapi.ManagerGrantRevokeParams) (localapi.ManagerGrantMutationResult, error) {
+	return localapi.ManagerGrantMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) ManagerGrantShow(context.Context, string, string) (localapi.ManagerGrantShowResult, error) {
+	return localapi.ManagerGrantShowResult{}, nil
+}
+
+func (client *fakeDaemonClient) ManagerGrantList(context.Context, localapi.ManagerGrantQueryParams) (localapi.ManagerGrantListResult, error) {
+	return localapi.ManagerGrantListResult{}, nil
+}
+
+func (client *fakeDaemonClient) LaunchProfileCreate(context.Context, localapi.LaunchProfileCreateParams) (localapi.LaunchProfileMutationResult, error) {
+	return localapi.LaunchProfileMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) LaunchProfileRetire(context.Context, localapi.LaunchProfileRetireParams) (localapi.LaunchProfileMutationResult, error) {
+	return localapi.LaunchProfileMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) LaunchProfileShow(context.Context, string, string) (localapi.LaunchProfileShowResult, error) {
+	return localapi.LaunchProfileShowResult{}, nil
+}
+
+func (client *fakeDaemonClient) LaunchProfileList(context.Context, localapi.LaunchProfileQueryParams) (localapi.LaunchProfileListResult, error) {
+	return localapi.LaunchProfileListResult{}, nil
+}
+
+func (client *fakeDaemonClient) ManagerInvoke(context.Context, localapi.ManagerInvokeParams) (localapi.ManagerInvocationResult, error) {
+	return localapi.ManagerInvocationResult{}, nil
+}
+
+func (client *fakeDaemonClient) ProposalList(context.Context, localapi.ProposalQueryParams) (localapi.ProposalListResult, error) {
+	return localapi.ProposalListResult{}, nil
+}
+
+func (client *fakeDaemonClient) ProposalInspect(context.Context, string, string) (localapi.ProposalShowResult, error) {
+	return localapi.ProposalShowResult{}, nil
+}
+
+func (client *fakeDaemonClient) ProposalAccept(context.Context, localapi.ProposalDecisionParams) (localapi.ProposalMutationResult, error) {
+	return localapi.ProposalMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) ProposalReject(context.Context, localapi.ProposalDecisionParams) (localapi.ProposalMutationResult, error) {
+	return localapi.ProposalMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) SupervisorPolicyShow(context.Context, string) (localapi.SupervisorPolicyShowResult, error) {
+	return localapi.SupervisorPolicyShowResult{}, nil
+}
+
+func (client *fakeDaemonClient) SupervisorPolicyConfigure(context.Context, localapi.SupervisorPolicyConfigureParams) (localapi.SupervisorPolicyMutationResult, error) {
+	return localapi.SupervisorPolicyMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) SupervisorRun(context.Context, localapi.SupervisorRunParams) (localapi.SupervisorRunResult, error) {
+	return localapi.SupervisorRunResult{}, nil
+}
+
+func (client *fakeDaemonClient) SupervisorActionList(context.Context, localapi.SupervisorActionQueryParams) (localapi.SupervisorActionListResult, error) {
+	return localapi.SupervisorActionListResult{}, nil
+}
+
+func (client *fakeDaemonClient) SupervisorActionShow(context.Context, string, string) (localapi.SupervisorActionShowResult, error) {
+	return localapi.SupervisorActionShowResult{}, nil
+}
+
+func (client *fakeDaemonClient) SupervisorExplain(context.Context, localapi.SupervisorExplainParams) (localapi.SupervisorExplanationResult, error) {
+	return localapi.SupervisorExplanationResult{}, nil
+}
+
+func (client *fakeDaemonClient) ApprovalList(context.Context, localapi.ApprovalQueryParams) (localapi.ApprovalListResult, error) {
+	return localapi.ApprovalListResult{}, nil
+}
+
+func (client *fakeDaemonClient) ApprovalInspect(context.Context, string, string) (localapi.ApprovalShowResult, error) {
+	return localapi.ApprovalShowResult{}, nil
+}
+
+func (client *fakeDaemonClient) ApprovalAllow(context.Context, localapi.ApprovalDecisionParams) (localapi.ApprovalMutationResult, error) {
+	return localapi.ApprovalMutationResult{}, nil
+}
+
+func (client *fakeDaemonClient) ApprovalDeny(context.Context, localapi.ApprovalDecisionParams) (localapi.ApprovalMutationResult, error) {
+	return localapi.ApprovalMutationResult{}, nil
+}
+
 func (client *fakeDaemonClient) EventsList(_ context.Context, after int64, limit int) (localapi.EventsListResult, error) {
 	client.eventsAfter = after
 	client.eventsLimit = limit

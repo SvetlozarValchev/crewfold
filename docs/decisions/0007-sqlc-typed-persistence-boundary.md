@@ -36,6 +36,36 @@ the complete offline gate do not download or execute the generator: a determinis
 hash detects changes to migration/query sources without refreshed checked-in
 output. Contributors run `./scripts/generate-db.sh` after changing those sources.
 
+The generator reads an ordered temporary projection of the migrations with
+`CREATE TRIGGER` bodies removed. Triggers are runtime integrity programs rather
+than query result schemas, and sufficiently large SQLite trigger expressions can
+make the pinned parser pathologically slow. The authoritative migration files,
+including every trigger byte, remain part of the source hash and are executed and
+tested unchanged by Crewfold; only sqlc's development-time schema input omits
+them.
+
+### Schema-17 supervision exception
+
+Schema 17's management/supervision service is an explicit transaction-specific
+exception to the default. Its writes are not independent CRUD operations: one
+proposal decision or placement interleaves optimistic revision checks, normalized
+authority children, graph and capacity reads, projection writes, immutable
+journal facts, integrity receipts, fault barriers, and an idempotency receipt in
+one `BEGIN IMMEDIATE` transaction. Splitting that sequence between generated and
+handwritten query objects made the security ordering harder—not easier—to audit,
+so `internal/store/management.go` keeps the complete fixed SQL program together
+for M16. It does not construct SQL from caller data; only values are parameters.
+
+This exception is bounded to schema-17 tables and their atomic orchestration. It
+is covered by strict row scanners and canonical-hash checks on every read,
+direct-SQL substitution/partial-graph tests, transaction fault barriers,
+concurrent supervisor and proposal tests, restart tests, the generated schema
+object-manifest check, and the provider-free manager/supervisor scenario. New
+unrelated persistence still uses named sqlc queries by default. A later
+mechanical conversion may move whole fixed read/write units to named queries,
+but must preserve transaction/event/receipt ordering and the same executable
+security matrix; it is not a license for a second dynamic persistence layer.
+
 ## Consequences
 
 - Query inputs, nullable fields, results, and row scanning are compile-time Go

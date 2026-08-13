@@ -22,6 +22,7 @@ func TestContextSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 		"schemas/domain/v1/live-context-policy.schema.json":         domain.ContextLivePolicySchema,
 		"schemas/local/v1/context-build-v4.result.schema.json":      localapi.ContextBuildSchema,
 		"schemas/local/v1/context-show-v4.result.schema.json":       localapi.ContextShowSchema,
+		"schemas/local/v1/context-show-v5.result.schema.json":       localapi.ContextShowSchemaV5,
 		"schemas/local/v1/context-explain-v3.result.schema.json":    localapi.ContextExplainSchema,
 		"schemas/local/v1/context-refresh.result.schema.json":       localapi.ContextRefreshSchema,
 		"schemas/local/v1/context-delta-list.result.schema.json":    localapi.ContextDeltaListSchema,

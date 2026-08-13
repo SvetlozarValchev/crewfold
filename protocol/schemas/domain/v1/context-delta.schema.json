@@ -18,7 +18,7 @@
     "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
     "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
     "agent_id": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
-    "base_packet_schema": {"const": "urn:crewfold:schema:domain:context-packet:v4"},
+    "base_packet_schema": {"enum": ["urn:crewfold:schema:domain:context-packet:v4", "urn:crewfold:schema:domain:context-packet:v5"]},
     "sequence": {"type": "integer", "minimum": 1},
     "parent_delta_id": {"type": "string", "pattern": "^cdelta_[0-9a-f]{32}$"},
     "from_event_sequence": {"type": "integer", "minimum": 0},

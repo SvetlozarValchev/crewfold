@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"crewfold/internal/domain"
 )
 
 func TestOpenCreatesHealthyMigratedOwnerOnlyDatabase(t *testing.T) {
@@ -312,6 +314,20 @@ func TestDirectRuntimeSchemaUpgradePreservesActiveRunAndQueue(t *testing.T) {
 	}
 	if detail.Run.Status != "active" || detail.Run.RuntimeHandle != "runtime-handle" || detail.Run.ContextPacketID != "" || detail.Run.StopForced || detail.Run.StopGraceMillis != 0 || len(detail.Timeline) != 1 {
 		t.Fatalf("upgraded run detail = %#v", detail)
+	}
+	const assignmentID = "asg_00000000000000000000000000000003"
+	if detail.Run.AssignmentID != assignmentID {
+		t.Fatalf("upgraded legacy run assignment = %q, want exact unique %q", detail.Run.AssignmentID, assignmentID)
+	}
+	if _, err := storage.db.Exec(`UPDATE task_assignments SET lease_expires_at='2026-08-12T00:00:01Z' WHERE id=?`, assignmentID); err != nil {
+		t.Fatalf("expire upgraded legacy assignment fixture: %v", err)
+	}
+	if count, err := storage.ReconcileExpiredAssignments(context.Background(), "upgrade-fixture", "inspect-upgraded-reservation"); err != nil || count != 0 {
+		t.Fatalf("ReconcileExpiredAssignments(upgraded active run) = %d, %v; want retained reservation", count, err)
+	}
+	var assignmentStatus string
+	if err := storage.db.QueryRow(`SELECT status FROM task_assignments WHERE id=?`, assignmentID).Scan(&assignmentStatus); err != nil || assignmentStatus != domain.AssignmentActive {
+		t.Fatalf("upgraded active-run assignment status = %q, %v; want active", assignmentStatus, err)
 	}
 	for _, table := range []string{"context_packets", "run_context_bindings", "run_capabilities", "run_reports", "run_artifacts", "run_tool_calls", "message_threads", "messages", "message_recipients", "message_wake_jobs"} {
 		var count int

@@ -132,6 +132,29 @@ type daemonClient interface {
 	MeetingInspect(context.Context, string, string) (localapi.MeetingInspectResult, error)
 	MeetingAccept(context.Context, localapi.MeetingAcceptParams) (localapi.MeetingMutationResult, error)
 	MeetingTakeover(context.Context, localapi.MeetingTakeoverParams) (localapi.MeetingMutationResult, error)
+	ManagerGrantCreate(context.Context, localapi.ManagerGrantCreateParams) (localapi.ManagerGrantMutationResult, error)
+	ManagerGrantRevoke(context.Context, localapi.ManagerGrantRevokeParams) (localapi.ManagerGrantMutationResult, error)
+	ManagerGrantShow(context.Context, string, string) (localapi.ManagerGrantShowResult, error)
+	ManagerGrantList(context.Context, localapi.ManagerGrantQueryParams) (localapi.ManagerGrantListResult, error)
+	LaunchProfileCreate(context.Context, localapi.LaunchProfileCreateParams) (localapi.LaunchProfileMutationResult, error)
+	LaunchProfileRetire(context.Context, localapi.LaunchProfileRetireParams) (localapi.LaunchProfileMutationResult, error)
+	LaunchProfileShow(context.Context, string, string) (localapi.LaunchProfileShowResult, error)
+	LaunchProfileList(context.Context, localapi.LaunchProfileQueryParams) (localapi.LaunchProfileListResult, error)
+	ManagerInvoke(context.Context, localapi.ManagerInvokeParams) (localapi.ManagerInvocationResult, error)
+	ProposalList(context.Context, localapi.ProposalQueryParams) (localapi.ProposalListResult, error)
+	ProposalInspect(context.Context, string, string) (localapi.ProposalShowResult, error)
+	ProposalAccept(context.Context, localapi.ProposalDecisionParams) (localapi.ProposalMutationResult, error)
+	ProposalReject(context.Context, localapi.ProposalDecisionParams) (localapi.ProposalMutationResult, error)
+	SupervisorPolicyShow(context.Context, string) (localapi.SupervisorPolicyShowResult, error)
+	SupervisorPolicyConfigure(context.Context, localapi.SupervisorPolicyConfigureParams) (localapi.SupervisorPolicyMutationResult, error)
+	SupervisorRun(context.Context, localapi.SupervisorRunParams) (localapi.SupervisorRunResult, error)
+	SupervisorActionList(context.Context, localapi.SupervisorActionQueryParams) (localapi.SupervisorActionListResult, error)
+	SupervisorActionShow(context.Context, string, string) (localapi.SupervisorActionShowResult, error)
+	SupervisorExplain(context.Context, localapi.SupervisorExplainParams) (localapi.SupervisorExplanationResult, error)
+	ApprovalList(context.Context, localapi.ApprovalQueryParams) (localapi.ApprovalListResult, error)
+	ApprovalInspect(context.Context, string, string) (localapi.ApprovalShowResult, error)
+	ApprovalAllow(context.Context, localapi.ApprovalDecisionParams) (localapi.ApprovalMutationResult, error)
+	ApprovalDeny(context.Context, localapi.ApprovalDecisionParams) (localapi.ApprovalMutationResult, error)
 	EventsList(context.Context, int64, int) (localapi.EventsListResult, error)
 }
 
@@ -223,6 +246,16 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runDrift(ctx, mode, args[1:])
 	case "meeting":
 		return a.runMeeting(ctx, mode, args[1:])
+	case "manager":
+		return a.runManager(ctx, mode, args[1:])
+	case "launch-profile":
+		return a.runLaunchProfile(ctx, mode, args[1:])
+	case "proposal":
+		return a.runProposal(ctx, mode, args[1:])
+	case "supervisor":
+		return a.runSupervisor(ctx, mode, args[1:])
+	case "approval":
+		return a.runApproval(ctx, mode, args[1:])
 	case "events":
 		return a.runEvents(ctx, mode, args[1:])
 	default:
@@ -835,6 +868,16 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, driftHelp)
 	case "meeting":
 		fmt.Fprint(a.stdout, meetingHelp)
+	case "manager":
+		fmt.Fprint(a.stdout, managerHelp)
+	case "launch-profile":
+		fmt.Fprint(a.stdout, launchProfileHelp)
+	case "proposal":
+		fmt.Fprint(a.stdout, proposalHelp)
+	case "supervisor":
+		fmt.Fprint(a.stdout, supervisorHelp)
+	case "approval":
+		fmt.Fprint(a.stdout, approvalHelp)
 	case "events":
 		fmt.Fprint(a.stdout, eventsHelp)
 	case "help":
@@ -1502,6 +1545,11 @@ Commands:
   overlap        Inspect deterministic claim conflicts and rescan Git
   drift          Inspect writes observed outside declared task scopes
   meeting        Resolve overlaps through durable structured decisions
+  manager        Grant bounded proposal authority and invoke planning runs
+  launch-profile Define immutable owner-authored scheduling capabilities
+  proposal       Inspect and decide manager proposals
+  supervisor     Configure, run, and explain deterministic scheduling
+  approval       Decide supervisor actions requiring local-owner authority
   events         Inspect the durable event journal
   help [command] Show command help
 

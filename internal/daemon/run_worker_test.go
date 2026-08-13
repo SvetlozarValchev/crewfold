@@ -13,6 +13,7 @@ import (
 	"crewfold/internal/domain"
 	"crewfold/internal/execution"
 	"crewfold/internal/localapi"
+	"crewfold/internal/store"
 )
 
 func TestDirectProcessHelper(t *testing.T) {
@@ -279,6 +280,326 @@ func TestRequestedRunStartsWhenWorkerIsEnabledAfterRestart(t *testing.T) {
 	}
 	if err := second.wait(); err != nil {
 		t.Fatalf("Run(second) error = %v", err)
+	}
+}
+
+func TestSupervisorOriginRunCommittedBeforeWorkerLaunchesExactlyOnceAfterRestart(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("Git is unavailable: %v", err)
+	}
+	testCases := []struct {
+		name            string
+		crashStage      string
+		ownerBlockStage string
+	}{
+		{name: "requested run survives restart"},
+		{name: "starting without handle survives crash", crashStage: "after_run_starting"},
+		{name: "starting with handle reconciles after crash", crashStage: "after_runtime_launch"},
+		{name: "owner block is rejected for requested reservation", ownerBlockStage: domain.RunRequested},
+		{name: "owner block is rejected across starting launch gate", ownerBlockStage: domain.RunStarting},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+
+			fixtureRoot := t.TempDir()
+			createGitFixture(t, fixtureRoot)
+			runtimeDriver := execution.NewFakeRuntime()
+			config := testConfig(t)
+			config.RuntimeDrivers = map[string]execution.RuntimeDriver{"fake": runtimeDriver}
+			config.ProviderAdapters = map[string]execution.ProviderAdapter{"fake": execution.FakeProvider{}}
+			config.DisableRunWorker = true
+			config.DisableSupervisor = true
+
+			first := startTestServer(t, config)
+			client := localapi.NewClient(config.SocketPath)
+			if _, err := client.WorkspaceInit(context.Background(), "personal", "supervisor-recovery-workspace"); err != nil {
+				t.Fatalf("WorkspaceInit() error = %v", err)
+			}
+			project, err := client.ProjectAdd(context.Background(), "personal", "demo", filepath.Join(fixtureRoot, "world-engine"), domain.WriteModeShared, "supervisor-recovery-project")
+			if err != nil {
+				t.Fatalf("ProjectAdd() error = %v", err)
+			}
+			manager, err := client.AgentCreate(context.Background(), localapi.AgentCreateParams{
+				Workspace: "personal", Name: "recovery-manager", Role: "nebula surveyor", Provider: "fake", Runtime: "fake", MaxConcurrency: 1,
+				IdempotencyKey: "supervisor-recovery-manager",
+			})
+			if err != nil {
+				t.Fatalf("AgentCreate(manager) = %v", err)
+			}
+			target, err := client.AgentCreate(context.Background(), localapi.AgentCreateParams{
+				Workspace: "personal", Name: "recovery-target", Role: "nebula surveyor", Provider: "fake", Runtime: "fake", MaxConcurrency: 1,
+				IdempotencyKey: "supervisor-recovery-target",
+			})
+			if err != nil {
+				t.Fatalf("AgentCreate(target) = %v", err)
+			}
+			objective, err := client.ObjectiveCreate(context.Background(), localapi.ObjectiveCreateParams{
+				Workspace: "personal", Project: project.Project.ID, Title: "Recover supervisor-origin launch",
+				Budget: domain.Budget{TokenLimit: 1000, CostCents: 100, TimeSeconds: 600}, IdempotencyKey: "supervisor-recovery-objective",
+			})
+			if err != nil {
+				t.Fatalf("ObjectiveCreate() = %v", err)
+			}
+			planning, err := client.TaskCreate(context.Background(), localapi.TaskCreateParams{
+				Workspace: "personal", Project: project.Project.ID, Objective: objective.Objective.ID, Title: "Plan recovered work", Priority: 100,
+				Budget: domain.Budget{TokenLimit: 100, CostCents: 10, TimeSeconds: 60}, IdempotencyKey: "supervisor-recovery-planning-task",
+			})
+			if err != nil {
+				t.Fatalf("TaskCreate(planning) = %v", err)
+			}
+			planning, err = client.TaskAssign(context.Background(), localapi.TaskAssignParams{
+				Workspace: "personal", Task: planning.Detail.Task.ID, Agent: manager.Agent.ID, LeaseSeconds: 900,
+				ExpectedRevision: planning.Detail.Task.Revision, IdempotencyKey: "supervisor-recovery-planning-assign",
+			})
+			if err != nil {
+				t.Fatalf("TaskAssign(planning) = %v", err)
+			}
+			targetScenario := domain.FakeScenario{
+				Schema: execution.FakeScenarioSchema, Name: "supervisor-recovery-target",
+				Steps: []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "recovered exactly once", Handoff: "inspect recovered launch"}},
+			}
+			targetProfile, err := client.LaunchProfileCreate(context.Background(), localapi.LaunchProfileCreateParams{
+				Workspace: "personal", Project: project.Project.ID, Agent: target.Agent.ID, ExpectedAgentRevision: target.Agent.Revision,
+				Purpose: "recovery target metadata", Runtime: "fake", Provider: "fake", Scenario: targetScenario,
+				AssignmentLeaseSeconds: 900, CapabilityTTLSeconds: 900, IdempotencyKey: "supervisor-recovery-target-profile",
+			})
+			if err != nil {
+				t.Fatalf("LaunchProfileCreate(target) = %v", err)
+			}
+			grant, err := client.ManagerGrantCreate(context.Background(), localapi.ManagerGrantCreateParams{
+				Workspace: "personal", Project: project.Project.ID, Objective: objective.Objective.ID, Task: planning.Detail.Task.ID,
+				Agent: manager.Agent.ID, ExpectedTaskRevision: planning.Detail.Task.Revision, ExpectedAgentRevision: manager.Agent.Revision,
+				ProposalKinds: []string{domain.ManagerProposalTaskDecomposition}, LaunchProfileIDs: []string{targetProfile.Profile.ID},
+				AllowedClaimKinds: []string{}, Limits: domain.ManagerProposalLimits{
+					MaxOpenProposals: 2, MaxActions: 4, MaxTasks: 2, MaxDependencies: 2, MaxClaimRequirements: 1,
+					Budget: domain.Budget{TokenLimit: 500, CostCents: 50, TimeSeconds: 300},
+				}, IdempotencyKey: "supervisor-recovery-grant",
+			})
+			if err != nil {
+				t.Fatalf("ManagerGrantCreate() = %v", err)
+			}
+			managerScenario := domain.FakeScenario{
+				Schema: execution.FakeScenarioSchema, Name: "supervisor-recovery-manager",
+				Steps: []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "proposal recorded", Handoff: "owner accepted exact proposal"}},
+			}
+			managerProfile, err := client.LaunchProfileCreate(context.Background(), localapi.LaunchProfileCreateParams{
+				Workspace: "personal", Project: project.Project.ID, Agent: manager.Agent.ID, ExpectedAgentRevision: manager.Agent.Revision,
+				Purpose: "recovery planning metadata", Runtime: "fake", Provider: "fake", Scenario: managerScenario,
+				AssignmentLeaseSeconds: 900, CapabilityTTLSeconds: 900, ManagerGrant: grant.Grant.ID,
+				IdempotencyKey: "supervisor-recovery-manager-profile",
+			})
+			if err != nil {
+				t.Fatalf("LaunchProfileCreate(manager) = %v", err)
+			}
+			if _, err := client.Stop(context.Background()); err != nil {
+				t.Fatalf("Stop(first) = %v", err)
+			}
+			if err := first.wait(); err != nil {
+				t.Fatalf("Run(first) = %v", err)
+			}
+
+			storage, err := store.Open(context.Background(), config.DataDir, store.Options{})
+			if err != nil {
+				t.Fatalf("store.Open(recovery setup) = %v", err)
+			}
+			invoked, err := storage.InvokeManager(context.Background(), store.InvokeManagerCommand{
+				WorkspaceIdentifier: "personal", ObjectiveID: objective.Objective.ID, TaskID: planning.Detail.Task.ID,
+				ManagerGrantID: grant.Grant.ID, LaunchProfileID: managerProfile.Profile.ID,
+				ExpectedTaskRevision: planning.Detail.Task.Revision, ExpectedGrantRevision: grant.Grant.Revision,
+				ExpectedProfileRevision: managerProfile.Profile.Revision,
+				IdempotencyKey:          "supervisor-recovery-invoke", CorrelationID: "request-supervisor-recovery-invoke",
+			})
+			if err != nil {
+				_ = storage.Close()
+				t.Fatalf("InvokeManager() = %v", err)
+			}
+			if _, err := storage.MarkRunStarting(context.Background(), invoked.Detail.Run.ID, "request-supervisor-recovery-manager-starting"); err != nil {
+				_ = storage.Close()
+				t.Fatalf("MarkRunStarting(manager) = %v", err)
+			}
+			packet, err := storage.ContextPacket(context.Background(), "personal", invoked.Detail.Run.ContextPacketID)
+			if err != nil {
+				_ = storage.Close()
+				t.Fatalf("ContextPacket(manager) = %v", err)
+			}
+			submitted, err := storage.SubmitManagerProposal(context.Background(), store.SubmitManagerProposalCommand{
+				RunID: invoked.Detail.Run.ID, ManagerGrantID: grant.Grant.ID, ExpectedGrantRevision: grant.Grant.Revision,
+				Kind: domain.ManagerProposalTaskDecomposition, Summary: "Create one exact recovery task.", AsOfEventSequence: packet.AsOfEventSequence,
+				Actions: []domain.ManagerProposalAction{{Type: domain.ProposalActionCreateTask, CreateTask: &domain.ProposalCreateTaskAction{
+					TaskKey: "recover", LaunchProfileID: targetProfile.Profile.ID, Title: "Launch after supervisor restart", Priority: 100,
+					Budget: domain.Budget{TokenLimit: 100, CostCents: 10, TimeSeconds: 60},
+				}}}, IdempotencyKey: "supervisor-recovery-submit", CorrelationID: "request-supervisor-recovery-submit",
+			})
+			if err != nil {
+				_ = storage.Close()
+				t.Fatalf("SubmitManagerProposal() = %v", err)
+			}
+			accepted, err := storage.AcceptManagerProposal(context.Background(), store.AcceptManagerProposalCommand{
+				WorkspaceIdentifier: "personal", ManagerProposalID: submitted.Proposal.ID, ExpectedRevision: submitted.Proposal.Revision,
+				DecisionNote: "Accept exact recovery task.", IdempotencyKey: "supervisor-recovery-accept", CorrelationID: "request-supervisor-recovery-accept",
+			})
+			if err != nil || len(accepted.Effects) == 0 {
+				_ = storage.Close()
+				t.Fatalf("AcceptManagerProposal() = %#v, %v", accepted, err)
+			}
+			if _, err := storage.MarkRunStarted(context.Background(), invoked.Detail.Run.ID, "manager-runtime", "manager-provider", "request-supervisor-recovery-manager-started"); err != nil {
+				_ = storage.Close()
+				t.Fatalf("MarkRunStarted(manager) = %v", err)
+			}
+			if _, err := storage.ApplyRunObservation(context.Background(), invoked.Detail.Run.ID, domain.RunObservation{
+				Kind: domain.ObservationCompletion, Message: "proposal recorded", Handoff: "owner accepted exact proposal",
+			}, true, nil, "request-supervisor-recovery-manager-completed"); err != nil {
+				_ = storage.Close()
+				t.Fatalf("ApplyRunObservation(manager completion) = %v", err)
+			}
+			if _, err := storage.ConfigureSupervisorPolicy(context.Background(), store.ConfigureSupervisorPolicyCommand{
+				WorkspaceIdentifier: "personal", Enabled: true, AutoSchedule: true,
+				Limits:           domain.SupervisorLimits{MaxActiveRuns: 4, MaxStartingRuns: 2, DefaultProjectConcurrency: 2, DefaultProviderConcurrency: 2},
+				ExpectedRevision: 1, IdempotencyKey: "supervisor-recovery-policy", CorrelationID: "request-supervisor-recovery-policy",
+			}); err != nil {
+				_ = storage.Close()
+				t.Fatalf("ConfigureSupervisorPolicy() = %v", err)
+			}
+			scan, err := storage.RunSupervisor(context.Background(), store.RunSupervisorCommand{
+				WorkspaceIdentifier: "personal", Limit: 100, IdempotencyKey: "supervisor-recovery-scan", CorrelationID: "request-supervisor-recovery-scan",
+			})
+			if err != nil || len(scan.ScheduledRunIDs) != 1 {
+				_ = storage.Close()
+				t.Fatalf("RunSupervisor() = %#v, %v", scan, err)
+			}
+			scheduledRunID := scan.ScheduledRunIDs[0]
+			requested, err := storage.RunDetail(context.Background(), "personal", scheduledRunID)
+			if err != nil || requested.Run.Status != domain.RunRequested {
+				_ = storage.Close()
+				t.Fatalf("supervisor-origin run before worker = %#v, %v", requested, err)
+			}
+			if len(scan.Actions) != 1 || scan.Actions[0].RunID != scheduledRunID {
+				_ = storage.Close()
+				t.Fatalf("supervisor action/run linkage before worker = %#v", scan)
+			}
+			if testCase.ownerBlockStage == domain.RunRequested {
+				_, blockErr := storage.TransitionTask(context.Background(), store.TransitionTaskCommand{
+					WorkspaceIdentifier: "personal", TaskID: requested.Task.ID, ExpectedRevision: requested.Task.Revision,
+					Action: "block", Reason: "owner attempted to block reserved task before external launch",
+					IdempotencyKey: "supervisor-recovery-owner-block", CorrelationID: "request-supervisor-recovery-owner-block",
+				})
+				unchanged, detailErr := storage.RunDetail(context.Background(), "personal", scheduledRunID)
+				if store.ErrorCode(blockErr) != store.CodeRunConflict || detailErr != nil || unchanged.Run.Status != domain.RunRequested || unchanged.Task.Status != domain.TaskAssigned || runtimeDriver.LaunchCount() != 0 {
+					_ = storage.Close()
+					t.Fatalf("TransitionTask(block requested reservation) error=%v; run=%#v, detail error=%v, launch count=%d",
+						blockErr, unchanged, detailErr, runtimeDriver.LaunchCount())
+				}
+			}
+			if err := storage.Close(); err != nil {
+				t.Fatalf("close recovery setup store = %v", err)
+			}
+
+			config.DisableRunWorker = false
+			if testCase.ownerBlockStage == domain.RunStarting {
+				var barrierReached atomic.Bool
+				startingReached := make(chan struct{})
+				releaseLaunch := make(chan struct{})
+				config.RunWorkerHook = func(stage string, _ domain.Run) error {
+					if stage == "after_run_starting" && barrierReached.CompareAndSwap(false, true) {
+						close(startingReached)
+						<-releaseLaunch
+					}
+					return nil
+				}
+				gatedWorker := startTestServer(t, config)
+				gatedClient := localapi.NewClient(config.SocketPath)
+				select {
+				case <-startingReached:
+				case <-time.After(3 * time.Second):
+					close(releaseLaunch)
+					t.Fatal("worker did not reach the starting-to-launch gate")
+				}
+				_, blockErr := gatedClient.TaskTransition(context.Background(), localapi.TaskTransitionParams{
+					Workspace: "personal", Task: requested.Task.ID, ExpectedRevision: requested.Task.Revision,
+					Action: "block", Reason: "owner attempted to block during external launch handoff",
+					IdempotencyKey: "supervisor-recovery-owner-block-starting",
+				})
+				unchanged, detailErr := gatedClient.TaskShow(context.Background(), "personal", requested.Task.ID)
+				launchCountAtDecision := runtimeDriver.LaunchCount()
+				close(releaseLaunch)
+				if localAPIErrorCode(blockErr) != store.CodeRunConflict || detailErr != nil || unchanged.Detail.Task.Status != domain.TaskAssigned || launchCountAtDecision != 0 {
+					t.Fatalf("TaskTransition(block at starting gate) error=%v; task=%#v, detail error=%v, launch count before release=%d",
+						blockErr, unchanged, detailErr, launchCountAtDecision)
+				}
+				completed := waitForRunStatus(t, gatedClient, scheduledRunID, domain.RunCompleted)
+				if completed.Detail.Run.StepCursor != 1 || runtimeDriver.LaunchCount() != 1 {
+					t.Fatalf("run after rejected starting block = %#v; launch count=%d", completed.Detail, runtimeDriver.LaunchCount())
+				}
+				if _, err := gatedClient.Stop(context.Background()); err != nil {
+					t.Fatalf("Stop(gated worker) = %v", err)
+				}
+				if err := gatedWorker.wait(); err != nil {
+					t.Fatalf("Run(gated worker) = %v", err)
+				}
+				return
+			}
+			if testCase.crashStage != "" {
+				var barrierReached atomic.Bool
+				releaseCrash := make(chan struct{})
+				config.RunWorkerHook = func(stage string, _ domain.Run) error {
+					if stage == testCase.crashStage && barrierReached.CompareAndSwap(false, true) {
+						// Let the server publish readiness before stopping it. Without this
+						// gate the deliberately fast fake worker can win the test harness's
+						// readiness probe, making the crash assertion timing-dependent.
+						<-releaseCrash
+						return errors.New("injected supervisor-origin prelaunch crash")
+					}
+					return nil
+				}
+				crashedWorker := startTestServer(t, config)
+				close(releaseCrash)
+				if err := crashedWorker.wait(); err != nil {
+					t.Fatalf("Run(crashed worker at %s) = %v", testCase.crashStage, err)
+				}
+				if !barrierReached.Load() {
+					t.Fatalf("worker did not reach crash stage %s", testCase.crashStage)
+				}
+				crashedStore, err := store.Open(context.Background(), config.DataDir, store.Options{})
+				if err != nil {
+					t.Fatalf("store.Open(after %s crash) = %v", testCase.crashStage, err)
+				}
+				crashed, err := crashedStore.RunDetail(context.Background(), "personal", scheduledRunID)
+				if err != nil {
+					_ = crashedStore.Close()
+					t.Fatalf("RunDetail(after %s crash) = %v", testCase.crashStage, err)
+				}
+				if closeErr := crashedStore.Close(); closeErr != nil {
+					t.Fatalf("close store after %s crash = %v", testCase.crashStage, closeErr)
+				}
+				hasHandle := crashed.Run.RuntimeHandle != ""
+				wantHandle := testCase.crashStage == "after_runtime_launch"
+				wantLaunchCount := 0
+				if wantHandle {
+					wantLaunchCount = 1
+				}
+				if crashed.Run.Status != domain.RunStarting || hasHandle != wantHandle || runtimeDriver.LaunchCount() != wantLaunchCount {
+					t.Fatalf("supervisor-origin crash state at %s = %#v; launch count=%d, want starting handle=%t count=%d",
+						testCase.crashStage, crashed.Run, runtimeDriver.LaunchCount(), wantHandle, wantLaunchCount)
+				}
+				config.RunWorkerHook = nil
+			}
+			second := startTestServer(t, config)
+			restarted := localapi.NewClient(config.SocketPath)
+			completed := waitForRunStatus(t, restarted, scheduledRunID, domain.RunCompleted)
+			if completed.Detail.Run.ID != scheduledRunID || completed.Detail.Run.StepCursor != 1 || completed.Detail.Handoff == nil || runtimeDriver.LaunchCount() != 1 {
+				t.Fatalf("supervisor-origin run after restart = %#v; launch count=%d", completed.Detail, runtimeDriver.LaunchCount())
+			}
+			action, err := restarted.SupervisorActionShow(context.Background(), "personal", scan.Actions[0].ID)
+			if err != nil || action.Action.RunID != scheduledRunID || action.Action.ID != scan.Actions[0].ID {
+				t.Fatalf("SupervisorActionShow(after restart) = %#v, %v", action, err)
+			}
+			if _, err := restarted.Stop(context.Background()); err != nil {
+				t.Fatalf("Stop(second) = %v", err)
+			}
+			if err := second.wait(); err != nil {
+				t.Fatalf("Run(second) = %v", err)
+			}
+		})
 	}
 }
 

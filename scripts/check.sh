@@ -88,6 +88,9 @@ printf 'Portable project knowledge black-box acceptance\n'
 printf 'Live context delta black-box acceptance\n'
 "$repo_root/test/scenarios/live-context-deltas/run.sh"
 
+printf 'Manager proposals and deterministic supervisor public smoke\n'
+"$repo_root/test/scenarios/manager-supervisor/run.sh"
+
 printf 'Herdr runtime black-box acceptance\n'
 "$repo_root/test/scenarios/herdr-runtime/run.sh"
 

@@ -8,7 +8,9 @@ knowledge, and deterministic derived retrieval. Subscriptions arrive later.
 The owner-local surface also exposes the bounded deterministic curator queue,
 rule configuration, explicit processing pass, and exact knowledge-contradiction
 governance, portable project knowledge snapshots, and explicit bounded live
-context refresh and inspection.
+context refresh and inspection. M16 adds owner-granted manager invocation and
+proposal decisions, exact launch profiles, deterministic supervision, and an
+owner approval queue.
 
 ## Transport
 
@@ -244,16 +246,23 @@ revision. Dependencies can be added only while that task is ready and unassigned
 
 `task.assign` takes a task, agent ID or name, lease length from one second through
 30 days, and `expected_revision`. It requires an enabled agent and derived-ready
-task. A partial unique index and transaction invariant allow only one active
-primary assignment per task. It creates a durable assignment record and changes
-the task to `assigned`; it does not start a runtime.
+task with no open scheduling intent. A partial unique index and transaction
+invariant allow only one active primary assignment per task. It creates a durable
+assignment record and changes the task to `assigned`; it does not start a runtime.
+Manual assignment cannot race or replace accepted manager work in
+`pending`, `deferred`, `awaiting_approval`, or `run_requested` intent state.
 
 `task.transition` currently accepts `start`, `block`, `unblock`, or `cancel`:
 
 - `start` changes `assigned` to `active` as coordination state only;
 - `block` requires a reason and accepts ready, assigned, or active tasks;
 - `unblock` returns to assigned while a lease remains active, otherwise ready;
-- `cancel` releases an active assignment but retains its history.
+- `cancel` releases an active assignment but retains its history. It cannot split
+  a reserved requested/starting/active run from its assignment. In the same
+  transaction it closes a pending/deferred scheduling intent, or a
+  `run_requested` intent whose exact latest retry-chain run is a definite
+  `start_failed`, and appends one `supervisor.intent_cancelled` fact. A later
+  supervisor pass cannot retry that owner-cancelled intent.
 
 `task.show` and `task.list` return task details, dependency edges, any active
 assignment, and derived readiness. `ready_only` filters deterministically by
@@ -674,6 +683,185 @@ One new import appends `knowledge.imported` for each revision,
 imported final state. Origin event and authority ledgers, curator proof rows, and
 idempotency records are not bundle contents and are not replayed. See
 [ADR-0013](../decisions/0013-portable-project-knowledge-snapshots.md).
+
+### Manager grants and launch profiles
+
+`manager.grant.create` is owner-only and requires an exact workspace, project,
+objective, planning task and task revision, agent and agent revision, one through
+four proposal kinds, one through 32 pre-existing target launch-profile IDs, zero
+through three claim kinds, bounded proposal limits, an optional expiry, and an
+idempotency key. The proposal kinds are `task_decomposition`, `assignment`,
+`review`, and `escalation`; claim kinds are `path`, `component`, and `operation`.
+It returns `manager_grant_mutation` with the full immutable grant and event
+sequence. `manager.grant.revoke` requires the exact current revision and reason.
+Show/list return `manager_grant`/`manager_grant_list` and can filter by exact
+scope, agent, status, and a limit no greater than 100.
+
+The grant is the authority. An agent definition's `role` remains any
+owner-selected descriptive string; neither the role, agent name, nor launch
+profile `purpose` can authorize a manager call. A manager run must still match the
+grant's exact active assignment, task/agent revisions, planning launch profile,
+packet-v5 snapshot, capability, expiry, proposal kind, and target-profile set at
+every proposal call. Revocation stops later proposal calls from an already-live
+run.
+
+`launch_profile.create` requires an exact workspace/project/agent revision,
+runtime, provider, bounded fake/direct fixture scenario, optional checkout,
+assignment lease and capability lifetime from 30 through 86,400 seconds, and an
+idempotency key. An optional `manager_grant` creates the planning profile for that
+grant; target profiles omit it and must exist before grant creation.
+`launch_profile.retire` requires an expected revision and reason. Show/list return
+`launch_profile`/`launch_profile_list` and can filter by project, agent, grant,
+status, and bounded limit. Profiles are exact scheduling eligibility, not ranked
+candidates; retirement never rewrites their execution content.
+
+### Manager invocation and proposals
+
+`manager.invoke` takes workspace and objective plus either a fully explicit
+planning tuple (`planning_task`, `grant`, `profile`, and their expected revisions)
+or an unambiguous resolvable tuple, and an idempotency key. It atomically creates
+packet v5, the run and pending job, and context/capability bindings for the
+existing exact active assignment. It returns `manager_invocation`: the exact grant
+and profile, complete run detail, and final event sequence. Ambiguity, an inactive
+grant/profile, stale revision or assignment, scope mismatch, or a planning profile
+not bound to the grant fails before any runtime launch.
+
+The run can submit only the proposal kinds frozen in packet v5. One action array
+is bounded to 32 actions and 49,152 encoded bytes. `proposal.list`
+filters by workspace plus optional project, objective, source run, grant, kind,
+status, and limit. `proposal.inspect` returns the complete immutable action array
+and validation issues. `proposal.accept` and `proposal.reject` require the exact
+pending revision, a bounded decision note, and an idempotency key. They return
+`manager_proposal_mutation` with the decided proposal, exact typed effects, and
+event sequence.
+
+Submission is intentionally inert. Acceptance revalidates all current scope,
+revisions, dependency cycles, count/budget envelope, claim allowlist, and exact
+launch-profile bindings in one immediate transaction. It either commits every
+task/dependency/claim requirement/scheduling intent/effect/event/idempotency row,
+or none. Rejection creates no work effect. The run has no local-API access and no
+MCP acceptance tool; `crewfold_accept_manager_proposal` is a recognized denied
+probe.
+
+A pending immutable proposal remains owner-decidable after its source planning
+run completes and releases the planning assignment. Acceptance still requires
+the active unexpired grant, immutable source packet-v5/grant tuple, current source
+agent at its frozen revision, exact active objective revision, and current target
+references; it does not require or restore a live planning capability.
+
+### Supervisor policy, actions, and approvals
+
+`supervisor.policy.show` returns the effective immutable policy revision.
+`supervisor.policy.configure` appends a new owner revision with `enabled`, global
+active/starting limits, default and exact project/provider concurrency maps,
+`auto_schedule`, retry limit `0..3`, cooldown `0..86400`, optional expected
+revision, and idempotency key. A zero manager budget means unlimited, but all
+supervisor concurrency limits are positive and bounded; policy configuration does
+not itself schedule work.
+
+`supervisor.run` takes workspace, a limit no greater than 100, and an idempotency
+key. It returns `supervisor_run` with the exact policy used, newly recorded
+actions, scheduled run IDs, and final event sequence. The pass first reconciles
+existing requested/starting/active/blocked/stopping/lost runs and expired leases,
+then evaluates stable candidates. It counts global, project, provider, and agent
+capacity, including lost or reserved work, and creates at most one canonical
+condition action. Repeating the same command or racing passes cannot create a
+second run for one accepted intent.
+
+Before inspecting projections, each pass captures one workspace-journal cutoff
+and classifies closed-union event pages of at most 1,000 facts. A fully understood
+partial page advances only the durable cursor; the pass remains effect-free until
+it has caught up to that captured cutoff. An event type unknown to the running
+binary returns `unsupported_supervisor_event` and leaves the cursor, actions,
+approvals, intents, runs, and idempotency state unchanged. This makes adding a new
+journal fact an explicit supervisor-compatibility change rather than permission
+to skip evidence.
+
+The owner-facing method durably records even a successful no-op result, so replay
+of that exact idempotency key can never acquire effects that became eligible
+later. Background daemon passes use one-shot keys; an idle pass advances a
+classified cursor when needed but emits neither a scan event nor a no-op receipt.
+A later fresh pass may act only after it has classified every fact through its
+own captured cutoff.
+
+Eligible intents are ordered by task priority descending, readiness time
+ascending, then task ID. Readiness time is the latest of intent creation, an
+exact task-readied or assignment-expired fact, and completion of every
+dependency; an ordinary title, description, priority, or budget update does not
+invent a newer ready transition. An unchanged deferral receives a deterministic
+30-second `next_attempt_at`. Before that deadline, only a newly classified fact
+relevant to the action's sealed primary failing dimension may wake it. The
+per-intent event watermark prevents an old fact from repeatedly bypassing
+backoff, and deferred queue heads cannot starve a later eligible intent.
+
+`dependency_ready -> schedule` is the sole automatic scheduling rule when the
+effective policy is enabled with `auto_schedule`. A bounded cooled-down retry of
+the same start-failed task may also be policy-driven. It creates a new receipted
+run through the exact frozen profile while leaving the failed run immutable, and
+requires the assignment and every required claim to remain active and unexpired.
+The retry action exposes the immutable failed run as optional `prior_run_id` and
+the fresh requested run as `run_id`; non-retry actions omit `prior_run_id`.
+Conditions `blocked`,
+`stale`, `failed`, `repeated_failure`, and `over_budget`, plus stop/resume/reassign
+responses, create inspectable action/approval records instead of applying hidden
+control. `supervisor.action.list` filters by project/task/run/status/condition;
+`supervisor.action.show` returns one frozen action. `supervisor.explain` is a
+read-only result containing the exact policy/event cursor and, for each intent,
+eligibility, reasons, and constraint snapshot.
+
+Intent acceptance begins at `pending`; capacity or authority contention may move
+it to `deferred`, and a committed placement moves it to `run_requested`.
+Completion closes it `satisfied`; rejected completion or a definite runtime
+failure closes it `failed`; a stopped run closes it `cancelled`. A definite
+`start_failed` remains `run_requested` only while the current policy still
+authorizes another exact bounded retry. Exhaustion, disabling/lowering retry
+policy, or owner cancellation closes it exactly once. Fresh retry runs retain the
+original intent and only the latest sealed successor can determine its terminal
+result.
+
+The scheduling or retry receipt freezes authority for that already committed run
+operation. Worker claim/start revalidates the exact receipt, job, run, current
+task, and active assignment linkage, but it does not reinterpret a later profile
+retirement, agent disablement or revision change, or passage beyond the assignment's
+lease timestamp as revocation of the committed launch. Reserved-run
+reconciliation prevents that assignment from being released merely because wall
+time advanced. Those changes do block future placements and retries, which must
+revalidate current authority and create a new receipt.
+
+An accepted proposal's `request_action` becomes a `manager_escalation` action and
+one inert approval request. The supervisor action freezes typed
+`source_proposal_id` and `source_action_id` together with the requested response,
+exact target/revision, optional reassign profile, and reason; it cannot be
+detached from or substituted across proposals. Owner allow revalidates that
+closed target before applying the supported response, while deny/replay has no
+second effect.
+
+`approval.list` filters by status/action and `approval.inspect` returns one exact
+request. `approval.allow` and `approval.deny` require the pending request's
+expected revision, a bounded decision note, and an idempotency key. The result type
+`approval_mutation` returns both approval and bound supervisor action plus event
+sequence. One action has at most one approval; a stale or repeated decision
+returns a conflict rather than applying twice. An allow authorizes only that
+closed action at its frozen revision and never becomes a reusable grant.
+
+Stable M16 failures are:
+
+```text
+invalid_manager_grant
+manager_grant_not_found
+manager_grant_denied
+invalid_launch_profile
+launch_profile_not_found
+invalid_manager_proposal
+manager_proposal_not_found
+manager_proposal_conflict
+manager_proposal_denied
+invalid_supervisor_policy
+supervisor_action_not_found
+unsupported_supervisor_event
+approval_not_found
+approval_conflict
+```
 
 ### `coordination.status`
 

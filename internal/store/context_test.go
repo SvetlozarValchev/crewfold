@@ -38,6 +38,162 @@ func TestContextKnowledgeRevisionIDsAreOrderedBoundedAndUnique(t *testing.T) {
 	}
 }
 
+func TestPacketV5ManagerToolsAreDerivedInCanonicalOrder(t *testing.T) {
+	t.Parallel()
+	allKinds := []string{
+		domain.ManagerProposalAssignment,
+		domain.ManagerProposalEscalation,
+		domain.ManagerProposalReview,
+		domain.ManagerProposalTaskDecomposition,
+	}
+	wantSuffix := []string{
+		"crewfold_propose_assignment",
+		"crewfold_propose_escalation",
+		"crewfold_propose_review",
+		"crewfold_propose_tasks",
+	}
+	tools := managerAllowedTools(allKinds)
+	if !reflect.DeepEqual(tools[:len(runScopedTools)], runScopedTools) || !reflect.DeepEqual(tools[len(runScopedTools):], wantSuffix) {
+		t.Fatalf("manager tools = %v, want v4 base plus %v", tools, wantSuffix)
+	}
+	for index, kind := range allKinds {
+		tools := managerAllowedTools([]string{kind})
+		if len(tools) != len(runScopedTools)+1 || tools[len(runScopedTools)] != wantSuffix[index] {
+			t.Errorf("manager tools for %q = %v", kind, tools)
+		}
+	}
+	if !reflect.DeepEqual(managerAllowedTools(nil), runScopedTools) {
+		t.Fatal("empty manager kinds changed the frozen v4 tool base")
+	}
+}
+
+func TestPacketV4MarshalDoesNotExposePacketV5Authority(t *testing.T) {
+	t.Parallel()
+	packet := domain.ContextPacket{
+		Schema:       domain.ContextPacketSchemaV4,
+		Dependencies: []domain.ContextDependency{}, Dependents: []domain.ContextDependency{}, ParticipantThreads: []domain.ParticipantThread{},
+		RequestedKnowledgeRevisionIDs: []string{}, AcceptedKnowledge: []domain.KnowledgeRevision{}, Included: []domain.ContextSelection{}, Excluded: []domain.ContextExclusion{},
+	}
+	encoded, err := json.Marshal(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := fields["management_grant"]; exists {
+		t.Fatalf("packet v4 wire shape gained packet-v5 authority: %s", encoded)
+	}
+	for _, required := range []string{"dependencies", "dependents", "participant_threads", "requested_knowledge_revision_ids", "accepted_knowledge"} {
+		if string(fields[required]) != "[]" {
+			t.Errorf("packet v4 explicit collection %s = %s", required, fields[required])
+		}
+	}
+}
+
+func TestPacketV5ManagerGrantValidationIsExactAndRoleAgnostic(t *testing.T) {
+	t.Parallel()
+	packet := domain.ContextPacket{
+		Schema: domain.ContextPacketSchemaV5, WorkspaceID: "ws_exact", ProjectID: "prj_exact", TaskID: "task_exact", AgentID: "agent_exact",
+		Role:     domain.ContextRole{AgentID: "agent_exact", Revision: 7, Role: "constellation cartographer"},
+		Task:     domain.ContextTask{TaskID: "task_exact", ObjectiveID: "obj_exact", Revision: 11},
+		Included: []domain.ContextSelection{{Section: "management_grant", EntityType: "manager_grant", EntityID: "mgrgrant_exact", Revision: 3}},
+		ManagementGrant: &domain.ContextManagerGrant{
+			Schema: domain.ContextManagerGrantSchema, GrantID: "mgrgrant_exact", GrantRevision: 3,
+			WorkspaceID: "ws_exact", ProjectID: "prj_exact", ObjectiveID: "obj_exact", ObjectiveRevision: 2,
+			ManagerAgentID: "agent_exact", ManagerAgentRevision: 7, ManagerTaskID: "task_exact", ManagerTaskRevision: 11,
+			AllowedProposalKinds: []string{domain.ManagerProposalAssignment, domain.ManagerProposalTaskDecomposition},
+			LaunchProfiles:       []domain.ContextManagerLaunchProfile{{LaunchProfileID: "lprof_exact", Revision: 2, AgentID: "agent_target", AgentRevision: 4}},
+			AllowedClaimKinds:    []string{domain.ClaimKindComponent, domain.ClaimKindOperation, domain.ClaimKindPath},
+			MaxOpenProposals:     2, MaxActions: 8, MaxTasks: 4, MaxDependencies: 8, MaxClaimRequirements: 8,
+		},
+	}
+	if err := validateContextManagerGrant(packet); err != nil {
+		t.Fatalf("valid manager grant rejected: %v", err)
+	}
+	packet.Role.Role = "a second arbitrary owner label"
+	if err := validateContextManagerGrant(packet); err != nil {
+		t.Fatalf("role label affected manager authority: %v", err)
+	}
+	for name, mutate := range map[string]func(*domain.ContextManagerGrant){
+		"wrong task revision": func(grant *domain.ContextManagerGrant) { grant.ManagerTaskRevision++ },
+		"unsorted kinds": func(grant *domain.ContextManagerGrant) {
+			grant.AllowedProposalKinds = []string{domain.ManagerProposalTaskDecomposition, domain.ManagerProposalAssignment}
+		},
+		"duplicate profile": func(grant *domain.ContextManagerGrant) {
+			grant.LaunchProfiles = append(grant.LaunchProfiles, grant.LaunchProfiles[0])
+		},
+		"zero limit": func(grant *domain.ContextManagerGrant) { grant.MaxTasks = 0 },
+	} {
+		candidate := packet
+		grant := *packet.ManagementGrant
+		grant.AllowedProposalKinds = append([]string(nil), grant.AllowedProposalKinds...)
+		grant.LaunchProfiles = append([]domain.ContextManagerLaunchProfile(nil), grant.LaunchProfiles...)
+		mutate(&grant)
+		candidate.ManagementGrant = &grant
+		if err := validateContextManagerGrant(candidate); err == nil {
+			t.Errorf("%s manager grant unexpectedly validated", name)
+		}
+	}
+}
+
+func TestManagerInvocationAloneBuildsPacketV5FromExactGrantAndProfile(t *testing.T) {
+	t.Parallel()
+	storage, fixture := createManagerGrantAdversarialFixture(t)
+	ctx := context.Background()
+
+	ordinary, err := storage.BuildContextPacket(ctx, BuildContextCommand{
+		WorkspaceIdentifier: fixture.workspace.ID, TaskID: fixture.planning.Task.ID, AgentIdentifier: fixture.manager.ID,
+		ExpectedTaskRevision: fixture.planning.Task.Revision, IdempotencyKey: "ordinary-planning-context", CorrelationID: "request-ordinary-planning-context",
+	})
+	if err != nil {
+		t.Fatalf("BuildContextPacket(ordinary) = %v", err)
+	}
+	if ordinary.Value.Schema != domain.ContextPacketSchemaV4 || ordinary.Value.ManagementGrant != nil || !reflect.DeepEqual(ordinary.Value.Policy.AllowedTools, runScopedTools) {
+		t.Fatalf("ordinary context unexpectedly gained manager authority: %#v", ordinary.Value)
+	}
+
+	planningScenario := domain.FakeScenario{
+		Schema: "urn:crewfold:schema:fixture:fake-run-scenario:v1", Name: "exact-manager-planning",
+		Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "propose bounded work"}},
+	}
+	planningProfile, err := storage.CreateLaunchProfile(ctx, CreateLaunchProfileCommand{
+		WorkspaceIdentifier: fixture.workspace.ID, ProjectIdentifier: fixture.project.ID, AgentIdentifier: fixture.manager.ID,
+		ExpectedAgentRevision: fixture.manager.Revision, Runtime: "fake", Provider: "fake", Scenario: planningScenario,
+		AssignmentLeaseSeconds: 900, CapabilityTTLSeconds: 900, ManagerGrantID: fixture.grant.ID,
+		IdempotencyKey: "exact-manager-planning-profile", CorrelationID: "request-exact-manager-planning-profile",
+	})
+	if err != nil {
+		t.Fatalf("CreateLaunchProfile(planning) = %v", err)
+	}
+	invoked, err := storage.InvokeManager(ctx, InvokeManagerCommand{
+		WorkspaceIdentifier: fixture.workspace.ID, ObjectiveID: fixture.objective.ID, TaskID: fixture.planning.Task.ID,
+		ManagerGrantID: fixture.grant.ID, LaunchProfileID: planningProfile.Value.ID,
+		ExpectedTaskRevision: fixture.planning.Task.Revision, ExpectedGrantRevision: fixture.grant.Revision,
+		ExpectedProfileRevision: planningProfile.Value.Revision,
+		IdempotencyKey:          "invoke-exact-manager", CorrelationID: "request-invoke-exact-manager",
+	})
+	if err != nil {
+		t.Fatalf("InvokeManager() = %v", err)
+	}
+	packet, err := storage.ContextPacket(ctx, fixture.workspace.ID, invoked.Detail.Run.ContextPacketID)
+	if err != nil {
+		t.Fatalf("ContextPacket(manager) = %v", err)
+	}
+	grant := packet.ManagementGrant
+	if packet.Schema != domain.ContextPacketSchemaV5 || grant == nil || grant.GrantID != fixture.grant.ID || grant.GrantRevision != fixture.grant.Revision ||
+		grant.ManagerTaskID != fixture.planning.Task.ID || grant.ManagerTaskRevision != fixture.planning.Task.Revision ||
+		grant.ManagerAgentID != fixture.manager.ID || grant.ManagerAgentRevision != fixture.manager.Revision ||
+		len(grant.LaunchProfiles) != 1 || grant.LaunchProfiles[0].LaunchProfileID != fixture.target.ID ||
+		!reflect.DeepEqual(packet.Policy.AllowedTools, managerAllowedTools(fixture.grant.ProposalKinds)) {
+		t.Fatalf("manager packet did not freeze exact grant/profile authority: %#v", packet)
+	}
+	if packet.Role.Role != "constellation cartographer" {
+		t.Fatalf("arbitrary role label changed in packet: %q", packet.Role.Role)
+	}
+}
+
 func TestContextKnowledgeEligibilityReasonsAreExplicit(t *testing.T) {
 	t.Parallel()
 	const (

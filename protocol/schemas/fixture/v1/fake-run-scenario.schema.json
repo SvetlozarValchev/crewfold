@@ -109,6 +109,25 @@
         "denied_expected_sequence": {"type": "integer", "minimum": 1},
         "expect_tools_denied": {"type": "boolean"}
       }
+    },
+    "management": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "proposals": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"$ref": "#/$defs/manager_proposal"}},
+        "probe_reserved_acceptance": {"type": "boolean"},
+        "expect_tools_denied": {"type": "boolean"},
+        "probe_revoked_grant": {"type": "boolean"},
+        "revocation_probe_delay_millis": {"type": "integer", "minimum": 1, "maximum": 30000}
+      },
+      "oneOf": [
+        {"required": ["expect_tools_denied"], "properties": {"expect_tools_denied": {"const": true}}, "not": {"anyOf": [{"required": ["proposals"]}, {"required": ["probe_reserved_acceptance"]}, {"required": ["probe_revoked_grant"]}, {"required": ["revocation_probe_delay_millis"]}]}},
+        {"required": ["proposals"], "not": {"required": ["expect_tools_denied"]}}
+      ],
+      "allOf": [
+        {"if": {"required": ["probe_reserved_acceptance"], "properties": {"probe_reserved_acceptance": {"const": true}}}, "then": {"required": ["proposals"]}},
+        {"if": {"required": ["probe_revoked_grant"], "properties": {"probe_revoked_grant": {"const": true}}}, "then": {"required": ["proposals", "revocation_probe_delay_millis"]}}
+      ]
     }
   },
   "$defs": {
@@ -190,6 +209,22 @@
         "contradiction_id": {"type": "string", "pattern": "^kcon_[0-9a-f]{32}$"},
         "dependent_task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"}
       }
+    },
+    "manager_proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "summary", "actions"],
+      "properties": {
+        "kind": {"enum": ["task_decomposition", "assignment", "review", "escalation"]},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "actions": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "../../mcp/v1/manager-proposal-action-input.schema.json"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "task_decomposition"}}}, "then": {"properties": {"actions": {"items": {"oneOf": [{"$ref": "../../mcp/v1/manager-proposal-action-input.schema.json#/$defs/create_task_action"}, {"$ref": "../../mcp/v1/manager-proposal-action-input.schema.json#/$defs/add_dependency_action"}, {"$ref": "../../mcp/v1/manager-proposal-action-input.schema.json#/$defs/declare_claim_requirement_action"}]}}}}},
+        {"if": {"properties": {"kind": {"const": "assignment"}}}, "then": {"properties": {"actions": {"items": {"$ref": "../../mcp/v1/manager-proposal-action-input.schema.json#/$defs/assign_task_action"}}}}},
+        {"if": {"properties": {"kind": {"const": "review"}}}, "then": {"properties": {"actions": {"items": {"$ref": "../../mcp/v1/manager-proposal-action-input.schema.json#/$defs/request_review_action"}}}}},
+        {"if": {"properties": {"kind": {"const": "escalation"}}}, "then": {"properties": {"actions": {"items": {"$ref": "../../mcp/v1/manager-proposal-action-input.schema.json#/$defs/request_action_action"}}}}}
+      ]
     }
   },
   "oneOf": [

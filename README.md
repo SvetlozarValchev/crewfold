@@ -15,7 +15,7 @@ from structured, provenance-linked outcomes—not from reading every session or
 combining agent-written summaries.
 
 Crewfold is provider-neutral. Codex, Claude Code, OpenCode, Gemini CLI, shell
-workers, CI watchers, and future tools should participate through adapters rather
+workers, check observers, and future tools should participate through adapters rather
 than forcing the core to understand every terminal UI.
 
 ## Status
@@ -109,8 +109,10 @@ The first useful version is intentionally personal:
 
 1. One human owns one local Crewfold daemon.
 2. Projects point at existing repositories and checkouts.
-3. Durable agent definitions describe roles such as implementer, reviewer,
-   researcher, context curator, and CI watcher.
+3. Durable agent definitions carry arbitrary owner-defined role descriptions;
+   explicit grants, exact agent-bound launch profiles, and packet capabilities,
+   never those strings, confer management, review, curation, or check-watch
+   authority.
 4. Runs bind those definitions to provider sessions through independent runtime
    and provider adapters.
 5. Tasks, claims, messages, meetings, decisions, and knowledge survive session

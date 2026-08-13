@@ -657,7 +657,8 @@ crewfold meeting accept MEETING_ID --expected-revision 2
 - Resolution policies: owner decision, named reviewer, or constrained manager
   proposal.
 - Resolution actions that can sequence, split, reassign, designate explicit
-  implementer/reviewer roles, or cancel tasks.
+  implementer/reviewer task duties, or cancel tasks. These duties are
+  task-specific workflow metadata, not `AgentDefinition.Role` authority.
 - Stalled/timeout handling and human takeover.
 
 **Automated acceptance**
@@ -866,9 +867,11 @@ and disabled.
 **Question answered:** Can a manager propose work and can Crewfold advance routine
 dependencies while keeping deterministic constraints and human authority?
 
-**Implementation status:** Active. Contract and acceptance work is defining the
-proposal/approval boundary, deterministic scheduler policy, concurrency limits,
-and recovery semantics before the first stateful slice lands.
+**Implementation status:** Active. The schema, store, local surfaces, fixtures,
+and acceptance support are landing against the frozen proposal/approval boundary,
+deterministic scheduler policy, concurrency limits, and recovery semantics. The
+milestone remains incomplete until the full restart, race, fault, and authority
+matrix passes.
 
 **Visible result**
 
@@ -882,35 +885,67 @@ crewfold supervisor explain ACTION_ID
 **Deliverables**
 
 - Manager MCP tools for task, assignment, review, and escalation proposals.
+- Owner-revisioned manager grants, packet-v5 exact grant snapshots, and exact
+  project/agent-bound launch profiles; packet v1–v4 authority remains unchanged.
 - Deterministic validation of proposed dependencies, claims, budgets, and policy.
 - Dependency-aware ready queue and global/provider/project concurrency bounds.
 - Supervisor conditions for blocked, stale, failed, over-budget, dependency-ready,
   and repeated-failure states.
 - Explainable recommendations, approved automatic actions, and human approval
   queue.
+- Atomic proposal acceptance and durable schedule intent/action/job receipts with
+  idempotent recovery before any worker launch.
 
 **Automated acceptance**
 
 - A fixture manager proposes a valid task decomposition that creates no state until
   accepted.
-- Invalid cycles, authority escalation, and over-budget proposals are rejected with
-  exact reasons.
-- Completing task A schedules dependent task B once and explains why.
-- A stale run is reconciled before reassignment.
-- Concurrency limits remain satisfied under contention.
-- A recommendation beyond policy becomes an approval request, not an action.
+- The granted and ungranted fixture agents share an arbitrary role label; only the
+  exact grant authorizes proposal tools.
+- One owner acceptance creates a valid `A -> B -> independent review` sequence;
+  replay produces no second work or decision.
+- Cycles, cross-scope references, authority escalation, finite-budget overflow,
+  unlimited-under-finite budget, stale/disabled or wrong-agent profile, and claim
+  conflicts are rejected with exact reasons and no partial application.
+- Completing A schedules B exactly once and explains the dependency, profile,
+  exact profile/agent binding, claims, and capacity decision.
+- Global, project, provider, agent, checkout, and claim limits remain satisfied
+  under concurrent supervisor scans.
+- A stale run is reconciled before lease release or reassignment; `lost` remains
+  blocked and consumes capacity.
+- A recommendation beyond automatic policy creates one inert approval request;
+  only one current owner decision can produce its allowed effect.
+- Named cases exercise `dependency_ready`, `blocked`, `stale`, `failed`, wall-time
+  `over_budget`, and `repeated_failure`; only dependency-ready scheduling
+  auto-applies by default and each other condition yields one approval.
+- Packet v4 and wrong-scope/expired/revoked packet-v5 runs are denied while one
+  exact current v5 grant permits only its proposal kinds.
+- Raw-SQL, named transaction-failure, idempotency, and restart tests prove that
+  proposal/decision/application and condition/action/run/job/event receipts cannot
+  become partially visible.
+- Ready-queue tests prove priority/readiness/ID ordering, metadata-stable readiness,
+  deterministic deferral backoff, relevant-fact early wake, and bounded pages
+  that do not let deferred heads starve later eligible work.
+- Intent lifecycle tests prove exact satisfied/failed/cancelled terminalization,
+  bounded retry retention, owner cancellation of pending/deferred or exact-latest
+  start-failed work, and rejection of manual assignment while any intent is open.
+- Worker tests prove a committed scheduling/retry receipt remains the authority
+  for that exact launch after profile retirement, agent disablement or revision
+  change, or assignment-deadline passage, while every future placement revalidates
+  current authority.
 
 **Failure injection**
 
-- Crash between scheduling intent and runtime launch; recovery starts at most one
-  run and preserves the original placement explanation.
+- Crash after scheduling intent commits but before worker launch; recovery starts
+  the same run at most once and preserves the original placement explanation.
 
 **Exit gate**
 
-A manager/implementer/reviewer fixture completes a dependent task sequence, with
-one deliberate human approval and a fully inspectable decision trail.
+An arbitrarily named planning agent with one exact grant and arbitrarily named
+execution/evidence agents complete a dependent task sequence, with one deliberate
+human approval and a fully inspectable decision trail.
 
-### M17 — Local check and CI-watcher role
+### M17 — Local checks and reusable check-watch capability
 
 **Question answered:** Can Crewfold run and route check results as evidence without
 confusing test status with task or merge authority?
@@ -927,7 +962,9 @@ crewfold check inspect CHECK_RUN_ID
 
 - Allowlisted local check definitions and direct-runtime execution.
 - Structured check run, result, logs/artifacts, HEAD, and freshness records.
-- CI-watcher agent role and routing rules for task owners, reviewers, and manager.
+- Owner-granted check-watch capability attachable to any eligible agent, with
+  routing rules for agents assigned task ownership, evidence-review, or
+  coordination duties.
 - Policy-controlled repair-task proposal.
 - Invalidated/stale result handling when repository HEAD changes.
 - Evidence classification that distinguishes agent self-report, mechanical check,
@@ -949,8 +986,9 @@ crewfold check inspect CHECK_RUN_ID
 
 **Exit gate**
 
-An implementer, reviewer, and CI watcher complete a fixture change/fail/repair/pass
-cycle. Remote GitHub/GitLab CI remains deferred.
+Arbitrarily named change/evidence agents and one agent with a check-watch grant
+complete a fixture change/fail/repair/pass cycle. Remote GitHub/GitLab CI remains
+deferred.
 
 ## Stage E — Make the personal product dependable
 
@@ -1148,7 +1186,7 @@ an explicit owner decision.
 | Interactive preview | M9–M11 | Herdr plus real Codex and Claude canaries |
 | Coordination preview | M12–M13 | Overlap detection and structured resolution |
 | Knowledge preview | M14–M15 | Canonical knowledge, context, curation, and retrieval |
-| Personal alpha | M16–M17 | Manager/supervisor flow and local CI evidence |
+| Personal alpha | M16–M17 | Manager/supervisor flow and local check evidence |
 | Management alpha | M18 | Evidence-backed outcomes and bounded owner briefings |
 | Operator alpha | M19 | One coherent terminal control surface |
 | Personal beta | M20 | Operable and recoverable at target local scale |

@@ -23,7 +23,7 @@ hash_stream() {
 }
 
 {
-  printf '%s\n' .sqlc-version sqlc.yaml
+  printf '%s\n' .sqlc-version sqlc.yaml scripts/sqlc-schema.sh
   find internal/store/migrations internal/store/queries -type f -name '*.sql' -print
 } | LC_ALL=C sort | while IFS= read -r source_path
 do

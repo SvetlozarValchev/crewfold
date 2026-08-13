@@ -1,0 +1,5 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"urn:crewfold:schema:domain:approval-request:v1","title":"Crewfold approval request v1","type":"object","additionalProperties":false,
+  "required":["id","workspace_id","action_id","status","expected_action_revision","revision","created_at","updated_at","created_by","updated_by"],
+  "properties":{"id":{"type":"string","pattern":"^appr_[0-9a-f]{32}$"},"workspace_id":{"type":"string","pattern":"^ws_[0-9a-f]{32}$"},"action_id":{"type":"string","pattern":"^saction_[0-9a-f]{32}$"},"status":{"enum":["pending","granted","denied","expired","consumed"]},"decision_note":{"type":"string","maxLength":2048},"expected_action_revision":{"type":"integer","minimum":1},"revision":{"type":"integer","minimum":1},"expires_at":{"type":"string","format":"date-time"},"created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"},"decided_at":{"type":"string","format":"date-time"},"created_by":{"type":"string","minLength":1},"updated_by":{"type":"string","minLength":1},"decided_by":{"type":"string","minLength":1}}
+}

@@ -27,7 +27,7 @@
       ],
       "properties": {
         "base_packet_id": {"type": "string", "pattern": "^ctx_[0-9a-f]{32}$"},
-        "base_schema": {"enum": ["urn:crewfold:schema:domain:context-packet:v1", "urn:crewfold:schema:domain:context-packet:v2", "urn:crewfold:schema:domain:context-packet:v3", "urn:crewfold:schema:domain:context-packet:v4"]},
+        "base_schema": {"enum": ["urn:crewfold:schema:domain:context-packet:v1", "urn:crewfold:schema:domain:context-packet:v2", "urn:crewfold:schema:domain:context-packet:v3", "urn:crewfold:schema:domain:context-packet:v4", "urn:crewfold:schema:domain:context-packet:v5"]},
         "base_as_of_event_sequence": {"type": "integer", "minimum": 0},
         "state_revision": {"type": "integer", "minimum": 0},
         "scanned_through_event_sequence": {"type": "integer", "minimum": 0},

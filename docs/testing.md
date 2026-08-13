@@ -399,6 +399,41 @@ independent and self-reported evidence; unresolved risk; duplicate tasks; and
 contradictory findings. Stable IDs and event cursors allow briefing and “since
 checkpoint” assertions without model-dependent prose.
 
+### Manager/supervisor authority fixture
+
+The provider-free `manager-supervisor` scenario uses a packet-v5 fixture grantee,
+two change-producing agents, one independent evidence agent, owner-defined launch
+profiles, and bounded global/project/provider/agent policy. Role strings are
+deliberately arbitrary: an otherwise equivalent agent with the same role label but
+no grant is denied. The grantee submits one `A -> B -> review` plan through the
+real scoped MCP surface. Public reads prove submission creates no task, dependency,
+assignment, claim, context, run, or capacity reservation; one owner acceptance
+applies the complete plan.
+
+The scenario then proves dependency completion schedules B exactly once, one
+policy-external recommendation creates exactly one approval request, and an owner
+decision is neither bypassed nor replayed as a second effect. Restart after durable
+scheduling intent but before worker launch recovers the same action and run. The
+fixture makes no provider, model, credential, remote, or network call.
+
+Store/domain tests cover cycles; cross-project/objective scope; finite and
+unlimited budget semantics; disabled/stale or wrong-agent profile revisions;
+claim conflict; global, project, provider, agent, and checkout contention; stale
+or lost runs before reassignment; concurrent scans; raw-SQL corruption; transaction
+barrier rollback; and packet-v4 denial versus packet-v5 grant/revocation.
+Every supervisor condition has a named executable case: `dependency_ready`
+auto-applies under the default policy, while `blocked`, `stale`, `failed`,
+wall-time `over_budget`, and `repeated_failure` remain inert and create exactly one
+approval request unless an exact bounded owner policy revision permits the response.
+Queue-boundary cases pin priority/readiness/ID order, readiness timestamps derived
+from real ready/dependency facts, 30-second stable deferral, relevant-fact early
+wake, and non-starvation past deferred heads. Intent cases pin every definitive
+terminal outcome, policy-bounded start-failure retention, owner cancellation, and
+manual-assignment exclusion. Worker-authority cases prove that the exact committed
+scheduling/retry receipt survives later profile retirement, agent
+disablement or revision change, and assignment-deadline passage for that one
+launch while a new placement must revalidate current authority.
+
 ## Milestone scenario layout
 
 When implementation begins, acceptance assets should follow a discoverable shape:
@@ -452,7 +487,8 @@ The suite grows this matrix milestone by milestone:
 | Messaging | recipient offline, wake failure, duplicate ack, forbidden recipient |
 | Meeting | participant timeout, facilitator crash, stale frozen context |
 | Knowledge/context | contradiction, stale item, missing/corrupt search index, curator rollback, oversized safe-copy source, packet/delta/chain/event-window overflow, old base, unsupported change, pending replay |
-| Scheduler | capacity saturation, dependency cycle, claim race, restart mid-launch |
+| Scheduler | proposal cycle/scope/budget/profile rejection, global/project/provider/agent/checkout saturation, claim race, concurrent scan, stale or lost run, restart after intent before launch, bounded journal catch-up/restart, unknown-event fail-closed, public no-op replay |
+| Manager/supervisor authority | packet-v4 denial, packet-v5 exact grant/revocation, same-role ungranted denial, self-accept denial, inert proposal, stale owner decision, approval replay, raw-SQL detached receipt/hash/source |
 
 Fault injection should happen at named seams rather than through arbitrary sleeps.
 Tests wait on observable barriers/events so they remain deterministic.
@@ -491,6 +527,14 @@ Every new mutation states its required capability and receives tests for:
 
 Authorization is checked at the domain-command boundary even if a CLI or MCP tool
 already filtered the action.
+
+For manager/supervisor mutations, tests also prove proposal authorship is distinct
+from owner acceptance, manager and supervisor cannot decide approvals, historical
+packet versions never gain tools, revocation is checked on each proposal call, and
+agent/profile role or purpose text cannot select launch parameters. A same-UID
+process with arbitrary database and node-key write access remains outside the
+authentication threat model; raw-SQL tests instead prove fail-closed constraints
+and read validation for partial or internally detached histories.
 
 ## Test suite commands
 

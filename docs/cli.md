@@ -14,9 +14,11 @@ execution, supervised direct and Herdr fixture subprocesses, run-scoped MCP
 reporting and knowledge proposal, durable one-recipient agent mail, and an
 offline-proven Codex provider adapter. The Claude Code adapter, provider doctor,
 and recorded Codex-to-Claude handoff are also implemented; only its separately
-gated live conformance call is pending. It supports text and JSON output. Teams,
-broader/model-assisted knowledge curation, policy/approval commands, management
-briefings, and the TUI remain future contracts.
+gated live conformance call is pending. Owner-granted manager proposals,
+immutable launch profiles, deterministic supervisor passes, and exact approval
+decisions are also implemented. It supports text and JSON output. Teams,
+broader/model-assisted knowledge curation, management briefings, and the TUI
+remain future contracts.
 
 ## Goals
 
@@ -25,8 +27,8 @@ readable output by default and stable structured output with `--output json`.
 Mutations return the durable entity and event cursor they created.
 
 The daemon, workspace, source, agent/task/run, context, message, claim, meeting,
-and canonical-knowledge examples below are implemented. Policy and management
-sections define intended behavior rather than an available interface.
+canonical-knowledge, manager, supervisor, and approval examples below are
+implemented. Outcome/briefing examples remain intended contracts.
 
 ## Daemon and workspace
 
@@ -161,6 +163,14 @@ Readiness is derived: a task is ready only when its state is `ready`, it has no
 active assignment, and every dependency is completed. The list/show result
 includes a stable human-readable reason. Assignment leases expire during task or
 status queries; the assignment record and expiry event remain durable.
+
+Manual `task assign` is rejected while accepted manager work has an open
+scheduling intent. `task cancel` atomically closes a pending/deferred intent. It
+can close `run_requested` retry-pending work only when the exact latest
+receipt-linked run is definitively `start_failed`; the cancellation records one
+`supervisor.intent_cancelled`, and a later supervisor pass cannot retry it.
+Reserved requested/starting/active work cannot be split from its assignment by a
+task transition.
 
 `task start` remains a manual coordination transition. Normal execution uses
 `run start`, which consumes an existing leased assignment and lets the daemon
@@ -623,6 +633,121 @@ packet or an unsafe/oversized incremental change returns status
 off that run and start a replacement with a new packet-v4 base. See [Context
 packets and live deltas](context.md).
 
+## Manager proposals and launch profiles
+
+Create target scheduling profiles, create and assign the planning task to the
+exact planning agent, create the grant, then create its grant-bound planning
+profile. Grant creation requires that current assignment and its exact task and
+agent revisions:
+
+```sh
+crewfold launch-profile create \
+  --workspace personal --project world-engine --agent engine-builder \
+  --expected-agent-revision 1 --runtime direct --provider fixture-mcp \
+  --scenario worker.json --assignment-lease-seconds 900 \
+  --capability-ttl-seconds 900 --socket "$SOCKET"
+
+crewfold manager grant create \
+  --workspace personal --project world-engine --objective "$OBJECTIVE" \
+  --task "$PLANNING_TASK" --agent constellation-cartographer \
+  --expected-task-revision 2 --expected-agent-revision 1 \
+  --proposal-kinds task_decomposition,assignment,review,escalation \
+  --launch-profiles "$TARGET_PROFILE" --claim-kinds component,path \
+  --max-open-proposals 4 --max-actions 16 --max-tasks 8 \
+  --max-dependencies 16 --max-claim-requirements 8 \
+  --token-limit 20000 --cost-cents 500 --time-seconds 3600 \
+  --socket "$SOCKET"
+
+crewfold launch-profile create \
+  --workspace personal --project world-engine --agent constellation-cartographer \
+  --expected-agent-revision 1 --runtime direct --provider fixture-mcp \
+  --scenario planner.json --assignment-lease-seconds 900 \
+  --capability-ttl-seconds 900 --manager-grant "$GRANT" --socket "$SOCKET"
+
+crewfold manager propose-tasks --workspace personal --objective "$OBJECTIVE" \
+  --planning-task "$PLANNING_TASK" --grant "$GRANT" \
+  --profile "$PLANNING_PROFILE" --expected-task-revision 2 \
+  --expected-grant-revision 1 --expected-profile-revision 1 --socket "$SOCKET"
+```
+
+`manager propose-tasks` invokes the exact already-assigned planning task; proposals themselves come
+from its packet-v5 scoped MCP tools. Omitted planning tuple fields resolve only
+when exactly one current tuple is compatible. Role and purpose strings are
+arbitrary descriptive metadata. Two agents may share `--role constellation
+cartographer`; only the exact grant/task/assignment/profile/packet binding gains
+proposal tools.
+
+```sh
+crewfold manager grant show "$GRANT" --workspace personal --socket "$SOCKET"
+crewfold manager grant list --workspace personal --project world-engine --status active --socket "$SOCKET"
+crewfold launch-profile show "$TARGET_PROFILE" --workspace personal --socket "$SOCKET"
+crewfold launch-profile list --workspace personal --project world-engine --status active --socket "$SOCKET"
+crewfold proposal list --workspace personal --objective "$OBJECTIVE" --status pending --socket "$SOCKET"
+crewfold proposal inspect "$PROPOSAL" --workspace personal --socket "$SOCKET"
+crewfold proposal accept "$PROPOSAL" --workspace personal --expected-revision 1 \
+  --decision-note 'Apply this exact bounded plan' --socket "$SOCKET"
+crewfold proposal reject "$OTHER_PROPOSAL" --workspace personal --expected-revision 1 \
+  --decision-note 'Keep the current graph' --socket "$SOCKET"
+```
+
+A submitted proposal is inert. Acceptance revalidates and applies its entire
+closed action set atomically; the JSON result returns the decided proposal,
+typed effects, and event cursor. Revoking a grant or retiring a profile uses its
+exact revision plus `--reason`; neither operation erases audit history.
+
+## Deterministic supervisor and approvals
+
+```sh
+crewfold supervisor policy show --workspace personal --socket "$SOCKET"
+crewfold supervisor policy update --workspace personal \
+  --enabled true --auto-schedule true --auto-retry-limit 1 \
+  --retry-cooldown-seconds 30 --max-active-runs 8 --max-starting-runs 2 \
+  --default-project-concurrency 4 --default-provider-concurrency 2 \
+  --project-concurrency-json '{"proj_id":2}' \
+  --provider-concurrency-json '{"fixture-mcp":1}' --socket "$SOCKET"
+crewfold supervisor run --workspace personal --limit 100 --socket "$SOCKET"
+crewfold supervisor list --workspace personal --condition dependency_ready --socket "$SOCKET"
+crewfold supervisor explain --workspace personal --task "$TASK" --socket "$SOCKET"
+crewfold supervisor explain --workspace personal --action "$ACTION" --socket "$SOCKET"
+```
+
+Only dependency-ready scheduling under an enabled auto-schedule policy is applied
+without owner approval; retry is separately bounded to `0..3` and a cooldown.
+Lost/reserved work remains counted until run-first reconciliation. Blocked, stale,
+failed, repeated-failure, over-budget, stop/resume, and reassignment responses
+remain inert behind one exact approval request.
+
+Ready intents are considered by priority descending, readiness time ascending,
+then task ID. Readiness time comes from intent creation, real task-ready or
+assignment-expired facts, and dependency completion—not ordinary metadata edits.
+An unchanged deferral waits 30 seconds. Only a newly classified fact relevant to
+its sealed primary failing dimension can wake it early, so old events and a page
+of deferred heads cannot starve later eligible work.
+
+Once scheduling commits, its receipt freezes authority for that one launch.
+Profile retirement, agent disablement or revision change, or crossing the
+assignment lease timestamp blocks future placement but does not invalidate
+worker recovery of the already receipted run. Claim/start still verifies the
+exact job, run, task, and active assignment link, and any retry must pass current
+authority again.
+An accepted manager `request_action` is listed as condition
+`manager_escalation`; its JSON action freezes `source_proposal_id` and
+`source_action_id`. A retry action uses `prior_run_id` for the immutable failed
+run and `run_id` for its fresh requested run.
+
+```sh
+crewfold approval list --workspace personal --status pending --socket "$SOCKET"
+crewfold approval inspect "$APPROVAL" --workspace personal --socket "$SOCKET"
+crewfold approval allow "$APPROVAL" --workspace personal --expected-revision 1 \
+  --decision-note 'Allow only this frozen action' --socket "$SOCKET"
+crewfold approval deny "$APPROVAL" --workspace personal --expected-revision 1 \
+  --decision-note 'Do not apply this action' --socket "$SOCKET"
+```
+
+The approval decision result includes both the approval and its bound supervisor
+action. Expected revisions make a race or second decision fail rather than apply
+twice.
+
 ## Outcomes and management briefings
 
 ```sh
@@ -640,16 +765,6 @@ decisions, verification, compatibility/stability effects, risks, unknowns, and
 owner actions. `briefing explain` follows a material claim to its durable source
 records and event cursor. Neither command requires provider transcripts or an
 optional model-rendered narrative.
-
-## Policy and approvals
-
-```sh
-crewfold approval list --pending
-crewfold approval inspect APPROVAL_ID
-crewfold approval allow APPROVAL_ID
-crewfold approval deny APPROVAL_ID --reason "Do not push this branch yet"
-crewfold policy explain --actor engine-impl --action git.push --project world-engine
-```
 
 ## Output and scripting rules
 

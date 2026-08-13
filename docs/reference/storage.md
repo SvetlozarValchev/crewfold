@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 16.
+Status: implemented through schema version 17.
 
 ## Location and ownership
 
@@ -425,6 +425,145 @@ one whole delta/event/state transition, advances the no-op cursor without an
 event, or records rebase event/state. Event payloads are candidate/audit data, not
 the stored delta's content authority.
 
+## Schema version 17
+
+Schema version 17 adds owner-granted manager proposals and a deterministic local
+supervisor. `manager_grants` binds one exact workspace/project/objective,
+planning-task revision, agent revision, proposal-kind set, target launch-profile
+revision set, allowed claim-kind set, quantitative limits, optional expiry, and
+content hash. The authority-bearing sets are normalized into immutable
+`manager_grant_proposal_kinds`, `manager_grant_launch_profiles`, and
+`manager_grant_claim_kinds` rows. The JSON values on the parent are canonical
+mirrors, not a second authority source. A grant may be revoked but not rewritten
+or deleted.
+
+`launch_profiles` is the complete owner-authored scheduling eligibility record.
+It freezes one project, exact agent revision, runtime/provider, optional checkout,
+bounded scenario and hash, assignment lease, capability lifetime, and optional
+manager-grant binding. A target profile has no manager grant; a planning profile
+is bound to the exact grant that authorizes its manager run. Retirement changes
+only lifecycle metadata. `purpose` and the agent definition's arbitrary `role`
+are descriptive and never participate in authorization or candidate ranking.
+
+`manager_proposals` stores the run-authenticated proposal envelope, exact grant
+and objective revisions, journal high-water, immutable closed action array,
+validation issues, and content hash. `manager_proposal_actions` normalizes every tagged-union action
+and must exactly equal its corresponding frozen JSON element.
+`manager_proposal_submissions` proves the complete action set and submission
+event. A pending proposal has no coordination effect. Owner acceptance atomically
+revalidates scope, revisions, graph acyclicity, budgets, claim kinds, and exact
+launch profiles, then writes typed work mutations and immutable
+`manager_proposal_effects`. Rejection writes no work effect.
+Completion of the source planning run and release of its assignment do not make
+an already-sealed pending proposal undecidable. Acceptance instead proves the
+immutable source packet-v5/grant tuple, current frozen source-agent revision,
+active/unexpired grant, exact active objective revision, and current referenced
+profiles/tasks; it never grants the completed run another tool capability.
+
+Accepted assignment-producing actions create immutable
+`task_claim_requirements` and one durable `scheduling_intent` for the exact task,
+agent, and launch profile. At most one open intent exists per task. Intent states
+distinguish pending/deferred work from an owner-approved-but-not-yet-launched
+`run_requested` effect and terminal satisfied/failed/cancelled outcomes. A manual
+assignment is rejected while any intent is open, so owner assignment cannot race
+accepted manager work.
+
+Intent acceptance begins at `pending`; placement contention may produce
+`deferred`, and the atomic schedule transaction advances it to `run_requested`.
+A completed run closes it `satisfied`; rejected completion or definitive runtime
+failure closes it `failed`; a stopped run closes it `cancelled`. A definite
+`start_failed` remains `run_requested` only while another exact policy-bounded
+retry is authorized. Retry successors retain the original intent, and only the
+latest receipt-linked run may close it. Owner task cancellation closes a
+pending/deferred intent immediately, or closes `run_requested` only when that
+exact latest retry-chain run is definitively `start_failed`; it appends the exact
+local-owner `supervisor.intent_cancelled` fact in the same transaction. Disabling
+retry or exhausting/lowering its bound closes a stranded start-failure intent
+instead of leaving permanent open work.
+
+`supervisor_policies` is append-only owner policy history. Each revision freezes
+global, starting, project, provider, and retry/cooldown limits. New workspaces get
+a disabled default. `supervisor_actions` freezes one canonical condition,
+condition key, entity revision, policy revision, event cursor, constraint
+snapshot, response, and explanation. `approval_requests` gives at most one
+owner-decision record per action; decisions use optimistic revisions and cannot
+be replayed into a different action. `supervisor_state` stores the durable scan
+cursor so restart resumes from committed state. A pass captures a journal cutoff,
+classifies closed-union pages of at most 1,000 events, and cannot inspect
+projections for effects until the cursor reaches that cutoff. A known partial page
+may advance the cursor without effects; an unknown event returns
+`unsupported_supervisor_event` without advancing the cursor or committing any
+action, approval, scheduling effect, or command receipt. Cursor timestamps remain
+strictly monotonic even under a frozen wall clock.
+
+The owner-facing `supervisor.run` persists a successful no-op idempotency result,
+which prevents the same key from gaining later effects. Internal daemon no-op
+passes remain receipt- and event-idle; they only persist a classified cursor
+advance when one is required.
+
+Each scheduling intent also stores an internal classified-event watermark and an
+optional retry time. These fields bound ready-queue scans without weakening the
+global priority/readiness/ID order: an unchanged deferral waits 30 seconds, while
+a fact can wake it early only when it matches the latest sealed primary failing
+dimension. The readiness key is derived from immutable ready/dependency facts,
+not the task projection's general-purpose `updated_at` field.
+
+An accepted `request_action` is materialized as a `manager_escalation`
+supervisor action plus one approval request. Its typed `source_proposal_id` and
+`source_action_id` foreign-key pair seals provenance to the exact accepted action;
+the frozen requested response, target revision, optional reassign profile, and
+reason are revalidated again before an allowed effect.
+
+Only `dependency_ready -> schedule` may be applied automatically, and only when
+the effective enabled policy has `auto_schedule`. Optional start-failure retry is
+bounded by the exact `0..3` retry limit and cooldown. Blocked, stale, failed,
+repeated-failure, over-budget, stop, resume, and reassignment responses require an
+approval record before application. Lost or otherwise uncertain runs continue to
+consume every applicable capacity dimension until run-first reconciliation
+establishes their terminal state; the supervisor cannot free a lease merely to
+make a replacement fit.
+
+Schema 17 also freezes the scheduling boundary. `runs.assignment_id` binds the
+exact assignment. `run_jobs.origin` distinguishes owner and supervisor work, and
+every supervisor-origin job requires an immutable `run_scheduling_receipts` row
+linking the run, intent, applied action, exact launch-profile revision, assignment,
+task revision, and policy revision. The accepted intent, assignment, run, pending
+job, receipt, action transition, event facts, and idempotency result commit before
+the worker may call a runtime. An interrupted worker therefore reclaims and
+reconciles the same run ID instead of scheduling a second effect.
+
+That receipt is frozen launch authority for the one committed operation, not a
+pointer that is re-resolved against mutable eligibility later. Worker claim/start
+still proves the exact receipt/job/run, current task state, active assignment
+link, and immutable requested event. It deliberately does not cancel that
+already committed run because its profile is later retired, its agent is later
+disabled or its revision changes, or wall time passes the assignment lease
+deadline.
+Reserved-run reconciliation keeps the exact assignment from expiring underneath
+the operation. Any new placement or fresh retry must revalidate the then-current
+profile, agent, assignment, claims, checkout, and policy and seal a new receipt.
+
+An enabled bounded `start_failed` retry creates a different run and fresh
+packet/capability while preserving the prior failed run. Its immutable retry
+receipt binds prior run, new run, applied action, exact profile/policy,
+assignment, and attempt number. The assignment and all required claims must still
+be active and canonically unexpired; retry cannot extend or resurrect expired
+authority merely because history still contains the original scheduling receipt.
+The corresponding action stores `prior_run_id` for the immutable failed run and
+`run_id` for the fresh requested run; ordinary actions leave `prior_run_id` null.
+
+Context packet v5 extends v4 only for a manager run. It freezes the complete exact
+grant snapshot and adds only the proposal tools allowed by that grant. Insert and
+binding checks require the active unexpired grant, exact planning task/agent and
+profile revisions, live assignment, canonical target-profile tuples, and exact
+tool intersection. Packets v1 through v4 remain immutable and never acquire
+manager authority after upgrade or role-label changes.
+
+The schema rejects update/delete of immutable evidence and rejects partial direct
+SQL that cannot prove the same canonical relationships. Transactions use an
+immediate write reservation, so concurrent proposal decisions, supervisor scans,
+approval decisions, and scheduling attempts serialize their invariant checks.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -449,7 +588,7 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 16 contains agent/task/run/claim coordination,
+without its WAL. Schema version 17 contains agent/task/run/claim coordination,
 meetings, canonical knowledge, immutable context packets, scoped
 report/artifact/audit records, durable message/thread/delivery/wake state,
 overlap/drift/watcher state, bounded curator policy/derivation/acceptance evidence,
@@ -462,4 +601,8 @@ acknowledgement receipts, and durable scan/rebase state. Backup of a live
 installation must include a
 coordinated snapshot of the database, direct-runtime state, node key, and
 capability files; restored capabilities still obey their stored expiry and run
-state.
+state. It also includes manager grants/proposals, immutable launch profiles,
+accepted-action effects and scheduling intents, append-only supervisor policy,
+actions/approvals/state, and exact supervisor scheduling receipts. Restoring only
+part of that authority graph is unsupported and must fail canonical health or the
+first dependent operation closed.

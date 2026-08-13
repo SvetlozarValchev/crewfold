@@ -1,0 +1,18 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:crewfold:schema:mcp:manager-proposal-action-input:v1",
+  "title":"Crewfold model-authored manager proposal action input v1",
+  "oneOf":[
+    {"$ref":"#/$defs/create_task_action"},{"$ref":"#/$defs/add_dependency_action"},
+    {"$ref":"#/$defs/declare_claim_requirement_action"},{"$ref":"#/$defs/assign_task_action"},
+    {"$ref":"#/$defs/request_review_action"},{"$ref":"#/$defs/request_action_action"}
+  ],
+  "$defs":{
+    "create_task_action":{"type":"object","additionalProperties":false,"required":["type","create_task"],"properties":{"type":{"const":"create_task"},"create_task":{"$ref":"../../domain/v1/manager-proposal-action.schema.json#/$defs/create_task"}}},
+    "add_dependency_action":{"type":"object","additionalProperties":false,"required":["type","add_dependency"],"properties":{"type":{"const":"add_dependency"},"add_dependency":{"$ref":"../../domain/v1/manager-proposal-action.schema.json#/$defs/add_dependency"}}},
+    "declare_claim_requirement_action":{"type":"object","additionalProperties":false,"required":["type","declare_claim_requirement"],"properties":{"type":{"const":"declare_claim_requirement"},"declare_claim_requirement":{"$ref":"../../domain/v1/manager-proposal-action.schema.json#/$defs/declare_claim_requirement"}}},
+    "assign_task_action":{"type":"object","additionalProperties":false,"required":["type","assign_task"],"properties":{"type":{"const":"assign_task"},"assign_task":{"$ref":"../../domain/v1/manager-proposal-action.schema.json#/$defs/assign_task"}}},
+    "request_review_action":{"type":"object","additionalProperties":false,"required":["type","request_review"],"properties":{"type":{"const":"request_review"},"request_review":{"$ref":"../../domain/v1/manager-proposal-action.schema.json#/$defs/request_review"}}},
+    "request_action_action":{"type":"object","additionalProperties":false,"required":["type","request_action"],"properties":{"type":{"const":"request_action"},"request_action":{"$ref":"../../domain/v1/manager-proposal-action.schema.json#/$defs/request_action"}}}
+  }
+}

@@ -59,6 +59,14 @@ retrieval, participant-bound cross-project mail, bounded curation, exact
 contradictions, portable project knowledge, and packet-v4 live context deltas.
 Its final implementation commit is `c975ba4b17856b25c16dc5976d248e09a865d178`.
 
+M16 remains active (`◐`). Its [pending manager/supervisor
+review](reviews/manager-supervisor.md) records executable public restart/background
+scheduling, exact arbitrary-role authority separation, proposal and approval
+matrices, readiness/backoff and capacity boundaries, intent lifecycle, frozen
+worker authority, fault/raw-SQL defenses, and protocol coverage. These are
+acceptance inputs, not a completion mark; M16 still requires one clean final gate
+and independent severity audit before this roadmap may show `✓`.
+
 ## Sequence
 
 | Milestone | Increment | Demonstrable outcome | Depends on |
@@ -67,7 +75,7 @@ Its final implementation commit is `c975ba4b17856b25c16dc5976d248e09a865d178`.
 | M1 ✓ | Daemon/API spine | Start, query, diagnose, and cleanly stop a local daemon | M0 |
 | M2 ✓ | Persistent workspace | Commit an event, restart, restore, and inspect the same workspace | M1 |
 | M3 ✓ | Projects/checkouts | Register and observe a disposable Git repository without mutating it | M2 |
-| M4 ✓ | Agents/tasks | Define durable roles, tasks, dependencies, leases, and readiness | M3 |
+| M4 ✓ | Agents/tasks | Define durable agent descriptions, tasks, dependencies, leases, and readiness | M3 |
 | M5 ✓ | Fake-agent loop | Assign, launch, progress, block, complete, and hand off one task | M4 |
 | M6 ✓ | Direct runtime | Run and recover a real fixture subprocess with bounded output | M5 |
 | M7 ✓ | MCP/briefing | Let a run read scoped context and report through authenticated MCP | M6 |
@@ -80,10 +88,10 @@ Its final implementation commit is `c975ba4b17856b25c16dc5976d248e09a865d178`.
 | M14 ✓ | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
 | M15 ✓ | Curator/retrieval | Retrieve, curate, exchange, export, dispute, and incrementally deliver canonical context under bounded authority | M14 |
 | M16 ◐ | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
-| M17 | Local checks/CI watcher | Route fresh check evidence without granting merge authority | M16 |
+| M17 | Local checks/check-watch capability | Route fresh check evidence without granting merge authority | M16 |
 | M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
 | M19 | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
-| M20 | Personal beta | Back up, recover, upgrade, and load-test 100 registered roles | M19 |
+| M20 | Personal beta | Back up, recover, upgrade, and load-test 100 registered agent definitions | M19 |
 | M21 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M20 |
 
 ## Capability ladder
@@ -93,7 +101,7 @@ buildable binary
   -> observable daemon
   -> durable state
   -> repository awareness
-  -> tasks and roles
+  -> tasks and owner-defined agent descriptions
   -> one fake agent loop
   -> one real process
   -> provider-neutral MCP
@@ -106,7 +114,7 @@ buildable binary
   -> canonical knowledge
   -> curation and retrieval
   -> manager and supervisor
-  -> local checks and CI watching
+  -> local checks and reusable check observation
   -> outcome ledger and management briefings
   -> operator TUI
   -> personal-scale recovery
@@ -153,7 +161,7 @@ and explicit refresh without making retrieval or conversation authoritative.
 ### Personal alpha — M16 through M17
 
 Managers propose work, dependencies advance under policy, and local checks route
-fresh evidence to the right roles.
+fresh evidence to explicitly eligible agents.
 
 ### Management alpha — M18
 
@@ -169,7 +177,8 @@ intervenable without polling panes.
 ### Personal beta — M20
 
 One developer can operate and recover the system at the target of roughly 100
-registered roles with bounded active concurrency.
+registered agent definitions with bounded active concurrency. Their role strings
+remain arbitrary descriptive labels rather than an authority taxonomy.
 
 ### Public release candidate — M21
 

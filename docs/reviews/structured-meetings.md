@@ -39,7 +39,7 @@ The facilitator can propose only typed actions over frozen meeting entities:
 | `sequence` | Add a dependency, release the downstream overlapping claim, resolve its hold |
 | `split` | Create a new ready task inheriting project/objective/priority/budget |
 | `reassign` | Replace a ready/assigned task lease when no live run exists |
-| `designate_role` | Record an explicit implementer or reviewer role and provenance |
+| `designate_role` | Record an explicit implementer or reviewer task duty and provenance |
 | `cancel` | Cancel a nonterminal task, release its assignment and overlapping claim |
 
 Unknown payload fields are rejected. Every action set first revalidates frozen
@@ -47,6 +47,8 @@ overlap, claim, and task revisions, then commits all projections/events or none.
 Owner policy never applies a proposal before explicit `meeting.accept`.
 Named-reviewer policy requires its recorded review; bounded-manager policy can
 apply only allowlisted action types. Anything else waits for the owner.
+Implementer and reviewer duties are meeting-scoped workflow metadata, not fixed
+`AgentDefinition.Role` values and not sources of authority.
 
 ## Test evidence
 
@@ -56,7 +58,7 @@ apply only allowlisted action types. Anything else waits for the owner.
 | Restart and rollback | store tests plus focused scenario | passed | durable position checkpoint, reopen/resume without recollection, missing participant recovery, injected transaction rollback |
 | Daemon/CLI/protocol | `./scripts/go.sh test ./internal/daemon ./internal/cli ./protocol` | passed | five API methods, repeatable participant flags, strict fixtures, published JSON Schema IDs |
 | Typed persistence | `./scripts/sqlc.sh vet` and generated consistency gate | passed | pinned generator, typed params/results/nullability, source and generated-output hashes |
-| Black-box acceptance | `test/scenarios/structured-meetings/run.sh` | passed | real binary/socket/database, daemon restart, owner acceptance, named reviewer roles, stalled human takeover |
+| Black-box acceptance | `test/scenarios/structured-meetings/run.sh` | passed | real binary/socket/database, daemon restart, owner acceptance, named-reviewer workflow, stalled human takeover |
 | Full offline/race gate | `./scripts/check.sh` | passed | vet, all tests, race tests, and all fourteen capability scenarios |
 
 ## Failure proof

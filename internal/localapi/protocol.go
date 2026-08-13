@@ -118,6 +118,7 @@ const (
 	TaskTimelineSchema              = "urn:crewfold:schema:local-api:task-timeline-result:v1"
 	ContextBuildSchema              = "urn:crewfold:schema:local-api:context-build-result:v4"
 	ContextShowSchema               = "urn:crewfold:schema:local-api:context-show-result:v4"
+	ContextShowSchemaV5             = "urn:crewfold:schema:local-api:context-show-result:v5"
 	ContextExplainSchema            = "urn:crewfold:schema:local-api:context-explain-result:v3"
 	ContextRefreshSchema            = "urn:crewfold:schema:local-api:context-refresh-result:v1"
 	ContextDeltaListSchema          = "urn:crewfold:schema:local-api:context-delta-list-result:v1"

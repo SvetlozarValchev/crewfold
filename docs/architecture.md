@@ -191,10 +191,10 @@ event/projection ordering. Ordered SQL migrations remain the schema authority.
 
 ### Scheduler
 
-Matches ready tasks with eligible agent definitions, available checkouts, runtime
-capacity, and policy. It produces an explainable placement proposal or a blocked
-reason. Process launch happens through a runtime driver after the placement is
-committed.
+Matches ready tasks carrying an exact agent-bound launch profile with available
+checkouts, runtime capacity, and policy. It produces an explainable placement
+proposal or a blocked reason. Process launch happens through a runtime driver
+after the placement is committed.
 
 The implemented deterministic scheduler consumes the task's existing active
 assignment, verifies the agent's enabled state and runtime/provider configuration,
@@ -203,11 +203,38 @@ Checkout eligibility depends on availability and write policy, not Git layout:
 adjacent clones and linked worktrees are equal inputs. The selected placement and
 its reasons are durable before the asynchronous worker sees the job.
 
+M16 extends placement without moving launch authority into model output. Accepted
+work names an exact owner-defined launch profile whose project and agent revision
+are the complete scheduling-eligibility binding. Profile purpose and agent role
+are workflow metadata only. The scheduler evaluates ready work in stable order and
+rechecks global, project, provider, agent, checkout, dependency, and claim capacity
+in one immediate transaction. That transaction creates or renews the assignment, acquires required
+claims, builds and binds context, creates the run/job, and records one supervisor
+action, explanation, event, receipt, and idempotency result before any runtime
+driver is called.
+
+The scheduling receipt freezes launch authority for that one operation. The
+worker still checks the exact receipt/job/run, current task, and active assignment
+link before starting, but it does not re-rank or revoke the committed run because
+the profile is later retired, the agent definition is later disabled/revisioned,
+or wall time crosses the assignment deadline. Those mutable facts are inputs to a
+future placement or retry, which must obtain a new receipt. Reserved-run
+reconciliation prevents lease expiry from splitting the committed run from its
+assignment.
+
 ### Supervisor
 
 Consumes task, run, claim, message, and watcher events. It applies deterministic
 rules first and may ask a manager model for a recommendation when judgment is
 useful. Recommendations do not gain more authority because a model generated them.
+
+Management-capable agents and the supervisor have intentionally disjoint
+authority. Packet-v5 runs may submit only the typed proposal kinds in a current
+owner grant; submission is inert and only an owner transaction can accept it. The
+supervisor is a subsystem actor whose automatic set initially contains
+`schedule_ready`; every action outside the exact current policy becomes an
+approval request. Neither surface can invent a launch command, derive authority
+from a role string, or impersonate owner acceptance.
 
 ### Canonical knowledge, retrieval, and bounded context curator
 
@@ -442,6 +469,12 @@ mechanism exists.
 Assignments and claims use renewable leases. Expiry makes abandonment visible but
 does not silently erase evidence or assume that a process stopped writing. A
 supervisor reconciles expired ownership before reassignment.
+
+Reconciliation is run-first: reserved or `lost` runs continue consuming all
+applicable capacity even if an assignment or claim lease is stale. A proven live
+runtime renews ownership, a proven terminal runtime is normalized, temporary
+inspection failure retains reservations, and an unknown process identity/outcome
+becomes `lost`. No automatic path releases, retries, or reassigns lost work.
 
 ### Idempotency
 

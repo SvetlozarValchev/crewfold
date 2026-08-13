@@ -19,6 +19,9 @@ import (
 // and their journaled lifecycle. This keeps a self-consistent raw SQL writer
 // from inventing message previews, knowledge bodies, or other live authority.
 func (s *Store) validateContextDeltaCanonicalProvenance(ctx context.Context, tx *sql.Tx, packet domain.ContextPacket, delta domain.ContextDelta) error {
+	if delta.BasePacketSchema != packet.Schema {
+		return storageFailure("validate context delta canonical scope", errors.New("delta base schema differs from its bound packet"))
+	}
 	run, err := queryRun(ctx, tx, packet.WorkspaceID, delta.RunID)
 	if err != nil {
 		return storageFailure("validate context delta canonical run", err)

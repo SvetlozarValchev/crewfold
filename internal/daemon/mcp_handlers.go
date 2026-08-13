@@ -33,8 +33,13 @@ const (
 	toolKnowledgeAccept = "crewfold_accept_knowledge"
 	// toolContradictionConfirm is likewise recognized but never advertised or
 	// included in a run capability. Only the local owner can confirm a report.
-	toolContradictionConfirm = "crewfold_confirm_contradiction"
-	toolCompletion           = "crewfold_propose_completion"
+	toolContradictionConfirm  = "crewfold_confirm_contradiction"
+	toolManagerProposalAccept = "crewfold_accept_manager_proposal"
+	toolProposeTasks          = "crewfold_propose_tasks"
+	toolProposeAssignment     = "crewfold_propose_assignment"
+	toolProposeReview         = "crewfold_propose_review"
+	toolProposeEscalation     = "crewfold_propose_escalation"
+	toolCompletion            = "crewfold_propose_completion"
 )
 
 func (s *server) handleMCPRequest(request mcp.Request) mcp.Response {
@@ -160,7 +165,7 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 		err = decodeEmptyToolArguments(params.Arguments)
 		if err == nil {
 			contextStatus := legacyContextStatus(briefing.Packet)
-			if briefing.Packet.Schema == domain.ContextPacketSchema {
+			if domain.IsLiveContextPacketSchema(briefing.Packet.Schema) {
 				var contextState domain.ContextDeltaFetchResult
 				contextState, err = s.store.FetchRunContextDelta(context.Background(), briefing.Run.ID)
 				if err == nil {
@@ -318,6 +323,14 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 			})
 			value = result.Detail
 		}
+	case toolProposeTasks:
+		value, err = s.submitManagerProposal(request, briefing, params.Arguments, domain.ManagerProposalTaskDecomposition)
+	case toolProposeAssignment:
+		value, err = s.submitManagerProposal(request, briefing, params.Arguments, domain.ManagerProposalAssignment)
+	case toolProposeReview:
+		value, err = s.submitManagerProposal(request, briefing, params.Arguments, domain.ManagerProposalReview)
+	case toolProposeEscalation:
+		value, err = s.submitManagerProposal(request, briefing, params.Arguments, domain.ManagerProposalEscalation)
 	default:
 		return s.mcpDenied(request, briefing.Run.ID, name, "out_of_scope", "tool is outside this run capability", "denied")
 	}
@@ -465,6 +478,10 @@ func scopedMCPTools() []mcp.Tool {
 		{Name: toolArtifact, Description: "Publish bounded evidence owned by this run.", InputSchema: objectSchema([]string{"name", "media_type", "content", "idempotency_key"}, map[string]any{"name": stringSchema(1, 128), "media_type": stringSchema(1, 128), "content": stringSchema(0, 32768), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolKnowledge, Description: "Propose one concise decision or finding sourced from this run's task; owner acceptance is still required.", InputSchema: objectSchema([]string{"type", "title", "body", "confidence", "verification_status", "freshness_policy", "idempotency_key"}, map[string]any{"type": map[string]any{"type": "string", "enum": []string{"decision", "finding"}}, "title": stringSchema(1, 160), "body": stringSchema(1, 16384), "confidence": map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}}, "verification_status": map[string]any{"type": "string", "enum": []string{"unverified", "supported", "verified"}}, "freshness_policy": map[string]any{"type": "string", "enum": []string{"until_superseded", "expires_at"}}, "fresh_until": stringSchema(1, 64), "task_scope_id": stringSchema(1, 128), "supersedes_revision_id": stringSchema(1, 128), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolContradictionReport, Description: "Report a reasoned contradiction between two exact accepted/current knowledge revisions that both apply to this run's project and task. The local owner must still confirm it before either revision is quarantined.", InputSchema: objectSchema([]string{"left_revision", "right_revision", "reason", "idempotency_key"}, map[string]any{"left_revision": knowledgeRevisionIDSchema(), "right_revision": knowledgeRevisionIDSchema(), "reason": stringSchema(1, 2048), "idempotency_key": stringSchema(1, 128)})},
+		{Name: toolProposeAssignment, Description: "Propose assignment of an existing task through one exact owner-authored launch profile. This does not assign or launch work until local-owner acceptance and supervision.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionAssignTask})},
+		{Name: toolProposeEscalation, Description: "Propose one closed supervisor response for local-owner review. This never grants open-ended control of another run or task.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionRequestAction})},
+		{Name: toolProposeReview, Description: "Propose a review task through one exact owner-authored launch profile. This does not create or launch the review until local-owner acceptance and supervision.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionRequestReview})},
+		{Name: toolProposeTasks, Description: "Propose a bounded task decomposition using only exact owner-allowed launch profiles. This does not create tasks until the local owner accepts it.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionCreateTask, domain.ProposalActionAddDependency, domain.ProposalActionDeclareClaimRequirement})},
 		{Name: toolCompletion, Description: "Propose completion with an executive handoff and evidence.", InputSchema: objectSchema([]string{"summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "handoff": stringSchema(1, 4096), "evidence_ids": stringArraySchema(), "changed_paths": stringArraySchema(), "checks": stringArraySchema(), "remaining_risks": stringArraySchema(), "unknowns": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 	}
 }
@@ -480,7 +497,7 @@ func allowedMCPTools(allowed []string) []mcp.Tool {
 }
 
 func knownMCPTool(name string) bool {
-	if name == toolKnowledgeAccept || name == toolContradictionConfirm {
+	if name == toolKnowledgeAccept || name == toolContradictionConfirm || name == toolManagerProposalAccept {
 		return true
 	}
 	for _, tool := range scopedMCPTools() {
@@ -489,6 +506,88 @@ func knownMCPTool(name string) bool {
 		}
 	}
 	return false
+}
+
+func managerProposalInputSchema(actionTypes []string) map[string]any {
+	actionChoices := make([]map[string]any, 0, len(actionTypes))
+	for _, actionType := range actionTypes {
+		actionChoices = append(actionChoices, objectSchema([]string{"type", actionType}, map[string]any{
+			"type": map[string]any{"const": actionType}, actionType: managerActionPayloadSchema(actionType),
+		}))
+	}
+	return objectSchema([]string{"summary", "actions", "idempotency_key"}, map[string]any{
+		"summary": stringSchema(1, 1024),
+		"actions": map[string]any{
+			"type": "array", "minItems": 1, "maxItems": 32,
+			"items": map[string]any{"oneOf": actionChoices},
+		},
+		"idempotency_key": stringSchema(1, 128),
+	})
+}
+
+// The canonical store validates the closed action union, exact task revisions,
+// and launch-profile scope. The transport still closes each nested payload so a
+// model cannot smuggle trusted run/workspace/provider fields through MCP.
+func managerActionPayloadSchema(actionType string) map[string]any {
+	existingTaskRef := func() map[string]any {
+		return objectSchema([]string{"task_id", "expected_task_revision"}, map[string]any{
+			"task_id": managerEntityIDSchema("task_"), "expected_task_revision": map[string]any{"type": "integer", "minimum": 1},
+		})
+	}
+	taskRef := func(proposedAllowed bool) map[string]any {
+		if !proposedAllowed {
+			return existingTaskRef()
+		}
+		return map[string]any{"oneOf": []map[string]any{
+			existingTaskRef(), objectSchema([]string{"proposal_task_key"}, map[string]any{"proposal_task_key": stringSchema(1, 64)}),
+		}}
+	}
+	budget := objectSchema([]string{"token_limit", "cost_cents", "time_seconds"}, map[string]any{
+		"token_limit":  map[string]any{"type": "integer", "minimum": 0},
+		"cost_cents":   map[string]any{"type": "integer", "minimum": 0},
+		"time_seconds": map[string]any{"type": "integer", "minimum": 0},
+	})
+	switch actionType {
+	case domain.ProposalActionCreateTask:
+		return objectSchema([]string{"task_key", "launch_profile_id", "title", "priority", "budget"}, map[string]any{
+			"task_key": stringSchema(1, 64), "launch_profile_id": managerEntityIDSchema("lprof_"), "title": stringSchema(1, 256),
+			"description": stringSchema(0, 4096), "priority": map[string]any{"type": "integer", "minimum": 0, "maximum": 1000}, "budget": budget,
+		})
+	case domain.ProposalActionAddDependency:
+		return objectSchema([]string{"task", "depends_on"}, map[string]any{"task": taskRef(true), "depends_on": taskRef(true)})
+	case domain.ProposalActionDeclareClaimRequirement:
+		return objectSchema([]string{"task", "kind", "target", "mode", "conflict_policy"}, map[string]any{
+			"task": taskRef(true), "kind": map[string]any{"type": "string", "enum": []string{domain.ClaimKindPath, domain.ClaimKindComponent, domain.ClaimKindOperation}}, "target": stringSchema(1, 512),
+			"mode":            map[string]any{"type": "string", "enum": []string{domain.ClaimModeExclusive, domain.ClaimModeShared, domain.ClaimModeAdvisory}},
+			"conflict_policy": map[string]any{"type": "string", "enum": []string{domain.ClaimPolicyNotify, domain.ClaimPolicyDenyNew, domain.ClaimPolicyPauseScheduling, domain.ClaimPolicyRequestResolution}},
+		})
+	case domain.ProposalActionAssignTask:
+		return objectSchema([]string{"task", "launch_profile_id"}, map[string]any{"task": taskRef(false), "launch_profile_id": managerEntityIDSchema("lprof_")})
+	case domain.ProposalActionRequestReview:
+		return objectSchema([]string{"task", "launch_profile_id", "title", "priority", "budget"}, map[string]any{
+			"task": taskRef(false), "launch_profile_id": managerEntityIDSchema("lprof_"), "title": stringSchema(1, 256),
+			"description": stringSchema(0, 4096), "priority": map[string]any{"type": "integer", "minimum": 0, "maximum": 1000}, "budget": budget,
+		})
+	case domain.ProposalActionRequestAction:
+		common := func(response string, required []string, extra map[string]any) map[string]any {
+			properties := map[string]any{
+				"response": map[string]any{"const": response}, "reason": stringSchema(1, 1024),
+				"expected_revision": map[string]any{"type": "integer", "minimum": 1},
+			}
+			for name, schema := range extra {
+				properties[name] = schema
+			}
+			return objectSchema(append([]string{"response", "reason", "expected_revision"}, required...), properties)
+		}
+		return map[string]any{"oneOf": []map[string]any{
+			common(domain.ProposalResponseResumeRun, []string{"target_run_id"}, map[string]any{"target_run_id": managerEntityIDSchema("run_")}),
+			common(domain.ProposalResponseStopRun, []string{"target_run_id"}, map[string]any{"target_run_id": managerEntityIDSchema("run_")}),
+			common(domain.ProposalResponseRetryTask, []string{"target_task_id"}, map[string]any{"target_task_id": managerEntityIDSchema("task_")}),
+			common(domain.ProposalResponseReassignTask, []string{"target_task_id", "launch_profile_id"}, map[string]any{"target_task_id": managerEntityIDSchema("task_"), "launch_profile_id": managerEntityIDSchema("lprof_")}),
+		}}
+	default:
+		return objectSchema(nil, nil)
+	}
 }
 
 func containsString(values []string, wanted string) bool {
@@ -519,12 +618,374 @@ func contextDeltaIDSchema() map[string]any {
 	return map[string]any{"type": "string", "pattern": `^cdelta_[0-9a-f]{32}$`}
 }
 
+func managerEntityIDSchema(prefix string) map[string]any {
+	return map[string]any{"type": "string", "pattern": "^" + prefix + "[0-9a-f]{32}$"}
+}
+
+func validManagerEntityID(value, prefix string) bool {
+	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	for _, character := range value[len(prefix):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func stringArraySchema() map[string]any {
 	return boundedStringArraySchema(32)
 }
 
 func boundedStringArraySchema(maximum int) map[string]any {
 	return map[string]any{"type": "array", "maxItems": maximum, "items": stringSchema(1, 128)}
+}
+
+type managerProposalArguments struct {
+	Summary        string                         `json:"summary"`
+	Actions        []domain.ManagerProposalAction `json:"actions"`
+	IdempotencyKey string                         `json:"idempotency_key"`
+}
+
+type managerProposalWireArguments struct {
+	Summary        string            `json:"summary"`
+	Actions        []json.RawMessage `json:"actions"`
+	IdempotencyKey string            `json:"idempotency_key"`
+}
+
+type managerProposalBudgetInput struct {
+	TokenLimit  *int64 `json:"token_limit"`
+	CostCents   *int64 `json:"cost_cents"`
+	TimeSeconds *int64 `json:"time_seconds"`
+}
+
+func (input *managerProposalBudgetInput) value() (domain.Budget, error) {
+	if input == nil || input.TokenLimit == nil || input.CostCents == nil || input.TimeSeconds == nil ||
+		*input.TokenLimit < 0 || *input.CostCents < 0 || *input.TimeSeconds < 0 {
+		return domain.Budget{}, errors.New("manager proposal budget requires three non-negative limits")
+	}
+	return domain.Budget{TokenLimit: *input.TokenLimit, CostCents: *input.CostCents, TimeSeconds: *input.TimeSeconds}, nil
+}
+
+type managerProposalTaskRefInput struct {
+	TaskID               string `json:"task_id,omitempty"`
+	ProposalTaskKey      string `json:"proposal_task_key,omitempty"`
+	ExpectedTaskRevision *int64 `json:"expected_task_revision,omitempty"`
+}
+
+func (input *managerProposalTaskRefInput) value(proposedAllowed bool) (domain.ProposalTaskRef, error) {
+	if input == nil {
+		return domain.ProposalTaskRef{}, errors.New("manager proposal task reference is required")
+	}
+	if input.TaskID != "" {
+		if input.ProposalTaskKey != "" || input.ExpectedTaskRevision == nil || *input.ExpectedTaskRevision < 1 || !validManagerEntityID(input.TaskID, "task_") {
+			return domain.ProposalTaskRef{}, errors.New("existing task reference requires exactly task_id and expected_task_revision")
+		}
+		return domain.ProposalTaskRef{TaskID: input.TaskID, ExpectedTaskRevision: *input.ExpectedTaskRevision}, nil
+	}
+	if proposedAllowed && input.ProposalTaskKey != "" && len(input.ProposalTaskKey) <= 64 && input.ExpectedTaskRevision == nil {
+		return domain.ProposalTaskRef{ProposalTaskKey: input.ProposalTaskKey}, nil
+	}
+	return domain.ProposalTaskRef{}, errors.New("manager proposal task reference does not match an allowed exact branch")
+}
+
+type managerProposalCreateTaskInput struct {
+	TaskKey         string                      `json:"task_key"`
+	LaunchProfileID string                      `json:"launch_profile_id"`
+	Title           string                      `json:"title"`
+	Description     string                      `json:"description,omitempty"`
+	Priority        *int                        `json:"priority"`
+	Budget          *managerProposalBudgetInput `json:"budget"`
+}
+
+func (input *managerProposalCreateTaskInput) value() (domain.ProposalCreateTaskAction, error) {
+	if input == nil || len(input.TaskKey) < 1 || len(input.TaskKey) > 64 || !validManagerEntityID(input.LaunchProfileID, "lprof_") ||
+		len(input.Title) < 1 || len(input.Title) > 256 || len(input.Description) > 4096 || input.Priority == nil || *input.Priority < 0 || *input.Priority > 1000 {
+		return domain.ProposalCreateTaskAction{}, errors.New("create_task action does not match its strict input schema")
+	}
+	budget, err := input.Budget.value()
+	if err != nil {
+		return domain.ProposalCreateTaskAction{}, err
+	}
+	return domain.ProposalCreateTaskAction{TaskKey: input.TaskKey, LaunchProfileID: input.LaunchProfileID, Title: input.Title, Description: input.Description, Priority: *input.Priority, Budget: budget}, nil
+}
+
+type managerProposalAddDependencyInput struct {
+	Task      *managerProposalTaskRefInput `json:"task"`
+	DependsOn *managerProposalTaskRefInput `json:"depends_on"`
+}
+
+func (input *managerProposalAddDependencyInput) value() (domain.ProposalAddDependencyAction, error) {
+	if input == nil {
+		return domain.ProposalAddDependencyAction{}, errors.New("add_dependency action requires its exact payload")
+	}
+	task, err := input.Task.value(true)
+	if err != nil {
+		return domain.ProposalAddDependencyAction{}, err
+	}
+	dependsOn, err := input.DependsOn.value(true)
+	if err != nil {
+		return domain.ProposalAddDependencyAction{}, err
+	}
+	return domain.ProposalAddDependencyAction{Task: task, DependsOn: dependsOn}, nil
+}
+
+type managerProposalClaimRequirementInput struct {
+	Task           *managerProposalTaskRefInput `json:"task"`
+	Kind           string                       `json:"kind"`
+	Target         string                       `json:"target"`
+	Mode           string                       `json:"mode"`
+	ConflictPolicy string                       `json:"conflict_policy"`
+}
+
+func (input *managerProposalClaimRequirementInput) value() (domain.ProposalDeclareClaimRequirementAction, error) {
+	if input == nil || !domain.ValidClaimKind(input.Kind) || len(input.Target) < 1 || len(input.Target) > 512 ||
+		!domain.ValidClaimMode(input.Mode) || !domain.ValidClaimPolicy(input.ConflictPolicy) {
+		return domain.ProposalDeclareClaimRequirementAction{}, errors.New("declare_claim_requirement action does not match its strict input schema")
+	}
+	task, err := input.Task.value(true)
+	if err != nil {
+		return domain.ProposalDeclareClaimRequirementAction{}, err
+	}
+	return domain.ProposalDeclareClaimRequirementAction{Task: task, Kind: input.Kind, Target: input.Target, Mode: input.Mode, ConflictPolicy: input.ConflictPolicy}, nil
+}
+
+type managerProposalAssignTaskInput struct {
+	Task            *managerProposalTaskRefInput `json:"task"`
+	LaunchProfileID string                       `json:"launch_profile_id"`
+}
+
+func (input *managerProposalAssignTaskInput) value() (domain.ProposalAssignTaskAction, error) {
+	if input == nil || !validManagerEntityID(input.LaunchProfileID, "lprof_") {
+		return domain.ProposalAssignTaskAction{}, errors.New("assign_task action does not match its strict input schema")
+	}
+	task, err := input.Task.value(false)
+	if err != nil {
+		return domain.ProposalAssignTaskAction{}, err
+	}
+	return domain.ProposalAssignTaskAction{Task: task, LaunchProfileID: input.LaunchProfileID}, nil
+}
+
+type managerProposalRequestReviewInput struct {
+	Task            *managerProposalTaskRefInput `json:"task"`
+	LaunchProfileID string                       `json:"launch_profile_id"`
+	Title           string                       `json:"title"`
+	Description     string                       `json:"description,omitempty"`
+	Priority        *int                         `json:"priority"`
+	Budget          *managerProposalBudgetInput  `json:"budget"`
+}
+
+func (input *managerProposalRequestReviewInput) value() (domain.ProposalRequestReviewAction, error) {
+	if input == nil || !validManagerEntityID(input.LaunchProfileID, "lprof_") || len(input.Title) < 1 || len(input.Title) > 256 ||
+		len(input.Description) > 4096 || input.Priority == nil || *input.Priority < 0 || *input.Priority > 1000 {
+		return domain.ProposalRequestReviewAction{}, errors.New("request_review action does not match its strict input schema")
+	}
+	task, err := input.Task.value(false)
+	if err != nil {
+		return domain.ProposalRequestReviewAction{}, err
+	}
+	budget, err := input.Budget.value()
+	if err != nil {
+		return domain.ProposalRequestReviewAction{}, err
+	}
+	return domain.ProposalRequestReviewAction{Task: task, LaunchProfileID: input.LaunchProfileID, Title: input.Title, Description: input.Description, Priority: *input.Priority, Budget: budget}, nil
+}
+
+type managerProposalRequestActionInput struct {
+	Response         string `json:"response"`
+	TargetRunID      string `json:"target_run_id,omitempty"`
+	TargetTaskID     string `json:"target_task_id,omitempty"`
+	LaunchProfileID  string `json:"launch_profile_id,omitempty"`
+	Reason           string `json:"reason"`
+	ExpectedRevision int64  `json:"expected_revision"`
+}
+
+func decodeManagerProposalArguments(data json.RawMessage) (managerProposalArguments, error) {
+	var wire managerProposalWireArguments
+	if err := decodeToolArguments(data, &wire); err != nil {
+		return managerProposalArguments{}, err
+	}
+	result := managerProposalArguments{Summary: wire.Summary, IdempotencyKey: wire.IdempotencyKey, Actions: make([]domain.ManagerProposalAction, 0, len(wire.Actions))}
+	for _, raw := range wire.Actions {
+		var discriminator struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &discriminator); err != nil || discriminator.Type == "" {
+			return managerProposalArguments{}, errors.New("manager proposal action requires a supported type")
+		}
+		action := domain.ManagerProposalAction{Type: discriminator.Type}
+		switch discriminator.Type {
+		case domain.ProposalActionCreateTask:
+			var input struct {
+				Type       string                          `json:"type"`
+				CreateTask *managerProposalCreateTaskInput `json:"create_task"`
+			}
+			if err := decodeMCPParams(raw, &input); err != nil {
+				return managerProposalArguments{}, err
+			}
+			value, err := input.CreateTask.value()
+			if err != nil {
+				return managerProposalArguments{}, err
+			}
+			action.CreateTask = &value
+		case domain.ProposalActionAddDependency:
+			var input struct {
+				Type          string                             `json:"type"`
+				AddDependency *managerProposalAddDependencyInput `json:"add_dependency"`
+			}
+			if err := decodeMCPParams(raw, &input); err != nil {
+				return managerProposalArguments{}, err
+			}
+			value, err := input.AddDependency.value()
+			if err != nil {
+				return managerProposalArguments{}, err
+			}
+			action.AddDependency = &value
+		case domain.ProposalActionDeclareClaimRequirement:
+			var input struct {
+				Type                    string                                `json:"type"`
+				DeclareClaimRequirement *managerProposalClaimRequirementInput `json:"declare_claim_requirement"`
+			}
+			if err := decodeMCPParams(raw, &input); err != nil {
+				return managerProposalArguments{}, err
+			}
+			value, err := input.DeclareClaimRequirement.value()
+			if err != nil {
+				return managerProposalArguments{}, err
+			}
+			action.DeclareClaimRequirement = &value
+		case domain.ProposalActionAssignTask:
+			var input struct {
+				Type       string                          `json:"type"`
+				AssignTask *managerProposalAssignTaskInput `json:"assign_task"`
+			}
+			if err := decodeMCPParams(raw, &input); err != nil {
+				return managerProposalArguments{}, err
+			}
+			value, err := input.AssignTask.value()
+			if err != nil {
+				return managerProposalArguments{}, err
+			}
+			action.AssignTask = &value
+		case domain.ProposalActionRequestReview:
+			var input struct {
+				Type          string                             `json:"type"`
+				RequestReview *managerProposalRequestReviewInput `json:"request_review"`
+			}
+			if err := decodeMCPParams(raw, &input); err != nil {
+				return managerProposalArguments{}, err
+			}
+			value, err := input.RequestReview.value()
+			if err != nil {
+				return managerProposalArguments{}, err
+			}
+			action.RequestReview = &value
+		case domain.ProposalActionRequestAction:
+			var input struct {
+				Type          string                             `json:"type"`
+				RequestAction *managerProposalRequestActionInput `json:"request_action"`
+			}
+			if err := decodeMCPParams(raw, &input); err != nil {
+				return managerProposalArguments{}, err
+			}
+			if input.RequestAction == nil {
+				return managerProposalArguments{}, errors.New("request_action action requires its exact payload")
+			}
+			if err := input.RequestAction.validate(); err != nil {
+				return managerProposalArguments{}, err
+			}
+			action.RequestAction = &domain.ProposalRequestAction{
+				Response: input.RequestAction.Response, TargetRunID: input.RequestAction.TargetRunID,
+				TargetTaskID: input.RequestAction.TargetTaskID, LaunchProfileID: input.RequestAction.LaunchProfileID,
+				Reason: input.RequestAction.Reason, ExpectedRevision: input.RequestAction.ExpectedRevision,
+			}
+		default:
+			return managerProposalArguments{}, errors.New("manager proposal action type is unsupported")
+		}
+		result.Actions = append(result.Actions, action)
+	}
+	return result, nil
+}
+
+func (input managerProposalRequestActionInput) validate() error {
+	if input.ExpectedRevision < 1 || strings.TrimSpace(input.Reason) == "" || len(input.Reason) > 1024 ||
+		!utf8.ValidString(input.Reason) || strings.ContainsRune(input.Reason, '\x00') {
+		return errors.New("manager escalation requires a bounded reason and positive expected revision")
+	}
+	switch input.Response {
+	case domain.ProposalResponseResumeRun, domain.ProposalResponseStopRun:
+		if input.TargetRunID == "" || input.TargetTaskID != "" || input.LaunchProfileID != "" {
+			return errors.New("resume_run and stop_run require exactly target_run_id")
+		}
+	case domain.ProposalResponseRetryTask:
+		if input.TargetTaskID == "" || input.TargetRunID != "" || input.LaunchProfileID != "" {
+			return errors.New("retry_task requires exactly target_task_id")
+		}
+	case domain.ProposalResponseReassignTask:
+		if input.TargetTaskID == "" || input.LaunchProfileID == "" || input.TargetRunID != "" {
+			return errors.New("reassign_task requires exactly target_task_id and launch_profile_id")
+		}
+	default:
+		return errors.New("manager escalation response is unsupported")
+	}
+	return nil
+}
+
+func (s *server) submitManagerProposal(request mcp.Request, briefing domain.RunBriefing, data json.RawMessage, kind string) (any, error) {
+	arguments, err := decodeManagerProposalArguments(data)
+	if err != nil {
+		return nil, err
+	}
+	grant := briefing.Packet.ManagementGrant
+	if briefing.Packet.Schema != domain.ContextPacketSchemaV5 || grant == nil || grant.Schema != domain.ContextManagerGrantSchema {
+		return nil, &store.Error{Code: store.CodeManagerGrantDenied, Message: "manager proposals require an exact packet-v5 grant snapshot"}
+	}
+	if !containsString(grant.AllowedProposalKinds, kind) {
+		return nil, &store.Error{Code: store.CodeManagerGrantDenied, Message: "proposal kind is absent from this exact manager grant"}
+	}
+	if strings.TrimSpace(arguments.Summary) == "" || len(arguments.Summary) > 1024 || !utf8.ValidString(arguments.Summary) || strings.ContainsRune(arguments.Summary, '\x00') {
+		return nil, &store.Error{Code: store.CodeInvalidManagerProposal, Message: "manager proposal summary must contain 1 to 1024 UTF-8 bytes without NUL"}
+	}
+	if len(arguments.Actions) < 1 || len(arguments.Actions) > grant.MaxActions {
+		return nil, &store.Error{Code: store.CodeInvalidManagerProposal, Message: "manager proposal action count is outside this grant's bound"}
+	}
+	if strings.TrimSpace(arguments.IdempotencyKey) == "" || len(arguments.IdempotencyKey) > 128 || !utf8.ValidString(arguments.IdempotencyKey) || strings.ContainsRune(arguments.IdempotencyKey, '\x00') {
+		return nil, &store.Error{Code: store.CodeInvalidManagerProposal, Message: "manager proposal requires a bounded idempotency key"}
+	}
+	for _, action := range arguments.Actions {
+		if action.ID != "" || action.Ordinal != 0 {
+			return nil, &store.Error{Code: store.CodeInvalidManagerProposal, Message: "manager proposal action identity and ordering are assigned by Crewfold"}
+		}
+		if !managerActionAllowedForKind(kind, action.Type) {
+			return nil, &store.Error{Code: store.CodeInvalidManagerProposal, Message: "manager proposal contains an action outside the selected proposal kind"}
+		}
+	}
+	result, err := s.store.SubmitManagerProposal(context.Background(), store.SubmitManagerProposalCommand{
+		RunID: briefing.Run.ID, ManagerGrantID: grant.GrantID, ExpectedGrantRevision: grant.GrantRevision,
+		Kind: kind, Summary: arguments.Summary, AsOfEventSequence: briefing.Packet.AsOfEventSequence,
+		Actions: arguments.Actions, IdempotencyKey: arguments.IdempotencyKey,
+		CorrelationID: "mcp-" + mcpRequestID(request.ID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Proposal, nil
+}
+
+func managerActionAllowedForKind(kind, actionType string) bool {
+	switch kind {
+	case domain.ManagerProposalTaskDecomposition:
+		return actionType == domain.ProposalActionCreateTask || actionType == domain.ProposalActionAddDependency || actionType == domain.ProposalActionDeclareClaimRequirement
+	case domain.ManagerProposalAssignment:
+		return actionType == domain.ProposalActionAssignTask
+	case domain.ManagerProposalReview:
+		return actionType == domain.ProposalActionRequestReview
+	case domain.ManagerProposalEscalation:
+		return actionType == domain.ProposalActionRequestAction
+	default:
+		return false
+	}
 }
 
 type inboxArguments struct {
@@ -727,11 +1188,14 @@ func mcpErrorFromStore(err error) mcp.ToolError {
 	result := mcp.ToolError{Message: err.Error()}
 	switch code {
 	case store.CodeInvalidContext, store.CodeInvalidContextDelta, store.CodeInvalidReport, store.CodeInvalidRun, store.CodeInvalidMessage, store.CodeInvalidKnowledge,
-		store.CodeKnowledgeConflict, store.CodeContradictionConflict, store.CodeIdempotencyConflict:
+		store.CodeKnowledgeConflict, store.CodeContradictionConflict, store.CodeInvalidManagerProposal, store.CodeManagerProposalConflict,
+		store.CodeInvalidManagerGrant, store.CodeIdempotencyConflict:
 		result.Code = "invalid_input"
-	case store.CodeContextNotFound, store.CodeContextDeltaNotFound, store.CodeRunNotFound, store.CodeMessageNotFound, store.CodeKnowledgeNotFound, store.CodeContradictionNotFound:
+	case store.CodeContextNotFound, store.CodeContextDeltaNotFound, store.CodeRunNotFound, store.CodeMessageNotFound, store.CodeKnowledgeNotFound, store.CodeContradictionNotFound,
+		store.CodeManagerGrantNotFound, store.CodeManagerProposalNotFound:
 		result.Code = "out_of_scope"
-	case store.CodeCapabilityExpired, store.CodeCapabilityInactive, store.CodeRunConflict, store.CodeMessageDenied, store.CodeKnowledgeDenied, store.CodeContradictionDenied:
+	case store.CodeCapabilityExpired, store.CodeCapabilityInactive, store.CodeRunConflict, store.CodeMessageDenied, store.CodeKnowledgeDenied, store.CodeContradictionDenied,
+		store.CodeManagerGrantDenied, store.CodeManagerProposalDenied:
 		result.Code = "denied_by_policy"
 	default:
 		result.Code, result.Retryable = "temporarily_unavailable", true

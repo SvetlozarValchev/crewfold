@@ -205,7 +205,7 @@ observed writes, and declared constraints carry more weight.
 The scheduler considers:
 
 - dependency readiness;
-- agent capability and project eligibility;
+- exact active agent-bound launch profile;
 - assignment and claim availability;
 - checkout write policy;
 - runtime/provider concurrency limits;
@@ -218,12 +218,38 @@ It returns a placement explanation, for example:
 
 ```text
 Assigned task T-42 to agent api-implementer in checkout world-engine-2.
-Reasons: role match, dependency T-37 completed, exclusive checkout available.
-Deferred reviewer: project concurrency limit 3/3.
+Reasons: exact launch profile binds the eligible agent, dependency T-37 completed,
+exclusive checkout available.
+Deferred independent-review task: project concurrency limit 3/3.
 ```
 
 The initial scheduler is deterministic. A model may propose task decomposition or
 priority changes, but it does not replace the constraint solver.
+
+M16 makes the authority split explicit. An agent with an exact owner grant may
+submit a bounded typed plan, but the plan creates no operational work until one
+owner acceptance transaction revalidates and applies it. Accepted tasks bind exact
+owner-defined agent-bound launch-profile revisions. A role label
+and profile purpose are workflow metadata; neither can choose an executable,
+provider command, capability, or arbitrary scenario.
+
+Ready tasks are ordered by priority descending, readiness time ascending, then ID.
+Readiness is the latest of intent creation, a real task-ready transition, and
+dependency completion; editing ready-task metadata does not move it. Supervisor
+pages are bounded. Stable deferrals use a deterministic 30-second retry time,
+and only a classified fact relevant to the latest primary failure wakes one early.
+Plans cite an exact profile, which derives the one eligible agent; there is no
+role-based candidate search or rank. Global, project, provider, agent, checkout,
+claim, and dependency availability are checked again while the durable scheduling
+intent is committed. Concurrent scans therefore either reuse the same action/run
+or defer; they cannot each spend the same capacity slot.
+
+The committed scheduling receipt is frozen authority for that exact run, not a
+standing role or profile grant. Later retirement of its profile, disablement or
+revision change of its agent, or passage beyond the assignment deadline prevents
+future placement but does not invalidate crash recovery of the already receipted
+run. The worker still requires the exact current task/assignment link, and a new
+retry rechecks current authority.
 
 ## Supervisor
 
@@ -237,11 +263,25 @@ The supervisor watches for conditions and chooses from policy-approved responses
 | Dependency completed | Refresh dependent context and enqueue task |
 | Run over budget | Stop, request extension, or create handoff |
 | Repeated task failure | Reassign, request review, or escalate |
-| CI failure | Attach result, notify owners, create repair task |
-| Knowledge contradiction | Ask curator/reviewer to reconcile revisions |
+| Check failure | Attach result, notify owners, create repair task |
+| Knowledge contradiction | Ask an exactly authorized agent to reconcile revisions |
 
 Model reasoning is useful for summarizing evidence and proposing responses. The
-supervisor's ability to execute a response still comes from deterministic policy.
+supervisor's ability to execute a response still comes from an exact, current
+owner policy revision. `schedule_ready` is the default automatic action. An owner
+may additionally enable a zero-through-three bounded same-profile retry after
+definite `start_failed`, with a cooldown. A retry is a new run with an exact
+prior/new receipt; it leaves the failed run immutable and cannot revive an expired
+assignment or claim. Blocked/failed recovery, wall-time stop,
+reassignment, budget changes, cancellation, meeting or resolution actions,
+ordinary stop/resume, and every uncertain outcome require one owner approval.
+
+Run reconciliation precedes lease release. `requested`, `starting`, `active`,
+`blocked`, `stopping`, and `lost` reserve capacity. A stale run that is proven
+alive renews its leases; a proven terminal run is normalized; an unavailable
+adapter keeps the reservation; an unknowable identity or outcome becomes `lost`.
+A lost run stays blocked and reserved until an owner resolves it, so a supervisor
+never creates a second possible writer from an expired lease.
 
 The supervisor also feeds exceptions into outcome projections. It records the
 condition, affected commitment, supporting observations, response, owner, and
@@ -249,23 +289,31 @@ resolution state. A management briefing can therefore show the unresolved
 exceptions that threaten delivery without turning every heartbeat or progress
 message into owner-facing noise.
 
-## Manager hierarchy
+## Owner-defined work patterns and authority
 
-Crewfold can represent manager and team-lead roles, but the personal MVP does not
-create an elaborate permanent org chart. A shallow default is enough:
+Crewfold can represent coordinating and team-lead work patterns, but it has no
+fixed role taxonomy and the personal MVP does not create an elaborate permanent
+org chart. One illustrative arrangement is:
 
 ```text
 owner
-└─ workspace manager
-   ├─ project implementers
-   ├─ reviewers
-   ├─ context curator
-   └─ CI watcher
+└─ coordination-capable agent
+   ├─ change-producing agents
+   ├─ independent evidence agent
+   ├─ context-curation capability
+   └─ check-observer capability
 ```
 
 Task-specific coordinators can be created temporarily. Hierarchies organize
 attention and escalation; they do not hide peer messages or confer unrestricted
 authority.
+
+The diagram is an attention hierarchy, not an authorization hierarchy. The owner
+alone creates/revokes management grants, launch profiles, and
+supervisor policy; accepts/rejects proposals; and allows/denies approval requests.
+A packet-v5 grantee can only propose within its exact grant. The deterministic
+supervisor can only execute the closed automatic actions in policy. Two agents may
+have identical arbitrary role strings while holding entirely different grants.
 
 Every layer rolls up accepted outcomes, material decisions, verification gaps,
 risks, unknowns, and requests for authority—not concatenated subordinate
@@ -289,10 +337,11 @@ Crewfold therefore:
 5. can pause or warn based on checkout policy;
 6. never promises isolation that the filesystem does not provide.
 
-## CI watcher behavior
+## Check-observer capability
 
-A CI watcher is an ordinary agent or deterministic worker with a specialized task.
-For local checks it can run allowlisted commands and attach structured results. A
-future remote-CI adapter can observe check runs and commit status. It should not
-infer merge order from pass/fail alone; dependency and integration policy decide
-who goes after whom.
+Check watching is an explicit reusable capability attachable to any eligible
+agent or deterministic worker; `CI watcher` is not a built-in role. Under an exact
+owner grant it can run allowlisted local checks and attach structured results. A
+future remote-CI adapter can observe check runs and commit status. It cannot infer
+merge order from pass/fail alone; dependency and integration policy decide who
+goes after whom.

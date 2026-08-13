@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	sqliteTimestampKeyFunction = "crewfold_timestamp_key"
-	sqliteTimestampKeyFormat   = "2006-01-02T15:04:05.000000000Z"
+	sqliteTimestampKeyFunction     = "crewfold_timestamp_key"
+	sqliteTimestampElapsedFunction = "crewfold_timestamp_elapsed_seconds"
+	sqliteTimestampKeyFormat       = "2006-01-02T15:04:05.000000000Z"
 )
 
 var errInvalidSQLiteTimestamp = errors.New("crewfold_timestamp_key: expected a valid RFC3339Nano timestamp")
@@ -39,7 +40,7 @@ func registerSQLiteTimestampKey(connection *sqlite3.Conn) error {
 	); err != nil {
 		return err
 	}
-	return connection.CreateFunction(
+	if err := connection.CreateFunction(
 		"crewfold_timestamp_canonical",
 		1,
 		sqlite3.DETERMINISTIC|sqlite3.INNOCUOUS,
@@ -55,6 +56,27 @@ func registerSQLiteTimestampKey(connection *sqlite3.Conn) error {
 				return
 			}
 			ctx.ResultInt(0)
+		},
+	); err != nil {
+		return err
+	}
+	return connection.CreateFunction(
+		sqliteTimestampElapsedFunction,
+		2,
+		sqlite3.DETERMINISTIC|sqlite3.INNOCUOUS,
+		func(ctx sqlite3.Context, arguments ...sqlite3.Value) {
+			if len(arguments) != 2 || arguments[0].Type() != sqlite3.TEXT || arguments[1].Type() != sqlite3.TEXT {
+				ctx.ResultError(errInvalidSQLiteTimestamp)
+				return
+			}
+			left, leftErr := time.Parse(time.RFC3339Nano, arguments[0].Text())
+			right, rightErr := time.Parse(time.RFC3339Nano, arguments[1].Text())
+			if leftErr != nil || rightErr != nil {
+				ctx.ResultError(errInvalidSQLiteTimestamp)
+				return
+			}
+			seconds := left.Sub(right) / time.Second
+			ctx.ResultInt64(int64(seconds))
 		},
 	)
 }

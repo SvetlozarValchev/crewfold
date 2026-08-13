@@ -52,6 +52,7 @@ type FakeScenario struct {
 	Knowledge     FixtureKnowledge     `json:"knowledge,omitempty"`
 	Contradiction FixtureContradiction `json:"contradiction,omitempty"`
 	ContextDelta  FixtureContextDelta  `json:"context_delta,omitempty"`
+	Management    FixtureManagement    `json:"management,omitempty"`
 }
 
 // FixtureProcess describes deterministic operating-system behavior for the
@@ -147,11 +148,28 @@ type FixtureContextDeltaExpectation struct {
 	DependentTaskID       string   `json:"dependent_task_id,omitempty"`
 }
 
+// FixtureManagement exercises packet-v5 proposal authority and its revocation
+// boundary without allowing the provider fixture to choose trusted run scope.
+type FixtureManagement struct {
+	Proposals                  []FixtureManagerProposal `json:"proposals,omitempty"`
+	ProbeReservedAcceptance    bool                     `json:"probe_reserved_acceptance,omitempty"`
+	ExpectToolsDenied          bool                     `json:"expect_tools_denied,omitempty"`
+	ProbeRevokedGrant          bool                     `json:"probe_revoked_grant,omitempty"`
+	RevocationProbeDelayMillis int                      `json:"revocation_probe_delay_millis,omitempty"`
+}
+
+type FixtureManagerProposal struct {
+	Kind    string                  `json:"kind"`
+	Summary string                  `json:"summary"`
+	Actions []ManagerProposalAction `json:"actions"`
+}
+
 type Run struct {
 	ID              string       `json:"id"`
 	WorkspaceID     string       `json:"workspace_id"`
 	ProjectID       string       `json:"project_id"`
 	TaskID          string       `json:"task_id"`
+	AssignmentID    string       `json:"assignment_id"`
 	AgentID         string       `json:"agent_id"`
 	CheckoutID      string       `json:"checkout_id"`
 	ContextPacketID string       `json:"context_packet_id,omitempty"`

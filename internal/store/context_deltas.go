@@ -80,7 +80,7 @@ func (s *Store) RefreshContext(ctx context.Context, command RefreshContextComman
 	if found, err := lookupIdempotency(ctx, tx, scopedKey, "context.refresh", requestHash, &replay); err != nil {
 		return domain.ContextRefreshResult{}, err
 	} else if found {
-		if packet.Schema == domain.ContextPacketSchema {
+		if domain.IsLiveContextPacketSchema(packet.Schema) {
 			state, stateErr := dbgen.New(tx).GetRunContextDeltaState(ctx, run.ID)
 			if stateErr != nil {
 				return domain.ContextRefreshResult{}, contextDeltaStateError(packet, stateErr)
@@ -95,7 +95,7 @@ func (s *Store) RefreshContext(ctx context.Context, command RefreshContextComman
 	if !runCanUseMailbox(run.Status) {
 		return domain.ContextRefreshResult{}, &Error{Code: CodeInvalidContextDelta, Message: "context can refresh only for a live run"}
 	}
-	if packet.Schema != domain.ContextPacketSchema {
+	if !domain.IsLiveContextPacketSchema(packet.Schema) {
 		result := domain.ContextRefreshResult{Status: domain.ContextRefreshRebaseRequired, RunID: run.ID,
 			ContextPacketID: packet.ID, RebaseReason: domain.ContextRebaseUnsupportedPacket,
 			Chain: domain.ContextDeltaChain{RunID: run.ID, ContextPacketID: packet.ID, RebaseReason: domain.ContextRebaseUnsupportedPacket}}
@@ -322,7 +322,7 @@ func (s *Store) ListContextDeltas(ctx context.Context, query ListContextDeltasQu
 	if err != nil {
 		return domain.ContextDeltaList{}, err
 	}
-	if packet.Schema != domain.ContextPacketSchema {
+	if !domain.IsLiveContextPacketSchema(packet.Schema) {
 		return domain.ContextDeltaList{}, &Error{Code: CodeInvalidContextDelta, Message: "context packet has no bounded live delta chain"}
 	}
 	state, err := dbgen.New(tx).GetRunContextDeltaState(ctx, run.ID)
@@ -430,7 +430,7 @@ func (s *Store) FetchRunContextDelta(ctx context.Context, runID string) (domain.
 	if err != nil {
 		return domain.ContextDeltaFetchResult{}, err
 	}
-	if packet.Schema != domain.ContextPacketSchema {
+	if !domain.IsLiveContextPacketSchema(packet.Schema) {
 		return domain.ContextDeltaFetchResult{Status: domain.ContextDeltaRebaseRequired, RunID: run.ID,
 			ContextPacketID: packet.ID, RebaseReason: domain.ContextRebaseUnsupportedPacket,
 			Chain: domain.ContextDeltaChain{RunID: run.ID, ContextPacketID: packet.ID, RebaseReason: domain.ContextRebaseUnsupportedPacket}}, nil
@@ -486,7 +486,7 @@ func (s *Store) AcknowledgeRunContextDelta(ctx context.Context, command Acknowle
 	if err != nil {
 		return domain.ContextDeltaAcknowledgement{}, err
 	}
-	if packet.Schema != domain.ContextPacketSchema {
+	if !domain.IsLiveContextPacketSchema(packet.Schema) {
 		return domain.ContextDeltaAcknowledgement{}, &Error{Code: CodeContextRebaseRequired, Message: "context packet predates bounded live context and must be rebased"}
 	}
 	queries := dbgen.New(tx)
@@ -1420,7 +1420,7 @@ func validateContextDelta(delta domain.ContextDelta) error {
 func validateContextDeltaForFinalize(delta domain.ContextDelta) error {
 	if delta.Schema != domain.ContextDeltaSchema || !validContextDeltaID(delta.ID) || delta.RunID == "" || delta.ContextPacketID == "" ||
 		delta.WorkspaceID == "" || delta.ProjectID == "" || delta.TaskID == "" || delta.AgentID == "" ||
-		delta.BasePacketSchema != domain.ContextPacketSchema || delta.Sequence < 1 ||
+		!domain.IsLiveContextPacketSchema(delta.BasePacketSchema) || delta.Sequence < 1 ||
 		delta.FromEventSequence < 0 || delta.ThroughEventSequence < delta.FromEventSequence || len(delta.Changes) == 0 ||
 		len(delta.Changes) > maximumContextDeltaEvents || delta.CreatedBy != localOwnerActorID || delta.CreatedAt != delta.EvaluatedAt {
 		return errors.New("delta identity, cursor, creator, or change count is invalid")
@@ -1751,7 +1751,7 @@ WHERE binding.run_id = ? AND binding.context_packet_id = ?`, run.ID, run.Context
 }
 
 func contextDeltaStateError(packet domain.ContextPacket, err error) error {
-	if errors.Is(err, sql.ErrNoRows) && packet.Schema != domain.ContextPacketSchema {
+	if errors.Is(err, sql.ErrNoRows) && !domain.IsLiveContextPacketSchema(packet.Schema) {
 		return &Error{Code: CodeContextRebaseRequired, Message: "context packet predates bounded live context and must be rebased"}
 	}
 	if errors.Is(err, sql.ErrNoRows) {

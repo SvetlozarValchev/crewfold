@@ -144,11 +144,18 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 		if err != nil {
 			return RunMutationResult{}, err
 		}
+		// A v5 packet carries owner-granted manager authority and is only safe
+		// when the store derives the run recipe from the exact grant-linked
+		// launch profile. The public run.start command accepts a caller supplied
+		// recipe, so it must never be used to bind manager authority.
+		if packet.Schema == domain.ContextPacketSchemaV5 {
+			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "manager context packets can only be launched through manager invoke"}
+		}
 		if packet.ProjectID != task.ProjectID || packet.TaskID != task.ID || packet.AgentID != agent.ID || packet.Task.Revision != task.Revision || packet.Role.Revision != agent.Revision {
 			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "context packet no longer matches the task assignment or its revisions"}
 		}
-		if packet.Schema == domain.ContextPacketSchema {
-			if err := s.validateVersionFourContextPacketAgainstCanonical(ctx, tx, packet); err != nil {
+		if domain.IsLiveContextPacketSchema(packet.Schema) {
+			if err := s.validateLiveContextPacketAgainstCanonical(ctx, tx, packet); err != nil {
 				return RunMutationResult{}, err
 			}
 		}
@@ -202,7 +209,8 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	}
 	run := domain.Run{
 		ID: runID, WorkspaceID: workspace.ID, ProjectID: task.ProjectID, TaskID: task.ID,
-		AgentID: agent.ID, CheckoutID: checkout.ID, ContextPacketID: contextPacketID, Runtime: runtimeName, Provider: providerName,
+		AssignmentID: task.AssignmentID,
+		AgentID:      agent.ID, CheckoutID: checkout.ID, ContextPacketID: contextPacketID, Runtime: runtimeName, Provider: providerName,
 		ScenarioName: command.Scenario.Name, Status: domain.RunRequested, Revision: 1,
 		CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID,
 		Placement: domain.RunPlacement{TaskID: task.ID, AgentID: agent.ID, CheckoutID: checkout.ID, CheckoutPath: checkout.Path, WriteMode: checkout.WriteMode, Runtime: runtimeName, Provider: providerName, Reasons: reasons},
@@ -210,17 +218,17 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO runs(id, workspace_id, project_id, task_id, agent_id, checkout_id, runtime, provider,
     scenario_name, scenario_json, placement_reasons_json, status, step_cursor, revision,
-    created_at, updated_at, created_by, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?)`,
+    created_at, updated_at, created_by, updated_by, assignment_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?)`,
 		run.ID, run.WorkspaceID, run.ProjectID, run.TaskID, run.AgentID, run.CheckoutID,
 		run.Runtime, run.Provider, run.ScenarioName, string(scenarioJSON), string(reasonsJSON),
-		run.Status, now, now, run.CreatedBy, run.UpdatedBy); err != nil {
+		run.Status, now, now, run.CreatedBy, run.UpdatedBy, run.AssignmentID); err != nil {
 		return RunMutationResult{}, storageFailure("insert run projection", err)
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO run_context_bindings(run_id, context_packet_id, bound_at) VALUES (?, ?, ?)", run.ID, contextPacketID, now); err != nil {
 		return RunMutationResult{}, storageFailure("bind run context packet", err)
 	}
-	if packet.Schema == domain.ContextPacketSchema {
+	if domain.IsLiveContextPacketSchema(packet.Schema) {
 		if err := dbgen.New(tx).InsertRunContextDeltaState(ctx, dbgen.InsertRunContextDeltaStateParams{
 			RunID: run.ID, ContextPacketID: contextPacketID, ScanEventSequence: packet.AsOfEventSequence,
 			CreatedAt: now, UpdatedAt: now,
@@ -379,6 +387,100 @@ func (s *Store) ClaimRunJob(ctx context.Context, lease time.Duration) (RunWork, 
 	if err != nil {
 		return RunWork{}, false, storageFailure("select run job", err)
 	}
+	var jobOrigin string
+	if err := tx.QueryRowContext(ctx, "SELECT origin FROM run_jobs WHERE run_id = ?", runID).Scan(&jobOrigin); err != nil {
+		return RunWork{}, false, storageFailure("read run job origin", err)
+	}
+	if jobOrigin == "supervisor" {
+		var validReceipt int
+		if err := tx.QueryRowContext(ctx, `
+SELECT EXISTS (
+    SELECT 1 FROM run_scheduling_receipts receipt
+    JOIN runs run ON run.id = receipt.run_id
+    JOIN run_jobs job ON job.run_id=run.id
+    JOIN scheduling_intents intent ON intent.id = receipt.intent_id
+    JOIN supervisor_actions action ON action.id = receipt.action_id
+    JOIN task_assignments assignment ON assignment.id=receipt.assignment_id
+    JOIN launch_profiles profile ON profile.id=receipt.launch_profile_id
+    JOIN run_context_bindings binding ON binding.run_id=run.id
+    JOIN context_packets packet ON packet.id=binding.context_packet_id
+    WHERE receipt.run_id = ? AND receipt.workspace_id=run.workspace_id
+      AND job.origin='supervisor' AND run.assignment_id = receipt.assignment_id
+      AND intent.run_id = run.id AND intent.assignment_id = receipt.assignment_id
+      AND intent.supervisor_action_id = action.id AND intent.status = 'run_requested'
+      AND action.intent_id = intent.id AND action.run_id=run.id
+      AND action.response='schedule' AND action.status = 'applied'
+      AND intent.launch_profile_id=receipt.launch_profile_id
+      AND assignment.task_id=run.task_id AND assignment.agent_id=run.agent_id
+      AND json_extract(action.constraint_snapshot_json,'$.launch_profile.id')=receipt.launch_profile_id
+      AND json_extract(action.constraint_snapshot_json,'$.launch_profile.revision')=receipt.launch_profile_revision
+      AND profile.agent_id=run.agent_id AND profile.runtime=run.runtime AND profile.provider=run.provider
+      AND (profile.checkout_id IS NULL OR profile.checkout_id=run.checkout_id)
+      AND lower(hex(sha256(CAST(run.scenario_json AS BLOB))))=profile.scenario_sha256
+      AND json_extract(packet.packet_json,'$.workspace_id')=run.workspace_id
+      AND json_extract(packet.packet_json,'$.project_id')=run.project_id
+      AND json_extract(packet.packet_json,'$.task_id')=run.task_id
+      AND json_extract(packet.packet_json,'$.agent_id')=run.agent_id
+      AND json_extract(packet.packet_json,'$.checkout_id')=run.checkout_id
+      AND json_extract(packet.packet_json,'$.task.assignment_id')=run.assignment_id
+	  AND EXISTS (SELECT 1 FROM events event WHERE event.workspace_id=run.workspace_id
+	    AND event.entity_type='run' AND event.entity_id=run.id AND event.entity_revision=run.revision
+	    AND ((run.status='requested' AND event.type='run.requested')
+	      OR (run.status='starting' AND run.runtime_handle IS NULL AND event.type='run.starting')
+	      OR (run.status='starting' AND run.runtime_handle IS NOT NULL AND event.type='run.runtime_observed'
+	        AND json_extract(event.data_json,'$.runtime_handle')=run.runtime_handle)
+	      OR (run.status='active' AND event.type IN ('run.started','run.progress_reported','run.resumed'))
+	      OR (run.status='stopping' AND event.type='run.stop_requested')))
+)
+OR EXISTS (
+    SELECT 1 FROM run_retry_receipts receipt
+    JOIN runs run ON run.id=receipt.run_id
+    JOIN runs prior ON prior.id=receipt.prior_run_id
+    JOIN run_jobs job ON job.run_id=run.id
+    JOIN scheduling_intents intent ON intent.id=receipt.intent_id
+    JOIN supervisor_actions action ON action.id=receipt.action_id
+    JOIN task_assignments assignment ON assignment.id=receipt.assignment_id
+    JOIN launch_profiles profile ON profile.id=receipt.launch_profile_id
+    JOIN run_context_bindings binding ON binding.run_id=run.id
+    JOIN context_packets packet ON packet.id=binding.context_packet_id
+    WHERE receipt.run_id=? AND receipt.workspace_id=run.workspace_id AND job.origin='supervisor'
+      AND run.assignment_id=receipt.assignment_id AND prior.workspace_id=run.workspace_id
+      AND prior.project_id=run.project_id AND prior.task_id=run.task_id
+      AND prior.agent_id=run.agent_id AND prior.checkout_id=run.checkout_id
+      AND prior.runtime=run.runtime AND prior.provider=run.provider
+      AND action.prior_run_id=prior.id AND action.run_id=run.id
+      AND action.task_id=run.task_id AND action.agent_id=run.agent_id
+      AND action.response='retry_task' AND action.status='applied'
+      AND intent.id=receipt.intent_id AND intent.task_id=run.task_id AND intent.agent_id=run.agent_id
+      AND intent.launch_profile_id=receipt.launch_profile_id
+      AND assignment.task_id=run.task_id AND assignment.agent_id=run.agent_id
+      AND json_extract(action.constraint_snapshot_json,'$.launch_profile_id')=receipt.launch_profile_id
+      AND json_extract(action.constraint_snapshot_json,'$.launch_profile_revision')=receipt.launch_profile_revision
+      AND profile.agent_id=run.agent_id AND profile.runtime=run.runtime AND profile.provider=run.provider
+      AND (profile.checkout_id IS NULL OR profile.checkout_id=run.checkout_id)
+      AND lower(hex(sha256(CAST(run.scenario_json AS BLOB))))=profile.scenario_sha256
+      AND json_extract(packet.packet_json,'$.schema')='urn:crewfold:schema:domain:context-packet:v4'
+      AND json_extract(packet.packet_json,'$.workspace_id')=run.workspace_id
+      AND json_extract(packet.packet_json,'$.project_id')=run.project_id
+      AND json_extract(packet.packet_json,'$.task_id')=run.task_id
+      AND json_extract(packet.packet_json,'$.agent_id')=run.agent_id
+      AND json_extract(packet.packet_json,'$.checkout_id')=run.checkout_id
+      AND json_extract(packet.packet_json,'$.task.assignment_id')=run.assignment_id
+	  AND EXISTS (SELECT 1 FROM events event WHERE event.workspace_id=run.workspace_id
+	    AND event.entity_type='run' AND event.entity_id=run.id AND event.entity_revision=run.revision
+	    AND ((run.status='requested' AND event.type='run.requested')
+	      OR (run.status='starting' AND run.runtime_handle IS NULL AND event.type='run.starting')
+	      OR (run.status='starting' AND run.runtime_handle IS NOT NULL AND event.type='run.runtime_observed'
+	        AND json_extract(event.data_json,'$.runtime_handle')=run.runtime_handle)
+	      OR (run.status='active' AND event.type IN ('run.started','run.progress_reported','run.resumed'))
+	      OR (run.status='stopping' AND event.type='run.stop_requested')))
+)`, runID, runID).Scan(&validReceipt); err != nil {
+			return RunWork{}, false, storageFailure("validate supervisor scheduling receipt", err)
+		}
+		if validReceipt != 1 {
+			return RunWork{}, false, &Error{Code: CodeRunConflict, Message: "supervisor run job has no exact scheduling receipt"}
+		}
+	}
 	leaseExpires := nowTime.Add(lease).Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, "UPDATE run_jobs SET status = 'leased', lease_expires_at = ?, attempts = attempts + 1, updated_at = ? WHERE run_id = ? AND status = 'pending'", leaseExpires, now, runID); err != nil {
 		return RunWork{}, false, storageFailure("claim run job", err)
@@ -403,11 +505,32 @@ func (s *Store) ClaimRunJob(ctx context.Context, lease time.Duration) (RunWork, 
 
 func (s *Store) MarkRunStarting(ctx context.Context, runID, correlationID string) (domain.Run, error) {
 	return s.mutateWorkerRun(ctx, runID, correlationID, func(tx *sql.Tx, run *domain.Run, now string) (int64, error) {
+		if run.Status != domain.RunRequested && run.Status != domain.RunStarting {
+			return 0, &Error{Code: CodeRunConflict, Message: "only a requested run can start"}
+		}
+		// This transaction is the final durable boundary before an external
+		// runtime may be launched. Scheduling and owner commands can race with a
+		// later task decision, so revalidate the exact live assignment rather than
+		// trusting the run's immutable placement receipt alone.
+		task, err := queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
+		if err != nil {
+			return 0, err
+		}
+		var assignmentCurrent int
+		if task.Status != domain.TaskAssigned || task.AssignmentID != run.AssignmentID || task.AssignedAgentID != run.AgentID {
+			return 0, &Error{Code: CodeRunConflict, Message: "run task no longer retains its exact active assignment"}
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+SELECT 1 FROM task_assignments
+WHERE id=? AND task_id=? AND agent_id=? AND status='active'
+)`, run.AssignmentID, run.TaskID, run.AgentID).Scan(&assignmentCurrent); err != nil {
+			return 0, storageFailure("revalidate run launch assignment", err)
+		}
+		if assignmentCurrent != 1 {
+			return 0, &Error{Code: CodeRunConflict, Message: "run task no longer retains its exact active assignment"}
+		}
 		if run.Status == domain.RunStarting {
 			return 0, nil
-		}
-		if run.Status != domain.RunRequested {
-			return 0, &Error{Code: CodeRunConflict, Message: "only a requested run can start"}
 		}
 		run.Status = domain.RunStarting
 		run.Revision++
@@ -553,6 +676,26 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartFailedEvent, correlationID, now, map[string]any{"code": run.FailureCode, "message": message}); err != nil {
 		return domain.RunDetail{}, err
 	}
+	// A start failure may keep its accepted intent open only while the current
+	// supervisor policy can still authorize a bounded retry. In particular, a
+	// disabled policy has no worker that could later close the intent, so leaving
+	// it run_requested would permanently prevent an owner from replacing it.
+	policy, err := querySupervisorPolicy(ctx, tx, run.WorkspaceID)
+	if err != nil {
+		return domain.RunDetail{}, err
+	}
+	retryAuthorized := policy.Enabled && policy.AutoRetryLimit > 0
+	if retryAuthorized {
+		_, retryAuthorized, err = s.supervisorRetryAuthorityForRun(ctx, tx, policy, run, now)
+		if err != nil {
+			return domain.RunDetail{}, err
+		}
+	}
+	if !retryAuthorized {
+		if err := terminalizeSchedulingIntentForRun(ctx, tx, run, "definite start failure has no enabled authorized retry", correlationID, now); err != nil {
+			return domain.RunDetail{}, err
+		}
+	}
 	detail, err := runDetailInTransaction(ctx, tx, run)
 	if err != nil {
 		return domain.RunDetail{}, err
@@ -679,6 +822,16 @@ func (s *Store) applyRunObservationInTransaction(ctx context.Context, tx *sql.Tx
 	if err := updateRunProjection(ctx, tx, *run, now); err != nil {
 		return domain.RunDetail{}, err
 	}
+	if run.Status == domain.RunCompleted {
+		// The raw reservation guard must observe the run's definite terminal
+		// projection before its exact assignment can be released.
+		if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'released', revision = revision + 1, updated_at = ?, updated_by = ? WHERE task_id = ? AND status = 'active'", now, localOwnerActorID, run.TaskID); err != nil {
+			return domain.RunDetail{}, storageFailure("release completed task assignment", err)
+		}
+	}
+	if err := terminalizeSchedulingIntentForRun(ctx, tx, *run, run.ResultSummary, correlationID, now); err != nil {
+		return domain.RunDetail{}, err
+	}
 	if err := setRunJob(ctx, tx, run.ID, jobStatus, now); err != nil {
 		return domain.RunDetail{}, err
 	}
@@ -728,9 +881,6 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 		run.Status, run.FinishedAt = domain.RunCompleted, now
 		run.Revision++
 		task.Status, task.Revision = domain.TaskCompleted, task.Revision+1
-		if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'released', revision = revision + 1, updated_at = ?, updated_by = ? WHERE task_id = ? AND status = 'active'", now, localOwnerActorID, task.ID); err != nil {
-			return storageFailure("release completed task assignment", err)
-		}
 		if err := appendRunTimeline(ctx, tx, run.ID, taskHandoffRecorded, handoffSummary, observation.Evidence, now); err != nil {
 			return err
 		}
@@ -970,6 +1120,9 @@ func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, d
 	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskRunStoppedEvent, correlationID, now, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
 		return domain.RunDetail{}, err
 	}
+	if err := terminalizeSchedulingIntentForRun(ctx, tx, run, message, correlationID, now); err != nil {
+		return domain.RunDetail{}, err
+	}
 	detail, err := runDetailInTransaction(ctx, tx, run)
 	if err != nil {
 		return domain.RunDetail{}, err
@@ -1096,6 +1249,9 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message, correlationID
 	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskFailedEvent, correlationID, now, map[string]any{"run_id": run.ID, "reason": run.FailureMessage}); err != nil {
 		return domain.RunDetail{}, err
 	}
+	if err := terminalizeSchedulingIntentForRun(ctx, tx, run, run.FailureMessage, correlationID, now); err != nil {
+		return domain.RunDetail{}, err
+	}
 	detail, err := runDetailInTransaction(ctx, tx, run)
 	if err != nil {
 		return domain.RunDetail{}, err
@@ -1162,7 +1318,7 @@ WHERE c.project_id = ? AND c.availability = 'available' AND c.write_mode <> 'rea
 }
 
 const runSelect = `
-SELECT r.id, r.workspace_id, r.project_id, r.task_id, r.agent_id, r.checkout_id,
+SELECT r.id, r.workspace_id, r.project_id, r.task_id, COALESCE(r.assignment_id, ''), r.agent_id, r.checkout_id,
        COALESCE(b.context_packet_id, ''),
        r.runtime, r.provider, r.scenario_name, r.status, r.step_cursor,
        COALESCE(r.runtime_handle, ''), COALESCE(r.provider_handle, ''),
@@ -1193,7 +1349,7 @@ func queryRun(ctx context.Context, database queryRower, workspaceID, runID strin
 
 func scanRun(row rowScanner, run *domain.Run) error {
 	var reasonsJSON string
-	err := row.Scan(&run.ID, &run.WorkspaceID, &run.ProjectID, &run.TaskID, &run.AgentID, &run.CheckoutID,
+	err := row.Scan(&run.ID, &run.WorkspaceID, &run.ProjectID, &run.TaskID, &run.AssignmentID, &run.AgentID, &run.CheckoutID,
 		&run.ContextPacketID,
 		&run.Runtime, &run.Provider, &run.ScenarioName, &run.Status, &run.StepCursor,
 		&run.RuntimeHandle, &run.ProviderHandle, &run.BlockedQuestion, &run.ResultSummary,

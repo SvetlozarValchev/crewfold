@@ -54,6 +54,25 @@ var runScopedTools = []string{
 	"crewfold_send_message",
 }
 
+var managerProposalTools = []struct {
+	kind string
+	tool string
+}{
+	{kind: domain.ManagerProposalAssignment, tool: "crewfold_propose_assignment"},
+	{kind: domain.ManagerProposalEscalation, tool: "crewfold_propose_escalation"},
+	{kind: domain.ManagerProposalReview, tool: "crewfold_propose_review"},
+	{kind: domain.ManagerProposalTaskDecomposition, tool: "crewfold_propose_tasks"},
+}
+
+func containsContextString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Store) BuildContextPacket(ctx context.Context, command BuildContextCommand) (MutationResult[domain.ContextPacket], error) {
 	workspaceIdentifier := strings.TrimSpace(command.WorkspaceIdentifier)
 	taskID := strings.TrimSpace(command.TaskID)
@@ -133,7 +152,49 @@ func (s *Store) buildContextPacketInTransaction(ctx context.Context, tx *sql.Tx,
 	return s.buildContextPacketWithKnowledgeInTransaction(ctx, tx, workspaceID, task, agent, checkout, nil, correlationID, now)
 }
 
+func (s *Store) buildManagerContextPacketInTransaction(ctx context.Context, tx *sql.Tx, workspaceID string, task domain.Task, agent domain.AgentDefinition, checkout domain.Checkout, grant domain.ManagerGrant, profile domain.LaunchProfile, correlationID, now string) (domain.ContextPacket, int64, error) {
+	if grant.Status != domain.ManagerGrantActive || profile.Status != domain.LaunchProfileActive ||
+		grant.WorkspaceID != workspaceID || grant.ProjectID != task.ProjectID || grant.ObjectiveID != task.ObjectiveID ||
+		grant.TaskID != task.ID || grant.TaskRevision != task.Revision || grant.AgentID != agent.ID || grant.AgentRevision != agent.Revision ||
+		profile.WorkspaceID != workspaceID || profile.ProjectID != task.ProjectID || profile.AgentID != agent.ID ||
+		profile.AgentRevision != agent.Revision || profile.ManagerGrantID != grant.ID {
+		return domain.ContextPacket{}, 0, &Error{Code: CodeInvalidManagerGrant, Message: "manager packet requires the exact current planning task, grant, profile, and agent revisions"}
+	}
+	objective, err := queryObjective(ctx, tx, workspaceID, task.ObjectiveID)
+	if err != nil {
+		return domain.ContextPacket{}, 0, err
+	}
+	if objective.Status != domain.ObjectiveActive || objective.Revision != grant.ObjectiveRevision {
+		return domain.ContextPacket{}, 0, &Error{Code: CodeInvalidManagerGrant, Message: "manager packet objective differs from the exact frozen grant revision"}
+	}
+	launchProfiles := make([]domain.ContextManagerLaunchProfile, len(grant.LaunchProfiles))
+	for index, target := range grant.LaunchProfiles {
+		launchProfiles[index] = domain.ContextManagerLaunchProfile{
+			LaunchProfileID: target.LaunchProfileID, Revision: target.Revision,
+			AgentID: target.AgentID, AgentRevision: target.AgentRevision,
+		}
+	}
+	managementGrant := &domain.ContextManagerGrant{
+		Schema: domain.ContextManagerGrantSchema, GrantID: grant.ID, GrantRevision: grant.Revision,
+		WorkspaceID: workspaceID, ProjectID: grant.ProjectID, ObjectiveID: grant.ObjectiveID, ObjectiveRevision: grant.ObjectiveRevision,
+		ManagerAgentID: grant.AgentID, ManagerAgentRevision: grant.AgentRevision,
+		ManagerTaskID: grant.TaskID, ManagerTaskRevision: grant.TaskRevision,
+		AllowedProposalKinds: append([]string(nil), grant.ProposalKinds...), LaunchProfiles: launchProfiles,
+		// Preserve an authorized empty set as JSON [] rather than null. The packet-v5
+		// contract requires an array, and SQL validates it against the grant's
+		// canonical [] mirror.
+		AllowedClaimKinds: append([]string{}, grant.AllowedClaimKinds...), MaxOpenProposals: grant.Limits.MaxOpenProposals,
+		MaxActions: grant.Limits.MaxActions, MaxTasks: grant.Limits.MaxTasks, MaxDependencies: grant.Limits.MaxDependencies,
+		MaxClaimRequirements: grant.Limits.MaxClaimRequirements, Budget: grant.Limits.Budget, ExpiresAt: grant.ExpiresAt,
+	}
+	return s.buildContextPacketWithAuthorityInTransaction(ctx, tx, workspaceID, task, agent, checkout, nil, managementGrant, correlationID, now)
+}
+
 func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context, tx *sql.Tx, workspaceID string, task domain.Task, agent domain.AgentDefinition, checkout domain.Checkout, knowledgeRevisionIDs []string, correlationID, now string) (domain.ContextPacket, int64, error) {
+	return s.buildContextPacketWithAuthorityInTransaction(ctx, tx, workspaceID, task, agent, checkout, knowledgeRevisionIDs, nil, correlationID, now)
+}
+
+func (s *Store) buildContextPacketWithAuthorityInTransaction(ctx context.Context, tx *sql.Tx, workspaceID string, task domain.Task, agent domain.AgentDefinition, checkout domain.Checkout, knowledgeRevisionIDs []string, managementGrant *domain.ContextManagerGrant, correlationID, now string) (domain.ContextPacket, int64, error) {
 	project, err := queryProject(ctx, tx, workspaceID, task.ProjectID)
 	if err != nil {
 		return domain.ContextPacket{}, 0, err
@@ -171,8 +232,18 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 	if err != nil {
 		return domain.ContextPacket{}, 0, storageFailure("generate context packet id", err)
 	}
+	packetSchema := domain.ContextPacketSchemaV4
+	allowedTools := append([]string(nil), runScopedTools...)
+	if managementGrant != nil {
+		packetSchema = domain.ContextPacketSchemaV5
+		for _, candidate := range managerProposalTools {
+			if containsContextString(managementGrant.AllowedProposalKinds, candidate.kind) {
+				allowedTools = append(allowedTools, candidate.tool)
+			}
+		}
+	}
 	packet := domain.ContextPacket{
-		Schema: domain.ContextPacketSchema, ID: packetID, WorkspaceID: workspaceID,
+		Schema: packetSchema, ID: packetID, WorkspaceID: workspaceID,
 		ProjectID: task.ProjectID, TaskID: task.ID, AgentID: agent.ID, CheckoutID: checkout.ID,
 		Role: domain.ContextRole{AgentID: agent.ID, Name: agent.Name, Role: agent.Role, Provider: agent.Provider, Runtime: agent.Runtime, Revision: agent.Revision},
 		Task: domain.ContextTask{TaskID: task.ID, AssignmentID: task.AssignmentID, ObjectiveID: task.ObjectiveID, Title: task.Title, Description: task.Description, Priority: task.Priority, Budget: task.Budget, Revision: task.Revision},
@@ -187,7 +258,7 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 		RequestedKnowledgeRevisionIDs: append(make([]string, 0, len(knowledgeRevisionIDs)), knowledgeRevisionIDs...),
 		AcceptedKnowledge:             acceptedKnowledge,
 		Policy: domain.ContextPolicy{
-			AllowedTools:     append([]string(nil), runScopedTools...),
+			AllowedTools:     allowedTools,
 			DeniedOperations: []string{"change another run or task", "push or merge source", "deploy", "message a person or broadcast", "read unscoped context"},
 			ApprovalRequired: []string{"shared repository mutation", "external side effect", "destructive operation"},
 		},
@@ -197,6 +268,7 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 			MaxRelevantEvents: maximumContextDeltaEvents, PerDeltaLimitBytes: maximumContextDeltaBytes,
 			CumulativeDeltaLimitBytes: maximumContextDeltaTotal,
 		},
+		ManagementGrant: managementGrant,
 		Reporting: domain.ContextReporting{
 			Progress:   "Report concise completed work, next work, risks, and evidence through crewfold_report_progress.",
 			Blocked:    "Stop unsafe work and report the blocking reason and requested resolution through crewfold_report_blocked.",
@@ -229,6 +301,12 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 	}
 	if len(knowledgeRevisionIDs) == 0 {
 		packet.Excluded = append([]domain.ContextExclusion{{Section: "accepted_knowledge", Reason: "no explicit knowledge revision links were requested"}}, packet.Excluded...)
+	}
+	if managementGrant != nil {
+		packet.Included = append(packet.Included, domain.ContextSelection{
+			Section: "management_grant", EntityType: "manager_grant", EntityID: managementGrant.GrantID,
+			Revision: managementGrant.GrantRevision, Reason: "the exact current owner grant bound to this manager run",
+		})
 	}
 	for _, dependency := range dependencies {
 		packet.Included = append(packet.Included, domain.ContextSelection{Section: "dependencies", EntityType: "task", EntityID: dependency.TaskID, Revision: dependency.Revision, Reason: "direct task dependency"})
@@ -654,7 +732,7 @@ func queryContextPacket(ctx context.Context, database dbgen.DBTX, workspaceID, p
 	if err := json.Unmarshal([]byte(row.PacketJson), &packet); err != nil {
 		return domain.ContextPacket{}, storageFailure("decode context packet", err)
 	}
-	if packet.Schema == domain.ContextPacketSchema {
+	if domain.IsLiveContextPacketSchema(packet.Schema) {
 		decoder := json.NewDecoder(bytes.NewBufferString(row.PacketJson))
 		decoder.DisallowUnknownFields()
 		var strict domain.ContextPacket
@@ -667,20 +745,20 @@ func queryContextPacket(ctx context.Context, database dbgen.DBTX, workspaceID, p
 		}
 		packet = strict
 	}
-	if (packet.Schema != domain.ContextPacketSchemaV1 && packet.Schema != domain.ContextPacketSchemaV2 && packet.Schema != domain.ContextPacketSchemaV3 && packet.Schema != domain.ContextPacketSchema) ||
+	if (packet.Schema != domain.ContextPacketSchemaV1 && packet.Schema != domain.ContextPacketSchemaV2 && packet.Schema != domain.ContextPacketSchemaV3 && !domain.IsLiveContextPacketSchema(packet.Schema)) ||
 		packet.ID != packetID || packet.WorkspaceID != workspaceID || packet.ProjectID != row.ProjectID || packet.TaskID != row.TaskID ||
 		packet.AgentID != row.AgentID || packet.CheckoutID != row.CheckoutID || packet.ContentHash != row.ContentHash ||
 		packet.ByteSize != int(row.ByteSize) || packet.ByteSize != len([]byte(row.PacketJson)) {
 		return domain.ContextPacket{}, storageFailure("validate context packet", errors.New("stored packet identity or size is invalid"))
 	}
-	if packet.Schema == domain.ContextPacketSchema {
+	if domain.IsLiveContextPacketSchema(packet.Schema) {
 		if packet.AsOfEventSequence < 0 || packet.LiveContext != (domain.ContextLivePolicy{
 			Schema: domain.ContextLivePolicySchema, Delivery: domain.ContextLiveDeliveryExplicitPull,
 			AckAuthority: domain.ContextLiveAckBoundRun, MaxPending: 1,
 			MaxRelevantEvents: maximumContextDeltaEvents, PerDeltaLimitBytes: maximumContextDeltaBytes,
 			CumulativeDeltaLimitBytes: maximumContextDeltaTotal,
 		}) {
-			return domain.ContextPacket{}, storageFailure("validate context packet live policy", errors.New("stored version-four policy is invalid"))
+			return domain.ContextPacket{}, storageFailure("validate context packet live policy", errors.New("stored live-context policy is invalid"))
 		}
 		semanticHash, err := contextPacketSemanticHash(packet)
 		if err != nil || semanticHash != packet.ContentHash {
@@ -689,21 +767,91 @@ func queryContextPacket(ctx context.Context, database dbgen.DBTX, workspaceID, p
 			}
 			return domain.ContextPacket{}, storageFailure("validate context packet semantic hash", err)
 		}
-		if err := validateVersionFourContextPacket(packet); err != nil {
-			return domain.ContextPacket{}, storageFailure("validate version-four context packet", err)
+		if err := validateLiveContextPacket(packet); err != nil {
+			return domain.ContextPacket{}, storageFailure("validate live context packet", err)
+		}
+		if packet.Schema == domain.ContextPacketSchemaV5 {
+			if err := validateStoredManagerGrantAgainstCanonical(ctx, database, packet); err != nil {
+				return domain.ContextPacket{}, storageFailure("validate stored manager grant authority", err)
+			}
 		}
 	}
 	return packet, nil
 }
 
+// Stored v5 reads prove the immutable grant authority against normalized rows
+// without requiring the grant or target profiles to remain active. Current
+// lifecycle/expiry checks happen again at invoke, bind, and proposal calls.
+func validateStoredManagerGrantAgainstCanonical(ctx context.Context, database queryRower, packet domain.ContextPacket) error {
+	snapshot := packet.ManagementGrant
+	if snapshot == nil {
+		return errors.New("stored manager grant snapshot is missing")
+	}
+	grant, err := queryManagerGrant(ctx, database, packet.WorkspaceID, snapshot.GrantID)
+	if err != nil {
+		return err
+	}
+	if snapshot.GrantRevision < 1 || snapshot.GrantRevision > grant.Revision ||
+		grant.WorkspaceID != snapshot.WorkspaceID || grant.ProjectID != snapshot.ProjectID || grant.ObjectiveID != snapshot.ObjectiveID ||
+		grant.TaskID != snapshot.ManagerTaskID || grant.TaskRevision != snapshot.ManagerTaskRevision ||
+		grant.AgentID != snapshot.ManagerAgentID || grant.AgentRevision != snapshot.ManagerAgentRevision ||
+		!reflect.DeepEqual(grant.ProposalKinds, snapshot.AllowedProposalKinds) ||
+		!reflect.DeepEqual(grant.AllowedClaimKinds, snapshot.AllowedClaimKinds) ||
+		grant.Limits.MaxOpenProposals != snapshot.MaxOpenProposals || grant.Limits.MaxActions != snapshot.MaxActions ||
+		grant.Limits.MaxTasks != snapshot.MaxTasks || grant.Limits.MaxDependencies != snapshot.MaxDependencies ||
+		grant.Limits.MaxClaimRequirements != snapshot.MaxClaimRequirements || grant.Limits.Budget != snapshot.Budget ||
+		grant.ExpiresAt != snapshot.ExpiresAt || len(grant.LaunchProfiles) != len(snapshot.LaunchProfiles) {
+		return errors.New("stored manager grant differs from normalized authority")
+	}
+	for index, frozen := range snapshot.LaunchProfiles {
+		current := grant.LaunchProfiles[index]
+		if current.LaunchProfileID != frozen.LaunchProfileID || current.Revision != frozen.Revision ||
+			current.AgentID != frozen.AgentID || current.AgentRevision != frozen.AgentRevision {
+			return errors.New("stored manager launch profile tuple differs from normalized authority")
+		}
+	}
+	return nil
+}
+
 func validateVersionFourContextPacket(packet domain.ContextPacket) error {
+	if packet.Schema != domain.ContextPacketSchemaV4 || packet.ManagementGrant != nil {
+		return errors.New("version-four packet cannot carry manager authority")
+	}
+	return validateLiveContextPacketBase(packet, runScopedTools)
+}
+
+func validateLiveContextPacket(packet domain.ContextPacket) error {
+	switch packet.Schema {
+	case domain.ContextPacketSchemaV4:
+		return validateVersionFourContextPacket(packet)
+	case domain.ContextPacketSchemaV5:
+		if err := validateContextManagerGrant(packet); err != nil {
+			return err
+		}
+		return validateLiveContextPacketBase(packet, managerAllowedTools(packet.ManagementGrant.AllowedProposalKinds))
+	default:
+		return errors.New("packet does not use a live-context schema")
+	}
+}
+
+func managerAllowedTools(proposalKinds []string) []string {
+	result := append([]string(nil), runScopedTools...)
+	for _, candidate := range managerProposalTools {
+		if containsContextString(proposalKinds, candidate.kind) {
+			result = append(result, candidate.tool)
+		}
+	}
+	return result
+}
+
+func validateLiveContextPacketBase(packet domain.ContextPacket, expectedTools []string) error {
 	if packet.Role.AgentID != packet.AgentID || packet.Task.TaskID != packet.TaskID || packet.Task.AssignmentID == "" ||
 		packet.Checkout.CheckoutID != packet.CheckoutID || packet.Checkout.ProjectID != packet.ProjectID ||
 		len(packet.Dependencies) > maximumContextDependents || len(packet.Dependents) > maximumContextDependents ||
 		packet.DependentTaskCount < len(packet.Dependents) || len(packet.ParticipantThreads) > maximumContextThreads ||
 		len(packet.Inbox.Items) > 10 || len(packet.RequestedKnowledgeRevisionIDs) > maximumContextKnowledgeItems ||
 		len(packet.AcceptedKnowledge) > maximumContextKnowledgeItems || len(packet.Included) > 128 || len(packet.Excluded) > 128 ||
-		packet.ByteSize <= 0 || packet.ByteSize > maximumContextBytes || !reflect.DeepEqual(packet.Policy.AllowedTools, runScopedTools) ||
+		packet.ByteSize <= 0 || packet.ByteSize > maximumContextBytes || !reflect.DeepEqual(packet.Policy.AllowedTools, expectedTools) ||
 		!reflect.DeepEqual(packet.Policy.DeniedOperations, []string{"change another run or task", "push or merge source", "deploy", "message a person or broadcast", "read unscoped context"}) ||
 		!reflect.DeepEqual(packet.Policy.ApprovalRequired, []string{"shared repository mutation", "external side effect", "destructive operation"}) ||
 		packet.Reporting != (domain.ContextReporting{
@@ -826,6 +974,61 @@ func validateVersionFourContextPacket(packet domain.ContextPacket) error {
 	return nil
 }
 
+func validateContextManagerGrant(packet domain.ContextPacket) error {
+	grant := packet.ManagementGrant
+	if grant == nil || grant.Schema != domain.ContextManagerGrantSchema || grant.GrantID == "" || grant.GrantRevision < 1 ||
+		grant.WorkspaceID != packet.WorkspaceID || grant.ProjectID != packet.ProjectID || grant.ObjectiveID != packet.Task.ObjectiveID || grant.ObjectiveRevision < 1 ||
+		grant.ManagerAgentID != packet.AgentID || grant.ManagerAgentRevision != packet.Role.Revision ||
+		grant.ManagerTaskID != packet.TaskID || grant.ManagerTaskRevision != packet.Task.Revision ||
+		len(grant.AllowedProposalKinds) < 1 || len(grant.AllowedProposalKinds) > len(managerProposalTools) ||
+		grant.MaxOpenProposals < 1 || grant.MaxOpenProposals > 32 || grant.MaxActions < 1 || grant.MaxActions > 32 ||
+		grant.MaxTasks < 1 || grant.MaxTasks > 16 || grant.MaxDependencies < 1 || grant.MaxDependencies > 32 ||
+		grant.MaxClaimRequirements < 1 || grant.MaxClaimRequirements > 32 || len(grant.LaunchProfiles) < 1 || len(grant.LaunchProfiles) > 32 ||
+		len(grant.AllowedClaimKinds) > 3 || grant.Budget.TokenLimit < 0 || grant.Budget.CostCents < 0 || grant.Budget.TimeSeconds < 0 {
+		return errors.New("packet manager grant identity, scope, or limits are invalid")
+	}
+	kindOrder := make(map[string]int, len(managerProposalTools))
+	for index, candidate := range managerProposalTools {
+		kindOrder[candidate.kind] = index
+	}
+	lastKind := -1
+	for _, kind := range grant.AllowedProposalKinds {
+		order, exists := kindOrder[kind]
+		if !exists || order <= lastKind {
+			return errors.New("packet manager proposal kinds are invalid or not canonically ordered")
+		}
+		lastKind = order
+	}
+	for index, profile := range grant.LaunchProfiles {
+		if profile.LaunchProfileID == "" || profile.Revision < 1 || profile.AgentID == "" || profile.AgentRevision < 1 ||
+			index > 0 && grant.LaunchProfiles[index-1].LaunchProfileID >= profile.LaunchProfileID {
+			return errors.New("packet manager launch profiles are invalid or not canonically ordered")
+		}
+	}
+	for index, kind := range grant.AllowedClaimKinds {
+		if kind != domain.ClaimKindPath && kind != domain.ClaimKindComponent && kind != domain.ClaimKindOperation ||
+			index > 0 && grant.AllowedClaimKinds[index-1] >= kind {
+			return errors.New("packet manager claim kinds are invalid or not canonically ordered")
+		}
+	}
+	if grant.ExpiresAt != "" {
+		if _, err := time.Parse(time.RFC3339Nano, grant.ExpiresAt); err != nil {
+			return errors.New("packet manager grant expiry is invalid")
+		}
+	}
+	foundSelection := false
+	for _, selection := range packet.Included {
+		if selection.Section == "management_grant" && selection.EntityType == "manager_grant" &&
+			selection.EntityID == grant.GrantID && selection.Revision == grant.GrantRevision {
+			foundSelection = true
+		}
+	}
+	if !foundSelection {
+		return errors.New("packet manager grant inclusion evidence is missing")
+	}
+	return nil
+}
+
 func validateContextParticipantThread(thread domain.ParticipantThread, workspaceID, projectID, taskID, agentID string) error {
 	if thread.Kind != domain.ThreadKindParticipantBound || thread.Thread.ID == "" || thread.Thread.WorkspaceID != workspaceID ||
 		thread.Thread.ProjectID != "" || thread.Thread.TaskID != "" || thread.Thread.Status != domain.ThreadOpen ||
@@ -857,7 +1060,7 @@ func validateContextParticipantThread(thread domain.ParticipantThread, workspace
 	return nil
 }
 
-func (s *Store) validateVersionFourContextPacketAgainstCanonical(ctx context.Context, tx *sql.Tx, packet domain.ContextPacket) error {
+func (s *Store) validateLiveContextPacketAgainstCanonical(ctx context.Context, tx *sql.Tx, packet domain.ContextPacket) error {
 	task, err := queryTask(ctx, tx, packet.WorkspaceID, packet.TaskID)
 	if err != nil {
 		return err
@@ -888,14 +1091,14 @@ func (s *Store) validateVersionFourContextPacketAgainstCanonical(ctx context.Con
 	packetCheckout.Branch, packetCheckout.HeadCommit, packetCheckout.Dirty, packetCheckout.Revision = "", "", false, 0
 	currentCheckout.Branch, currentCheckout.HeadCommit, currentCheckout.Dirty, currentCheckout.Revision = "", "", false, 0
 	if packet.Role != expectedRole || packet.Task != expectedTask || packetCheckout != currentCheckout || !agent.Enabled || checkout.Availability != domain.CheckoutAvailable {
-		return &Error{Code: CodeInvalidContext, Message: "version-four context packet snapshots differ from canonical run authority"}
+		return &Error{Code: CodeInvalidContext, Message: "live context packet snapshots differ from canonical run authority"}
 	}
 	dependencies, err := contextDependencies(ctx, tx, task.ID)
 	if err != nil {
 		return err
 	}
 	if !reflect.DeepEqual(packet.Dependencies, dependencies) {
-		return &Error{Code: CodeInvalidContext, Message: "version-four context packet upstream dependencies differ from canonical authority"}
+		return &Error{Code: CodeInvalidContext, Message: "live context packet upstream dependencies differ from canonical authority"}
 	}
 	for _, dependent := range packet.Dependents {
 		var projectID, title, status string
@@ -903,10 +1106,10 @@ func (s *Store) validateVersionFourContextPacketAgainstCanonical(ctx context.Con
 		if err := tx.QueryRowContext(ctx, `SELECT task.project_id, task.title, task.status, task.revision
 FROM task_dependencies dependency JOIN tasks task ON task.id = dependency.task_id
 WHERE dependency.task_id = ? AND dependency.depends_on_task_id = ?`, dependent.TaskID, task.ID).Scan(&projectID, &title, &status, &revision); err != nil || projectID != packet.ProjectID || revision < dependent.Revision {
-			return &Error{Code: CodeInvalidContext, Message: "version-four packet reverse dependent lacks canonical provenance", Cause: err}
+			return &Error{Code: CodeInvalidContext, Message: "live packet reverse dependent lacks canonical provenance", Cause: err}
 		}
 		if revision == dependent.Revision && (title != dependent.Title || status != dependent.Status) {
-			return &Error{Code: CodeInvalidContext, Message: "version-four packet reverse dependent snapshot differs"}
+			return &Error{Code: CodeInvalidContext, Message: "live packet reverse dependent snapshot differs"}
 		}
 	}
 	for _, item := range packet.Inbox.Items {
@@ -914,7 +1117,7 @@ WHERE dependency.task_id = ? AND dependency.depends_on_task_id = ?`, dependent.T
 		if err != nil || canonical.Message.ThreadID != item.ThreadID || canonical.Message.Kind != item.Kind ||
 			canonical.Message.SenderAgentID != item.SenderAgentID || canonical.Message.SenderAgentName != item.SenderAgentName ||
 			messagePreview(canonical.Message.Body, 160) != item.BodyPreview || canonical.Message.CreatedAt != item.CreatedAt || canonical.Delivery.Status != item.Status {
-			return &Error{Code: CodeInvalidContext, Message: "version-four packet inbox item lacks canonical provenance", Cause: err}
+			return &Error{Code: CodeInvalidContext, Message: "live packet inbox item lacks canonical provenance", Cause: err}
 		}
 		var authorized int
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages message JOIN message_threads thread ON thread.id = message.thread_id
@@ -925,35 +1128,35 @@ WHERE message.id = ? AND recipient.recipient_agent_id = ? AND recipient.status I
    WHERE participant.id = recipient.recipient_participant_id AND participant.status = 'active'
      AND participant.agent_id = ? AND participant.project_id = ? AND participant.task_id = ?))))`,
 			item.MessageID, packet.AgentID, packet.ProjectID, packet.AgentID, packet.ProjectID, packet.TaskID).Scan(&authorized); err != nil || authorized != 1 {
-			return &Error{Code: CodeInvalidContext, Message: "version-four packet inbox item is outside exact run authority", Cause: err}
+			return &Error{Code: CodeInvalidContext, Message: "live packet inbox item is outside exact run authority", Cause: err}
 		}
 		var sentSequence int64
 		if err := tx.QueryRowContext(ctx, "SELECT sequence FROM events WHERE type = 'message.sent' AND entity_id = ?", item.MessageID).Scan(&sentSequence); err != nil || sentSequence > packet.AsOfEventSequence {
-			return &Error{Code: CodeInvalidContext, Message: "version-four packet inbox item postdates its cursor", Cause: err}
+			return &Error{Code: CodeInvalidContext, Message: "live packet inbox item postdates its cursor", Cause: err}
 		}
 	}
 	for _, revision := range packet.AcceptedKnowledge {
 		canonical, err := s.KnowledgeRevisionInTransaction(ctx, tx, packet.WorkspaceID, revision.ID)
 		if err != nil {
-			return &Error{Code: CodeInvalidContext, Message: "version-four packet knowledge is not canonical", Cause: err}
+			return &Error{Code: CodeInvalidContext, Message: "live packet knowledge is not canonical", Cause: err}
 		}
 		immutableRevision, immutableCanonical := revision, canonical
 		immutableRevision.ReviewStatus, immutableRevision.CurrencyStatus, immutableRevision.StateRevision = "", "", 0
 		immutableCanonical.ReviewStatus, immutableCanonical.CurrencyStatus, immutableCanonical.StateRevision = "", "", 0
 		if !reflect.DeepEqual(immutableRevision, immutableCanonical) {
-			return &Error{Code: CodeInvalidContext, Message: "version-four packet knowledge snapshot differs from canonical authority"}
+			return &Error{Code: CodeInvalidContext, Message: "live packet knowledge snapshot differs from canonical authority"}
 		}
 		if code, _, err := contextKnowledgeIneligibility(canonical, packet.WorkspaceID, task, s.nowText()); err != nil {
 			return err
 		} else if code != "" {
-			return &Error{Code: CodeInvalidContext, Message: "version-four packet knowledge is no longer eligible at run binding"}
+			return &Error{Code: CodeInvalidContext, Message: "live packet knowledge is no longer eligible at run binding"}
 		}
 		_, openCount, err := openKnowledgeContradictions(ctx, tx, packet.WorkspaceID, revision.ID)
 		if err != nil {
 			return err
 		}
 		if openCount != 0 {
-			return &Error{Code: CodeInvalidContext, Message: "version-four packet knowledge is disputed at run binding"}
+			return &Error{Code: CodeInvalidContext, Message: "live packet knowledge is disputed at run binding"}
 		}
 	}
 	for _, thread := range packet.ParticipantThreads {
@@ -965,12 +1168,64 @@ WHERE message.id = ? AND recipient.recipient_agent_id = ? AND recipient.status I
 		frozenHeader.Revision, frozenHeader.UpdatedAt, frozenHeader.UpdatedBy = 0, "", ""
 		currentHeader.Revision, currentHeader.UpdatedAt, currentHeader.UpdatedBy = 0, "", ""
 		if canonical.ParticipantRevision < thread.ParticipantRevision || len(canonical.Participants) < len(thread.Participants) || !reflect.DeepEqual(frozenHeader, currentHeader) {
-			return &Error{Code: CodeInvalidContext, Message: "version-four packet participant roster differs from canonical authority"}
+			return &Error{Code: CodeInvalidContext, Message: "live packet participant roster differs from canonical authority"}
 		}
 		for index := range thread.Participants {
 			if !reflect.DeepEqual(thread.Participants[index], canonical.Participants[index]) {
-				return &Error{Code: CodeInvalidContext, Message: "version-four packet participant lacks canonical provenance"}
+				return &Error{Code: CodeInvalidContext, Message: "live packet participant lacks canonical provenance"}
 			}
+		}
+	}
+	if packet.Schema == domain.ContextPacketSchemaV5 {
+		if err := s.validateVersionFiveManagerGrantAgainstCanonical(ctx, tx, packet); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) validateVersionFiveManagerGrantAgainstCanonical(ctx context.Context, tx *sql.Tx, packet domain.ContextPacket) error {
+	if packet.ManagementGrant == nil {
+		return &Error{Code: CodeInvalidContext, Message: "version-five context packet is missing manager authority"}
+	}
+	snapshot := packet.ManagementGrant
+	grant, err := queryManagerGrant(ctx, tx, packet.WorkspaceID, snapshot.GrantID)
+	if err != nil {
+		return &Error{Code: CodeInvalidContext, Message: "version-five manager grant is not canonical", Cause: err}
+	}
+	objective, err := queryObjective(ctx, tx, packet.WorkspaceID, grant.ObjectiveID)
+	if err != nil {
+		return &Error{Code: CodeInvalidContext, Message: "version-five manager objective is not canonical", Cause: err}
+	}
+	if grant.Status != domain.ManagerGrantActive || grant.Revision != snapshot.GrantRevision ||
+		grant.WorkspaceID != snapshot.WorkspaceID || grant.ProjectID != snapshot.ProjectID || grant.ObjectiveID != snapshot.ObjectiveID ||
+		objective.Revision != snapshot.ObjectiveRevision || grant.TaskID != snapshot.ManagerTaskID || grant.TaskRevision != snapshot.ManagerTaskRevision ||
+		grant.AgentID != snapshot.ManagerAgentID || grant.AgentRevision != snapshot.ManagerAgentRevision ||
+		!reflect.DeepEqual(grant.ProposalKinds, snapshot.AllowedProposalKinds) ||
+		!reflect.DeepEqual(grant.AllowedClaimKinds, snapshot.AllowedClaimKinds) ||
+		grant.Limits.MaxOpenProposals != snapshot.MaxOpenProposals || grant.Limits.MaxActions != snapshot.MaxActions ||
+		grant.Limits.MaxTasks != snapshot.MaxTasks || grant.Limits.MaxDependencies != snapshot.MaxDependencies ||
+		grant.Limits.MaxClaimRequirements != snapshot.MaxClaimRequirements || grant.Limits.Budget != snapshot.Budget ||
+		grant.ExpiresAt != snapshot.ExpiresAt || len(grant.LaunchProfiles) != len(snapshot.LaunchProfiles) {
+		return &Error{Code: CodeInvalidContext, Message: "version-five manager grant differs from current exact authority"}
+	}
+	if grant.ExpiresAt != "" {
+		expiresAt, err := time.Parse(time.RFC3339Nano, grant.ExpiresAt)
+		if err != nil || !s.clock().UTC().Before(expiresAt) {
+			return &Error{Code: CodeInvalidContext, Message: "version-five manager grant has expired", Cause: err}
+		}
+	}
+	for index, frozen := range snapshot.LaunchProfiles {
+		current := grant.LaunchProfiles[index]
+		if current.LaunchProfileID != frozen.LaunchProfileID || current.Revision != frozen.Revision ||
+			current.AgentID != frozen.AgentID || current.AgentRevision != frozen.AgentRevision {
+			return &Error{Code: CodeInvalidContext, Message: "version-five manager launch-profile snapshot differs from current grant authority"}
+		}
+		profile, err := queryLaunchProfile(ctx, tx, packet.WorkspaceID, frozen.LaunchProfileID)
+		if err != nil || profile.Status != domain.LaunchProfileActive || profile.ProjectID != packet.ProjectID ||
+			profile.Revision != frozen.Revision || profile.AgentID != frozen.AgentID || profile.AgentRevision != frozen.AgentRevision ||
+			profile.ManagerGrantID != "" {
+			return &Error{Code: CodeInvalidContext, Message: "version-five manager target profile is no longer exact and active", Cause: err}
 		}
 	}
 	return nil

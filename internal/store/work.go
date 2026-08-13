@@ -13,18 +13,19 @@ import (
 )
 
 const (
-	agentCreated          = "agent.created"
-	agentUpdated          = "agent.updated"
-	objectiveCreated      = "objective.created"
-	objectiveUpdated      = "objective.updated"
-	taskCreated           = "task.created"
-	taskDependencyAdded   = "task.dependency_added"
-	taskAssigned          = "task.assigned"
-	taskStarted           = "task.started"
-	taskBlocked           = "task.blocked"
-	taskReadied           = "task.readied"
-	taskCancelled         = "task.cancelled"
-	taskAssignmentExpired = "task.assignment_expired"
+	agentCreated                      = "agent.created"
+	agentUpdated                      = "agent.updated"
+	objectiveCreated                  = "objective.created"
+	objectiveUpdated                  = "objective.updated"
+	taskCreated                       = "task.created"
+	taskDependencyAdded               = "task.dependency_added"
+	taskAssigned                      = "task.assigned"
+	taskStarted                       = "task.started"
+	taskBlocked                       = "task.blocked"
+	taskReadied                       = "task.readied"
+	taskCancelled                     = "task.cancelled"
+	taskAssignmentExpired             = "task.assignment_expired"
+	ownerTaskCancellationIntentReason = "task cancelled by local owner"
 )
 
 func (s *Store) CreateAgent(ctx context.Context, command CreateAgentCommand) (MutationResult[domain.AgentDefinition], error) {
@@ -524,6 +525,16 @@ func (s *Store) AssignTask(ctx context.Context, command AssignTaskCommand) (Task
 		if task.AssignmentID != "" {
 			return "", nil, &Error{Code: CodeAssignmentConflict, Message: fmt.Sprintf("task already has active assignment %s", task.AssignmentID)}
 		}
+		var openIntentID string
+		err := tx.QueryRowContext(ctx, `SELECT id FROM scheduling_intents
+WHERE task_id=? AND status IN ('pending','deferred','awaiting_approval','run_requested')
+ORDER BY created_at,id LIMIT 1`, task.ID).Scan(&openIntentID)
+		if err == nil {
+			return "", nil, &Error{Code: CodeAssignmentConflict, Message: fmt.Sprintf("task already has open scheduling intent %s", openIntentID)}
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", nil, storageFailure("check task scheduling intent before assignment", err)
+		}
 		agent, err := queryAgent(ctx, tx, workspace.ID, strings.TrimSpace(command.AgentIdentifier))
 		if err != nil {
 			return "", nil, err
@@ -565,6 +576,9 @@ func (s *Store) TransitionTask(ctx context.Context, command TransitionTaskComman
 			if task.Status != domain.TaskAssigned {
 				return "", nil, invalidTaskTransition(task.Status, action)
 			}
+			if err := rejectOwnerTransitionWithReservedRun(ctx, tx, task.ID, action); err != nil {
+				return "", nil, err
+			}
 			task.Status = domain.TaskActive
 			return taskStarted, map[string]any{}, nil
 		case "block":
@@ -572,11 +586,17 @@ func (s *Store) TransitionTask(ctx context.Context, command TransitionTaskComman
 			if reason == "" || len(reason) > 1024 || (task.Status != domain.TaskReady && task.Status != domain.TaskAssigned && task.Status != domain.TaskActive) {
 				return "", nil, invalidTaskTransition(task.Status, action)
 			}
+			if err := rejectOwnerTransitionWithReservedRun(ctx, tx, task.ID, action); err != nil {
+				return "", nil, err
+			}
 			task.Status, task.BlockedReason = domain.TaskBlocked, reason
 			return taskBlocked, map[string]any{"reason": reason}, nil
 		case "unblock":
 			if task.Status != domain.TaskBlocked {
 				return "", nil, invalidTaskTransition(task.Status, action)
+			}
+			if err := rejectOwnerTransitionWithReservedRun(ctx, tx, task.ID, action); err != nil {
+				return "", nil, err
 			}
 			var active int
 			err := tx.QueryRowContext(ctx, "SELECT 1 FROM task_assignments WHERE task_id = ? AND status = 'active' LIMIT 1", task.ID).Scan(&active)
@@ -592,6 +612,9 @@ func (s *Store) TransitionTask(ctx context.Context, command TransitionTaskComman
 		case "cancel":
 			if task.Status == domain.TaskCancelled || task.Status == domain.TaskCompleted {
 				return "", nil, invalidTaskTransition(task.Status, action)
+			}
+			if err := rejectOwnerTransitionWithReservedRun(ctx, tx, task.ID, action); err != nil {
+				return "", nil, err
 			}
 			if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'released', revision = revision + 1, updated_at = ?, updated_by = ? WHERE task_id = ? AND status = 'active'", now, localOwnerActorID, task.ID); err != nil {
 				return "", nil, storageFailure("release cancelled task assignment", err)
@@ -665,6 +688,11 @@ WHERE id = ?`, task.Title, task.Description, task.Status, task.BlockedReason, ta
 	if err != nil {
 		return TaskMutationResult{}, err
 	}
+	if eventType == taskCancelled {
+		if err := cancelPendingSchedulingIntentForTask(ctx, tx, workspace.ID, task, correlationID, now); err != nil {
+			return TaskMutationResult{}, err
+		}
+	}
 	detail, err := taskDetailInTransaction(ctx, tx, task)
 	if err != nil {
 		return TaskMutationResult{}, err
@@ -677,6 +705,95 @@ WHERE id = ?`, task.Title, task.Description, task.Status, task.BlockedReason, ta
 		return TaskMutationResult{}, storageFailure("commit task mutation", err)
 	}
 	return result, nil
+}
+
+// cancelPendingSchedulingIntentForTask closes accepted work that the owner
+// cancelled before scheduling or while the exact latest bounded retry is a
+// definite start failure. The task projection and both journal facts share the
+// caller's transaction.
+func cancelPendingSchedulingIntentForTask(ctx context.Context, tx *sql.Tx, workspaceID string, task domain.Task, correlationID, now string) error {
+	var intentID, intentStatus, latestRunID string
+	var intentRevision int64
+	err := tx.QueryRowContext(ctx, `WITH candidate AS (
+  SELECT intent.*,
+    COALESCE((
+      SELECT retry.run_id FROM run_retry_receipts retry
+      WHERE retry.intent_id=intent.id
+      ORDER BY retry.attempt DESC,retry.run_id DESC LIMIT 1
+    ),intent.run_id,'') AS latest_run_id
+  FROM scheduling_intents intent
+  WHERE intent.workspace_id=? AND intent.task_id=?
+    AND intent.status IN ('pending','deferred','run_requested')
+)
+SELECT candidate.id,candidate.revision,candidate.status,
+  CASE WHEN candidate.status='run_requested' THEN candidate.latest_run_id ELSE '' END
+FROM candidate
+WHERE candidate.status IN ('pending','deferred') OR (
+  candidate.status='run_requested' AND EXISTS (
+    SELECT 1 FROM runs latest
+    JOIN run_jobs job ON job.run_id=latest.id
+    WHERE latest.id=candidate.latest_run_id
+      AND latest.workspace_id=candidate.workspace_id AND latest.task_id=candidate.task_id
+      AND latest.assignment_id=candidate.assignment_id
+      AND latest.status='start_failed' AND latest.step_cursor=0
+      AND latest.finished_at=latest.updated_at
+      AND job.status='complete' AND job.origin='supervisor'
+      AND (
+        (latest.id=candidate.run_id AND EXISTS (
+          SELECT 1 FROM run_scheduling_receipts initial
+          WHERE initial.run_id=latest.id AND initial.intent_id=candidate.id
+        ))
+        OR EXISTS (
+          SELECT 1 FROM run_retry_receipts source
+          WHERE source.run_id=latest.id AND source.intent_id=candidate.id
+        )
+      )
+      AND NOT EXISTS (SELECT 1 FROM run_retry_receipts successor WHERE successor.prior_run_id=latest.id)
+      AND EXISTS (
+        SELECT 1 FROM events failure
+        WHERE failure.workspace_id=candidate.workspace_id
+          AND failure.entity_type='run' AND failure.entity_id=latest.id
+          AND failure.entity_revision=latest.revision AND failure.type='run.start_failed'
+          AND failure.occurred_at=latest.updated_at AND failure.recorded_at=latest.updated_at
+          AND failure.actor_id='local-owner' AND failure.actor_type='human'
+          AND json_extract(failure.data_json,'$.code')='runtime_start_failed'
+      )
+  )
+)
+ORDER BY candidate.created_at,candidate.id LIMIT 1`, workspaceID, task.ID).
+		Scan(&intentID, &intentRevision, &intentStatus, &latestRunID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return storageFailure("query task scheduling intent before cancellation", err)
+	}
+	reason := ownerTaskCancellationIntentReason
+	nextRevision := intentRevision + 1
+	eventData := map[string]any{
+		"task_id": task.ID, "status": domain.SchedulingIntentCancelled, "reason": reason,
+	}
+	if intentStatus == domain.SchedulingIntentRunRequested {
+		eventData["run_id"] = latestRunID
+		eventData["run_status"] = domain.RunStartFailed
+	}
+	if _, err := appendEvent(ctx, tx, workspaceID, "scheduling_intent", intentID, nextRevision,
+		schedulingIntentCancelledEvent, correlationID, now, eventData); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE scheduling_intents
+SET status='cancelled',reason=?,revision=?,updated_at=?,next_attempt_at=NULL,updated_by=?
+WHERE id=? AND status=? AND revision=?`, reason, nextRevision, now, localOwnerActorID, intentID, intentStatus, intentRevision)
+	if err != nil {
+		return storageFailure("cancel task scheduling intent", err)
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		if err != nil {
+			return storageFailure("count cancelled task scheduling intent", err)
+		}
+		return &Error{Code: CodeAssignmentConflict, Message: "task scheduling intent changed before cancellation"}
+	}
+	return nil
 }
 
 func (s *Store) TaskDetail(ctx context.Context, workspaceIdentifier, taskID, correlationID string) (domain.TaskDetail, error) {
@@ -769,8 +886,14 @@ func expireAssignmentsInTransaction(ctx context.Context, tx *sql.Tx, workspaceID
 	rows, err := tx.QueryContext(ctx, `
 SELECT a.id, a.task_id
 FROM task_assignments a JOIN tasks t ON t.id = a.task_id
-WHERE t.workspace_id = ? AND a.status = 'active' AND julianday(a.lease_expires_at) <= julianday(?)
-ORDER BY a.lease_expires_at, a.id`, workspaceID, now.Format(time.RFC3339Nano))
+WHERE t.workspace_id = ? AND a.status = 'active'
+  AND crewfold_timestamp_key(a.lease_expires_at) <= crewfold_timestamp_key(?)
+  AND NOT EXISTS (
+      SELECT 1 FROM runs run
+      WHERE run.assignment_id = a.id
+        AND run.status IN ('requested','starting','active','blocked','stopping','lost')
+  )
+ORDER BY crewfold_timestamp_key(a.lease_expires_at), a.id`, workspaceID, now.Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, storageFailure("list expired assignments", err)
 	}
@@ -996,6 +1119,25 @@ func revisionConflict(entityType, id string, expected, actual int64) *Error {
 
 func invalidTaskTransition(status, action string) *Error {
 	return &Error{Code: CodeInvalidTransition, Message: fmt.Sprintf("cannot %s task in %s state", action, status)}
+}
+
+// Owner task transitions cannot independently rewrite a task projection while
+// a run owns its launch/runtime reservation. Worker and agent paths perform the
+// paired run+task transitions atomically (for example, blocked and resume) and
+// therefore do not pass through this guard.
+func rejectOwnerTransitionWithReservedRun(ctx context.Context, tx *sql.Tx, taskID, action string) error {
+	var runID string
+	err := tx.QueryRowContext(ctx, `
+SELECT id FROM runs
+WHERE task_id=? AND status IN ('requested','starting','active','blocked','stopping','lost')
+ORDER BY created_at,id LIMIT 1`, taskID).Scan(&runID)
+	if err == nil {
+		return &Error{Code: CodeRunConflict, Message: fmt.Sprintf("task cannot transition via %s while run %s retains launch or runtime authority", action, runID)}
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	return storageFailure("check task run reservation for owner transition", err)
 }
 
 func validShortText(value string) bool { return value != "" && len(value) <= 128 }

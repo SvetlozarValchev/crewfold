@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -23,8 +24,102 @@ func TestImmutableToolAllowlistHidesLaterCapabilities(t *testing.T) {
 	}
 	if !knownMCPTool(toolSend) || !knownMCPTool(toolKnowledge) || !knownMCPTool(toolKnowledgeAccept) ||
 		!knownMCPTool(toolContradictionReport) || !knownMCPTool(toolContradictionConfirm) ||
-		!knownMCPTool(toolContextDelta) || !knownMCPTool(toolContextDeltaAck) || knownMCPTool("crewfold_unknown_tool") {
+		!knownMCPTool(toolContextDelta) || !knownMCPTool(toolContextDeltaAck) ||
+		!knownMCPTool(toolProposeAssignment) || !knownMCPTool(toolProposeEscalation) || !knownMCPTool(toolProposeReview) ||
+		!knownMCPTool(toolProposeTasks) || !knownMCPTool(toolManagerProposalAccept) || knownMCPTool("crewfold_unknown_tool") {
 		t.Fatal("known MCP tool classification is inconsistent")
+	}
+}
+
+func TestManagerProposalToolsAreBoundedDerivedScopeAndCanonical(t *testing.T) {
+	t.Parallel()
+	wantNames := []string{toolProposeAssignment, toolProposeEscalation, toolProposeReview, toolProposeTasks}
+	found := make([]mcp.Tool, 0, len(wantNames))
+	for _, tool := range scopedMCPTools() {
+		if containsString(wantNames, tool.Name) {
+			found = append(found, tool)
+		}
+	}
+	if len(found) != len(wantNames) {
+		t.Fatalf("manager tools = %d, want %d", len(found), len(wantNames))
+	}
+	for index, tool := range found {
+		if tool.Name != wantNames[index] {
+			t.Fatalf("manager tool %d = %q, want %q", index, tool.Name, wantNames[index])
+		}
+		properties := tool.InputSchema["properties"].(map[string]any)
+		for _, forbidden := range []string{"workspace", "project", "objective", "run", "agent", "grant_id", "expected_grant_revision", "runtime", "provider", "scenario"} {
+			if _, exists := properties[forbidden]; exists {
+				t.Errorf("%s exposes trusted scope field %q", tool.Name, forbidden)
+			}
+		}
+		actions := properties["actions"].(map[string]any)
+		if actions["minItems"] != 1 || actions["maxItems"] != 32 {
+			t.Errorf("%s action bounds = %v..%v, want 1..32", tool.Name, actions["minItems"], actions["maxItems"])
+		}
+		choices := actions["items"].(map[string]any)["oneOf"].([]map[string]any)
+		for _, choice := range choices {
+			choiceProperties := choice["properties"].(map[string]any)
+			if _, exists := choiceProperties["id"]; exists {
+				t.Errorf("%s lets caller choose action id", tool.Name)
+			}
+			if _, exists := choiceProperties["ordinal"]; exists {
+				t.Errorf("%s lets caller choose action ordinal", tool.Name)
+			}
+		}
+	}
+	allowed := allowedMCPTools(append([]string(nil), wantNames...))
+	for index, tool := range allowed {
+		if tool.Name != wantNames[index] {
+			t.Fatalf("allowed manager tool %d = %q, want %q", index, tool.Name, wantNames[index])
+		}
+	}
+}
+
+func TestManagerProposalActionKindsAreClosed(t *testing.T) {
+	t.Parallel()
+	allowed := map[string][]string{
+		domain.ManagerProposalTaskDecomposition: {domain.ProposalActionCreateTask, domain.ProposalActionAddDependency, domain.ProposalActionDeclareClaimRequirement},
+		domain.ManagerProposalAssignment:        {domain.ProposalActionAssignTask},
+		domain.ManagerProposalReview:            {domain.ProposalActionRequestReview},
+		domain.ManagerProposalEscalation:        {domain.ProposalActionRequestAction},
+	}
+	all := []string{domain.ProposalActionCreateTask, domain.ProposalActionAddDependency, domain.ProposalActionDeclareClaimRequirement, domain.ProposalActionAssignTask, domain.ProposalActionRequestReview, domain.ProposalActionRequestAction}
+	for kind, permitted := range allowed {
+		for _, actionType := range all {
+			if got, want := managerActionAllowedForKind(kind, actionType), containsString(permitted, actionType); got != want {
+				t.Errorf("managerActionAllowedForKind(%q, %q) = %v, want %v", kind, actionType, got, want)
+			}
+		}
+	}
+	if managerActionAllowedForKind("unknown", domain.ProposalActionCreateTask) {
+		t.Fatal("unknown proposal kind accepted")
+	}
+}
+
+func TestManagerProposalDecoderRejectsCallerOwnedActionMetadataAndEscalationScope(t *testing.T) {
+	t.Parallel()
+	valid := `{"summary":"assign exact task","actions":[{"type":"assign_task","assign_task":{"task":{"task_id":"task_0123456789abcdef0123456789abcdef","expected_task_revision":1},"launch_profile_id":"lprof_0123456789abcdef0123456789abcdef"}}],"idempotency_key":"proposal-one"}`
+	decoded, err := decodeManagerProposalArguments(json.RawMessage(valid))
+	if err != nil || len(decoded.Actions) != 1 || decoded.Actions[0].AssignTask == nil || decoded.Actions[0].ID != "" || decoded.Actions[0].Ordinal != 0 {
+		t.Fatalf("valid manager proposal decode = %#v, %v", decoded, err)
+	}
+	for name, raw := range map[string]string{
+		"action id":             `{"summary":"x","actions":[{"id":"mpact_0123456789abcdef0123456789abcdef","type":"assign_task","assign_task":{"task":{"task_id":"task_0123456789abcdef0123456789abcdef","expected_task_revision":1},"launch_profile_id":"lprof_0123456789abcdef0123456789abcdef"}}],"idempotency_key":"x"}`,
+		"zero ordinal":          `{"summary":"x","actions":[{"ordinal":0,"type":"assign_task","assign_task":{"task":{"task_id":"task_0123456789abcdef0123456789abcdef","expected_task_revision":1},"launch_profile_id":"lprof_0123456789abcdef0123456789abcdef"}}],"idempotency_key":"x"}`,
+		"mixed task ref":        `{"summary":"x","actions":[{"type":"assign_task","assign_task":{"task":{"task_id":"task_0123456789abcdef0123456789abcdef","proposal_task_key":"A","expected_task_revision":1},"launch_profile_id":"lprof_0123456789abcdef0123456789abcdef"}}],"idempotency_key":"x"}`,
+		"proposal assignment":   `{"summary":"x","actions":[{"type":"assign_task","assign_task":{"task":{"proposal_task_key":"A"},"launch_profile_id":"lprof_0123456789abcdef0123456789abcdef"}}],"idempotency_key":"x"}`,
+		"missing task revision": `{"summary":"x","actions":[{"type":"assign_task","assign_task":{"task":{"task_id":"task_0123456789abcdef0123456789abcdef"},"launch_profile_id":"lprof_0123456789abcdef0123456789abcdef"}}],"idempotency_key":"x"}`,
+		"missing create budget": `{"summary":"x","actions":[{"type":"create_task","create_task":{"task_key":"A","launch_profile_id":"lprof_0123456789abcdef0123456789abcdef","title":"A","priority":0}}],"idempotency_key":"x"}`,
+		"partial create budget": `{"summary":"x","actions":[{"type":"create_task","create_task":{"task_key":"A","launch_profile_id":"lprof_0123456789abcdef0123456789abcdef","title":"A","priority":0,"budget":{"token_limit":0,"cost_cents":0}}}],"idempotency_key":"x"}`,
+		"target agent":          `{"summary":"x","actions":[{"type":"request_action","request_action":{"response":"reassign_task","target_task_id":"task_0123456789abcdef0123456789abcdef","target_agent_id":"agent_0123456789abcdef0123456789abcdef","launch_profile_id":"lprof_0123456789abcdef0123456789abcdef","reason":"retry elsewhere","expected_revision":1}}],"idempotency_key":"x"}`,
+		"mixed targets":         `{"summary":"x","actions":[{"type":"request_action","request_action":{"response":"resume_run","target_run_id":"run_0123456789abcdef0123456789abcdef","target_task_id":"task_0123456789abcdef0123456789abcdef","reason":"resume","expected_revision":1}}],"idempotency_key":"x"}`,
+		"irrelevant payload":    `{"summary":"x","actions":[{"type":"assign_task","assign_task":{"task":{"task_id":"task_0123456789abcdef0123456789abcdef","expected_task_revision":1},"launch_profile_id":"lprof_0123456789abcdef0123456789abcdef"},"request_review":{}}],"idempotency_key":"x"}`,
+		"missing payload":       `{"summary":"x","actions":[{"type":"assign_task"}],"idempotency_key":"x"}`,
+	} {
+		if _, err := decodeManagerProposalArguments(json.RawMessage(raw)); err == nil {
+			t.Errorf("%s payload unexpectedly decoded", name)
+		}
 	}
 }
 

@@ -97,6 +97,16 @@ func (s *server) processRunWork(work store.RunWork) error {
 		}
 		fallthrough
 	case domain.RunStarting:
+		// A starting job with no durable runtime handle is a pre-launch crash
+		// recovery. Replay the transactional launch gate so a task decision made
+		// while the daemon was down cannot lead to a stale external launch.
+		if run.RuntimeHandle == "" {
+			starting, err := s.store.MarkRunStarting(context.Background(), run.ID, correlationID)
+			if err != nil {
+				return s.recordWorkerTransitionFailure(run, "revalidate run starting", err, correlationID)
+			}
+			run = starting
+		}
 		if run.RuntimeHandle != "" {
 			binding, reconcileErr := runtimeDriver.Reconcile(context.Background(), run.ID, run.RuntimeHandle)
 			if reconcileErr != nil {

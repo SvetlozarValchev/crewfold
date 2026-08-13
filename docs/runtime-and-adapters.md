@@ -313,7 +313,7 @@ for:
 
 - deterministic tests and fake providers;
 - one-shot headless agent modes;
-- CI watchers and local commands;
+- agents with an explicit check-watch capability and local commands;
 - environments where Herdr is not installed;
 - future service execution.
 

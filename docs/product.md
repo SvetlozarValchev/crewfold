@@ -54,19 +54,22 @@ choices that require attention. The owner should be able to continue, review,
 redirect, consolidate, retry, pause, or stop work from recommendations that cite
 their supporting facts and expose uncertainty.
 
-## Roles in the first product
+## Owner-defined work patterns in the first product
 
-Roles are templates; a person can define others.
+Agent role strings are arbitrary descriptive labels, not an enum or authority
+taxonomy. The following are illustrative work patterns only; explicit grants,
+exact agent-bound launch profiles, packet capabilities, and owner policy confer
+authority.
 
-| Role | Responsibility | Default authority |
+| Example pattern | Responsibility | Possible explicit capability |
 | --- | --- | --- |
 | Owner | Sets objectives, policies, and approvals | Full local authority |
-| Manager | Decomposes objectives and coordinates dependencies | Propose and coordinate |
-| Implementer | Changes a scoped part of a project | Mutate assigned checkout |
-| Reviewer | Inspects evidence and changes | Read plus structured findings |
-| Context curator | Maintains concise shared knowledge | Propose revisions; limited auto-accept |
-| CI watcher | Runs or observes checks and reports status | Read and execute allowlisted checks |
-| Integrator | Consolidates compatible completed work | Local integration; push/merge gated |
+| Coordinator | Decomposes objectives and coordinates dependencies | Exact bounded proposal grant |
+| Change producer | Changes a scoped part of a project | Assigned-checkout mutation |
+| Evidence reviewer | Inspects evidence and changes | Exact review/report capability |
+| Context curator | Maintains concise shared knowledge | Propose revisions; bounded configured derivation |
+| Check observer | Runs or observes checks and reports status | Exact allowlisted check-watch grant |
+| Integrator | Consolidates compatible completed work | Exact local integration grant; push/merge gated |
 
 No role name grants permission. Policy is explicit and attached to the agent,
 task, project, and action.
@@ -88,10 +91,11 @@ provider process is running.
 
 ### 3. Assign and launch
 
-The owner or manager creates a task with deliverables, dependencies, constraints,
-and expected change surfaces. The scheduler selects an eligible agent and
-checkout. Crewfold builds a context packet, creates a run, and asks a runtime
-driver to launch or attach to the provider session.
+The owner creates work directly or accepts an exact bounded proposal containing
+deliverables, dependencies, constraints, and expected change surfaces. The
+scheduler validates its owner-authored agent-bound launch profile and checkout.
+Crewfold builds a context packet, creates a run, and asks a runtime driver to
+launch or attach to the provider session.
 
 ### 4. Work and communicate
 
@@ -224,12 +228,13 @@ supporting records without reading each session.
 The first meaningful release passes this scenario:
 
 1. Register three checkouts of one repository.
-2. Define an implementer, reviewer, and CI watcher using at least two different
-   provider adapters.
-3. Give the implementer a task and launch it through Herdr.
+2. Define three arbitrarily named agents for change, evidence review, and check
+   observation, using at least two different provider adapters; attach explicit
+   capabilities independently of their role strings.
+3. Give the change-producing agent a task and launch it through Herdr.
 4. Send it a durable message from the owner and receive an acknowledgement.
-5. Launch a reviewer whose context contains the task and the implementer's handoff
-   but not the entire implementer transcript.
+5. Launch the evidence agent with an exact review assignment whose context contains
+   the task and handoff but not the entire prior transcript.
 6. Detect a deliberately overlapping claim and create a two-agent coordination
    thread or meeting.
 7. Stop one run and resume the same durable agent and task in a new session.

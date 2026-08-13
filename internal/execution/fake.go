@@ -195,6 +195,9 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 	if scenario.StartFailure != "" && !emptyFixtureContextDelta(scenario.ContextDelta) {
 		return errors.New("start-failure scenarios cannot contain context delta controls")
 	}
+	if scenario.StartFailure != "" && !emptyFixtureManagement(scenario.Management) {
+		return errors.New("start-failure scenarios cannot contain management controls")
+	}
 	if err := validateFixtureMailbox(scenario.Mailbox); err != nil {
 		return err
 	}
@@ -205,6 +208,9 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 		return err
 	}
 	if err := validateFixtureContextDelta(scenario.ContextDelta); err != nil {
+		return err
+	}
+	if err := validateFixtureManagement(scenario.Management); err != nil {
 		return err
 	}
 	for index, step := range scenario.Steps {
@@ -233,6 +239,64 @@ func ValidateScenario(scenario domain.FakeScenario) error {
 		}
 	}
 	return nil
+}
+
+func emptyFixtureManagement(plan domain.FixtureManagement) bool {
+	return len(plan.Proposals) == 0 && !plan.ProbeReservedAcceptance && !plan.ExpectToolsDenied &&
+		!plan.ProbeRevokedGrant && plan.RevocationProbeDelayMillis == 0
+}
+
+func validateFixtureManagement(plan domain.FixtureManagement) error {
+	if emptyFixtureManagement(plan) {
+		return nil
+	}
+	if plan.ExpectToolsDenied {
+		if len(plan.Proposals) != 0 || plan.ProbeReservedAcceptance || plan.ProbeRevokedGrant || plan.RevocationProbeDelayMillis != 0 {
+			return errors.New("fixture denied management mode cannot include manager proposals or revocation controls")
+		}
+		return nil
+	}
+	if len(plan.Proposals) < 1 || len(plan.Proposals) > 4 {
+		return errors.New("fixture management requires 1 to 4 proposals")
+	}
+	if plan.ProbeRevokedGrant && (plan.RevocationProbeDelayMillis < 1 || plan.RevocationProbeDelayMillis > 30000) {
+		return errors.New("fixture revoked grant probe requires a delay from 1 to 30000 milliseconds")
+	}
+	if !plan.ProbeRevokedGrant && plan.RevocationProbeDelayMillis != 0 {
+		return errors.New("fixture revocation delay requires probe_revoked_grant")
+	}
+	for index, proposal := range plan.Proposals {
+		if !validFixtureManagerProposalKind(proposal.Kind) || strings.TrimSpace(proposal.Summary) == "" || len(proposal.Summary) > 1024 ||
+			len(proposal.Actions) < 1 || len(proposal.Actions) > 32 {
+			return fmt.Errorf("fixture manager proposal %d has an invalid kind, summary, or action count", index)
+		}
+		for _, action := range proposal.Actions {
+			if action.ID != "" || action.Ordinal != 0 || !fixtureManagerActionMatchesKind(proposal.Kind, action.Type) {
+				return fmt.Errorf("fixture manager proposal %d contains caller-selected identity or a mismatched action", index)
+			}
+		}
+	}
+	return nil
+}
+
+func validFixtureManagerProposalKind(kind string) bool {
+	return kind == domain.ManagerProposalTaskDecomposition || kind == domain.ManagerProposalAssignment ||
+		kind == domain.ManagerProposalReview || kind == domain.ManagerProposalEscalation
+}
+
+func fixtureManagerActionMatchesKind(kind, actionType string) bool {
+	switch kind {
+	case domain.ManagerProposalTaskDecomposition:
+		return actionType == domain.ProposalActionCreateTask || actionType == domain.ProposalActionAddDependency || actionType == domain.ProposalActionDeclareClaimRequirement
+	case domain.ManagerProposalAssignment:
+		return actionType == domain.ProposalActionAssignTask
+	case domain.ManagerProposalReview:
+		return actionType == domain.ProposalActionRequestReview
+	case domain.ManagerProposalEscalation:
+		return actionType == domain.ProposalActionRequestAction
+	default:
+		return false
+	}
 }
 
 func emptyFixtureContextDelta(plan domain.FixtureContextDelta) bool {

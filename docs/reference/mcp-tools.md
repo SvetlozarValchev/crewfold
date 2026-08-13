@@ -1,9 +1,9 @@
 # MCP tool contract
 
 Status: implemented run-scoped briefing, reporting, artifact, durable mailbox,
-canonical-knowledge proposal, contradiction report, and live-context
-fetch/acknowledgement subset. Claims, meetings, and manager/outcome tools remain
-planned.
+canonical-knowledge proposal, contradiction report, live-context
+fetch/acknowledgement, and owner-granted manager-proposal tools. Claims, meetings,
+and outcome tools remain planned.
 
 ## Transport and authentication
 
@@ -31,6 +31,16 @@ mailbox or knowledge-proposal authority merely because the daemon binary was
 upgraded. New v4 packets record both tool sets, the bounded inbox/participant
 snapshot, live bounds, source event cursor, and any explicitly selected accepted
 knowledge. Preserved v1–v3 packets do not gain the live-context tools.
+
+Manager runs use packet v5. It contains the complete exact active grant snapshot:
+grant/project/objective, manager planning task and agent revisions, proposal kinds,
+target launch-profile/agent revision tuples, allowed claim kinds, quantitative
+limits, content hash, and expiry. Its `allowed_tools` is the v4 base set plus only
+the proposal tools corresponding to those kinds. Packet versions 1 through 4 do
+not gain manager tools after daemon upgrade, even when their agent has the same
+name or arbitrary `role` label as a granted agent. The store rechecks the live
+grant and exact run binding on every proposal call; revocation or expiry denies a
+later call from an already-running process.
 
 ## Implemented resources
 
@@ -267,6 +277,78 @@ run capability; probing it produces durable `run.tool_denied` and never creates 
 contradiction authority check. The report reason is valid UTF-8 without NUL and is
 bounded to 2048 encoded bytes.
 
+### `crewfold_propose_tasks`
+
+```json
+{
+  "summary": "Split implementation from independent review",
+  "actions": [
+    {
+      "type": "create_task",
+      "create_task": {
+        "task_key": "implementation",
+        "launch_profile_id": "lprof_...",
+        "title": "Implement the change",
+        "priority": 50,
+        "budget": {"token_limit": 10000, "cost_cents": 0, "time_seconds": 3600}
+      }
+    },
+    {
+      "type": "add_dependency",
+      "add_dependency": {
+        "task": {"proposal_task_key": "review"},
+        "depends_on": {"proposal_task_key": "implementation"}
+      }
+    }
+  ],
+  "idempotency_key": "planning-turn-1"
+}
+```
+
+This submits a `task_decomposition` proposal. Its closed action set is
+`create_task`, `add_dependency`, and `declare_claim_requirement`. Task references
+select either an exact existing task/revision or a proposal-local task key, never
+an agent-selected project/objective. Claim requirements are limited to the
+grant's exact `path|component|operation` set. Every created task names one exact
+owner-authored target launch profile.
+
+### `crewfold_propose_assignment`
+
+This submits an `assignment` proposal containing only `assign_task` actions. Each
+action binds an exact existing task/revision to one exact target launch profile.
+It does not pick by role, purpose, or a ranked candidate set and it does not assign
+or launch the task before owner acceptance and a supervisor scheduling pass.
+
+### `crewfold_propose_review`
+
+This submits a `review` proposal containing only `request_review` actions. A
+review action specifies its review task content/budget and one exact target launch
+profile. `implementer` and `reviewer`, where displayed as task duties, remain
+proposal workflow metadata; they are not enumerated `AgentDefinition.Role`
+authorities.
+
+### `crewfold_propose_escalation`
+
+This submits an `escalation` proposal containing only `request_action`. The
+response is one closed value (`resume_run`, `stop_run`, `retry_task`, or
+`reassign_task`) with its exact target IDs/revision and a bounded reason. It is a
+request for owner/supervisor handling, never open-ended control of another run.
+
+All four tools take exactly `summary`, one through 32 actions within the grant's
+stricter count/budget limits and the 49,152-byte encoded proposal bound, and
+`idempotency_key`. Crewfold assigns action IDs
+and ordinals; caller-supplied identity is rejected. A success returns the complete
+immutable `ManagerProposal`, initially `pending` or `invalid`, with its source run,
+exact grant revision, journal high-water, validation issues, and content hash.
+Submission never mutates tasks, dependencies, claims, assignments, or runs.
+Only the local owner can accept or reject it.
+
+The known name `crewfold_accept_manager_proposal` is deliberately never
+advertised. Calling it records a denied scoped-tool audit and returns
+`denied_by_policy`; it cannot reach proposal decision state. A manager call also
+fails closed when packet v5, the grant, live run/capability, proposal kind, exact
+target profile, claim kind, revision, scope, or quantitative envelope differs.
+
 Newly built context packets include a bounded summary of at most ten queued or
 delivered messages for the assigned agent and project. Full message bodies remain
 outside the base packet and are retrieved explicitly through the mailbox tools.
@@ -274,8 +356,8 @@ outside the base packet and are retrieved explicitly through the mailbox tools.
 ## Idempotency and audit
 
 Report, artifact, message-send, read, acknowledgement, knowledge-proposal,
-contradiction-report, and context-delta acknowledgement idempotency is local to
-the authenticated actor/run.
+contradiction-report, manager-proposal, and context-delta acknowledgement
+idempotency is local to the authenticated actor/run.
 Repeating the same key and
 content returns the same durable record while the capability remains active,
 including after the worker has applied a progress report. Reusing a key with
@@ -319,9 +401,11 @@ tool results with `isError: true` and the same structured body.
 
 ## Deferred tools and resources
 
-Claims, meetings, manager actions, outcome assessments, and project briefings are
-deliberately absent. Their future URIs and tools will use the same scope,
+Claims, meetings, outcome assessments, and project briefings are deliberately
+absent. Their future URIs and tools will use the same scope,
 idempotency, audit, and domain-authority rules. Knowledge governance remains an
-owner-only local API rather than a deferred agent tool. Thread closing,
+owner-only local API rather than a deferred agent tool. Manager proposal
+acceptance, launch-profile/grant mutation, supervisor policy/action control, and
+approval decisions likewise remain owner-only local API operations. Thread closing,
 multi-recipient conversation, runtime-specific live prompting, and human-directed
 messages are also not exposed by the current mailbox surface.
