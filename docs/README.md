@@ -63,3 +63,4 @@ explicitly rather than silently treating either as authoritative.
 - [ADR-0010: Participant-bound cross-project collaboration](decisions/0010-participant-bound-cross-project-collaboration.md)
 - [ADR-0011: Bounded deterministic context curator](decisions/0011-bounded-deterministic-context-curator.md)
 - [ADR-0012: Owner-confirmed exact knowledge contradictions](decisions/0012-owner-confirmed-exact-knowledge-contradictions.md)
+- [ADR-0013: Portable project knowledge snapshots](decisions/0013-portable-project-knowledge-snapshots.md)

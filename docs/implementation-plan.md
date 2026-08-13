@@ -756,8 +756,9 @@ deterministic scoped search, explanation, retrieval health, explicit search-inde
 rebuild, participant-bound cross-project collaboration through the existing
 mailbox tools, and a provider-free bounded curator with one exact deterministic
 meeting-resolution rule, plus owner-confirmed exact-revision contradictions with
-agent-run reporting and fail-closed search/context behavior. Context deltas and
-portable export remain required before M15 is complete.
+agent-run reporting and fail-closed search/context behavior, and deterministic
+project knowledge export/import with exact applicability and contradiction
+snapshots. Context deltas remain required before M15 is complete.
 
 **Visible result**
 
@@ -779,6 +780,9 @@ crewfold thread invite THREAD_ID --agent review-agent --task TASK_REVIEW \
 crewfold curator queue
 crewfold context refresh RUN_ID
 crewfold contradiction list
+crewfold knowledge export /private/demo-knowledge --workspace personal --project demo
+crewfold knowledge import /private/demo-knowledge --workspace personal --project demo \
+  --expected-content-sha256 SHA256 --create-scope
 ```
 
 **Deliverables**
@@ -789,7 +793,8 @@ crewfold contradiction list
 - Context deltas for new messages, decisions, dependencies, and contradictions.
 - Exact-pair contradiction workflow and relational dispute state independent of
   current/stale currency.
-- Markdown plus machine-metadata export.
+- Deterministic Markdown plus canonical manifest export and owner-only exact
+  empty-scope import.
 - Search index health and idempotent rebuild from canonical records.
 - Owner-created, participant-bound cross-project threads using the existing
   provider-neutral mailbox surface, with exact agent/task/project authority.
@@ -805,7 +810,8 @@ crewfold contradiction list
 - Contradictory accepted candidates create a conflict, not a blended summary.
 - Deleting or corrupting the search index leaves exact canonical reads unchanged;
   rebuilding changes no canonical revisions or events.
-- Export/reimport preserves IDs, revisions, provenance, and current status.
+- Export/reimport preserves IDs, all lifecycle states, provenance, task
+  applicability, and contradiction effect without creating operational sources.
 - A library agent can queue a one-recipient explanation to an offline application
   agent across projects; restart preserves it, while another task run for the same
   agent cannot receive or wake for it.

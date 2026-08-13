@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:knowledge-export-params:v1",
+  "title": "Crewfold portable knowledge export parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "project", "directory"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "project": {"type": "string", "minLength": 1, "maxLength": 128},
+    "directory": {
+      "type": "string", "minLength": 2, "maxLength": 4096, "pattern": "^/",
+      "description": "An absolute clean non-root Linux path. The daemon additionally enforces the 4096 bound on UTF-8 bytes and validates every existing prefix descriptor-relatively without following symbolic links."
+    }
+  }
+}

@@ -574,6 +574,10 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleKnowledgeMarkStale(request), false
 	case localapi.MethodKnowledgeDispute:
 		return s.handleKnowledgeDispute(request), false
+	case localapi.MethodKnowledgeExport:
+		return s.handleKnowledgeExport(request), false
+	case localapi.MethodKnowledgeImport:
+		return s.handleKnowledgeImport(request), false
 	case localapi.MethodCuratorQueue:
 		return s.handleCuratorQueue(request), false
 	case localapi.MethodCuratorRuleConfigure:

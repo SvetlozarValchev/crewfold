@@ -114,6 +114,26 @@ type KnowledgeContradictionAuthorityCheck struct {
 	CreatedAt       string  `json:"created_at"`
 }
 
+type KnowledgeImport struct {
+	ID                      string `json:"id"`
+	BundleID                string `json:"bundle_id"`
+	WorkspaceID             string `json:"workspace_id"`
+	ProjectID               string `json:"project_id"`
+	ContentSha256           string `json:"content_sha256"`
+	RenderingSha256         string `json:"rendering_sha256"`
+	ManifestJson            []byte `json:"manifest_json"`
+	Markdown                []byte `json:"markdown"`
+	IdempotencyKey          string `json:"idempotency_key"`
+	RequestHash             string `json:"request_hash"`
+	ImportedAt              string `json:"imported_at"`
+	ImportedBy              string `json:"imported_by"`
+	ImportedByType          string `json:"imported_by_type"`
+	CreatedWorkspace        int64  `json:"created_workspace"`
+	CreatedProject          int64  `json:"created_project"`
+	CreatedTaskScopeAnchors int64  `json:"created_task_scope_anchors"`
+	CompletedEventSequence  int64  `json:"completed_event_sequence"`
+}
+
 type KnowledgeSource struct {
 	RevisionID     string `json:"revision_id"`
 	Ordinal        int64  `json:"ordinal"`
@@ -121,6 +141,14 @@ type KnowledgeSource struct {
 	SourceID       string `json:"source_id"`
 	SourceRevision int64  `json:"source_revision"`
 	Role           string `json:"role"`
+}
+
+type KnowledgeTaskScopeAnchor struct {
+	TaskID      string `json:"task_id"`
+	WorkspaceID string `json:"workspace_id"`
+	ProjectID   string `json:"project_id"`
+	CreatedAt   string `json:"created_at"`
+	CreatedBy   string `json:"created_by"`
 }
 
 type Meeting struct {

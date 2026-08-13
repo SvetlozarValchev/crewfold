@@ -126,10 +126,13 @@ generated through the pinned `sqlc` boundary.
   revision, not by hidden ranking.
 - Exact pair history is compact and cannot accumulate duplicate reverse-order or
   post-dismissal records.
-- Context refresh/deltas, portable export/import of contradiction history,
-  semantic detection, and automated reconciliation remain separate work. Export
-  must eventually preserve IDs, exact revision links, lifecycle events, and
-  authority evidence; it cannot flatten dispute into knowledge currency.
+- Context refresh/deltas, semantic detection, and automated reconciliation remain
+  separate work. The portable snapshot defined later by
+  [ADR-0013](0013-portable-project-knowledge-snapshots.md) preserves contradiction
+  IDs, exact participant links, descriptive lifecycle state, and effective open
+  dispute without flattening dispute into knowledge currency. Its deliberately
+  narrower trust boundary does not export or replay this origin event/authority
+  ledger; the importing local owner attests the restored final state.
 
 ## Rejected alternatives
 

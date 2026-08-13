@@ -412,6 +412,13 @@ crewfold knowledge accept KNOWLEDGE_REVISION --expected-state-revision 1 \
   --workspace personal --socket /path/to/crewfold.sock
 crewfold knowledge dispute KNOWLEDGE_REVISION --workspace personal \
   --socket /path/to/crewfold.sock
+crewfold knowledge export /private/engine-knowledge \
+  --workspace personal --project world-engine \
+  --socket /path/to/crewfold.sock
+crewfold knowledge import /private/engine-knowledge \
+  --workspace personal --project world-engine \
+  --expected-content-sha256 SHA256 --create-scope \
+  --socket /path/to/crewfold.sock
 crewfold curator queue --workspace personal --project world-engine \
   --socket /path/to/crewfold.sock
 crewfold curator rule enable accepted-meeting-resolution-copy \
@@ -527,6 +534,48 @@ new build with `knowledge_conflict`. `knowledge dispute` derives total incident
 open records and the first 200 sorted IDs. Owner dismissal, or a participant
 becoming stale/superseded, clears that record's effect. Existing packet-v3 bytes
 never change.
+
+`knowledge export DIR` writes a new private directory containing exactly
+`manifest.json` and `knowledge.md`. Workspace and project are required. The
+manifest is compact canonical JSON over the complete project knowledge snapshot:
+all items and revisions in every review/currency state, ordered sources, portable
+task applicability anchors, and contradictions in every lifecycle state.
+Markdown is a deterministic human rendering, not an alternate authority source.
+The command never overwrites `DIR`; successful modes are `0700` for the directory
+and `0600` for both files. An unchanged snapshot exports byte-identically even
+after daemon restart. The JSON result reports bundle/content/rendering digests,
+counts, file sizes, and the read snapshot's event high-water separately from the
+portable bytes.
+
+`knowledge import DIR` requires the exact manifest workspace/project and a full
+`--expected-content-sha256`. Without `--create-scope`, exact workspace, project,
+and task anchors must already exist. With it, import may create the exact missing
+scope but never creates a repository, checkout, operational task, meeting, agent,
+run, or capability. V1 accepts only an empty canonical target project; there is no
+merge, remap, overwrite, or partial import. The same exact bundle replays under
+the same or a new key without another event and reports `already_present`.
+Malformed bytes, a digest/scope collision, a nonempty target, or an unsafe path
+fails before any canonical row or import receipt is committed.
+
+Stable failures distinguish an existing export destination
+(`knowledge_export_path_exists`), an unsafe path
+(`invalid_knowledge_bundle_path`), invalid canonical bundle bytes
+(`invalid_knowledge_bundle`), a digest mismatch
+(`knowledge_bundle_digest_mismatch`), an exact-scope mismatch
+(`knowledge_import_scope_conflict`), and a nonempty/different imported target
+(`knowledge_import_conflict`). Reusing one idempotency key with different import
+arguments returns the ordinary `idempotency_conflict`; unexpected durable
+I/O/database failures remain `storage_failed`.
+
+An export-side `storage_failed` can occur after the complete directory becomes
+visible but before its parent-directory entry is confirmed durable. In that
+commit-uncertain case, inspect the existing destination; Crewfold will not
+overwrite or automatically remove it on retry.
+
+Import is a local-owner attestation of the validated final snapshot. Portable
+bundles do not contain or replay the origin event journal, authority checks,
+curator proof rows, or command idempotency. See
+[ADR-0013](decisions/0013-portable-project-knowledge-snapshots.md).
 
 The fixed packet budget is 32 KiB with a 12 KiB whole-knowledge sub-budget.
 `context show --output json` preserves the exact ordered request list and embedded

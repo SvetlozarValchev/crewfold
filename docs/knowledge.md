@@ -20,11 +20,13 @@ their acceptance/review gate has passed. The current implementation supports:
 - one disabled-by-default, owner-configured deterministic rule that can copy an
   accepted structured meeting resolution into canonical project knowledge; and
 - owner-confirmed exact-revision contradiction records with derived bounded
-  dispute state and fail-closed retrieval/context behavior.
+  dispute state and fail-closed retrieval/context behavior; and
+- deterministic project-scoped manifest/Markdown export plus exact owner-only
+  import into an empty canonical scope.
 
 It does not ingest provider transcripts, run a model-backed curator or background
 curation loop, semantically detect conflicts, automatically reconcile them, or
-refresh a running agent with context deltas. Export/import also remains later.
+refresh a running agent with context deltas.
 
 The system separates four layers:
 
@@ -211,7 +213,7 @@ Agent proposals remain manual regardless of their confidence, verification label
 persuasive text, or claimed source. See
 [ADR-0011](decisions/0011-bounded-deterministic-context-curator.md).
 
-Later M15 slices add explicit refresh/deltas and portable export. Future
+The remaining M15 slice adds explicit refresh/deltas. Future
 curator rules may cover structured handoffs, review findings, test evidence, and
 explicit owner decisions, but each requires its own frozen transform and authority
 contract; no general curator self-approval exists.
@@ -314,8 +316,29 @@ Automatic semantic detection and reconciliation are not implemented. The system
 preserves both claims, provenance, scope, and resolution authority rather than
 silently choosing the highest-ranked result.
 
-Human-readable export plus machine-readable metadata remains planned. Provider
-embeddings, hidden prompts, and proprietary databases must never be required to
-recover canonical decisions and findings. Export must preserve exact contradiction
-pairs, lifecycle/event links, and authority history without flattening dispute
-into knowledge currency.
+## Portable project snapshots
+
+`knowledge export` writes a byte-stable `manifest.json` plus `knowledge.md` for one
+complete project. The manifest preserves exact item and revision IDs, every
+review/currency state, ordered frozen sources, effective project/task
+applicability, content and lifecycle fields, and each contradiction's exact pair
+and final descriptive state. Open contradictions remain open after import and
+therefore immediately keep their conservative retrieval/context effect. The
+human-readable Markdown is derived and verified; it is never parsed as authority.
+
+Portable task-scope anchors preserve an opaque task ID's project binding without
+creating an operational task. Import can therefore retain non-leakage of
+task-only knowledge while producing no ghost task, meeting, agent, run, checkout,
+or capability. Export does not depend on FTS health; retrieval can be rebuilt
+explicitly from imported canonical rows.
+
+The format is intentionally a final-state trust handoff, not an origin audit
+archive. It excludes origin events, knowledge/contradiction authority checks,
+curator proof rows, command idempotency, contexts, transcripts, credentials, and
+provider-private data. The target local owner attests the complete validated
+snapshot. Import requires exact scope and an empty canonical project, performs no
+identity remapping or merge, and records one atomic receipt. Exact replays append
+no new event. Imported source tuples remain descriptive: retrieval does not give
+them local exact-task or dependency-affinity rank when an operational task happens
+to reuse the same opaque ID. See
+[ADR-0013](decisions/0013-portable-project-knowledge-snapshots.md).

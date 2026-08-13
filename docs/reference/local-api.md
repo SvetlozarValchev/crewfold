@@ -590,6 +590,54 @@ before ranking/limit, while a new explicit context build returns
 Existing packet-v3 bytes remain unchanged. See
 [ADR-0012](../decisions/0012-owner-confirmed-exact-knowledge-contradictions.md).
 
+### Portable project knowledge
+
+`knowledge.export` requires `workspace`, `project`, and an absolute clean
+daemon-local `directory`. It obtains one coherent read snapshot and returns the
+canonical manifest and Markdown bytes to the daemon handler, which writes that new
+private destination directory. The
+`urn:crewfold:schema:local-api:knowledge-export-result:v1` result type is
+`knowledge_export`: directory, `kbun_...` ID, full content digest, flat manifest
+and Markdown byte-size/SHA-256 fields, record counts, and a result-only
+`as_of_event_sequence`. Export is read-only, is independent of FTS, and appends no
+event.
+
+`knowledge.import` requires the exact target `workspace`, `project`, full expected
+content digest, caller-generated idempotency key, an absolute clean daemon-local
+bundle `directory`, and an explicit `create_scope` Boolean. The CLI's optional
+`--create-scope` flag maps omission to `false`; the API field itself is required.
+Bundle bytes are not carried in the bounded request. Request payloads cannot
+select an actor. The handler injects the local-owner actor; no MCP/run method
+exists.
+
+Import rejects unknown manifest fields, noncanonical JSON or Markdown,
+digest/count/scope/lifecycle inconsistency, unsafe bounds, missing task anchors,
+and nonempty or colliding canonical target scope. With `create_scope`, it may
+create only the exact missing workspace/project and portable task anchors. It
+never creates operational tasks, meetings, agents, runs, repositories, checkouts,
+or capabilities. The
+`urn:crewfold:schema:local-api:knowledge-import-result:v1` result type is
+`knowledge_import`: bundle and digest metadata, immutable receipt,
+`imported|already_present` status, created-scope counts, and local event
+high-water. The same exact completed bundle
+replays under the same or another command key without a second event.
+
+Stable failures distinguish `knowledge_export_path_exists`,
+`invalid_knowledge_bundle_path`, `invalid_knowledge_bundle`,
+`knowledge_bundle_digest_mismatch`, `knowledge_import_scope_conflict`, and
+`knowledge_import_conflict`. Reusing one idempotency key with a different
+normalized request returns the ordinary `idempotency_conflict`; an unexpected
+durable I/O/database failure remains `storage_failed`. Every rejected import is
+zero-write. The store also retains `knowledge_import_denied` as defense in depth
+if a non-owner actor ever bypasses the owner-only surface.
+
+One new import appends `knowledge.imported` for each revision,
+`contradiction.imported` for each contradiction, then
+`knowledge.import_completed`. These local-owner attestations authorize the
+imported final state. Origin event and authority ledgers, curator proof rows, and
+idempotency records are not bundle contents and are not replayed. See
+[ADR-0013](../decisions/0013-portable-project-knowledge-snapshots.md).
+
 ### `coordination.status`
 
 Takes `workspace` and returns counts for registered/enabled agents plus

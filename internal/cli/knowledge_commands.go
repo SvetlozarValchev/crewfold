@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
@@ -39,9 +40,159 @@ func (a *App) runKnowledge(ctx context.Context, mode outputMode, args []string) 
 		return a.runKnowledgeMarkStale(ctx, mode, args[1:])
 	case "dispute":
 		return a.runKnowledgeDispute(ctx, mode, args[1:])
+	case "export":
+		return a.runKnowledgeExport(ctx, mode, args[1:])
+	case "import":
+		return a.runKnowledgeImport(ctx, mode, args[1:])
 	default:
 		return a.writeFailure(mode, usageFailure(fmt.Sprintf("unknown knowledge command %q", args[0]), "run 'crewfold help knowledge' for usage"))
 	}
+}
+
+func (a *App) runKnowledgeExport(ctx context.Context, mode outputMode, args []string) int {
+	directory, optionArgs, failure := requiredLeadingArgument(args, "export directory")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "project", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	project, failure := requiredOption(options, "project")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	directory, failure = absoluteCleanPortablePath(directory)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).KnowledgeExport(ctx, localapi.KnowledgeExportParams{
+		Workspace: workspace, Project: project, Directory: directory,
+	})
+	if err != nil {
+		return a.writeClientFailure(mode, "export knowledge", err)
+	}
+	return a.writeKnowledgeExport(mode, result)
+}
+
+func (a *App) runKnowledgeImport(ctx context.Context, mode outputMode, args []string) int {
+	directory, optionArgs, failure := requiredLeadingArgument(args, "import directory")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	createScope := false
+	normalized := make([]string, 0, len(optionArgs))
+	for _, argument := range optionArgs {
+		if argument == "--create-scope" {
+			if createScope {
+				return a.writeFailure(mode, usageFailure("--create-scope may be specified only once", "remove the duplicate option"))
+			}
+			createScope = true
+			continue
+		}
+		if strings.HasPrefix(argument, "--create-scope=") {
+			return a.writeFailure(mode, usageFailure("--create-scope is a Boolean flag and does not accept a value", "pass --create-scope only when the target scope is absent"))
+		}
+		normalized = append(normalized, argument)
+	}
+	options, failure := parseOptions(normalized, "workspace", "project", "expected-content-sha256", "idempotency-key", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	project, failure := requiredOption(options, "project")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	expectedDigest, failure := requiredOption(options, "expected-content-sha256")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	if !isLowerHexSHA256(expectedDigest) {
+		return a.writeFailure(mode, usageFailure("--expected-content-sha256 must be exactly 64 lowercase hexadecimal characters", "copy content_sha256 from a trusted knowledge export result"))
+	}
+	directory, failure = absoluteCleanPortablePath(directory)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).KnowledgeImport(ctx, localapi.KnowledgeImportParams{
+		Workspace: workspace, Project: project, Directory: directory,
+		ExpectedContentSHA256: expectedDigest, CreateScope: createScope, IdempotencyKey: options["idempotency-key"],
+	})
+	if err != nil {
+		return a.writeClientFailure(mode, "import knowledge", err)
+	}
+	return a.writeKnowledgeImport(mode, result)
+}
+
+func absoluteCleanPortablePath(path string) (string, *commandFailure) {
+	if !utf8.ValidString(path) || strings.IndexByte(path, 0) >= 0 {
+		failure := usageFailure("knowledge bundle directory must be valid UTF-8 without NUL", "provide an absolute directory path")
+		return "", &failure
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		failure := usageFailure(fmt.Sprintf("resolve knowledge bundle directory: %v", err), "provide a filesystem directory path")
+		return "", &failure
+	}
+	absolute = filepath.Clean(absolute)
+	if len(absolute) > 4096 || !utf8.ValidString(absolute) || strings.IndexByte(absolute, 0) >= 0 {
+		failure := usageFailure("resolved knowledge bundle directory must be valid UTF-8 and at most 4096 bytes", "choose a shorter filesystem directory path")
+		return "", &failure
+	}
+	if absolute == string(filepath.Separator) {
+		failure := usageFailure("knowledge bundle directory may not resolve to the filesystem root", "provide a dedicated export or import directory")
+		return "", &failure
+	}
+	return absolute, nil
+}
+
+func isLowerHexSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *App) writeKnowledgeExport(mode outputMode, result localapi.KnowledgeExportResult) int {
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write knowledge export", err))
+		}
+		return ExitOK
+	}
+	fmt.Fprintf(a.stdout, "exported: %s\nbundle: %s\ncontent sha256: %s\nmanifest: %d bytes %s\nmarkdown: %d bytes %s\nas-of event sequence: %d\nitems: %d\nrevisions: %d\ncontradictions: %d\ntask scope anchors: %d\n",
+		result.Directory, result.BundleID, result.ContentSHA256,
+		result.ManifestBytes, result.ManifestSHA256, result.MarkdownBytes, result.MarkdownSHA256,
+		result.AsOfEventSequence, result.Counts.Items, result.Counts.Revisions, result.Counts.Contradictions, result.Counts.TaskScopeAnchors)
+	return ExitOK
+}
+
+func (a *App) writeKnowledgeImport(mode outputMode, result localapi.KnowledgeImportResult) int {
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write knowledge import", err))
+		}
+		return ExitOK
+	}
+	fmt.Fprintf(a.stdout, "status: %s\nimported from: %s\nreceipt: %s\nbundle: %s\ncontent sha256: %s\nmanifest: %d bytes %s\nmarkdown: %d bytes %s\nevent sequence: %d\ncreated workspaces: %d\ncreated projects: %d\ncreated task scope anchors: %d\nitems: %d\nrevisions: %d\ncontradictions: %d\ntask scope anchors: %d\n",
+		result.Status, result.Directory, result.Receipt.ID, result.BundleID, result.ContentSHA256,
+		result.ManifestBytes, result.ManifestSHA256, result.MarkdownBytes, result.MarkdownSHA256,
+		result.EventSequence, result.Created.Workspaces, result.Created.Projects, result.Created.TaskScopeAnchors,
+		result.Counts.Items, result.Counts.Revisions, result.Counts.Contradictions, result.Counts.TaskScopeAnchors)
+	return ExitOK
 }
 
 func (a *App) runKnowledgeSearch(ctx context.Context, mode outputMode, args []string) int {
@@ -505,6 +656,8 @@ const knowledgeHelp = `Usage:
   crewfold knowledge reject <revision> --expected-state-revision <n> --workspace <scope> --socket <path> [--note <text>]
   crewfold knowledge mark-stale <revision> --expected-state-revision <n> --reason <text> --workspace <scope> --socket <path>
   crewfold knowledge dispute <revision> --workspace <scope> --socket <path>
+  crewfold knowledge export <directory> --workspace <scope> --project <project> --socket <path>
+  crewfold knowledge import <directory> --workspace <scope> --project <project> --expected-content-sha256 <hex> [--create-scope] [--idempotency-key <key>] --socket <path>
 
 Proposal Markdown must begin with one '# ' title followed by a concise body. A
 task or meeting source records provenance; applicability defaults to that source's
@@ -517,4 +670,7 @@ contradiction quarantines each exact participant everywhere it would otherwise a
 The dispute read returns the first at most 200 contradiction IDs in ascending lexical
 order together with the exact total count.
 Use the -- separator before a literal search query that begins with --.
+Portable export creates a new directory atomically and never overwrites one.
+Import requires the content digest obtained out of band from a trusted export and
+restores only an empty or byte-identical exact project scope; it is not a merge.
 `

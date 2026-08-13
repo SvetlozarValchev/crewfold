@@ -65,6 +65,11 @@ cursor, and the search-index generation/digest that produced the match. A later
 consumer may freeze those exact candidate facts; it must not reconstruct them by
 rerunning search.
 
+Portable imports preserve source tuples as descriptive origin references, not
+local operational bindings. Imported revisions therefore receive the neutral
+no-affinity provenance rank and no matched local source IDs even when an opaque
+task ID collides with a local task or dependency.
+
 The index publishes generation metadata only after a complete transactional
 rebuild from canonical records and an integrity/content-consistency check. Its
 source digest is deterministic over revision IDs and canonical content hashes in

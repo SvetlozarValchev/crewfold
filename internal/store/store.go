@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ncruces/go-sqlite3"
@@ -24,10 +25,11 @@ const databaseFilename = "crewfold.db"
 const sqliteApplicationID = 0x43524644
 
 type Store struct {
-	db           *sql.DB
-	path         string
-	mutationHook func(string) error
-	clock        func() time.Time
+	db            *sql.DB
+	path          string
+	mutationHook  func(string) error
+	clock         func() time.Time
+	restoreActive *atomic.Bool
 }
 
 func Open(ctx context.Context, dataDir string, options Options) (*Store, error) {
@@ -37,7 +39,20 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 	}
 
 	dsn := databaseDSN(path)
-	database, err := driver.Open(dsn, registerSQLiteExtensions)
+	restoreActive := new(atomic.Bool)
+	database, err := driver.Open(dsn, func(connection *sqlite3.Conn) error {
+		if err := registerSQLiteExtensions(connection); err != nil {
+			return err
+		}
+		return connection.CreateFunction("crewfold_restore_active", 0, sqlite3.INNOCUOUS,
+			func(functionContext sqlite3.Context, _ ...sqlite3.Value) {
+				if restoreActive.Load() {
+					functionContext.ResultInt(1)
+					return
+				}
+				functionContext.ResultInt(0)
+			})
+	})
 	if err != nil {
 		return nil, &Error{Code: CodeStorageFailed, Message: "open SQLite database", Cause: err}
 	}
@@ -48,7 +63,7 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 	if clock == nil {
 		clock = time.Now
 	}
-	storage := &Store{db: database, path: path, mutationHook: options.MutationHook, clock: clock}
+	storage := &Store{db: database, path: path, mutationHook: options.MutationHook, clock: clock, restoreActive: restoreActive}
 	if err := database.PingContext(ctx); err != nil {
 		_ = database.Close()
 		return nil, &Error{Code: CodeStorageFailed, Message: "connect to SQLite database", Cause: err}

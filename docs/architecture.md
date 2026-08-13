@@ -276,9 +276,18 @@ only the owner can open the record. Open participants are conservatively
 quarantined everywhere they otherwise apply, search excludes them before limit,
 and exact context assembly fails closed. Dismissal or a participant becoming
 stale/superseded closes effective dispute, while old packets remain immutable.
-Semantic detection, broader reconciliation, refresh/deltas, and export remain
-later work; retrieval still cannot automatically accept, summarize, or deliver
-knowledge.
+
+The fifth slice adds a deterministic two-file project snapshot. Its manifest
+freezes every canonical item/revision/source, effective task applicability anchor,
+and contradiction lifecycle snapshot; the Markdown file is a byte-checked human
+rendering. Export uses one coherent read transaction and is independent of FTS.
+Owner-only import accepts only an exact empty project scope, or creates that exact
+scope when explicitly requested, then commits canonical rows, local import
+attestations, and receipt atomically. Portable task anchors preserve narrow scope
+without creating operational tasks. Origin events, authority ledgers, curator
+proof rows, provider state, and idempotency are deliberately not replayed.
+Semantic detection, broader reconciliation, and refresh/deltas remain later work;
+retrieval still cannot automatically accept, summarize, or deliver knowledge.
 
 ### Outcome and briefing projector
 

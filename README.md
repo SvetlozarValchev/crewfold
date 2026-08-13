@@ -73,7 +73,10 @@ explicit owner configuration. Exact-revision contradiction reports remain inert
 until owner confirmation; an open record then quarantines both exact participants
 from search and new explicit context without changing currency or historical
 packets. Model-assisted curation, semantic conflict detection, context deltas,
-portable export, broader knowledge types, and the operator TUI remain to come.
+broader knowledge types, and the operator TUI remain to come. A deterministic
+project knowledge bundle now exports and owner-imports complete canonical
+item/revision/source/applicability and contradiction snapshots without provider
+state, operational ghost tasks, or reliance on FTS.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.

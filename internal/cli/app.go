@@ -90,6 +90,8 @@ type daemonClient interface {
 	KnowledgeReject(context.Context, localapi.KnowledgeDecisionParams) (localapi.KnowledgeMutationResult, error)
 	KnowledgeMarkStale(context.Context, localapi.KnowledgeMarkStaleParams) (localapi.KnowledgeMutationResult, error)
 	KnowledgeDispute(context.Context, string, string) (localapi.KnowledgeDisputeResult, error)
+	KnowledgeExport(context.Context, localapi.KnowledgeExportParams) (localapi.KnowledgeExportResult, error)
+	KnowledgeImport(context.Context, localapi.KnowledgeImportParams) (localapi.KnowledgeImportResult, error)
 	CuratorQueue(context.Context, localapi.CuratorQueueParams) (localapi.CuratorQueueResult, error)
 	CuratorRuleConfigure(context.Context, localapi.CuratorRuleConfigureParams) (localapi.CuratorRuleMutationResult, error)
 	CuratorProcess(context.Context, localapi.CuratorProcessParams) (localapi.CuratorProcessResult, error)
@@ -882,6 +884,18 @@ func clientFailureHint(code string) string {
 		return "only the trusted local owner can accept, reject, or mark canonical knowledge stale"
 	case "retrieval_degraded":
 		return "inspect with 'crewfold doctor --retrieval --workspace <workspace> --socket <path>' and rebuild with 'crewfold knowledge index rebuild'"
+	case "knowledge_export_path_exists":
+		return "choose a new absent export directory; Crewfold never overwrites an export"
+	case "invalid_knowledge_bundle_path":
+		return "use an absolute clean path whose existing components are real directories, not symbolic links"
+	case "invalid_knowledge_bundle":
+		return "verify the bundle contains exactly unchanged private manifest.json and knowledge.md files"
+	case "knowledge_bundle_digest_mismatch":
+		return "verify --expected-content-sha256 against the content_sha256 from the trusted export"
+	case "knowledge_import_scope_conflict":
+		return "choose the bundle's exact workspace/project target, or use --create-scope only for an absent scope"
+	case "knowledge_import_conflict":
+		return "import into an empty or byte-identical target scope; Crewfold does not perform a general merge"
 	case "revision_conflict":
 		return "inspect the current entity revision and retry with that exact expected revision"
 	case "storage_failed":

@@ -1166,6 +1166,10 @@ type fakeDaemonClient struct {
 	knowledgeStale          localapi.KnowledgeMarkStaleParams
 	knowledgeDispute        localapi.KnowledgeDisputeResult
 	knowledgeDisputeArgs    []string
+	knowledgeExport         localapi.KnowledgeExportResult
+	knowledgeImport         localapi.KnowledgeImportResult
+	knowledgeExportParams   localapi.KnowledgeExportParams
+	knowledgeImportParams   localapi.KnowledgeImportParams
 	curatorQueue            localapi.CuratorQueueResult
 	curatorRuleMutation     localapi.CuratorRuleMutationResult
 	curatorProcess          localapi.CuratorProcessResult
@@ -1359,6 +1363,16 @@ func (client *fakeDaemonClient) KnowledgeMarkStale(_ context.Context, params loc
 func (client *fakeDaemonClient) KnowledgeDispute(_ context.Context, workspace, revision string) (localapi.KnowledgeDisputeResult, error) {
 	client.knowledgeDisputeArgs = []string{workspace, revision}
 	return client.knowledgeDispute, nil
+}
+
+func (client *fakeDaemonClient) KnowledgeExport(_ context.Context, params localapi.KnowledgeExportParams) (localapi.KnowledgeExportResult, error) {
+	client.knowledgeExportParams = params
+	return client.knowledgeExport, nil
+}
+
+func (client *fakeDaemonClient) KnowledgeImport(_ context.Context, params localapi.KnowledgeImportParams) (localapi.KnowledgeImportResult, error) {
+	client.knowledgeImportParams = params
+	return client.knowledgeImport, nil
 }
 
 func (client *fakeDaemonClient) CuratorQueue(_ context.Context, params localapi.CuratorQueueParams) (localapi.CuratorQueueResult, error) {

@@ -297,6 +297,32 @@ confirm-time revalidation, denied non-owner governance, direct-SQL trigger
 attacks, mutation-hook rollback, and run-report replay after completion/restart.
 No model, credential, remote, or network is used.
 
+### Portable project knowledge fixture
+
+The provider-free portable scenario builds one project containing broad and
+task-scoped canonical histories across proposed, rejected, current, stale, and
+superseded states plus proposed/open/dismissed/resolved contradictions. It exports
+twice to distinct private directories and requires exact manifest/Markdown bytes,
+the two-file listing, and `0700`/`0600` modes.
+
+It imports into a fresh daemon with exact `--create-scope` and the expected full
+digest, then proves exact IDs, bodies, states, ordered sources, portable task
+applicability, and contradiction effects survive restart and immediate re-export.
+No operational task, meeting, agent, run, repository, or checkout may appear.
+Project-only search cannot expose task-scoped imported knowledge; an imported open
+contradiction remains a fail-closed context/search gate. Export remains available
+with missing/degraded FTS and explicit rebuild restores derived search.
+Imported knowledge/contradiction detail contains no forged origin authority
+checks; the target journal contains only local-owner import attestations.
+
+Same- and new-key replay append no event. Unsafe paths, extra/missing files,
+tampered hashes/rendering, scope mismatch, absent anchors without create-scope,
+and a nonempty target all fail before a canonical row, receipt, event, or
+idempotency result is visible. The scenario compares durable table-count
+fingerprints as well as journal bytes around those failures. Store mutation hooks
+cover transaction rollback and restart recovery. The scenario uses no provider,
+model, credential, network, or `jq`.
+
 The real Claude canary has an independent two-flag acknowledgement gate:
 
 ```sh

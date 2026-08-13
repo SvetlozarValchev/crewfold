@@ -13,6 +13,10 @@ type Querier interface {
 	ConfirmKnowledgeContradiction(ctx context.Context, arg ConfirmKnowledgeContradictionParams) (int64, error)
 	CountKnowledgeContradictionAuthorityChecks(ctx context.Context, arg CountKnowledgeContradictionAuthorityChecksParams) (int64, error)
 	CountOpenKnowledgeContradictionsForRevision(ctx context.Context, arg CountOpenKnowledgeContradictionsForRevisionParams) (int64, error)
+	CountPortableKnowledgeContradictionIdentity(ctx context.Context, arg CountPortableKnowledgeContradictionIdentityParams) (int64, error)
+	CountPortableKnowledgeItemIdentity(ctx context.Context, id string) (int64, error)
+	CountPortableKnowledgeProjectState(ctx context.Context, arg CountPortableKnowledgeProjectStateParams) (CountPortableKnowledgeProjectStateRow, error)
+	CountPortableKnowledgeRevisionIdentity(ctx context.Context, id string) (int64, error)
 	DecideMeetingProposal(ctx context.Context, arg DecideMeetingProposalParams) error
 	DismissKnowledgeContradiction(ctx context.Context, arg DismissKnowledgeContradictionParams) (int64, error)
 	FindAcceptedKnowledgeSuccessor(ctx context.Context, arg FindAcceptedKnowledgeSuccessorParams) (string, error)
@@ -34,10 +38,14 @@ type Querier interface {
 	GetKnowledgeSourceMeeting(ctx context.Context, id string) (GetKnowledgeSourceMeetingRow, error)
 	GetKnowledgeSourceMeetingProposal(ctx context.Context, id string) (GetKnowledgeSourceMeetingProposalRow, error)
 	GetKnowledgeSourceTask(ctx context.Context, id string) (GetKnowledgeSourceTaskRow, error)
+	GetKnowledgeTaskScopeAnchor(ctx context.Context, taskID string) (KnowledgeTaskScopeAnchor, error)
 	GetMeeting(ctx context.Context, arg GetMeetingParams) (Meeting, error)
 	GetMeetingContribution(ctx context.Context, arg GetMeetingContributionParams) (MeetingContribution, error)
 	GetMeetingProposal(ctx context.Context, meetingID string) (MeetingProposal, error)
 	GetParticipantThreadState(ctx context.Context, arg GetParticipantThreadStateParams) (GetParticipantThreadStateRow, error)
+	GetPortableKnowledgeAnchorIdentity(ctx context.Context, taskID string) (GetPortableKnowledgeAnchorIdentityRow, error)
+	GetPortableKnowledgeImportReceipt(ctx context.Context, arg GetPortableKnowledgeImportReceiptParams) (KnowledgeImport, error)
+	GetPortableTaskIdentity(ctx context.Context, id string) (GetPortableTaskIdentityRow, error)
 	HasLiveTaskRun(ctx context.Context, taskID string) (bool, error)
 	InsertCuratorAutoAcceptance(ctx context.Context, arg InsertCuratorAutoAcceptanceParams) error
 	InsertCuratorDerivation(ctx context.Context, arg InsertCuratorDerivationParams) error
@@ -46,8 +54,10 @@ type Querier interface {
 	InsertKnowledgeContradiction(ctx context.Context, arg InsertKnowledgeContradictionParams) error
 	InsertKnowledgeContradictionAuthorityCheck(ctx context.Context, arg InsertKnowledgeContradictionAuthorityCheckParams) error
 	InsertKnowledgeItem(ctx context.Context, arg InsertKnowledgeItemParams) error
+	InsertKnowledgeItemTaskScope(ctx context.Context, arg InsertKnowledgeItemTaskScopeParams) error
 	InsertKnowledgeRevision(ctx context.Context, arg InsertKnowledgeRevisionParams) error
 	InsertKnowledgeSource(ctx context.Context, arg InsertKnowledgeSourceParams) error
+	InsertKnowledgeTaskScopeAnchor(ctx context.Context, arg InsertKnowledgeTaskScopeAnchorParams) error
 	InsertMeeting(ctx context.Context, arg InsertMeetingParams) error
 	InsertMeetingAction(ctx context.Context, arg InsertMeetingActionParams) error
 	InsertMeetingAssignment(ctx context.Context, arg InsertMeetingAssignmentParams) error
@@ -57,6 +67,13 @@ type Querier interface {
 	InsertMeetingProposal(ctx context.Context, arg InsertMeetingProposalParams) error
 	InsertMeetingTaskRole(ctx context.Context, arg InsertMeetingTaskRoleParams) error
 	InsertParticipantThread(ctx context.Context, arg InsertParticipantThreadParams) error
+	InsertPortableKnowledgeAnchor(ctx context.Context, arg InsertPortableKnowledgeAnchorParams) error
+	InsertPortableKnowledgeContradiction(ctx context.Context, arg InsertPortableKnowledgeContradictionParams) error
+	InsertPortableKnowledgeImportEntity(ctx context.Context, arg InsertPortableKnowledgeImportEntityParams) error
+	InsertPortableKnowledgeImportReceipt(ctx context.Context, arg InsertPortableKnowledgeImportReceiptParams) error
+	InsertPortableKnowledgeRevision(ctx context.Context, arg InsertPortableKnowledgeRevisionParams) error
+	InsertPortableProject(ctx context.Context, arg InsertPortableProjectParams) error
+	InsertPortableWorkspace(ctx context.Context, arg InsertPortableWorkspaceParams) error
 	InsertSplitTask(ctx context.Context, arg InsertSplitTaskParams) error
 	InsertThreadParticipant(ctx context.Context, arg InsertThreadParticipantParams) error
 	ListAllOpenKnowledgeContradictionsForRevision(ctx context.Context, arg ListAllOpenKnowledgeContradictionsForRevisionParams) ([]KnowledgeContradiction, error)
@@ -72,6 +89,11 @@ type Querier interface {
 	ListMeetingContributions(ctx context.Context, meetingID string) ([]MeetingContribution, error)
 	ListMeetingParticipants(ctx context.Context, meetingID string) ([]MeetingParticipant, error)
 	ListOpenKnowledgeContradictionsForRevision(ctx context.Context, arg ListOpenKnowledgeContradictionsForRevisionParams) ([]KnowledgeContradiction, error)
+	ListPortableKnowledgeContradictions(ctx context.Context, arg ListPortableKnowledgeContradictionsParams) ([]KnowledgeContradiction, error)
+	ListPortableKnowledgeItems(ctx context.Context, arg ListPortableKnowledgeItemsParams) ([]ListPortableKnowledgeItemsRow, error)
+	ListPortableKnowledgeRevisionIDsForItem(ctx context.Context, itemID string) ([]string, error)
+	ListPortableKnowledgeTargetAnchors(ctx context.Context, arg ListPortableKnowledgeTargetAnchorsParams) ([]KnowledgeTaskScopeAnchor, error)
+	ListPortableKnowledgeTaskScopeAnchors(ctx context.Context, arg ListPortableKnowledgeTaskScopeAnchorsParams) ([]KnowledgeTaskScopeAnchor, error)
 	ListThreadParticipants(ctx context.Context, threadID string) ([]ThreadParticipant, error)
 	ListThreadParticipantsByAgent(ctx context.Context, arg ListThreadParticipantsByAgentParams) ([]ThreadParticipant, error)
 	MarkKnowledgeRevisionStale(ctx context.Context, arg MarkKnowledgeRevisionStaleParams) (int64, error)
@@ -79,6 +101,8 @@ type Querier interface {
 	MaxEventSequence(ctx context.Context) (int64, error)
 	MaxKnowledgeRevisionNumber(ctx context.Context, itemID string) (int64, error)
 	MeetingDependencyExists(ctx context.Context, arg MeetingDependencyExistsParams) (bool, error)
+	PortableKnowledgeEventHighWater(ctx context.Context) (int64, error)
+	PortableKnowledgeSnapshotPreflight(ctx context.Context, arg PortableKnowledgeSnapshotPreflightParams) (PortableKnowledgeSnapshotPreflightRow, error)
 	RejectKnowledgeRevision(ctx context.Context, arg RejectKnowledgeRevisionParams) (int64, error)
 	ReleaseMeetingClaim(ctx context.Context, arg ReleaseMeetingClaimParams) error
 	ReleaseTaskAssignmentsForMeeting(ctx context.Context, arg ReleaseTaskAssignmentsForMeetingParams) error

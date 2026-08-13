@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 14
+	LatestSchemaVersion = 15
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -490,6 +490,44 @@ type KnowledgeContradictionMutationResult struct {
 	Detail         domain.KnowledgeContradictionDetail          `json:"detail"`
 	AuthorityCheck *domain.KnowledgeContradictionAuthorityCheck `json:"authority_check,omitempty"`
 	EventSequence  int64                                        `json:"event_sequence"`
+}
+
+type ExportKnowledgeBundleQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+}
+
+type KnowledgeBundleExportResult struct {
+	Manifest          domain.PortableKnowledgeBundleManifest `json:"manifest"`
+	ManifestJSON      []byte                                 `json:"manifest_json"`
+	Markdown          []byte                                 `json:"markdown"`
+	AsOfEventSequence int64                                  `json:"as_of_event_sequence"`
+}
+
+type ImportKnowledgeBundleCommand struct {
+	WorkspaceIdentifier   string
+	ProjectIdentifier     string
+	ManifestJSON          []byte
+	Markdown              []byte
+	ExpectedContentSHA256 string
+	CreateScope           bool
+	Actor                 domain.KnowledgeActor
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type KnowledgeBundleImportCreated struct {
+	Workspace        bool  `json:"workspace"`
+	Project          bool  `json:"project"`
+	TaskScopeAnchors int64 `json:"task_scope_anchors"`
+}
+
+type KnowledgeBundleImportResult struct {
+	Receipt       domain.KnowledgeImportReceipt  `json:"receipt"`
+	Counts        domain.PortableKnowledgeCounts `json:"counts"`
+	Created       KnowledgeBundleImportCreated   `json:"created"`
+	EventSequence int64                          `json:"event_sequence"`
+	Replayed      bool                           `json:"replayed"`
 }
 
 type CuratorQueueQuery struct {

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:knowledge-import-result:v1",
+  "title": "Crewfold portable knowledge import result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "directory", "bundle_id", "content_sha256", "manifest_sha256", "manifest_bytes", "markdown_sha256", "markdown_bytes", "counts", "receipt", "status", "created", "event_sequence"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:knowledge-import-result:v1"},
+    "type": {"const": "knowledge_import"},
+    "directory": {"type": "string", "minLength": 2, "maxLength": 4096, "pattern": "^/"},
+    "bundle_id": {"type": "string", "pattern": "^kbun_[0-9a-f]{32}$"},
+    "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "manifest_bytes": {"type": "integer", "minimum": 0, "maximum": 67108864},
+    "markdown_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "markdown_bytes": {"type": "integer", "minimum": 0, "maximum": 67108864},
+    "counts": {"$ref": "../../portable/v1/knowledge-bundle-manifest.schema.json#/$defs/counts"},
+    "receipt": {"$ref": "../../portable/v1/knowledge-import-receipt.schema.json"},
+    "status": {"enum": ["imported", "already_present"]},
+    "created": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaces", "projects", "task_scope_anchors"],
+      "properties": {
+        "workspaces": {"type": "integer", "minimum": 0, "maximum": 1},
+        "projects": {"type": "integer", "minimum": 0, "maximum": 1},
+        "task_scope_anchors": {"type": "integer", "minimum": 0, "maximum": 4096}
+      }
+    },
+    "event_sequence": {"type": "integer", "minimum": 1}
+  }
+}

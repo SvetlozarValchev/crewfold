@@ -23,6 +23,8 @@ const (
 	curatorDerivedEvent        = "curator.derived"
 	curatorAutoAcceptedEvent   = "curator.auto_accepted"
 	curatorSourceType          = domain.KnowledgeSourceMeetingProposal
+	curatorSourceRevision      = 2
+	curatorAutoAcceptanceNote  = "accepted by bounded deterministic curator rule " + domain.CuratorRuleAcceptedMeetingResolutionCopy
 	maximumCuratorCandidates   = 100
 	maximumCuratorAcceptances  = 10
 	maximumCuratorSummaryBytes = 2 * 1024
@@ -419,7 +421,7 @@ func (s *Store) autoAcceptCuratorRevision(ctx context.Context, tx *sql.Tx, queri
 	derivation domain.CuratorDerivation, correlationID, processKey string,
 ) (domain.CuratorAutoAcceptance, int64, error) {
 	now := s.nowText()
-	note := "accepted by bounded deterministic curator rule " + rule.Name
+	note := curatorAutoAcceptanceNote
 	rows, err := queries.AcceptKnowledgeRevision(ctx, dbgen.AcceptKnowledgeRevisionParams{
 		AcceptedAt: &now, AcceptedBy: &curatorActor.ID, AcceptedByType: &curatorActor.Type,
 		DecisionNote: &note, ID: revision.ID, ExpectedStateRevision: revision.StateRevision,

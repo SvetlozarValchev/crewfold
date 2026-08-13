@@ -363,6 +363,23 @@ Dismissal closes it; stale/supersede governance resolves it atomically with the
 exact cause event. A revision remains disputed while any other incident record is
 open.
 
+### Portable project knowledge bundle
+
+A `kbun_...` bundle is a deterministic two-file snapshot of one exact project's
+canonical knowledge. Its manifest includes exact workspace/project identity,
+portable task-scope anchors, all knowledge items and revision histories, ordered
+sources, record counts, and final contradiction lifecycle snapshots. It excludes
+the origin event and authority ledgers, operational source entities, retrieval
+indexes, context, messages, transcripts, credentials, and provider state.
+
+A task-scope anchor binds an opaque exact task ID, workspace/project, and task
+creation time/actor identity solely for applicability. It does not create a task
+or grant scheduling, source, agent, run, or capability authority. An operational
+task with that ID activates exact applicability only when the identity fields
+match. An import receipt records the local owner's atomic attestation of one exact
+validated bundle. Same-bundle replay is idempotent; different or partial state is
+a conflict rather than an implicit merge.
+
 ### Outcome assessment
 
 A revisioned judgment about whether a promised deliverable was achieved. It is
@@ -442,3 +459,5 @@ launched it.
 11. Run activity cannot imply an accepted outcome without an explicit assessment.
 12. Every material management-briefing claim is traceable to durable source
     records at a declared event cursor.
+13. A portable import cannot create operational work or replay origin authority;
+    only its local-owner import attestation authorizes the imported final state.

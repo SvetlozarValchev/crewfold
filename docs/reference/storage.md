@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 14.
+Status: implemented through schema version 15.
 
 ## Location and ownership
 
@@ -361,6 +361,30 @@ Context-build conflict checks fetch only 16 sorted IDs plus a total count and
 commit no packet/event/key on failure. Mark-stale and successor acceptance resolve
 all incident open rows within their existing knowledge transaction.
 
+## Schema version 15
+
+This schema adds immutable task-scope anchors and owner import receipts. A
+task anchor binds an exact opaque task ID to workspace/project applicability
+without requiring or creating an operational task row. Existing task-scoped
+knowledge is backfilled; native proposals validate/create the same binding.
+Insert/update triggers prevent an existing or later operational task with that ID
+from disagreeing on workspace, project, creation time, or creator identity.
+
+Import receipts freeze bundle/content/rendering digests, exact scope, imported
+time/actor, and completion event. Narrow staging/attestation rows allow a validated
+final knowledge or contradiction snapshot to be inserted without replaying a
+foreign event stream. Triggers accept that path only inside the matching owner
+import transaction. Receipt, anchors, all canonical rows, per-entity import
+events, and the completion event commit or roll back together; exact byte replay
+is recognized from the immutable receipt rather than reconstructed foreign
+idempotency state.
+
+The portable bundle itself excludes authority-check and curator tables,
+idempotency keys, FTS tables/metadata, context, messages, tasks, meetings, agents,
+runs, repositories, checkouts, provider state, credentials, and transcripts.
+These tables remain local and are not reconstructed from descriptive actor fields
+in an imported snapshot.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -385,13 +409,14 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 14 contains agent/task/run/claim coordination,
+without its WAL. Schema version 15 contains agent/task/run/claim coordination,
 meetings, canonical knowledge, immutable context packets, scoped
 report/artifact/audit records, durable message/thread/delivery/wake state,
 overlap/drift/watcher state, bounded curator policy/derivation/acceptance evidence,
 exact contradiction history and bounded derived dispute evidence,
 opaque fake/direct bindings, direct supervisor references, and a rebuildable FTS
-projection. It contains no provider-private
+projection, plus portable task-scope anchors, exact owner import receipts, and
+per-entity import attestation rows. It contains no provider-private
 session transcript. Backup of a live installation must include a
 coordinated snapshot of the database, direct-runtime state, node key, and
 capability files; restored capabilities still obey their stored expiry and run

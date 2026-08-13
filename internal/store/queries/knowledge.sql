@@ -27,7 +27,8 @@ INSERT INTO knowledge_sources(
 ) VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: GetKnowledgeRevision :one
-SELECT kr.id, kr.item_id, ki.workspace_id, ki.project_id, ki.task_scope_id, ki.type,
+SELECT kr.id, kr.item_id, ki.workspace_id, ki.project_id,
+       COALESCE(binding.task_id, ki.task_scope_id, '') AS task_scope_id, ki.type,
        kr.revision_number, kr.state_revision, kr.title, kr.body, kr.content_hash,
        kr.review_status, kr.currency_status, kr.confidence, kr.verification_status,
        kr.freshness_policy, kr.fresh_until, kr.supersedes_revision_id,
@@ -38,15 +39,17 @@ SELECT kr.id, kr.item_id, ki.workspace_id, ki.project_id, ki.task_scope_id, ki.t
        kr.decision_note, kr.stale_reason
 FROM knowledge_revisions kr
 JOIN knowledge_items ki ON ki.id = kr.item_id
+LEFT JOIN knowledge_item_task_scopes binding ON binding.item_id = ki.id
 WHERE kr.id = sqlc.arg(revision_id) AND ki.workspace_id = sqlc.arg(workspace_id);
 
 -- name: ListKnowledgeRevisionIDs :many
 SELECT kr.id
 FROM knowledge_revisions kr
 JOIN knowledge_items ki ON ki.id = kr.item_id
+LEFT JOIN knowledge_item_task_scopes binding ON binding.item_id = ki.id
 WHERE ki.workspace_id = sqlc.arg(workspace_id)
   AND ki.project_id = sqlc.arg(project_id)
-  AND (sqlc.arg(task_scope_id) = '' OR ki.task_scope_id = sqlc.arg(task_scope_id))
+  AND (sqlc.arg(task_scope_id) = '' OR COALESCE(binding.task_id, ki.task_scope_id) = sqlc.arg(task_scope_id))
   AND (sqlc.arg(type) = '' OR ki.type = sqlc.arg(type))
   AND (sqlc.arg(review_status) = '' OR kr.review_status = sqlc.arg(review_status))
   AND (sqlc.arg(currency_status) = '' OR kr.currency_status = sqlc.arg(currency_status))
@@ -158,3 +161,17 @@ FROM knowledge_authority_checks
 WHERE workspace_id = sqlc.arg(workspace_id)
   AND (sqlc.arg(revision_id) = '' OR revision_id = sqlc.arg(revision_id))
 ORDER BY created_at, id;
+
+-- name: InsertKnowledgeTaskScopeAnchor :exec
+INSERT INTO knowledge_task_scope_anchors(task_id, workspace_id, project_id, created_at, created_by)
+VALUES (sqlc.arg(task_id), sqlc.arg(workspace_id), sqlc.arg(project_id), sqlc.arg(created_at), sqlc.arg(created_by))
+ON CONFLICT(task_id) DO NOTHING;
+
+-- name: GetKnowledgeTaskScopeAnchor :one
+SELECT task_id, workspace_id, project_id, created_at, created_by
+FROM knowledge_task_scope_anchors
+WHERE task_id = sqlc.arg(task_id);
+
+-- name: InsertKnowledgeItemTaskScope :exec
+INSERT INTO knowledge_item_task_scopes(item_id, task_id)
+VALUES (sqlc.arg(item_id), sqlc.arg(task_id));

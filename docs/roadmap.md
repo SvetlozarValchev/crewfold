@@ -72,7 +72,7 @@ implementation commit is `e37fdcf32b2e5f69766405d6585ff24277a1ab3c`.
 | M12 ✓ | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
 | M13 ✓ | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
 | M14 ✓ | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
-| M15 ◐ | Curator/retrieval | Scoped retrieval, participant-bound cross-project mail, one bounded deterministic curator rule, and owner-confirmed exact contradictions are implemented; refresh and export remain | M14 |
+| M15 ◐ | Curator/retrieval | Scoped retrieval, participant-bound cross-project mail, one bounded deterministic curator rule, exact contradictions, and portable project knowledge are implemented; context refresh/deltas remain | M14 |
 | M16 | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
 | M17 | Local checks/CI watcher | Route fresh check evidence without granting merge authority | M16 |
 | M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
@@ -141,8 +141,8 @@ changes task ownership or ordering.
 
 M14 lets agents resume from owner-accepted decisions/findings linked by exact
 revision. M15 adds a curator, deterministic search, participant-bound
-cross-project negotiation, contradiction handling, and explicit refresh without
-making retrieval or conversation authoritative.
+cross-project negotiation, contradiction handling, portable project knowledge,
+and explicit refresh without making retrieval or conversation authoritative.
 
 ### Personal alpha — M16 through M17
 
@@ -245,8 +245,16 @@ closure when a participant becomes stale or superseded. Agent reporting is
 run/task scoped and never grants governance. The accepted contract is
 [ADR-0012](decisions/0012-owner-confirmed-exact-knowledge-contradictions.md).
 
-Remaining M15 slices add explicit context deltas and portable export. Participant
-rosters in context are deferred to packet v4/deltas;
+A fifth completed slice adds byte-stable project `manifest.json` plus derived
+Markdown export and exact owner-only import into an empty canonical target. It
+preserves task-only applicability without ghost tasks and remains independent of
+provider state and FTS. The accepted contract is
+[ADR-0013](decisions/0013-portable-project-knowledge-snapshots.md).
+
+The remaining M15 slice adds explicit context deltas. Portable v1 moves exact
+project knowledge/applicability/contradiction snapshots under a new local-owner
+attestation; it deliberately does not replay origin authority or operational
+entities. Participant rosters in context are deferred to packet v4/deltas;
 packet v3 only keeps its bounded authorized inbox summary.
 Native provider resume, active-turn steering,
 app-server ownership, remote users, and broader organizational authority remain

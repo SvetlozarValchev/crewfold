@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:portable:knowledge-bundle-manifest:v1",
+  "title": "Crewfold portable canonical project knowledge bundle manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "bundle_id", "content_sha256", "snapshot", "rendering"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:portable:knowledge-bundle-manifest:v1"},
+    "type": {"const": "portable_knowledge_bundle"},
+    "bundle_id": {"type": "string", "pattern": "^kbun_[0-9a-f]{32}$"},
+    "content_sha256": {
+      "type": "string", "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of compact canonical snapshot JSON, excluding the envelope and Markdown rendering."
+    },
+    "snapshot": {"$ref": "#/$defs/snapshot"},
+    "rendering": {"$ref": "#/$defs/rendering"}
+  },
+  "$defs": {
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "counts", "task_scope_anchors", "items", "contradictions"],
+      "properties": {
+        "scope": {"$ref": "#/$defs/scope"},
+        "counts": {"$ref": "#/$defs/counts"},
+        "task_scope_anchors": {
+          "type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/task_scope_anchor"}
+        },
+        "items": {
+          "type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/item"}
+        },
+        "contradictions": {
+          "type": "array", "maxItems": 8192, "items": {"$ref": "#/$defs/contradiction"}
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace_id", "workspace_name", "project_id", "project_name"],
+      "properties": {
+        "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+        "workspace_name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+        "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+        "project_name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_scope_anchors", "items", "revisions", "contradictions"],
+      "properties": {
+        "task_scope_anchors": {"type": "integer", "minimum": 0, "maximum": 4096},
+        "items": {"type": "integer", "minimum": 0, "maximum": 4096},
+        "revisions": {"type": "integer", "minimum": 0, "maximum": 16384},
+        "contradictions": {"type": "integer", "minimum": 0, "maximum": 8192}
+      }
+    },
+    "task_scope_anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "workspace_id", "project_id", "created_at", "created_by"],
+      "properties": {
+        "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+        "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+        "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "created_by": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item", "revisions"],
+      "properties": {
+        "item": {"$ref": "../../domain/v1/knowledge-item.schema.json"},
+        "revisions": {
+          "type": "array", "minItems": 1, "maxItems": 16384,
+          "items": {"$ref": "#/$defs/revision"}
+        }
+      }
+    },
+    "revision": {
+      "allOf": [
+        {"$ref": "../../domain/v1/knowledge-revision.schema.json"},
+        {
+          "oneOf": [
+            {
+              "properties": {"review_status": {"const": "proposed"}, "currency_status": {"const": "pending"}, "state_revision": {"const": 1}},
+              "required": ["review_status", "currency_status", "state_revision"],
+              "not": {"anyOf": [
+                {"required": ["accepted_at"]}, {"required": ["accepted_by"]}, {"required": ["accepted_by_type"]},
+                {"required": ["rejected_at"]}, {"required": ["rejected_by"]}, {"required": ["rejected_by_type"]},
+                {"required": ["stale_at"]}, {"required": ["stale_by"]}, {"required": ["stale_by_type"]}, {"required": ["decision_note"]}, {"required": ["stale_reason"]}
+              ]}
+            },
+            {
+              "properties": {"review_status": {"const": "rejected"}, "currency_status": {"const": "pending"}, "state_revision": {"const": 2}, "rejected_by": {"const": "local-owner"}, "rejected_by_type": {"const": "human"}},
+              "required": ["review_status", "currency_status", "state_revision", "rejected_at", "rejected_by", "rejected_by_type"],
+              "not": {"anyOf": [
+                {"required": ["accepted_at"]}, {"required": ["accepted_by"]}, {"required": ["accepted_by_type"]},
+                {"required": ["stale_at"]}, {"required": ["stale_by"]}, {"required": ["stale_by_type"]}, {"required": ["stale_reason"]}
+              ]}
+            },
+            {
+              "properties": {"review_status": {"const": "accepted"}, "currency_status": {"const": "current"}, "state_revision": {"const": 2}},
+              "required": ["review_status", "currency_status", "state_revision", "accepted_at", "accepted_by", "accepted_by_type"],
+              "allOf": [{"$ref": "#/$defs/accepted_actor"}],
+              "not": {"anyOf": [
+                {"required": ["rejected_at"]}, {"required": ["rejected_by"]}, {"required": ["rejected_by_type"]},
+                {"required": ["stale_at"]}, {"required": ["stale_by"]}, {"required": ["stale_by_type"]}, {"required": ["stale_reason"]}
+              ]}
+            },
+            {
+              "properties": {"review_status": {"const": "accepted"}, "currency_status": {"const": "stale"}, "state_revision": {"const": 3}, "stale_by": {"const": "local-owner"}, "stale_by_type": {"const": "human"}},
+              "required": ["review_status", "currency_status", "state_revision", "accepted_at", "accepted_by", "accepted_by_type", "stale_at", "stale_by", "stale_by_type", "stale_reason"],
+              "allOf": [{"$ref": "#/$defs/accepted_actor"}],
+              "not": {"anyOf": [{"required": ["rejected_at"]}, {"required": ["rejected_by"]}, {"required": ["rejected_by_type"]}]}
+            },
+            {
+              "properties": {"review_status": {"const": "accepted"}, "currency_status": {"const": "superseded"}, "state_revision": {"const": 3}},
+              "required": ["review_status", "currency_status", "state_revision", "accepted_at", "accepted_by", "accepted_by_type"],
+              "allOf": [{"$ref": "#/$defs/accepted_actor"}],
+              "not": {"anyOf": [
+                {"required": ["rejected_at"]}, {"required": ["rejected_by"]}, {"required": ["rejected_by_type"]},
+                {"required": ["stale_at"]}, {"required": ["stale_by"]}, {"required": ["stale_by_type"]}, {"required": ["stale_reason"]}
+              ]}
+            }
+          ]
+        },
+        {
+          "if": {"properties": {"proposed_by_type": {"const": "human"}}, "required": ["proposed_by_type"]},
+          "then": {"properties": {"proposed_by": {"const": "local-owner"}}},
+          "else": {
+            "oneOf": [
+              {"properties": {"proposed_by_type": {"const": "agent_run"}, "proposed_by": {"pattern": "^run_[0-9a-f]{32}$"}}},
+              {"properties": {"proposed_by_type": {"const": "subsystem"}, "proposed_by": {"const": "subsystem:curator"}}}
+            ]
+          }
+        }
+      ]
+    },
+    "accepted_actor": {
+      "oneOf": [
+        {"properties": {"accepted_by": {"const": "local-owner"}, "accepted_by_type": {"const": "human"}}},
+        {"properties": {"accepted_by": {"const": "subsystem:curator"}, "accepted_by_type": {"const": "subsystem"}}}
+      ]
+    },
+    "contradiction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "workspace_id", "project_id", "left_revision_id", "right_revision_id", "status", "state_revision", "report_note", "reported_at", "reported_by", "reported_by_type"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^kcon_[0-9a-f]{32}$"},
+        "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+        "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+        "left_revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+        "right_revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+        "status": {"enum": ["proposed", "open", "resolved", "dismissed"]},
+        "state_revision": {"type": "integer", "minimum": 1},
+        "report_note": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "reported_at": {"type": "string", "format": "date-time"},
+        "reported_by": {"type": "string", "minLength": 1, "maxLength": 128},
+        "reported_by_type": {"enum": ["human", "agent_run"]},
+        "confirmed_at": {"type": "string", "format": "date-time"},
+        "confirmed_by": {"const": "local-owner"},
+        "confirmed_by_type": {"const": "human"},
+        "confirm_note": {"type": "string", "maxLength": 2048},
+        "dismissed_at": {"type": "string", "format": "date-time"},
+        "dismissed_by": {"const": "local-owner"},
+        "dismissed_by_type": {"const": "human"},
+        "dismiss_note": {"type": "string", "maxLength": 2048},
+        "resolution_reason": {"enum": ["participant_stale", "participant_superseded"]},
+        "resolved_at": {"type": "string", "format": "date-time"},
+        "resolved_by": {"const": "local-owner"},
+        "resolved_by_type": {"const": "human"},
+        "resolution_note": {"type": "string", "minLength": 1, "maxLength": 2048}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"reported_by_type": {"const": "human"}}, "required": ["reported_by_type"]},
+          "then": {"properties": {"reported_by": {"const": "local-owner"}}},
+          "else": {"properties": {"reported_by": {"pattern": "^run_[0-9a-f]{32}$"}}}
+        }
+      ],
+      "oneOf": [
+        {
+          "properties": {"status": {"const": "proposed"}, "state_revision": {"const": 1}},
+          "required": ["status", "state_revision"],
+          "not": {"anyOf": [
+            {"required": ["confirmed_at"]}, {"required": ["confirmed_by"]}, {"required": ["confirmed_by_type"]}, {"required": ["confirm_note"]},
+            {"required": ["dismissed_at"]}, {"required": ["dismissed_by"]}, {"required": ["dismissed_by_type"]}, {"required": ["dismiss_note"]},
+            {"required": ["resolution_reason"]}, {"required": ["resolved_at"]}, {"required": ["resolved_by"]}, {"required": ["resolved_by_type"]}, {"required": ["resolution_note"]}
+          ]}
+        },
+        {
+          "properties": {"status": {"const": "open"}, "state_revision": {"const": 2}},
+          "required": ["status", "state_revision", "confirmed_at", "confirmed_by", "confirmed_by_type"],
+          "not": {"anyOf": [
+            {"required": ["dismissed_at"]}, {"required": ["dismissed_by"]}, {"required": ["dismissed_by_type"]}, {"required": ["dismiss_note"]},
+            {"required": ["resolution_reason"]}, {"required": ["resolved_at"]}, {"required": ["resolved_by"]}, {"required": ["resolved_by_type"]}, {"required": ["resolution_note"]}
+          ]}
+        },
+        {
+          "properties": {"status": {"const": "dismissed"}, "state_revision": {"const": 2}},
+          "required": ["status", "state_revision", "dismissed_at", "dismissed_by", "dismissed_by_type"],
+          "not": {"anyOf": [
+            {"required": ["confirmed_at"]}, {"required": ["confirmed_by"]}, {"required": ["confirmed_by_type"]}, {"required": ["confirm_note"]},
+            {"required": ["resolution_reason"]}, {"required": ["resolved_at"]}, {"required": ["resolved_by"]}, {"required": ["resolved_by_type"]}, {"required": ["resolution_note"]}
+          ]}
+        },
+        {
+          "properties": {"status": {"const": "dismissed"}, "state_revision": {"const": 3}},
+          "required": ["status", "state_revision", "confirmed_at", "confirmed_by", "confirmed_by_type", "dismissed_at", "dismissed_by", "dismissed_by_type"],
+          "not": {"anyOf": [
+            {"required": ["resolution_reason"]}, {"required": ["resolved_at"]}, {"required": ["resolved_by"]}, {"required": ["resolved_by_type"]}, {"required": ["resolution_note"]}
+          ]}
+        },
+        {
+          "properties": {"status": {"const": "resolved"}, "state_revision": {"const": 3}},
+          "required": ["status", "state_revision", "confirmed_at", "confirmed_by", "confirmed_by_type", "resolution_reason", "resolved_at", "resolved_by", "resolved_by_type", "resolution_note"],
+          "not": {"anyOf": [
+            {"required": ["dismissed_at"]}, {"required": ["dismissed_by"]}, {"required": ["dismissed_by_type"]}, {"required": ["dismiss_note"]}
+          ]}
+        }
+      ]
+    },
+    "rendering": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "media_type", "byte_size", "sha256"],
+      "properties": {
+        "path": {"const": "knowledge.md"},
+        "media_type": {"const": "text/markdown; charset=utf-8"},
+        "byte_size": {"type": "integer", "minimum": 0, "maximum": 67108864},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

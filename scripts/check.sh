@@ -82,6 +82,9 @@ printf 'Bounded deterministic curator black-box acceptance\n'
 printf 'Owner-confirmed knowledge contradiction black-box acceptance\n'
 "$repo_root/test/scenarios/knowledge-contradictions/run.sh"
 
+printf 'Portable project knowledge black-box acceptance\n'
+"$repo_root/test/scenarios/portable-knowledge/run.sh"
+
 printf 'Herdr runtime black-box acceptance\n'
 "$repo_root/test/scenarios/herdr-runtime/run.sh"
 

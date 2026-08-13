@@ -87,6 +87,7 @@ func (s *Store) ProposeKnowledge(ctx context.Context, command ProposeKnowledgeCo
 		}
 		projectID = project.ID
 	}
+	var taskScope domain.Task
 	if command.TaskScopeID != "" {
 		task, err := queryTask(ctx, tx, workspace.ID, command.TaskScopeID)
 		if err != nil {
@@ -96,6 +97,7 @@ func (s *Store) ProposeKnowledge(ctx context.Context, command ProposeKnowledgeCo
 			return KnowledgeMutationResult{}, knowledgeInvalid("task applicability scope must belong to the knowledge project")
 		}
 		command.TaskScopeID = task.ID
+		taskScope = task
 	}
 	itemID, revisionNumber := "", int64(1)
 	var predecessor domain.KnowledgeRevision
@@ -146,6 +148,26 @@ func (s *Store) ProposeKnowledge(ctx context.Context, command ProposeKnowledgeCo
 			CreatedAt: now, CreatedBy: command.Actor.ID, CreatedByType: command.Actor.Type,
 		}); err != nil {
 			return KnowledgeMutationResult{}, storageFailure("insert knowledge item", err)
+		}
+		if command.TaskScopeID != "" {
+			if err := queries.InsertKnowledgeTaskScopeAnchor(ctx, dbgen.InsertKnowledgeTaskScopeAnchorParams{
+				TaskID: taskScope.ID, WorkspaceID: taskScope.WorkspaceID, ProjectID: taskScope.ProjectID,
+				CreatedAt: taskScope.CreatedAt, CreatedBy: taskScope.CreatedBy,
+			}); err != nil {
+				return KnowledgeMutationResult{}, storageFailure("ensure knowledge task-scope anchor", err)
+			}
+			anchor, err := queries.GetKnowledgeTaskScopeAnchor(ctx, taskScope.ID)
+			if err != nil {
+				return KnowledgeMutationResult{}, storageFailure("validate knowledge task-scope anchor", err)
+			}
+			if anchor.WorkspaceID != taskScope.WorkspaceID || anchor.ProjectID != taskScope.ProjectID || anchor.CreatedAt != taskScope.CreatedAt || anchor.CreatedBy != taskScope.CreatedBy {
+				return KnowledgeMutationResult{}, knowledgeConflict("task-scope anchor does not exactly match the native task")
+			}
+			if err := queries.InsertKnowledgeItemTaskScope(ctx, dbgen.InsertKnowledgeItemTaskScopeParams{
+				ItemID: itemID, TaskID: taskScope.ID,
+			}); err != nil {
+				return KnowledgeMutationResult{}, storageFailure("bind knowledge item task scope", err)
+			}
 		}
 	}
 	contentHash := knowledgeContentHash(command.Title, command.Body)
@@ -580,7 +602,7 @@ func knowledgeRevision(ctx context.Context, queries knowledgeQuerier, workspaceI
 	}
 	revision := domain.KnowledgeRevision{
 		ID: row.ID, ItemID: row.ItemID, WorkspaceID: row.WorkspaceID, ProjectID: row.ProjectID,
-		TaskScopeID: stringValue(row.TaskScopeID), Type: row.Type, RevisionNumber: row.RevisionNumber,
+		TaskScopeID: row.TaskScopeID, Type: row.Type, RevisionNumber: row.RevisionNumber,
 		StateRevision: row.StateRevision, Title: row.Title, Body: row.Body, ContentHash: row.ContentHash,
 		ReviewStatus: row.ReviewStatus, CurrencyStatus: row.CurrencyStatus, Confidence: row.Confidence,
 		VerificationStatus: row.VerificationStatus, FreshnessPolicy: row.FreshnessPolicy,

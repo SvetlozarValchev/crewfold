@@ -146,8 +146,12 @@ func searchKnowledgeCandidates(ctx context.Context, tx *sql.Tx, workspaceID, pro
 SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?
 ), ranked AS (
 SELECT kr.id,
-CASE WHEN ? = '' THEN 0 WHEN ki.task_scope_id = ? THEN 0 ELSE 1 END AS scope_rank,
-CASE WHEN ? = '' THEN 0 ELSE COALESCE((
+CASE WHEN ? = '' THEN 0 WHEN COALESCE(binding.task_id,ki.task_scope_id) = ? THEN 0 ELSE 1 END AS scope_rank,
+CASE WHEN ? = '' THEN 0
+WHEN EXISTS (
+  SELECT 1 FROM knowledge_import_entities imported
+  WHERE imported.entity_type='knowledge_revision' AND imported.entity_id=kr.id
+) THEN 4 ELSE COALESCE((
   SELECT MIN(CASE
     WHEN ks.source_type='task' AND ks.source_id=? AND ks.role='primary' THEN 0
     WHEN ks.source_type='task' AND ks.source_id=? AND ks.role='supporting' THEN 1
@@ -165,10 +169,12 @@ crewfold_timestamp_key(kr.accepted_at) AS accepted_at_key
 FROM knowledge_search
 JOIN knowledge_revisions kr ON kr.id=knowledge_search.revision_id
 JOIN knowledge_items ki ON ki.id=kr.item_id
+LEFT JOIN knowledge_item_task_scopes binding ON binding.item_id=ki.id
 WHERE knowledge_search MATCH ? AND ki.workspace_id=? AND ki.project_id=?
   AND kr.review_status='accepted' AND kr.currency_status='current'
 	  AND (?='' OR ki.type=?)
-	  AND ((?='' AND ki.task_scope_id IS NULL) OR (?!='' AND (ki.task_scope_id IS NULL OR ki.task_scope_id=?)))
+	  AND ((?='' AND COALESCE(binding.task_id,ki.task_scope_id) IS NULL) OR
+	       (?!='' AND (COALESCE(binding.task_id,ki.task_scope_id) IS NULL OR COALESCE(binding.task_id,ki.task_scope_id)=?)))
 	  AND EXISTS (SELECT 1 FROM knowledge_sources primary_source WHERE primary_source.revision_id=kr.id AND primary_source.role='primary')
 	  AND NOT EXISTS (
 	    SELECT 1 FROM knowledge_contradictions contradiction
@@ -214,7 +220,12 @@ func matchedKnowledgeSourceIDs(ctx context.Context, tx *sql.Tx, revisionID, task
 	if taskID == "" || rank == 4 {
 		return []string{}, nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT source_id FROM knowledge_sources WHERE revision_id=? AND source_type='task' AND (
+	rows, err := tx.QueryContext(ctx, `SELECT source_id FROM knowledge_sources WHERE revision_id=?
+AND NOT EXISTS (
+  SELECT 1 FROM knowledge_import_entities imported
+  WHERE imported.entity_type='knowledge_revision' AND imported.entity_id=knowledge_sources.revision_id
+)
+AND source_type='task' AND (
 (?=0 AND source_id=? AND role='primary') OR (?=1 AND source_id=? AND role='supporting') OR
 (?=2 AND role='primary' AND source_id IN (SELECT depends_on_task_id FROM task_dependencies WHERE task_id=?)) OR
 (?=3 AND role='supporting' AND source_id IN (SELECT depends_on_task_id FROM task_dependencies WHERE task_id=?))
@@ -237,7 +248,7 @@ func matchedKnowledgeSourceIDs(ctx context.Context, tx *sql.Tx, revisionID, task
 func knowledgeSearchExplanation(revision domain.KnowledgeRevision, candidate knowledgeSearchCandidate, taskID, evaluatedAt string) domain.KnowledgeSearchExplanation {
 	scopeReason := "project-wide knowledge is eligible for a project-only search"
 	if taskID != "" {
-		if candidate.ScopeRank == 0 {
+		if revision.TaskScopeID == taskID {
 			scopeReason = "knowledge is scoped to the exact search task"
 		} else {
 			scopeReason = "project-wide knowledge applies to the search task"

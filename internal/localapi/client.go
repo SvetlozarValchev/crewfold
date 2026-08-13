@@ -2,19 +2,24 @@ package localapi
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"time"
 
 	"crewfold/internal/domain"
 )
 
-const defaultTimeout = 2 * time.Second
+const (
+	defaultTimeout           = 2 * time.Second
+	portableKnowledgeTimeout = 2 * time.Minute
+)
 
 type Client struct {
 	socketPath string
@@ -432,6 +437,29 @@ func (c *Client) KnowledgeDispute(ctx context.Context, workspace, revision strin
 	return result, nil
 }
 
+func (c *Client) KnowledgeExport(ctx context.Context, params KnowledgeExportParams) (KnowledgeExportResult, error) {
+	var result KnowledgeExportResult
+	if err := c.callParamsStrictWithTimeout(ctx, portableKnowledgeTimeout, MethodKnowledgeExport, params, &result); err != nil {
+		return KnowledgeExportResult{}, err
+	}
+	if result.Schema != KnowledgeExportSchema || result.Type != "knowledge_export" {
+		return KnowledgeExportResult{}, fmt.Errorf("knowledge.export returned unexpected result schema %q or type %q", result.Schema, result.Type)
+	}
+	return result, nil
+}
+
+func (c *Client) KnowledgeImport(ctx context.Context, params KnowledgeImportParams) (KnowledgeImportResult, error) {
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result KnowledgeImportResult
+	if err := c.callParamsStrictWithTimeout(ctx, portableKnowledgeTimeout, MethodKnowledgeImport, params, &result); err != nil {
+		return KnowledgeImportResult{}, err
+	}
+	if result.Schema != KnowledgeImportSchema || result.Type != "knowledge_import" {
+		return KnowledgeImportResult{}, fmt.Errorf("knowledge.import returned unexpected result schema %q or type %q", result.Schema, result.Type)
+	}
+	return result, nil
+}
+
 func (c *Client) CuratorQueue(ctx context.Context, params CuratorQueueParams) (CuratorQueueResult, error) {
 	if params.Limit == nil {
 		limit := 50
@@ -792,6 +820,35 @@ func (c *Client) callParams(ctx context.Context, method string, paramsValue, res
 	return c.call(ctx, method, params, result)
 }
 
+func (c *Client) callParamsStrictWithTimeout(ctx context.Context, timeout time.Duration, method string, paramsValue, result any) error {
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	params, err := json.Marshal(paramsValue)
+	if err != nil {
+		return fmt.Errorf("marshal %s parameters: %w", method, err)
+	}
+	return c.callStrict(ctx, method, params, result)
+}
+
+func (c *Client) callStrict(ctx context.Context, method string, params json.RawMessage, result any) error {
+	connection, cancel, err := c.dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	defer connection.Close()
+	hello, err := negotiate(connection)
+	if err != nil {
+		return err
+	}
+	return roundTripStrict(connection, Request{
+		ID: requestID(), Protocol: hello.SelectedProtocol, Method: method, Params: params,
+	}, result)
+}
+
 func defaultIdempotencyKey(value string) string {
 	if value == "" {
 		return "idem-" + requestID()
@@ -845,6 +902,14 @@ func negotiate(connection net.Conn) (HelloResult, error) {
 }
 
 func roundTrip(connection net.Conn, request Request, result any) error {
+	return roundTripDecoded(connection, request, result, false)
+}
+
+func roundTripStrict(connection net.Conn, request Request, result any) error {
+	return roundTripDecoded(connection, request, result, true)
+}
+
+func roundTripDecoded(connection net.Conn, request Request, result any, strict bool) error {
 	if err := json.NewEncoder(connection).Encode(request); err != nil {
 		return fmt.Errorf("write local API request %s: %w", request.ID, err)
 	}
@@ -867,6 +932,21 @@ func roundTrip(connection net.Conn, request Request, result any) error {
 	}
 	if len(response.Result) == 0 {
 		return errors.New("local API response has neither result nor error")
+	}
+	if strict {
+		decoder := json.NewDecoder(bytes.NewReader(response.Result))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(result); err != nil {
+			return fmt.Errorf("decode local API result %s: %w", request.ID, err)
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			if err == nil {
+				return fmt.Errorf("decode local API result %s: result contains more than one value", request.ID)
+			}
+			return fmt.Errorf("decode local API result %s: %w", request.ID, err)
+		}
+		return nil
 	}
 	if err := json.Unmarshal(response.Result, result); err != nil {
 		return fmt.Errorf("decode local API result %s: %w", request.ID, err)

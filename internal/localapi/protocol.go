@@ -53,6 +53,8 @@ const (
 	MethodKnowledgeReject       = "knowledge.reject"
 	MethodKnowledgeMarkStale    = "knowledge.mark_stale"
 	MethodKnowledgeDispute      = "knowledge.dispute"
+	MethodKnowledgeExport       = "knowledge.export"
+	MethodKnowledgeImport       = "knowledge.import"
 	MethodCuratorQueue          = "curator.queue"
 	MethodCuratorRuleConfigure  = "curator.rule.configure"
 	MethodCuratorProcess        = "curator.process"
@@ -120,6 +122,8 @@ const (
 	KnowledgeIndexStatusSchema      = "urn:crewfold:schema:local-api:knowledge-index-status-result:v1"
 	KnowledgeIndexRebuildSchema     = "urn:crewfold:schema:local-api:knowledge-index-rebuild-result:v1"
 	KnowledgeDisputeSchema          = "urn:crewfold:schema:local-api:knowledge-dispute-result:v1"
+	KnowledgeExportSchema           = "urn:crewfold:schema:local-api:knowledge-export-result:v1"
+	KnowledgeImportSchema           = "urn:crewfold:schema:local-api:knowledge-import-result:v1"
 	CuratorQueueSchema              = "urn:crewfold:schema:local-api:curator-queue-result:v1"
 	CuratorRuleMutationSchema       = "urn:crewfold:schema:local-api:curator-rule-mutation-result:v1"
 	CuratorProcessSchema            = "urn:crewfold:schema:local-api:curator-process-result:v1"
@@ -720,6 +724,58 @@ type KnowledgeDisputeResult struct {
 	Schema  string                          `json:"schema"`
 	Type    string                          `json:"type"`
 	Dispute domain.KnowledgeRevisionDispute `json:"dispute"`
+}
+
+type KnowledgeExportParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project"`
+	Directory string `json:"directory"`
+}
+
+type KnowledgeImportParams struct {
+	Workspace             string `json:"workspace"`
+	Project               string `json:"project"`
+	Directory             string `json:"directory"`
+	ExpectedContentSHA256 string `json:"expected_content_sha256"`
+	CreateScope           bool   `json:"create_scope"`
+	IdempotencyKey        string `json:"idempotency_key"`
+}
+
+type KnowledgeExportResult struct {
+	Schema            string                         `json:"schema"`
+	Type              string                         `json:"type"`
+	Directory         string                         `json:"directory"`
+	BundleID          string                         `json:"bundle_id"`
+	ContentSHA256     string                         `json:"content_sha256"`
+	ManifestSHA256    string                         `json:"manifest_sha256"`
+	ManifestBytes     int64                          `json:"manifest_bytes"`
+	MarkdownSHA256    string                         `json:"markdown_sha256"`
+	MarkdownBytes     int64                          `json:"markdown_bytes"`
+	AsOfEventSequence int64                          `json:"as_of_event_sequence"`
+	Counts            domain.PortableKnowledgeCounts `json:"counts"`
+}
+
+type PortableKnowledgeCreatedCounts struct {
+	Workspaces       int64 `json:"workspaces"`
+	Projects         int64 `json:"projects"`
+	TaskScopeAnchors int64 `json:"task_scope_anchors"`
+}
+
+type KnowledgeImportResult struct {
+	Schema         string                         `json:"schema"`
+	Type           string                         `json:"type"`
+	Directory      string                         `json:"directory"`
+	BundleID       string                         `json:"bundle_id"`
+	ContentSHA256  string                         `json:"content_sha256"`
+	ManifestSHA256 string                         `json:"manifest_sha256"`
+	ManifestBytes  int64                          `json:"manifest_bytes"`
+	MarkdownSHA256 string                         `json:"markdown_sha256"`
+	MarkdownBytes  int64                          `json:"markdown_bytes"`
+	Counts         domain.PortableKnowledgeCounts `json:"counts"`
+	Receipt        domain.KnowledgeImportReceipt  `json:"receipt"`
+	Status         string                         `json:"status"`
+	Created        PortableKnowledgeCreatedCounts `json:"created"`
+	EventSequence  int64                          `json:"event_sequence"`
 }
 
 type ContradictionReportParams struct {

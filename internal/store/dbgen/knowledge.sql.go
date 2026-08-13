@@ -134,7 +134,8 @@ func (q *Queries) GetKnowledgeAuthorityCheckByKey(ctx context.Context, arg GetKn
 }
 
 const getKnowledgeRevision = `-- name: GetKnowledgeRevision :one
-SELECT kr.id, kr.item_id, ki.workspace_id, ki.project_id, ki.task_scope_id, ki.type,
+SELECT kr.id, kr.item_id, ki.workspace_id, ki.project_id,
+       COALESCE(binding.task_id, ki.task_scope_id, '') AS task_scope_id, ki.type,
        kr.revision_number, kr.state_revision, kr.title, kr.body, kr.content_hash,
        kr.review_status, kr.currency_status, kr.confidence, kr.verification_status,
        kr.freshness_policy, kr.fresh_until, kr.supersedes_revision_id,
@@ -145,6 +146,7 @@ SELECT kr.id, kr.item_id, ki.workspace_id, ki.project_id, ki.task_scope_id, ki.t
        kr.decision_note, kr.stale_reason
 FROM knowledge_revisions kr
 JOIN knowledge_items ki ON ki.id = kr.item_id
+LEFT JOIN knowledge_item_task_scopes binding ON binding.item_id = ki.id
 WHERE kr.id = ?1 AND ki.workspace_id = ?2
 `
 
@@ -158,7 +160,7 @@ type GetKnowledgeRevisionRow struct {
 	ItemID               string  `json:"item_id"`
 	WorkspaceID          string  `json:"workspace_id"`
 	ProjectID            string  `json:"project_id"`
-	TaskScopeID          *string `json:"task_scope_id"`
+	TaskScopeID          string  `json:"task_scope_id"`
 	Type                 string  `json:"type"`
 	RevisionNumber       int64   `json:"revision_number"`
 	StateRevision        int64   `json:"state_revision"`
@@ -301,6 +303,25 @@ func (q *Queries) GetKnowledgeSourceTask(ctx context.Context, id string) (GetKno
 	return i, err
 }
 
+const getKnowledgeTaskScopeAnchor = `-- name: GetKnowledgeTaskScopeAnchor :one
+SELECT task_id, workspace_id, project_id, created_at, created_by
+FROM knowledge_task_scope_anchors
+WHERE task_id = ?1
+`
+
+func (q *Queries) GetKnowledgeTaskScopeAnchor(ctx context.Context, taskID string) (KnowledgeTaskScopeAnchor, error) {
+	row := q.db.QueryRowContext(ctx, getKnowledgeTaskScopeAnchor, taskID)
+	var i KnowledgeTaskScopeAnchor
+	err := row.Scan(
+		&i.TaskID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.CreatedAt,
+		&i.CreatedBy,
+	)
+	return i, err
+}
+
 const insertKnowledgeAuthorityCheck = `-- name: InsertKnowledgeAuthorityCheck :exec
 INSERT INTO knowledge_authority_checks(
     id, workspace_id, revision_id, action, actor_id, actor_type,
@@ -383,6 +404,21 @@ func (q *Queries) InsertKnowledgeItem(ctx context.Context, arg InsertKnowledgeIt
 	return err
 }
 
+const insertKnowledgeItemTaskScope = `-- name: InsertKnowledgeItemTaskScope :exec
+INSERT INTO knowledge_item_task_scopes(item_id, task_id)
+VALUES (?1, ?2)
+`
+
+type InsertKnowledgeItemTaskScopeParams struct {
+	ItemID string `json:"item_id"`
+	TaskID string `json:"task_id"`
+}
+
+func (q *Queries) InsertKnowledgeItemTaskScope(ctx context.Context, arg InsertKnowledgeItemTaskScopeParams) error {
+	_, err := q.db.ExecContext(ctx, insertKnowledgeItemTaskScope, arg.ItemID, arg.TaskID)
+	return err
+}
+
 const insertKnowledgeRevision = `-- name: InsertKnowledgeRevision :exec
 INSERT INTO knowledge_revisions(
     id, item_id, revision_number, state_revision, title, body, content_hash,
@@ -462,6 +498,31 @@ func (q *Queries) InsertKnowledgeSource(ctx context.Context, arg InsertKnowledge
 	return err
 }
 
+const insertKnowledgeTaskScopeAnchor = `-- name: InsertKnowledgeTaskScopeAnchor :exec
+INSERT INTO knowledge_task_scope_anchors(task_id, workspace_id, project_id, created_at, created_by)
+VALUES (?1, ?2, ?3, ?4, ?5)
+ON CONFLICT(task_id) DO NOTHING
+`
+
+type InsertKnowledgeTaskScopeAnchorParams struct {
+	TaskID      string `json:"task_id"`
+	WorkspaceID string `json:"workspace_id"`
+	ProjectID   string `json:"project_id"`
+	CreatedAt   string `json:"created_at"`
+	CreatedBy   string `json:"created_by"`
+}
+
+func (q *Queries) InsertKnowledgeTaskScopeAnchor(ctx context.Context, arg InsertKnowledgeTaskScopeAnchorParams) error {
+	_, err := q.db.ExecContext(ctx, insertKnowledgeTaskScopeAnchor,
+		arg.TaskID,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.CreatedAt,
+		arg.CreatedBy,
+	)
+	return err
+}
+
 const listKnowledgeAuthorityChecks = `-- name: ListKnowledgeAuthorityChecks :many
 SELECT id, workspace_id, revision_id, action, actor_id, actor_type,
        outcome, reason, note, idempotency_key, request_hash, event_sequence, created_at
@@ -517,9 +578,10 @@ const listKnowledgeRevisionIDs = `-- name: ListKnowledgeRevisionIDs :many
 SELECT kr.id
 FROM knowledge_revisions kr
 JOIN knowledge_items ki ON ki.id = kr.item_id
+LEFT JOIN knowledge_item_task_scopes binding ON binding.item_id = ki.id
 WHERE ki.workspace_id = ?1
   AND ki.project_id = ?2
-  AND (?3 = '' OR ki.task_scope_id = ?3)
+  AND (?3 = '' OR COALESCE(binding.task_id, ki.task_scope_id) = ?3)
   AND (?4 = '' OR ki.type = ?4)
   AND (?5 = '' OR kr.review_status = ?5)
   AND (?6 = '' OR kr.currency_status = ?6)

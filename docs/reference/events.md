@@ -203,6 +203,9 @@ contradiction.dismissed
 contradiction.resolved
 contradiction.confirm_denied
 contradiction.dismiss_denied
+knowledge.imported
+contradiction.imported
+knowledge.import_completed
 context.packet_built
 ```
 
@@ -248,6 +251,14 @@ resolution reason, and exact cause event. Derived `knowledge.dispute` queries,
 search filtering, and failed context builds append no event. No
 `knowledge.disputed` fact exists because effective dispute is relational open
 state, not knowledge currency.
+
+Portable export is a read and appends no event. A first successful owner import
+appends one `knowledge.imported` attestation per exact restored revision, one
+`contradiction.imported` attestation per restored contradiction, and a final
+`knowledge.import_completed` event for the immutable receipt/bundle digest.
+These are local import facts, not replays of events from another node. Origin
+events and authority-check ledgers are excluded from portable v1. Exact replay of
+an already imported bundle appends nothing.
 
 The following remain proposals:
 
