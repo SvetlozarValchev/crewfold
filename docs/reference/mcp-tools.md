@@ -125,9 +125,11 @@ then either creates the accepted handoff or leaves the task in
 ### `crewfold_list_inbox`
 
 Input is `{"limit": 20}` with a required limit from 1 through 50. The authenticated
-run receives only messages for its assigned agent that are unscoped or belong to
-the run's project. Listing changes `queued` messages to `delivered` for that run;
-it does not mark them read or acknowledged.
+run normally receives only messages for its assigned agent that are unscoped or
+belong to the run's project. An owner-created participant thread is the bounded
+exception: a message is also visible when the run's agent, project, and task match
+one exact thread binding. Listing changes `queued` messages to `delivered` for
+that run; it does not mark them read or acknowledged.
 
 ### `crewfold_read_message`
 
@@ -136,8 +138,8 @@ it does not mark them read or acknowledged.
 ```
 
 Marks one inbox message read. The message must belong to the authenticated agent
-and be visible in the run's project. Repeating the same scoped key and input
-returns the original mutation.
+and be visible either in the run's project or through its exact participant-thread
+binding. Repeating the same scoped key and input returns the original mutation.
 
 ### `crewfold_send_message`
 
@@ -154,11 +156,16 @@ returns the original mutation.
 
 The sender identity, run, task, and project come from the authenticated capability;
 they cannot be selected in tool input. A send creates a new thread unless
-`thread_id` is supplied. Replies may also supply `reply_to_message_id`. The target
-is exactly one enabled agent, self-addressing and human/broadcast recipients are
-denied, and an agent can continue only a thread in which sender and recipient are
-already participants. Bodies are limited to 4096 UTF-8 bytes, artifact lists to
-16 IDs, and every artifact must have been published by the sender run.
+`thread_id` is supplied. Replies may also supply `reply_to_message_id`. Direct
+threads remain project-scoped. A run may supply the ID of an owner-created
+participant thread to communicate across projects only when both exact
+agent/task/project bindings already exist. Runs cannot create that thread or
+invite participants. The target is exactly one enabled agent, self-addressing and
+human/broadcast recipients are denied, and no message fans out to the roster.
+Bodies are limited to 4096 UTF-8 bytes. Direct messages may link at most 16
+artifacts published by the sender run. Participant-bound messages accept no
+artifacts in this slice; cross-project artifact authority is not inferred from
+roster membership.
 
 ### `crewfold_acknowledge_message`
 
@@ -166,8 +173,15 @@ already participants. Bodies are limited to 4096 UTF-8 bytes, artifact lists to
 {"message_id":"msg_id","idempotency_key":"provider-turn-key"}
 ```
 
-Acknowledges one visible recipient message. Acknowledging also establishes any
-missing delivered/read timestamps; it never changes the immutable message body.
+Acknowledges one visible recipient message, including one authorized by an exact
+participant-thread binding. Acknowledging also establishes any missing
+delivered/read timestamps; it never changes the immutable message body.
+
+No roster tool is exposed to runs in this slice. The owner can inspect bindings
+through the local API/CLI. Context packet v3 keeps its existing bounded inbox
+summary shape and may include authorized participant messages; full bodies and
+state transitions remain explicit mailbox tool calls. Roster snapshots and live
+context refresh are deferred to packet v4/context deltas.
 
 ### `crewfold_propose_knowledge`
 

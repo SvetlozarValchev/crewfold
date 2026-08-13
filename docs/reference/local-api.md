@@ -369,6 +369,32 @@ an owner inspection query and does not advance delivery state. `thread.show` tak
 `workspace` and thread ID and returns its ordered messages and delivery records,
 including acknowledgement and separate wake status/diagnostic.
 
+`thread.create` creates the explicit cross-project collaboration exception. It
+takes `workspace`, a 1–160 byte UTF-8 `subject`, two through eight bindings with
+unique agents and unique tasks spanning at least two projects, and an idempotency
+key.
+Every agent must be enabled and actively assigned to the exact task at creation.
+It returns a `participant_bound` collaboration whose participant revision starts
+at one. The result wrapper has type `participant_thread_mutation` and carries the
+complete `collaboration` plus its `event_sequence`. Runs cannot call this
+owner-socket operation.
+
+`thread.invite` takes `workspace`, thread ID, one new `{agent,task}` binding, the
+exact positive `expected_participant_revision`, and an idempotency key. A success
+adds one immutable binding and advances the roster revision; a stale revision
+returns `revision_conflict` without changing the thread. The total remains capped
+at eight. `thread.participants.list` is a read-only owner query returning the
+ordered frozen bindings and current participant revision in a
+`participant_thread` result wrapper. Both mutations return stable
+`invalid_message`, `message_denied`, or `revision_conflict` codes as applicable.
+
+Participant messages still target one agent. Their origin comes from an
+authenticated run's exact task/project binding, and artifacts are rejected in
+this first slice. An owner send into a participant thread must omit project and
+task, producing a null origin; explicit owner scope is rejected. Direct
+`message.send` behavior remains project-scoped and keeps its existing sender-owned
+artifact rules.
+
 The owner surface deliberately has no read/acknowledge mutation on behalf of an
 agent. Those transitions require an authenticated live run through MCP. The local
 socket remains owner-only and is not itself the run authorization boundary.

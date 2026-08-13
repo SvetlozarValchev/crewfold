@@ -11,21 +11,25 @@ import (
 	"unicode/utf8"
 
 	"crewfold/internal/domain"
+	"crewfold/internal/store/dbgen"
 )
 
 const (
-	threadCreatedEvent       = "thread.created"
-	messageSentEvent         = "message.sent"
-	messageDeliveredEvent    = "message.delivered"
-	messageReadEvent         = "message.read"
-	messageAcknowledgedEvent = "message.acknowledged"
-	messageWakeSucceeded     = "message.wake_succeeded"
-	messageWakeFailed        = "message.wake_failed"
-	messageWakeActorID       = "message-wake-worker"
-	maximumMessageBytes      = 4096
-	maximumMessageArtifacts  = 16
-	maximumInboxItems        = 50
-	contextInboxItems        = 10
+	threadCreatedEvent        = "thread.created"
+	messageSentEvent          = "message.sent"
+	messageDeliveredEvent     = "message.delivered"
+	messageReadEvent          = "message.read"
+	messageAcknowledgedEvent  = "message.acknowledged"
+	messageWakeSucceeded      = "message.wake_succeeded"
+	messageWakeFailed         = "message.wake_failed"
+	threadParticipantAdded    = "thread.participant_added"
+	messageWakeActorID        = "message-wake-worker"
+	maximumMessageBytes       = 4096
+	maximumMessageArtifacts   = 16
+	maximumInboxItems         = 50
+	contextInboxItems         = 10
+	minimumThreadParticipants = 2
+	maximumThreadParticipants = 8
 )
 
 var supportedMessageKinds = map[string]bool{
@@ -33,6 +37,304 @@ var supportedMessageKinds = map[string]bool{
 	domain.MessageReviewRequest: true, domain.MessageHandoff: true,
 	domain.MessageDecisionNotice: true, domain.MessageRisk: true,
 	domain.MessageConflict: true, domain.MessageApprovalRequest: true,
+}
+
+func (s *Store) CreateParticipantThread(ctx context.Context, command CreateParticipantThreadCommand) (ParticipantThreadMutationResult, error) {
+	workspaceIdentifier := strings.TrimSpace(command.WorkspaceIdentifier)
+	subject := strings.TrimSpace(command.Subject)
+	key, correlationID := strings.TrimSpace(command.IdempotencyKey), strings.TrimSpace(command.CorrelationID)
+	inputs := normalizeParticipantInputs(command.Participants)
+	if workspaceIdentifier == "" || !validMessageText(subject, 160) || len(inputs) < minimumThreadParticipants || len(inputs) > maximumThreadParticipants || len(inputs) != len(command.Participants) {
+		return ParticipantThreadMutationResult{}, &Error{Code: CodeInvalidMessage, Message: "participant thread requires a UTF-8 subject from 1 to 160 bytes and 2 to 8 distinct agent/task bindings"}
+	}
+	if err := validateMutationMetadata(key, correlationID, CodeInvalidMessage); err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ParticipantThreadMutationResult{}, storageFailure("begin participant thread creation", err)
+	}
+	defer tx.Rollback()
+	workspace, err := workspaceInTransaction(ctx, tx, workspaceIdentifier)
+	if err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	requestHash, err := hashCommand("participant-thread.create", map[string]any{"workspace_id": workspace.ID, "subject": subject, "participants": inputs})
+	if err != nil {
+		return ParticipantThreadMutationResult{}, storageFailure("hash participant thread creation", err)
+	}
+	scopedKey := "participant-thread-create:" + localOwnerActorID + ":" + key
+	var replay ParticipantThreadMutationResult
+	if found, lookupErr := lookupIdempotency(ctx, tx, scopedKey, "participant-thread.create", requestHash, &replay); lookupErr != nil {
+		return ParticipantThreadMutationResult{}, lookupErr
+	} else if found {
+		return replay, nil
+	}
+	now := s.nowText()
+	bindings := make([]domain.ThreadParticipant, 0, len(inputs))
+	projects := make(map[string]bool)
+	seenAgents := make(map[string]bool, len(inputs))
+	seenTasks := make(map[string]bool, len(inputs))
+	for index, input := range inputs {
+		participant, resolveErr := s.resolveParticipantBinding(ctx, tx, workspace.ID, input, now, index+1)
+		if resolveErr != nil {
+			return ParticipantThreadMutationResult{}, resolveErr
+		}
+		if seenAgents[participant.AgentID] || seenTasks[participant.TaskID] {
+			return ParticipantThreadMutationResult{}, &Error{Code: CodeInvalidMessage, Message: "participant agents and tasks must each be unique within a thread"}
+		}
+		seenAgents[participant.AgentID], seenTasks[participant.TaskID] = true, true
+		projects[participant.ProjectID] = true
+		bindings = append(bindings, participant)
+	}
+	if len(projects) < 2 {
+		return ParticipantThreadMutationResult{}, &Error{Code: CodeInvalidMessage, Message: "participant thread creation must span at least two projects"}
+	}
+	threadID, err := randomID("thread_")
+	if err != nil {
+		return ParticipantThreadMutationResult{}, storageFailure("generate participant thread id", err)
+	}
+	queries := dbgen.New(tx)
+	if err := queries.InsertParticipantThread(ctx, dbgen.InsertParticipantThreadParams{ID: threadID, WorkspaceID: workspace.ID, Subject: subject, CreatedAt: now, CreatedBy: localOwnerActorID, InitialParticipantCount: int64(len(bindings))}); err != nil {
+		return ParticipantThreadMutationResult{}, storageFailure("insert participant thread", err)
+	}
+	for index := range bindings {
+		bindings[index].ThreadID = threadID
+		if err := insertThreadParticipant(ctx, queries, bindings[index]); err != nil {
+			return ParticipantThreadMutationResult{}, err
+		}
+	}
+	if err := s.runMutationHook(MutationAfterProjection); err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	collaboration, err := participantThreadInTransaction(ctx, queries, workspace.ID, threadID)
+	if err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	sequence, err := appendEventForActor(ctx, tx, workspace.ID, "thread", threadID, collaboration.Thread.Revision, threadCreatedEvent, correlationID, now, localOwnerActorID, localActorType, map[string]any{
+		"kind": domain.ThreadKindParticipantBound, "participant_revision": collaboration.ParticipantRevision,
+		"participant_count": len(bindings), "participants": participantEventValues(bindings), "subject": subject,
+	})
+	if err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	if err := s.runMutationHook(MutationAfterEvent); err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	result := ParticipantThreadMutationResult{Collaboration: collaboration, EventSequence: sequence}
+	if err := recordIdempotency(ctx, tx, scopedKey, "participant-thread.create", requestHash, result, now); err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ParticipantThreadMutationResult{}, storageFailure("commit participant thread creation", err)
+	}
+	return result, nil
+}
+
+func (s *Store) InviteThreadParticipant(ctx context.Context, command InviteThreadParticipantCommand) (ParticipantThreadMutationResult, error) {
+	workspaceIdentifier, threadID := strings.TrimSpace(command.WorkspaceIdentifier), strings.TrimSpace(command.ThreadID)
+	key, correlationID := strings.TrimSpace(command.IdempotencyKey), strings.TrimSpace(command.CorrelationID)
+	input := domain.ParticipantBindingInput{AgentIdentifier: strings.TrimSpace(command.Participant.AgentIdentifier), TaskIdentifier: strings.TrimSpace(command.Participant.TaskIdentifier)}
+	if workspaceIdentifier == "" || threadID == "" || input.AgentIdentifier == "" || input.TaskIdentifier == "" || command.ExpectedParticipantRevision < 1 {
+		return ParticipantThreadMutationResult{}, &Error{Code: CodeInvalidMessage, Message: "participant invitation requires a thread, agent/task binding, and positive expected participant revision"}
+	}
+	if err := validateMutationMetadata(key, correlationID, CodeInvalidMessage); err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ParticipantThreadMutationResult{}, storageFailure("begin participant invitation", err)
+	}
+	defer tx.Rollback()
+	workspace, err := workspaceInTransaction(ctx, tx, workspaceIdentifier)
+	if err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	requestHash, err := hashCommand("participant-thread.invite", map[string]any{"workspace_id": workspace.ID, "thread_id": threadID, "participant": input, "expected_participant_revision": command.ExpectedParticipantRevision})
+	if err != nil {
+		return ParticipantThreadMutationResult{}, storageFailure("hash participant invitation", err)
+	}
+	scopedKey := "participant-thread-invite:" + localOwnerActorID + ":" + key
+	var replay ParticipantThreadMutationResult
+	if found, lookupErr := lookupIdempotency(ctx, tx, scopedKey, "participant-thread.invite", requestHash, &replay); lookupErr != nil {
+		return ParticipantThreadMutationResult{}, lookupErr
+	} else if found {
+		return replay, nil
+	}
+	queries := dbgen.New(tx)
+	current, err := participantThreadInTransaction(ctx, queries, workspace.ID, threadID)
+	if err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	if current.Thread.Status != domain.ThreadOpen {
+		return ParticipantThreadMutationResult{}, &Error{Code: CodeMessageDenied, Message: "participant thread is closed"}
+	}
+	if current.ParticipantRevision != command.ExpectedParticipantRevision {
+		return ParticipantThreadMutationResult{}, revisionConflict("participant thread", threadID, command.ExpectedParticipantRevision, current.ParticipantRevision)
+	}
+	if len(current.Participants) >= maximumThreadParticipants {
+		return ParticipantThreadMutationResult{}, &Error{Code: CodeInvalidMessage, Message: "participant thread already has the maximum of 8 bindings"}
+	}
+	now := s.nowText()
+	participant, err := s.resolveParticipantBinding(ctx, tx, workspace.ID, input, now, len(current.Participants)+1)
+	if err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	for _, existing := range current.Participants {
+		if existing.AgentID == participant.AgentID || existing.TaskID == participant.TaskID {
+			return ParticipantThreadMutationResult{}, &Error{Code: CodeInvalidMessage, Message: "participant agent and task must each be new to this thread"}
+		}
+	}
+	participant.ThreadID = threadID
+	if err := insertThreadParticipant(ctx, queries, participant); err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	if err := s.runMutationHook(MutationAfterProjection); err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	updated, err := participantThreadInTransaction(ctx, queries, workspace.ID, threadID)
+	if err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	sequence, err := appendEventForActor(ctx, tx, workspace.ID, "thread", threadID, updated.Thread.Revision, threadParticipantAdded, correlationID, now, localOwnerActorID, localActorType, map[string]any{
+		"kind": domain.ThreadKindParticipantBound, "participant_revision": updated.ParticipantRevision, "participant": participantEventValue(participant),
+	})
+	if err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	if err := s.runMutationHook(MutationAfterEvent); err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	result := ParticipantThreadMutationResult{Collaboration: updated, EventSequence: sequence}
+	if err := recordIdempotency(ctx, tx, scopedKey, "participant-thread.invite", requestHash, result, now); err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ParticipantThreadMutationResult{}, storageFailure("commit participant invitation", err)
+	}
+	return result, nil
+}
+
+func (s *Store) ParticipantThread(ctx context.Context, workspaceIdentifier, threadID string) (domain.ParticipantThread, error) {
+	workspace, err := s.Workspace(ctx, strings.TrimSpace(workspaceIdentifier))
+	if err != nil {
+		return domain.ParticipantThread{}, err
+	}
+	return participantThreadInTransaction(ctx, dbgen.New(s.db), workspace.ID, strings.TrimSpace(threadID))
+}
+
+func normalizeParticipantInputs(values []domain.ParticipantBindingInput) []domain.ParticipantBindingInput {
+	result := make([]domain.ParticipantBindingInput, 0, len(values))
+	for _, value := range values {
+		agent, task := strings.TrimSpace(value.AgentIdentifier), strings.TrimSpace(value.TaskIdentifier)
+		if agent == "" || task == "" || len(agent) > 128 || len(task) > 128 || strings.ContainsAny(agent+task, "\r\n\x00") {
+			continue
+		}
+		result = append(result, domain.ParticipantBindingInput{AgentIdentifier: agent, TaskIdentifier: task})
+	}
+	return result
+}
+
+func (s *Store) resolveParticipantBinding(ctx context.Context, tx *sql.Tx, workspaceID string, input domain.ParticipantBindingInput, now string, ordinal int) (domain.ThreadParticipant, error) {
+	agent, err := queryAgent(ctx, tx, workspaceID, input.AgentIdentifier)
+	if err != nil {
+		return domain.ThreadParticipant{}, &Error{Code: CodeMessageDenied, Message: "participant agent is outside the workspace or unavailable", Cause: err}
+	}
+	if !agent.Enabled {
+		return domain.ThreadParticipant{}, &Error{Code: CodeMessageDenied, Message: "participant agent must be enabled"}
+	}
+	task, err := queryTask(ctx, tx, workspaceID, input.TaskIdentifier)
+	if err != nil {
+		return domain.ThreadParticipant{}, &Error{Code: CodeMessageDenied, Message: "participant task is outside the workspace or unavailable", Cause: err}
+	}
+	assignment, err := dbgen.New(tx).GetEligibleParticipantAssignment(ctx, dbgen.GetEligibleParticipantAssignmentParams{TaskID: task.ID, AgentID: agent.ID, ObservedAt: now})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ThreadParticipant{}, &Error{Code: CodeMessageDenied, Message: "participant task requires an active unexpired assignment to the exact agent"}
+	}
+	if err != nil {
+		return domain.ThreadParticipant{}, storageFailure("resolve eligible participant assignment", err)
+	}
+	participantID, err := randomID("participant_")
+	if err != nil {
+		return domain.ThreadParticipant{}, storageFailure("generate thread participant id", err)
+	}
+	project, err := queryProject(ctx, tx, workspaceID, task.ProjectID)
+	if err != nil {
+		return domain.ThreadParticipant{}, err
+	}
+	return domain.ThreadParticipant{ID: participantID, WorkspaceID: workspaceID, AgentID: agent.ID, AgentName: agent.Name, TaskID: task.ID, TaskTitle: task.Title, ProjectID: task.ProjectID, ProjectName: project.Name, AssignmentID: assignment.AssignmentID, AssignmentRevision: assignment.AssignmentRevision, AgentRevision: agent.Revision, TaskRevision: task.Revision, Ordinal: ordinal, Status: domain.ThreadParticipantActive, InvitedAt: now, InvitedBy: localOwnerActorID}, nil
+}
+
+func insertThreadParticipant(ctx context.Context, queries *dbgen.Queries, participant domain.ThreadParticipant) error {
+	err := queries.InsertThreadParticipant(ctx, dbgen.InsertThreadParticipantParams{ID: participant.ID, ThreadID: participant.ThreadID, WorkspaceID: participant.WorkspaceID, AgentID: participant.AgentID, AgentName: participant.AgentName, TaskID: participant.TaskID, TaskTitle: participant.TaskTitle, ProjectID: participant.ProjectID, ProjectName: participant.ProjectName, AssignmentID: participant.AssignmentID, AssignmentRevision: participant.AssignmentRevision, AgentRevision: participant.AgentRevision, TaskRevision: participant.TaskRevision, Ordinal: int64(participant.Ordinal), InvitedAt: participant.InvitedAt, InvitedBy: participant.InvitedBy})
+	if err != nil {
+		return storageFailure("insert thread participant", err)
+	}
+	return nil
+}
+
+func participantThreadInTransaction(ctx context.Context, queries *dbgen.Queries, workspaceID, threadID string) (domain.ParticipantThread, error) {
+	row, err := queries.GetParticipantThreadState(ctx, dbgen.GetParticipantThreadStateParams{ID: threadID, WorkspaceID: workspaceID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ParticipantThread{}, &Error{Code: CodeMessageNotFound, Message: fmt.Sprintf("participant thread %q was not found", threadID)}
+	}
+	if err != nil {
+		return domain.ParticipantThread{}, storageFailure("query participant thread", err)
+	}
+	rows, err := queries.ListThreadParticipants(ctx, threadID)
+	if err != nil {
+		return domain.ParticipantThread{}, storageFailure("list thread participants", err)
+	}
+	participants := make([]domain.ThreadParticipant, 0, len(rows))
+	projects := make(map[string]bool)
+	for _, participant := range rows {
+		participants = append(participants, threadParticipantFromDB(participant))
+		projects[participant.ProjectID] = true
+	}
+	if row.InitialParticipantCount < minimumThreadParticipants || row.InitialParticipantCount > maximumThreadParticipants || len(participants) < int(row.InitialParticipantCount) || len(participants) > maximumThreadParticipants || row.ParticipantRevision != int64(len(participants))-row.InitialParticipantCount+1 || len(projects) < 2 {
+		return domain.ParticipantThread{}, &Error{Code: CodeStorageFailed, Message: "participant thread roster is incomplete or inconsistent"}
+	}
+	thread := domain.MessageThread{ID: row.ID, WorkspaceID: row.WorkspaceID, ProjectID: row.ProjectID, TaskID: row.TaskID, Subject: row.Subject, Status: row.Status, Revision: row.Revision, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, CreatedBy: row.CreatedBy, UpdatedBy: row.UpdatedBy}
+	return domain.ParticipantThread{Thread: thread, Kind: row.Kind, ParticipantRevision: row.ParticipantRevision, Participants: participants}, nil
+}
+
+func participantEventValues(participants []domain.ThreadParticipant) []map[string]any {
+	values := make([]map[string]any, 0, len(participants))
+	for _, participant := range participants {
+		values = append(values, participantEventValue(participant))
+	}
+	return values
+}
+
+func participantEventValue(participant domain.ThreadParticipant) map[string]any {
+	return map[string]any{"participant_id": participant.ID, "agent_id": participant.AgentID, "task_id": participant.TaskID, "project_id": participant.ProjectID, "assignment_id": participant.AssignmentID, "assignment_revision": participant.AssignmentRevision, "agent_revision": participant.AgentRevision, "task_revision": participant.TaskRevision, "ordinal": participant.Ordinal}
+}
+
+func threadParticipantFromDB(participant dbgen.ThreadParticipant) domain.ThreadParticipant {
+	return domain.ThreadParticipant{ID: participant.ID, ThreadID: participant.ThreadID, WorkspaceID: participant.WorkspaceID, AgentID: participant.AgentID, AgentName: participant.AgentName, TaskID: participant.TaskID, TaskTitle: participant.TaskTitle, ProjectID: participant.ProjectID, ProjectName: participant.ProjectName, AssignmentID: participant.AssignmentID, AssignmentRevision: participant.AssignmentRevision, AgentRevision: participant.AgentRevision, TaskRevision: participant.TaskRevision, Ordinal: int(participant.Ordinal), Status: participant.Status, InvitedAt: participant.InvitedAt, InvitedBy: participant.InvitedBy}
+}
+
+func findThreadParticipantBinding(ctx context.Context, tx *sql.Tx, threadID, agentID, projectID, taskID string) (domain.ThreadParticipant, error) {
+	row, err := dbgen.New(tx).FindThreadParticipantByBinding(ctx, dbgen.FindThreadParticipantByBindingParams{ThreadID: threadID, AgentID: agentID, TaskID: taskID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ThreadParticipant{}, nil
+	}
+	if err != nil {
+		return domain.ThreadParticipant{}, storageFailure("query exact thread participant", err)
+	}
+	participant := threadParticipantFromDB(row)
+	if participant.ProjectID != projectID || participant.Status != domain.ThreadParticipantActive {
+		return domain.ThreadParticipant{}, nil
+	}
+	return participant, nil
+}
+
+func runAuthorizedForMessage(ctx context.Context, tx *sql.Tx, run domain.Run, messageID string) (bool, error) {
+	authorized, err := dbgen.New(tx).RunAuthorizedForMessage(ctx, dbgen.RunAuthorizedForMessageParams{RunID: run.ID, MessageID: messageID})
+	if err != nil {
+		return false, storageFailure("authorize run message binding", err)
+	}
+	return authorized == 1, nil
 }
 
 func (s *Store) SendMessage(ctx context.Context, command SendMessageCommand) (MutationResult[domain.MessageMutation], error) {
@@ -116,6 +418,8 @@ func (s *Store) SendMessage(ctx context.Context, command SendMessageCommand) (Mu
 	now := s.nowText()
 	var thread domain.MessageThread
 	var sequence int64
+	threadKind := domain.ThreadKindDirect
+	var recipientParticipant domain.ThreadParticipant
 	if threadID == "" {
 		if subject == "" {
 			subject = messagePreview(body, 80)
@@ -132,7 +436,7 @@ func (s *Store) SendMessage(ctx context.Context, command SendMessageCommand) (Mu
 VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, 1, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.ProjectID, thread.TaskID, thread.Subject, thread.Status, now, now, senderID, senderID); err != nil {
 			return MutationResult[domain.MessageMutation]{}, storageFailure("insert message thread", err)
 		}
-		sequence, err = appendEventForActor(ctx, tx, workspace.ID, "thread", thread.ID, thread.Revision, threadCreatedEvent, correlationID, now, senderID, actorType, map[string]any{"project_id": projectID, "task_id": resolvedTaskID, "subject": subject})
+		sequence, err = appendEventForActor(ctx, tx, workspace.ID, "thread", thread.ID, thread.Revision, threadCreatedEvent, correlationID, now, senderID, actorType, map[string]any{"kind": domain.ThreadKindDirect, "project_id": projectID, "task_id": resolvedTaskID, "subject": subject})
 		if err != nil {
 			return MutationResult[domain.MessageMutation]{}, err
 		}
@@ -141,23 +445,51 @@ VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, 1, ?, ?, ?, ?)`, thread.ID, th
 		if err != nil {
 			return MutationResult[domain.MessageMutation]{}, err
 		}
-		if thread.Status != domain.ThreadOpen || (projectID != "" && thread.ProjectID != "" && projectID != thread.ProjectID) {
+		if err := tx.QueryRowContext(ctx, "SELECT kind FROM message_threads WHERE id = ? AND workspace_id = ?", thread.ID, workspace.ID).Scan(&threadKind); err != nil {
+			return MutationResult[domain.MessageMutation]{}, storageFailure("query message thread kind", err)
+		}
+		if thread.Status != domain.ThreadOpen || (threadKind == domain.ThreadKindDirect && projectID != "" && thread.ProjectID != "" && projectID != thread.ProjectID) {
 			return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "thread is closed or outside the sender scope"}
 		}
-		if senderAgentID != "" {
-			senderParticipant, participantErr := messageThreadHasAgent(ctx, tx, thread.ID, senderAgentID)
+		if threadKind == domain.ThreadKindParticipantBound {
+			if _, rosterErr := participantThreadInTransaction(ctx, dbgen.New(tx), workspace.ID, thread.ID); rosterErr != nil {
+				return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "participant thread roster is incomplete or inconsistent", Cause: rosterErr}
+			}
+			if len(artifactIDs) != 0 {
+				return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "participant-bound messages cannot attach artifacts"}
+			}
+			if senderAgentID != "" {
+				senderParticipant, participantErr := findThreadParticipantBinding(ctx, tx, thread.ID, senderAgentID, senderRun.ProjectID, senderRun.TaskID)
+				if participantErr != nil || senderParticipant.ID == "" {
+					return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "sender run must exactly match an active participant agent/project/task binding"}
+				}
+			} else if projectID != "" || resolvedTaskID != "" {
+				return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "owner participant-thread messages cannot claim a project or task origin"}
+			}
+			matches, participantErr := dbgen.New(tx).ListThreadParticipantsByAgent(ctx, dbgen.ListThreadParticipantsByAgentParams{ThreadID: thread.ID, AgentID: recipient.ID})
 			if participantErr != nil {
-				return MutationResult[domain.MessageMutation]{}, participantErr
+				return MutationResult[domain.MessageMutation]{}, storageFailure("resolve participant recipient", participantErr)
 			}
-			recipientParticipant, participantErr := messageThreadHasAgent(ctx, tx, thread.ID, recipient.ID)
-			if participantErr != nil {
-				return MutationResult[domain.MessageMutation]{}, participantErr
+			if len(matches) != 1 {
+				return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "recipient must resolve to exactly one active thread binding"}
 			}
-			if !senderParticipant || !recipientParticipant {
-				return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "agent replies are limited to existing thread participants"}
+			recipientParticipant = threadParticipantFromDB(matches[0])
+		} else {
+			if senderAgentID != "" {
+				senderParticipant, participantErr := messageThreadHasAgent(ctx, tx, thread.ID, senderAgentID)
+				if participantErr != nil {
+					return MutationResult[domain.MessageMutation]{}, participantErr
+				}
+				recipientInThread, participantErr := messageThreadHasAgent(ctx, tx, thread.ID, recipient.ID)
+				if participantErr != nil {
+					return MutationResult[domain.MessageMutation]{}, participantErr
+				}
+				if !senderParticipant || !recipientInThread {
+					return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "agent replies are limited to existing thread participants"}
+				}
 			}
+			projectID, resolvedTaskID = thread.ProjectID, thread.TaskID
 		}
-		projectID, resolvedTaskID = thread.ProjectID, thread.TaskID
 	}
 	if replyTo != "" {
 		var replyThread string
@@ -179,7 +511,7 @@ VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, 1, ?, ?, ?, ?)`, thread.ID, th
 VALUES (?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?)`, message.ID, message.WorkspaceID, message.ThreadID, message.ProjectID, message.TaskID, message.SenderType, message.SenderID, message.SenderAgentID, message.SenderRunID, message.Kind, message.Body, string(artifactsJSON), message.ReplyToMessageID, message.CreatedAt); err != nil {
 		return MutationResult[domain.MessageMutation]{}, storageFailure("insert message", err)
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO message_recipients(message_id, recipient_agent_id, status, queued_at) VALUES (?, ?, ?, ?)", message.ID, recipient.ID, domain.DeliveryQueued, now); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO message_recipients(message_id, recipient_agent_id, status, queued_at, recipient_participant_id) VALUES (?, ?, ?, ?, NULLIF(?, ''))", message.ID, recipient.ID, domain.DeliveryQueued, now, recipientParticipant.ID); err != nil {
 		return MutationResult[domain.MessageMutation]{}, storageFailure("queue message recipient", err)
 	}
 	thread.Revision++
@@ -187,15 +519,25 @@ VALUES (?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''
 	if _, err := tx.ExecContext(ctx, "UPDATE message_threads SET revision = ?, updated_at = ?, updated_by = ? WHERE id = ?", thread.Revision, now, senderID, thread.ID); err != nil {
 		return MutationResult[domain.MessageMutation]{}, storageFailure("update message thread", err)
 	}
-	sequence, err = appendEventForActor(ctx, tx, workspace.ID, "message", message.ID, 1, messageSentEvent, correlationID, now, senderID, actorType, map[string]any{"thread_id": thread.ID, "recipient_agent_id": recipient.ID, "kind": kind, "task_id": resolvedTaskID, "artifact_ids": artifactIDs})
+	sequence, err = appendEventForActor(ctx, tx, workspace.ID, "message", message.ID, 1, messageSentEvent, correlationID, now, senderID, actorType, map[string]any{
+		"thread_id": thread.ID, "thread_kind": threadKind, "recipient_agent_id": recipient.ID,
+		"recipient_participant_id": recipientParticipant.ID, "kind": kind,
+		"origin_project_id": projectID, "origin_task_id": resolvedTaskID, "artifact_ids": artifactIDs,
+	})
 	if err != nil {
 		return MutationResult[domain.MessageMutation]{}, err
 	}
 	wakeStatus := domain.WakeNotRequested
 	var targetRunID string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM runs
+	if threadKind == domain.ThreadKindParticipantBound {
+		err = tx.QueryRowContext(ctx, `SELECT id FROM runs
+WHERE workspace_id = ? AND agent_id = ? AND project_id = ? AND task_id = ?
+AND status IN ('starting', 'active', 'blocked') ORDER BY created_at DESC, id DESC LIMIT 1`, workspace.ID, recipient.ID, recipientParticipant.ProjectID, recipientParticipant.TaskID).Scan(&targetRunID)
+	} else {
+		err = tx.QueryRowContext(ctx, `SELECT id FROM runs
 WHERE workspace_id = ? AND agent_id = ? AND status IN ('starting', 'active', 'blocked')
 AND (? = '' OR project_id = ?) ORDER BY created_at DESC, id DESC LIMIT 1`, workspace.ID, recipient.ID, projectID, projectID).Scan(&targetRunID)
+	}
 	if err == nil {
 		wakeID, generateErr := randomID("wake_")
 		if generateErr != nil {
@@ -254,7 +596,19 @@ func (s *Store) RunInbox(ctx context.Context, runID string, limit int) ([]domain
 	if err != nil || !runCanUseMailbox(run.Status) {
 		return nil, &Error{Code: CodeMessageDenied, Message: "run mailbox is not active"}
 	}
-	items, err := queryInboxWithCondition(ctx, tx, run.AgentID, limit, " AND (m.project_id IS NULL OR m.project_id = ?)", run.ProjectID)
+	items, err := queryInboxWithCondition(ctx, tx, run.AgentID, limit, ` AND (
+((SELECT kind FROM message_threads WHERE id = m.thread_id) = 'direct' AND (m.project_id IS NULL OR m.project_id = ?))
+OR EXISTS (
+    SELECT 1 FROM thread_participants p
+    WHERE p.id = r.recipient_participant_id AND p.thread_id = m.thread_id
+      AND p.status = 'active' AND p.agent_id = ? AND p.project_id = ? AND p.task_id = ?
+      AND (SELECT COUNT(*) FROM thread_participants roster WHERE roster.thread_id = m.thread_id) BETWEEN 2 AND 8
+      AND (SELECT COUNT(*) FROM thread_participants roster WHERE roster.thread_id = m.thread_id) >=
+          (SELECT initial_participant_count FROM message_threads WHERE id = m.thread_id)
+      AND (SELECT COUNT(*) FROM thread_participants roster WHERE roster.thread_id = m.thread_id) =
+          (SELECT initial_participant_count + participant_revision - 1 FROM message_threads WHERE id = m.thread_id)
+      AND (SELECT COUNT(DISTINCT roster.project_id) FROM thread_participants roster WHERE roster.thread_id = m.thread_id) >= 2
+))`, run.ProjectID, run.AgentID, run.ProjectID, run.TaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +670,11 @@ func (s *Store) transitionRunMessage(ctx context.Context, runID, messageID, key,
 	if err != nil {
 		return MutationResult[domain.InboxItem]{}, &Error{Code: CodeMessageNotFound, Message: "message is outside this run mailbox"}
 	}
-	if item.Message.ProjectID != "" && item.Message.ProjectID != run.ProjectID {
+	authorized, authErr := runAuthorizedForMessage(ctx, tx, run, messageID)
+	if authErr != nil {
+		return MutationResult[domain.InboxItem]{}, authErr
+	}
+	if !authorized {
 		return MutationResult[domain.InboxItem]{}, &Error{Code: CodeMessageNotFound, Message: "message is outside this run project scope"}
 	}
 	now := s.nowText()
@@ -423,9 +781,17 @@ func (s *Store) CompleteMessageWakeJob(ctx context.Context, jobID string, succee
 	}
 	defer tx.Rollback()
 	var job domain.MessageWakeJob
-	var workspaceID, messageProjectID string
-	err = tx.QueryRowContext(ctx, `SELECT w.id, COALESCE(m.project_id, ''), j.id, j.message_id, j.recipient_agent_id, j.target_run_id, j.status, j.attempts
-FROM message_wake_jobs j JOIN messages m ON m.id = j.message_id JOIN workspaces w ON w.id = m.workspace_id WHERE j.id = ?`, strings.TrimSpace(jobID)).Scan(&workspaceID, &messageProjectID, &job.ID, &job.MessageID, &job.RecipientAgentID, &job.TargetRunID, &job.Status, &job.Attempts)
+	var workspaceID, messageProjectID, threadKind, recipientProjectID, recipientTaskID string
+	err = tx.QueryRowContext(ctx, `SELECT w.id, COALESCE(m.project_id, ''), th.kind,
+COALESCE(p.project_id, ''), COALESCE(p.task_id, ''),
+j.id, j.message_id, j.recipient_agent_id, j.target_run_id, j.status, j.attempts
+FROM message_wake_jobs j
+JOIN messages m ON m.id = j.message_id
+JOIN message_threads th ON th.id = m.thread_id
+JOIN workspaces w ON w.id = m.workspace_id
+LEFT JOIN message_recipients mr ON mr.message_id = j.message_id AND mr.recipient_agent_id = j.recipient_agent_id
+LEFT JOIN thread_participants p ON p.id = mr.recipient_participant_id
+WHERE j.id = ?`, strings.TrimSpace(jobID)).Scan(&workspaceID, &messageProjectID, &threadKind, &recipientProjectID, &recipientTaskID, &job.ID, &job.MessageID, &job.RecipientAgentID, &job.TargetRunID, &job.Status, &job.Attempts)
 	if err != nil {
 		return storageFailure("query message wake completion", err)
 	}
@@ -436,14 +802,20 @@ FROM message_wake_jobs j JOIN messages m ON m.id = j.message_id JOIN workspaces 
 		return &Error{Code: CodeInvalidMessage, Message: "message wake job is not leased"}
 	}
 	if succeeded {
-		var targetStatus, targetAgentID, targetProjectID string
-		targetErr := tx.QueryRowContext(ctx, "SELECT status, agent_id, project_id FROM runs WHERE id = ?", job.TargetRunID).Scan(&targetStatus, &targetAgentID, &targetProjectID)
+		var targetStatus, targetAgentID, targetProjectID, targetTaskID string
+		targetErr := tx.QueryRowContext(ctx, "SELECT status, agent_id, project_id, task_id FROM runs WHERE id = ?", job.TargetRunID).Scan(&targetStatus, &targetAgentID, &targetProjectID, &targetTaskID)
 		if targetErr != nil && !errors.Is(targetErr, sql.ErrNoRows) {
 			return storageFailure("revalidate message wake target", targetErr)
 		}
-		if targetErr != nil || targetAgentID != job.RecipientAgentID || !runCanUseMailbox(targetStatus) || (messageProjectID != "" && targetProjectID != messageProjectID) {
+		directMismatch := threadKind == domain.ThreadKindDirect && messageProjectID != "" && targetProjectID != messageProjectID
+		participantMismatch := threadKind == domain.ThreadKindParticipantBound && (recipientProjectID == "" || recipientTaskID == "" || targetProjectID != recipientProjectID || targetTaskID != recipientTaskID)
+		if targetErr != nil || targetAgentID != job.RecipientAgentID || !runCanUseMailbox(targetStatus) || directMismatch || participantMismatch {
 			succeeded = false
-			diagnostic = "target run is no longer live in the message project for wake-up"
+			if threadKind == domain.ThreadKindParticipantBound {
+				diagnostic = "target run is no longer live in the authorized participant binding for wake-up"
+			} else {
+				diagnostic = "target run is no longer live in the message project for wake-up"
+			}
 		}
 	}
 	now := s.nowText()
@@ -480,13 +852,26 @@ delivered_at = COALESCE(delivered_at, ?), delivered_run_id = COALESCE(delivered_
 	return nil
 }
 
-func inboxSummaryInTransaction(ctx context.Context, tx *sql.Tx, agentID, projectID string) (domain.InboxSummary, error) {
+func inboxSummaryInTransaction(ctx context.Context, tx *sql.Tx, agentID, projectID, taskID string) (domain.InboxSummary, error) {
 	var summary domain.InboxSummary
+	const authorizedCondition = ` AND (
+((SELECT kind FROM message_threads WHERE id = m.thread_id) = 'direct' AND (m.project_id IS NULL OR m.project_id = ?))
+OR EXISTS (
+    SELECT 1 FROM thread_participants p
+    WHERE p.id = r.recipient_participant_id AND p.thread_id = m.thread_id
+      AND p.status = 'active' AND p.agent_id = ? AND p.project_id = ? AND p.task_id = ?
+      AND (SELECT COUNT(*) FROM thread_participants roster WHERE roster.thread_id = m.thread_id) BETWEEN 2 AND 8
+      AND (SELECT COUNT(*) FROM thread_participants roster WHERE roster.thread_id = m.thread_id) >=
+          (SELECT initial_participant_count FROM message_threads WHERE id = m.thread_id)
+      AND (SELECT COUNT(*) FROM thread_participants roster WHERE roster.thread_id = m.thread_id) =
+          (SELECT initial_participant_count + participant_revision - 1 FROM message_threads WHERE id = m.thread_id)
+      AND (SELECT COUNT(DISTINCT roster.project_id) FROM thread_participants roster WHERE roster.thread_id = m.thread_id) >= 2
+))`
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_recipients r JOIN messages m ON m.id = r.message_id
-WHERE r.recipient_agent_id = ? AND r.status IN ('queued', 'delivered') AND (m.project_id IS NULL OR m.project_id = ?)`, agentID, projectID).Scan(&summary.UnseenCount); err != nil {
+WHERE r.recipient_agent_id = ? AND r.status IN ('queued', 'delivered')`+authorizedCondition, agentID, projectID, agentID, projectID, taskID).Scan(&summary.UnseenCount); err != nil {
 		return domain.InboxSummary{}, storageFailure("count context inbox", err)
 	}
-	items, err := queryInboxWithCondition(ctx, tx, agentID, contextInboxItems, " AND r.status IN ('queued', 'delivered') AND (m.project_id IS NULL OR m.project_id = ?)", projectID)
+	items, err := queryInboxWithCondition(ctx, tx, agentID, contextInboxItems, " AND r.status IN ('queued', 'delivered')"+authorizedCondition, projectID, agentID, projectID, taskID)
 	if err != nil {
 		return domain.InboxSummary{}, err
 	}

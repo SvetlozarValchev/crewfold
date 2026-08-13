@@ -442,6 +442,32 @@ func (c *Client) InboxList(ctx context.Context, workspace, agent string, limit i
 	return result, nil
 }
 
+func (c *Client) ThreadCreate(ctx context.Context, paramsValue ThreadCreateParams) (ParticipantThreadMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result ParticipantThreadMutationResult
+	if err := c.callParams(ctx, MethodThreadCreate, paramsValue, &result); err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ThreadInvite(ctx context.Context, paramsValue ThreadInviteParams) (ParticipantThreadMutationResult, error) {
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result ParticipantThreadMutationResult
+	if err := c.callParams(ctx, MethodThreadInvite, paramsValue, &result); err != nil {
+		return ParticipantThreadMutationResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ThreadParticipants(ctx context.Context, workspace, thread string) (ParticipantThreadResult, error) {
+	var result ParticipantThreadResult
+	if err := c.callParams(ctx, MethodThreadParticipants, ThreadQueryParams{Workspace: workspace, Thread: thread}, &result); err != nil {
+		return ParticipantThreadResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) ThreadShow(ctx context.Context, workspace, thread string) (ThreadShowResult, error) {
 	var result ThreadShowResult
 	if err := c.callParams(ctx, MethodThreadShow, ThreadQueryParams{Workspace: workspace, Thread: thread}, &result); err != nil {

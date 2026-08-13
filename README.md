@@ -64,8 +64,12 @@ to a replacement run under fixed byte budgets without reading provider
 transcripts. Crewfold can now discover eligible canonical revisions through
 deterministic scoped FTS5 search, explain the exact rank tuple and derived-index
 generation, diagnose degraded retrieval, and explicitly rebuild the index without
-changing canonical state. Automatic curation, contradictions, context deltas,
-portable export, broader knowledge types, and the operator TUI remain to come.
+changing canonical state. Agents assigned to different registered projects can
+now negotiate through an owner-created participant thread: exact agent/task/project
+bindings preserve direct-mail isolation, offline delivery, origin provenance, and
+single-recipient semantics across adjacent unrelated repositories. Automatic
+curation, contradictions, context deltas, portable export, broader knowledge
+types, and the operator TUI remain to come.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"crewfold/internal/domain"
 	"crewfold/internal/localapi"
 )
 
@@ -101,14 +102,129 @@ func (a *App) runInbox(ctx context.Context, mode outputMode, args []string) int 
 }
 
 func (a *App) runThread(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 0 {
+		return a.writeFailure(mode, usageFailure("thread requires a subcommand", "run 'crewfold help thread' for usage"))
+	}
 	if len(args) == 1 && isHelp(args[0]) {
 		fmt.Fprint(a.stdout, threadHelp)
 		return ExitOK
 	}
-	if len(args) == 0 || args[0] != "show" {
-		return a.writeFailure(mode, usageFailure("thread requires the show subcommand", "run 'crewfold help thread' for usage"))
+	switch args[0] {
+	case "create":
+		return a.runThreadCreate(ctx, mode, args[1:])
+	case "invite":
+		return a.runThreadInvite(ctx, mode, args[1:])
+	case "participants":
+		return a.runThreadParticipants(ctx, mode, args[1:])
+	case "show":
+		return a.runThreadShow(ctx, mode, args[1:])
+	default:
+		return a.writeFailure(mode, commandFailure{exitCode: ExitUsage, code: "unknown_thread_command", message: fmt.Sprintf("unknown thread command %q", args[0]), hint: "run 'crewfold help thread' for usage"})
 	}
-	threadID, optionArgs, failure := requiredLeadingArgument(args[1:], "thread ID")
+}
+
+func (a *App) runThreadCreate(ctx context.Context, mode outputMode, args []string) int {
+	options, participantValues, failure := parseThreadCreateOptions(args)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	subject, failure := requiredOption(options, "subject")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	if len(participantValues) < 2 || len(participantValues) > 8 {
+		return a.writeFailure(mode, usageFailure("--participant must be specified from 2 to 8 times", "use --participant agent=task for each participant"))
+	}
+	participants := make([]localapi.ThreadParticipantParams, len(participantValues))
+	for index, value := range participantValues {
+		agent, task, ok := strings.Cut(value, "=")
+		if !ok || strings.TrimSpace(agent) == "" || strings.TrimSpace(task) == "" || strings.Contains(task, "=") {
+			return a.writeFailure(mode, usageFailure("--participant must use agent=task", "bind each participant agent to exactly one task"))
+		}
+		participants[index] = localapi.ThreadParticipantParams{Agent: strings.TrimSpace(agent), Task: strings.TrimSpace(task)}
+	}
+	result, err := a.newClient(socket).ThreadCreate(ctx, localapi.ThreadCreateParams{
+		Workspace: workspace, Subject: subject, Participants: participants, IdempotencyKey: options["idempotency-key"],
+	})
+	if err != nil {
+		return a.writeClientFailure(mode, "create participant thread", err)
+	}
+	return a.writeParticipantThreadMutation(mode, result)
+}
+
+func (a *App) runThreadInvite(ctx context.Context, mode outputMode, args []string) int {
+	threadID, optionArgs, failure := requiredLeadingArgument(args, "thread ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "agent", "task", "expected-participant-revision", "socket", "idempotency-key")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	agent, failure := requiredOption(options, "agent")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	task, failure := requiredOption(options, "task")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	revisionText, failure := requiredOption(options, "expected-participant-revision")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	revision, err := strconv.ParseInt(revisionText, 10, 64)
+	if err != nil || revision < 1 {
+		return a.writeFailure(mode, usageFailure("--expected-participant-revision must be a positive integer", "use the participant_revision returned by the latest thread read"))
+	}
+	result, err := a.newClient(socket).ThreadInvite(ctx, localapi.ThreadInviteParams{
+		Workspace: workspace, Thread: threadID,
+		Participant:                 localapi.ThreadParticipantParams{Agent: agent, Task: task},
+		ExpectedParticipantRevision: revision, IdempotencyKey: options["idempotency-key"],
+	})
+	if err != nil {
+		return a.writeClientFailure(mode, "invite thread participant", err)
+	}
+	return a.writeParticipantThreadMutation(mode, result)
+}
+
+func (a *App) runThreadParticipants(ctx context.Context, mode outputMode, args []string) int {
+	threadID, optionArgs, failure := requiredLeadingArgument(args, "thread ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	options, failure := parseOptions(optionArgs, "workspace", "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).ThreadParticipants(ctx, workspace, threadID)
+	if err != nil {
+		return a.writeClientFailure(mode, "list thread participants", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write thread participants", err))
+		}
+	} else {
+		a.writeParticipantThread(result.Collaboration)
+	}
+	return ExitOK
+}
+
+func (a *App) runThreadShow(ctx context.Context, mode outputMode, args []string) int {
+	threadID, optionArgs, failure := requiredLeadingArgument(args, "thread ID")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -135,6 +251,53 @@ func (a *App) runThread(ctx context.Context, mode outputMode, args []string) int
 		}
 	}
 	return ExitOK
+}
+
+func (a *App) writeParticipantThreadMutation(mode outputMode, result localapi.ParticipantThreadMutationResult) int {
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write participant thread", err))
+		}
+	} else {
+		a.writeParticipantThread(result.Collaboration)
+	}
+	return ExitOK
+}
+
+func (a *App) writeParticipantThread(collaboration domain.ParticipantThread) {
+	fmt.Fprintf(a.stdout, "thread: %s\nkind: %s\nsubject: %s\nparticipant_revision: %d\nparticipants: %d\n", collaboration.Thread.ID, collaboration.Kind, collaboration.Thread.Subject, collaboration.ParticipantRevision, len(collaboration.Participants))
+	for _, participant := range collaboration.Participants {
+		fmt.Fprintf(a.stdout, "%d\t%s\t%s\t%s\t%s\n", participant.Ordinal, participant.ID, participant.AgentName, participant.ProjectName, participant.TaskTitle)
+	}
+}
+
+func parseThreadCreateOptions(args []string) (map[string]string, []string, *commandFailure) {
+	remaining := make([]string, 0, len(args))
+	participants := make([]string, 0, 2)
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if argument == "--participant" {
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				failure := usageFailure("--participant requires a value", "use --participant agent=task")
+				return nil, nil, &failure
+			}
+			index++
+			participants = append(participants, args[index])
+			continue
+		}
+		if strings.HasPrefix(argument, "--participant=") {
+			value := strings.TrimPrefix(argument, "--participant=")
+			if strings.TrimSpace(value) == "" {
+				failure := usageFailure("--participant requires a non-empty value", "use --participant agent=task")
+				return nil, nil, &failure
+			}
+			participants = append(participants, value)
+			continue
+		}
+		remaining = append(remaining, argument)
+	}
+	options, failure := parseOptions(remaining, "workspace", "subject", "socket", "idempotency-key")
+	return options, participants, failure
 }
 
 func splitBoundedList(value string) []string {
@@ -165,7 +328,11 @@ Inspect durable delivery state without marking messages read or acknowledged.
 `
 
 const threadHelp = `Usage:
+  crewfold thread create --workspace <scope> --subject <text> --participant <agent=task> --participant <agent=task> --socket <path> [--participant <agent=task> ...] [--idempotency-key <key>]
+  crewfold thread invite <thread-id> --workspace <scope> --agent <agent> --task <task-id> --expected-participant-revision <n> --socket <path> [--idempotency-key <key>]
+  crewfold thread participants <thread-id> --workspace <scope> --socket <path>
   crewfold thread show <thread-id> --workspace <scope> --socket <path>
 
-Show ordered messages and per-recipient delivery, acknowledgement, and wake state.
+Create and expand owner-controlled participant threads, list their task-bound
+participants, or show ordered messages and per-recipient delivery state.
 `

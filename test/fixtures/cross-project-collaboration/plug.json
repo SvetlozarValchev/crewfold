@@ -1,0 +1,28 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "plug-contract-response",
+  "acceptance": {
+    "required_evidence": ["contract_replied"]
+  },
+  "steps": [
+    {
+      "kind": "completion",
+      "message": "Application requirements replied to the engine task.",
+      "evidence": ["contract_replied"],
+      "handoff": "The two project origins and request/reply are ready for owner inspection."
+    }
+  ],
+  "process": {
+    "timeout_millis": 15000
+  },
+  "mailbox": {
+    "wait_for_kind": "request",
+    "reply": {
+      "kind": "inform",
+      "body": "plugandrev needs stable snapshot IDs and replay-safe step ordering; it will keep adapter policy on the application side."
+    },
+    "acknowledge_received": true,
+    "require_inbox_summary": true,
+    "wait_timeout_millis": 8000
+  }
+}

@@ -1,6 +1,6 @@
 # Storage contract
 
-Status: implemented through schema version 11.
+Status: implemented through schema version 12.
 
 ## Location and ownership
 
@@ -264,6 +264,39 @@ corruption, freelist/page-allocation damage, and structural damage to ordinary F
 shadow B-trees. Simultaneous FTS semantic and canonical corruption therefore still
 blocks startup.
 
+## Schema version 12
+
+`message_threads.kind` distinguishes existing `direct` threads from
+`participant_bound` collaboration, and `participant_revision` provides optimistic
+roster concurrency. Existing rows migrate as direct threads at participant
+revision zero; no cross-project authority is inferred for old mail.
+
+`thread_participants` stores two through eight immutable owner-created bindings.
+Each freezes one enabled agent, its exact active unexpired assignment and task,
+the task's project, their display names and observed revisions, ordinal,
+invitation time, and inviter.
+Agents and tasks are independently unique within one roster so an agent-only MCP
+recipient always resolves to exactly one binding.
+An initial participant thread spans at least two projects. Later invitations add
+one binding and advance the roster revision atomically. Participants cannot be
+rewritten or deleted.
+
+`message_recipients.recipient_participant_id` freezes which exact binding
+authorized a participant-thread delivery. Inserts enforce that sender runs match
+the bound agent/project/task and recipients belong to the same thread. Participant
+messages reject artifacts. Inbox, read, acknowledgement, context summary, wake
+selection, and wake completion all re-check the exact run binding; direct rows
+retain the schema-version-7 project rule. Message bodies stay immutable and retain
+the authenticated sender run's origin project/task.
+Owner participant mail cannot claim a binding origin: it must omit project/task
+and stores both as null.
+
+Thread create/invite, their journal events, roster projection, and idempotency
+commit in one transaction. A stale expected participant revision or failed
+eligibility check commits none of them. Context packet v3 is not revised: its
+existing bounded inbox shape can contain an authorized participant message, while
+the full body remains an explicit MCP read.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -288,7 +321,7 @@ SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
 Crewfold does not yet expose backup/restore commands. A later capability must use
 SQLite's online backup API for a running database rather than copy the main file
-without its WAL. Schema version 11 contains agent/task/run/claim coordination,
+without its WAL. Schema version 12 contains agent/task/run/claim coordination,
 meetings, canonical knowledge, immutable context packets, scoped
 report/artifact/audit records, durable message/thread/delivery/wake state,
 overlap/drift/watcher state, opaque fake/direct bindings, direct supervisor

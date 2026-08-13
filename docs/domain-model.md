@@ -143,8 +143,10 @@ handles, heartbeats, usage accounting, and enforced budgets remain planned.
 An immutable, bounded base briefing bound to exactly one run. It snapshots the
 assigned agent role, exact task revision, selected checkout and repository
 observation, direct dependency revisions, allowed tools, denied/approval-required
-operations, reporting instructions, and a bounded project-scoped summary of unseen
-inbox items. Full message bodies remain explicit mailbox reads; active claim
+operations, reporting instructions, and a bounded authority-scoped summary of
+unseen inbox items. This normally means project scope and additionally permits an
+exact participant agent/task/project binding. Full message bodies remain explicit
+mailbox reads; active claim
 snapshots and provider transcripts are deliberate exclusions.
 
 New builds use context-packet schema v3. The caller may provide up to 16 ordered,
@@ -248,13 +250,23 @@ from `queued` through `delivered`, `read`, and `acknowledged`; a separate wake j
 is `pending`, `leased`, `succeeded`, or `failed`. `not_requested` means no live
 recipient run existed at send time. Wake failure never means message failure.
 
+Direct messages remain project-scoped. A message in an owner-created participant
+thread can cross projects only when both sender and recipient have frozen bindings
+to their exact agent, active assigned task, and derived project. The message keeps
+the sender run's origin project/task even though the recipient belongs elsewhere.
+
 ### Thread
 
 An ordered conversation around a task, question, conflict, or announcement.
-Threads are asynchronous and durable. The implemented subset creates open threads
-and allows scoped replies between their existing agent participants; closing and
-multi-party expansion remain planned. A thread may later be promoted into a
-meeting when structured multi-party resolution is needed.
+Threads are asynchronous and durable. Direct threads preserve the original
+project-scoped participants. An owner may additionally create a participant
+thread with two through eight exact agent/task bindings spanning at least two
+projects; no agent or task can appear twice. The owner can then invite one
+participant at a time with an expected roster revision.
+Every message still has one recipient; the roster is authority, not a broadcast
+list. Agents cannot create or invite. Closing and agent-visible roster reads remain
+planned. A thread may later be promoted into a meeting when structured
+multi-party resolution is needed.
 
 ### Meeting
 
@@ -385,7 +397,9 @@ launched it.
    explicit successor revision, and only the owner can accept it.
 6. A context packet is immutable after build; knowledge eligibility is not
    re-evaluated when a run binds or reads it.
-7. A message is never modified after send; delivery metadata changes separately.
+7. A message is never modified after send; delivery metadata changes separately,
+   and cross-project visibility requires an exact participant agent/task/project
+   binding rather than workspace membership alone.
 8. Runtime termination cannot delete durable task or communication state.
 9. Every privileged action is attributable to an actor and policy decision.
 10. Provider-specific fields remain in adapter metadata, not core required fields.

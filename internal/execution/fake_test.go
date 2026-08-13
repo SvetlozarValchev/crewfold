@@ -79,6 +79,16 @@ func TestValidateScenarioRejectsUnknownAndUnboundedBehavior(t *testing.T) {
 		"mixed start":        {Schema: FakeScenarioSchema, Name: "mixed", StartFailure: "no", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}},
 		"completion handoff": {Schema: FakeScenarioSchema, Name: "completion", Steps: []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "done"}}},
 		"completion pause":   {Schema: FakeScenarioSchema, Name: "completion-pause", Steps: []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "done", Handoff: "review", WaitForResume: true}}},
+		"invalid mail thread": {Schema: FakeScenarioSchema, Name: "mail-thread", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Mailbox: domain.FixtureMailbox{
+			Send: &domain.FixtureMailboxMessage{RecipientAgent: "recipient", ThreadID: "not-a-thread", Kind: domain.MessageInform, Body: "hello"},
+		}},
+		"reply selects thread": {Schema: FakeScenarioSchema, Name: "reply-thread", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Mailbox: domain.FixtureMailbox{
+			WaitForKind: domain.MessageQuestion,
+			Reply:       &domain.FixtureMailboxMessage{ThreadID: "thread_0123456789abcdef", Kind: domain.MessageInform, Body: "reply"},
+		}},
+		"artifact probe without thread": {Schema: FakeScenarioSchema, Name: "artifact-thread", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress}}, Mailbox: domain.FixtureMailbox{
+			DeniedArtifactProbe: true,
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -86,6 +96,21 @@ func TestValidateScenarioRejectsUnknownAndUnboundedBehavior(t *testing.T) {
 				t.Fatal("ValidateScenario() error = nil, want rejection")
 			}
 		})
+	}
+}
+
+func TestValidateScenarioAllowsInitialSendIntoOwnerCreatedThread(t *testing.T) {
+	t.Parallel()
+	scenario := domain.FakeScenario{
+		Schema: FakeScenarioSchema,
+		Name:   "owner-thread",
+		Steps:  []domain.FakeStep{{Kind: domain.ObservationProgress}},
+		Mailbox: domain.FixtureMailbox{Send: &domain.FixtureMailboxMessage{
+			RecipientAgent: "plug-agent", ThreadID: "thread_0123456789abcdef", Kind: domain.MessageQuestion, Body: "Which API do you need?",
+		}},
+	}
+	if err := ValidateScenario(scenario); err != nil {
+		t.Fatalf("ValidateScenario() error = %v", err)
 	}
 }
 

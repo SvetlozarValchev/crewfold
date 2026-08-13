@@ -751,10 +751,11 @@ context deltas remain out of scope.
 **Question answered:** Can Crewfold find and maintain relevant knowledge at larger
 volume without making retrieval the source of truth?
 
-**Implementation status:** Active. The first independently testable slice now
-implements deterministic scoped search, explanation, retrieval health, and
-explicit search-index rebuild. Curator proposals, contradictions, context deltas,
-and portable export remain required before M15 is complete.
+**Implementation status:** Active. Independently testable slices now implement
+deterministic scoped search, explanation, retrieval health, explicit search-index
+rebuild, and participant-bound cross-project collaboration through the existing
+mailbox tools. Curator proposals, contradictions, context deltas, and portable
+export remain required before M15 is complete.
 
 **Visible result**
 
@@ -766,6 +767,12 @@ crewfold knowledge index status --workspace personal \
 crewfold knowledge index rebuild --workspace personal \
   --socket /path/to/crewfold.sock
 crewfold doctor --retrieval --workspace personal \
+  --socket /path/to/crewfold.sock
+crewfold thread create --workspace personal --subject "Engine integration" \
+  --participant plug-agent=TASK_PLUG --participant engine-agent=TASK_ENGINE \
+  --socket /path/to/crewfold.sock
+crewfold thread invite THREAD_ID --agent review-agent --task TASK_REVIEW \
+  --expected-participant-revision 1 --workspace personal \
   --socket /path/to/crewfold.sock
 crewfold curator queue
 crewfold context refresh RUN_ID
@@ -781,6 +788,8 @@ crewfold contradiction list
 - Contradiction workflow and current/stale/disputed state.
 - Markdown plus machine-metadata export.
 - Search index health and idempotent rebuild from canonical records.
+- Owner-created, participant-bound cross-project threads using the existing
+  provider-neutral mailbox surface, with exact agent/task/project authority.
 
 **Automated acceptance**
 
@@ -794,6 +803,11 @@ crewfold contradiction list
 - Deleting or corrupting the search index leaves exact canonical reads unchanged;
   rebuilding changes no canonical revisions or events.
 - Export/reimport preserves IDs, revisions, provenance, and current status.
+- A library agent can queue a one-recipient explanation to an offline application
+  agent across projects; restart preserves it, while another task run for the same
+  agent cannot receive or wake for it.
+- Direct mail remains project-isolated; participant creation/invitation is
+  owner-only and a stale roster revision changes nothing.
 
 **Failure injection**
 

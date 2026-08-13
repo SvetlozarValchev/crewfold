@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:participant-thread-mutation-result:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "collaboration", "event_sequence"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:participant-thread-mutation-result:v1"},
+    "type": {"const": "participant_thread_mutation"},
+    "collaboration": {"$ref": "../../domain/v1/participant-thread.schema.json"},
+    "event_sequence": {"type": "integer", "minimum": 1}
+  }
+}

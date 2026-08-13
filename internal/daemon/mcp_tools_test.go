@@ -1,6 +1,9 @@
 package daemon
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestImmutableToolAllowlistHidesLaterCapabilities(t *testing.T) {
 	t.Parallel()
@@ -38,5 +41,28 @@ func TestMessageToolArgumentsEnforceAdvertisedRequiredFields(t *testing.T) {
 	}
 	if err := (proposeKnowledgeArguments{FreshnessPolicy: "until_superseded", FreshUntil: "2026-08-14T00:00:00Z"}).validate(); err == nil {
 		t.Fatal("until_superseded knowledge with fresh_until unexpectedly validated")
+	}
+}
+
+func TestMessageToolDescriptionsExposeParticipantBoundCrossProjectException(t *testing.T) {
+	t.Parallel()
+	wanted := map[string]string{
+		toolInbox:       "cross-project participant",
+		toolRead:        "cross-project participant-thread",
+		toolSend:        "Runs cannot create a cross-project thread or invite participants",
+		toolAcknowledge: "cross-project participant-thread",
+	}
+	for _, tool := range scopedMCPTools() {
+		fragment, exists := wanted[tool.Name]
+		if !exists {
+			continue
+		}
+		if !strings.Contains(tool.Description, fragment) {
+			t.Errorf("%s description %q does not contain %q", tool.Name, tool.Description, fragment)
+		}
+		delete(wanted, tool.Name)
+	}
+	if len(wanted) != 0 {
+		t.Fatalf("message tool descriptions missing for %v", wanted)
 	}
 }

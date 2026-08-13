@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -268,6 +269,100 @@ func TestMessageSendPassesBoundedRecipientAndThreadInputs(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), localapi.MessageSendSchema) {
 		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestThreadCreateAcceptsRepeatedTaskBoundParticipants(t *testing.T) {
+	t.Parallel()
+	collaboration := domain.ParticipantThread{
+		Thread: domain.MessageThread{ID: "thread_00000000000000000000000000000001", Subject: "Align engine contract"},
+		Kind:   domain.ThreadKindParticipantBound, ParticipantRevision: 1,
+	}
+	client := &fakeDaemonClient{participantMutation: localapi.ParticipantThreadMutationResult{
+		Schema: localapi.ParticipantThreadMutationSchema, Type: "participant_thread_mutation", Collaboration: collaboration,
+	}}
+	app, stdout, stderr := newTestApp()
+	app.newClient = func(socketPath string) daemonClient {
+		if socketPath != "/tmp/collaboration.sock" {
+			t.Fatalf("socket path = %q", socketPath)
+		}
+		return client
+	}
+	exitCode := app.Run([]string{
+		"thread", "create", "--workspace", "personal", "--subject", "Align engine contract",
+		"--participant", "consumer=task_00000000000000000000000000000001",
+		"--participant=engine=task_00000000000000000000000000000002",
+		"--socket", "/tmp/collaboration.sock", "--output", "json",
+	})
+	if exitCode != ExitOK || stderr.Len() != 0 {
+		t.Fatalf("Run(thread create) exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+	params := client.threadCreateParams
+	if params.Workspace != "personal" || params.Subject != "Align engine contract" || len(params.Participants) != 2 || params.Participants[0].Agent != "consumer" || params.Participants[1].Task == "" || params.IdempotencyKey != "" {
+		t.Fatalf("ThreadCreate params = %#v", params)
+	}
+	if !strings.Contains(stdout.String(), localapi.ParticipantThreadMutationSchema) {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestThreadInviteAndParticipantsPassConcurrencyInputs(t *testing.T) {
+	t.Parallel()
+	threadID := "thread_00000000000000000000000000000001"
+	collaboration := domain.ParticipantThread{
+		Thread: domain.MessageThread{ID: threadID, Subject: "Align engine contract"},
+		Kind:   domain.ThreadKindParticipantBound, ParticipantRevision: 3,
+	}
+	client := &fakeDaemonClient{
+		participantMutation: localapi.ParticipantThreadMutationResult{Schema: localapi.ParticipantThreadMutationSchema, Type: "participant_thread_mutation", Collaboration: collaboration},
+		participantThread:   localapi.ParticipantThreadResult{Schema: localapi.ParticipantThreadSchema, Type: "participant_thread", Collaboration: collaboration},
+	}
+	app, stdout, stderr := newTestApp()
+	app.newClient = func(string) daemonClient { return client }
+	if exitCode := app.Run([]string{
+		"thread", "invite", threadID, "--workspace", "personal", "--agent", "reviewer",
+		"--task", "task_00000000000000000000000000000003", "--expected-participant-revision", "2",
+		"--socket", "/tmp/collaboration.sock", "--idempotency-key", "invite-reviewer",
+	}); exitCode != ExitOK {
+		t.Fatalf("Run(thread invite) exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+	params := client.threadInviteParams
+	if params.Thread != threadID || params.Participant.Agent != "reviewer" || params.ExpectedParticipantRevision != 2 || params.IdempotencyKey != "invite-reviewer" {
+		t.Fatalf("ThreadInvite params = %#v", params)
+	}
+	stdout.Reset()
+	if exitCode := app.Run([]string{"thread", "participants", threadID, "--workspace", "personal", "--socket", "/tmp/collaboration.sock", "--output", "json"}); exitCode != ExitOK {
+		t.Fatalf("Run(thread participants) exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+	if !reflect.DeepEqual(client.threadParticipantsArgs, []string{"personal", threadID}) || !strings.Contains(stdout.String(), localapi.ParticipantThreadSchema) {
+		t.Fatalf("participants args/output = %#v / %q", client.threadParticipantsArgs, stdout.String())
+	}
+}
+
+func TestThreadCommandsRejectMalformedBoundsBeforeCallingDaemon(t *testing.T) {
+	t.Parallel()
+	for name, args := range map[string][]string{
+		"one participant": {
+			"thread", "create", "--workspace", "personal", "--subject", "too small",
+			"--participant", "one=task_00000000000000000000000000000001", "--socket", "/tmp/collaboration.sock",
+		},
+		"malformed binding": {
+			"thread", "create", "--workspace", "personal", "--subject", "bad binding",
+			"--participant", "one", "--participant", "two=task_00000000000000000000000000000002", "--socket", "/tmp/collaboration.sock",
+		},
+		"zero participant revision": {
+			"thread", "invite", "thread_00000000000000000000000000000001", "--workspace", "personal",
+			"--agent", "three", "--task", "task_00000000000000000000000000000003",
+			"--expected-participant-revision", "0", "--socket", "/tmp/collaboration.sock",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			app, _, stderr := newTestApp()
+			if exitCode := app.Run(args); exitCode != ExitUsage {
+				t.Fatalf("Run() exit = %d, want %d; stderr = %q", exitCode, ExitUsage, stderr.String())
+			}
+		})
 	}
 }
 
@@ -1051,8 +1146,13 @@ type fakeDaemonClient struct {
 	coordination            localapi.CoordinationStatusResult
 	messageSend             localapi.MessageSendResult
 	inboxList               localapi.InboxListResult
+	participantMutation     localapi.ParticipantThreadMutationResult
+	participantThread       localapi.ParticipantThreadResult
 	threadShow              localapi.ThreadShowResult
 	messageSendParams       localapi.MessageSendParams
+	threadCreateParams      localapi.ThreadCreateParams
+	threadInviteParams      localapi.ThreadInviteParams
+	threadParticipantsArgs  []string
 	agentCreateParams       localapi.AgentCreateParams
 	objectiveCreateParams   localapi.ObjectiveCreateParams
 	taskCreateParams        localapi.TaskCreateParams
@@ -1248,6 +1348,21 @@ func (client *fakeDaemonClient) MessageSend(_ context.Context, params localapi.M
 
 func (client *fakeDaemonClient) InboxList(context.Context, string, string, int) (localapi.InboxListResult, error) {
 	return client.inboxList, nil
+}
+
+func (client *fakeDaemonClient) ThreadCreate(_ context.Context, params localapi.ThreadCreateParams) (localapi.ParticipantThreadMutationResult, error) {
+	client.threadCreateParams = params
+	return client.participantMutation, nil
+}
+
+func (client *fakeDaemonClient) ThreadInvite(_ context.Context, params localapi.ThreadInviteParams) (localapi.ParticipantThreadMutationResult, error) {
+	client.threadInviteParams = params
+	return client.participantMutation, nil
+}
+
+func (client *fakeDaemonClient) ThreadParticipants(_ context.Context, workspace, thread string) (localapi.ParticipantThreadResult, error) {
+	client.threadParticipantsArgs = []string{workspace, thread}
+	return client.participantThread, nil
 }
 
 func (client *fakeDaemonClient) ThreadShow(context.Context, string, string) (localapi.ThreadShowResult, error) {

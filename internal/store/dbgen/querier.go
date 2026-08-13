@@ -14,6 +14,8 @@ type Querier interface {
 	FindAcceptedKnowledgeSuccessor(ctx context.Context, arg FindAcceptedKnowledgeSuccessorParams) (string, error)
 	FindActiveMeetingForOverlap(ctx context.Context, overlapID string) (string, error)
 	FindLiveKnowledgeSuccessor(ctx context.Context, supersedesRevisionID *string) (string, error)
+	FindThreadParticipantByBinding(ctx context.Context, arg FindThreadParticipantByBindingParams) (ThreadParticipant, error)
+	GetEligibleParticipantAssignment(ctx context.Context, arg GetEligibleParticipantAssignmentParams) (GetEligibleParticipantAssignmentRow, error)
 	GetKnowledgeActorRunWorkspace(ctx context.Context, id string) (string, error)
 	GetKnowledgeAuthorityCheckByKey(ctx context.Context, arg GetKnowledgeAuthorityCheckByKeyParams) (KnowledgeAuthorityCheck, error)
 	GetKnowledgeRevision(ctx context.Context, arg GetKnowledgeRevisionParams) (GetKnowledgeRevisionRow, error)
@@ -23,6 +25,7 @@ type Querier interface {
 	GetMeeting(ctx context.Context, arg GetMeetingParams) (Meeting, error)
 	GetMeetingContribution(ctx context.Context, arg GetMeetingContributionParams) (MeetingContribution, error)
 	GetMeetingProposal(ctx context.Context, meetingID string) (MeetingProposal, error)
+	GetParticipantThreadState(ctx context.Context, arg GetParticipantThreadStateParams) (GetParticipantThreadStateRow, error)
 	HasLiveTaskRun(ctx context.Context, taskID string) (bool, error)
 	InsertKnowledgeAuthorityCheck(ctx context.Context, arg InsertKnowledgeAuthorityCheckParams) error
 	InsertKnowledgeItem(ctx context.Context, arg InsertKnowledgeItemParams) error
@@ -36,13 +39,17 @@ type Querier interface {
 	InsertMeetingParticipant(ctx context.Context, arg InsertMeetingParticipantParams) error
 	InsertMeetingProposal(ctx context.Context, arg InsertMeetingProposalParams) error
 	InsertMeetingTaskRole(ctx context.Context, arg InsertMeetingTaskRoleParams) error
+	InsertParticipantThread(ctx context.Context, arg InsertParticipantThreadParams) error
 	InsertSplitTask(ctx context.Context, arg InsertSplitTaskParams) error
+	InsertThreadParticipant(ctx context.Context, arg InsertThreadParticipantParams) error
 	ListKnowledgeAuthorityChecks(ctx context.Context, arg ListKnowledgeAuthorityChecksParams) ([]KnowledgeAuthorityCheck, error)
 	ListKnowledgeRevisionIDs(ctx context.Context, arg ListKnowledgeRevisionIDsParams) ([]string, error)
 	ListKnowledgeRevisionSources(ctx context.Context, revisionID string) ([]KnowledgeSource, error)
 	ListMeetingActions(ctx context.Context, proposalID string) ([]MeetingAction, error)
 	ListMeetingContributions(ctx context.Context, meetingID string) ([]MeetingContribution, error)
 	ListMeetingParticipants(ctx context.Context, meetingID string) ([]MeetingParticipant, error)
+	ListThreadParticipants(ctx context.Context, threadID string) ([]ThreadParticipant, error)
+	ListThreadParticipantsByAgent(ctx context.Context, arg ListThreadParticipantsByAgentParams) ([]ThreadParticipant, error)
 	MarkKnowledgeRevisionStale(ctx context.Context, arg MarkKnowledgeRevisionStaleParams) (int64, error)
 	MarkMeetingActionApplied(ctx context.Context, arg MarkMeetingActionAppliedParams) error
 	MaxEventSequence(ctx context.Context) (int64, error)
@@ -51,6 +58,7 @@ type Querier interface {
 	RejectKnowledgeRevision(ctx context.Context, arg RejectKnowledgeRevisionParams) (int64, error)
 	ReleaseMeetingClaim(ctx context.Context, arg ReleaseMeetingClaimParams) error
 	ReleaseTaskAssignmentsForMeeting(ctx context.Context, arg ReleaseTaskAssignmentsForMeetingParams) error
+	RunAuthorizedForMessage(ctx context.Context, arg RunAuthorizedForMessageParams) (int64, error)
 	SetMeetingTaskAssigned(ctx context.Context, arg SetMeetingTaskAssignedParams) error
 	SetMeetingTaskCancelled(ctx context.Context, arg SetMeetingTaskCancelledParams) error
 	SupersedeKnowledgeRevision(ctx context.Context, arg SupersedeKnowledgeRevisionParams) (int64, error)

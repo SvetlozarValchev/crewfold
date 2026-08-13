@@ -91,6 +91,9 @@ type daemonClient interface {
 	KnowledgeMarkStale(context.Context, localapi.KnowledgeMarkStaleParams) (localapi.KnowledgeMutationResult, error)
 	MessageSend(context.Context, localapi.MessageSendParams) (localapi.MessageSendResult, error)
 	InboxList(context.Context, string, string, int) (localapi.InboxListResult, error)
+	ThreadCreate(context.Context, localapi.ThreadCreateParams) (localapi.ParticipantThreadMutationResult, error)
+	ThreadInvite(context.Context, localapi.ThreadInviteParams) (localapi.ParticipantThreadMutationResult, error)
+	ThreadParticipants(context.Context, string, string) (localapi.ParticipantThreadResult, error)
 	ThreadShow(context.Context, string, string) (localapi.ThreadShowResult, error)
 	RunStart(context.Context, localapi.RunStartParams) (localapi.RunMutationResult, error)
 	RunShow(context.Context, string, string) (localapi.RunShowResult, error)
@@ -1456,7 +1459,7 @@ Commands:
   knowledge      Curate and discover versioned decisions and findings
   message        Send one bounded durable message to an agent
   inbox          Inspect an agent's durable mailbox
-  thread         Inspect a durable agent conversation
+  thread         Manage participant-bound and direct conversations
   run            Launch and inspect provider-neutral execution
   claim          Declare leased work scopes for tasks
   overlap        Inspect deterministic claim conflicts and rescan Git

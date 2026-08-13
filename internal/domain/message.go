@@ -4,6 +4,10 @@ const (
 	ThreadOpen   = "open"
 	ThreadClosed = "closed"
 
+	ThreadKindDirect           = "direct"
+	ThreadKindParticipantBound = "participant_bound"
+	ThreadParticipantActive    = "active"
+
 	MessageInform          = "inform"
 	MessageQuestion        = "question"
 	MessageRequest         = "request"
@@ -25,6 +29,46 @@ const (
 	WakeSucceeded    = "succeeded"
 	WakeFailed       = "failed"
 )
+
+// ParticipantBindingInput identifies the exact agent/task assignment that an
+// owner wants to bind into a participant-bound collaboration thread. Names are
+// accepted at the boundary, then resolved to immutable canonical identifiers.
+type ParticipantBindingInput struct {
+	AgentIdentifier string `json:"agent_identifier"`
+	TaskIdentifier  string `json:"task_identifier"`
+}
+
+// ThreadParticipant is an audit-frozen binding. The agent, task, project, and
+// assignment identifiers and the invitation-time agent/task revisions never
+// change, even after the underlying assignment ends.
+type ThreadParticipant struct {
+	ID                 string `json:"id"`
+	ThreadID           string `json:"thread_id"`
+	WorkspaceID        string `json:"workspace_id"`
+	AgentID            string `json:"agent_id"`
+	AgentName          string `json:"agent_name"`
+	TaskID             string `json:"task_id"`
+	TaskTitle          string `json:"task_title"`
+	ProjectID          string `json:"project_id"`
+	ProjectName        string `json:"project_name"`
+	AssignmentID       string `json:"assignment_id"`
+	AssignmentRevision int64  `json:"assignment_revision"`
+	AgentRevision      int64  `json:"agent_revision"`
+	TaskRevision       int64  `json:"task_revision"`
+	Ordinal            int    `json:"ordinal"`
+	Status             string `json:"status"`
+	InvitedAt          string `json:"invited_at"`
+	InvitedBy          string `json:"invited_by"`
+}
+
+// ParticipantThread adds collaboration-specific state without changing the
+// stable MessageThread wire shape used by direct mail.
+type ParticipantThread struct {
+	Thread              MessageThread       `json:"thread"`
+	Kind                string              `json:"kind"`
+	ParticipantRevision int64               `json:"participant_revision"`
+	Participants        []ThreadParticipant `json:"participants"`
+}
 
 type MessageThread struct {
 	ID          string `json:"id"`

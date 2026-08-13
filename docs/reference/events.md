@@ -154,13 +154,17 @@ overlap.dismissed
 
 ## Communication and meetings
 
-Thread creation and the six message/wake facts through `message.wake_failed` are
-implemented. Structured-meeting creation, checkpoints, proposals, stalls,
-conclusion, and takeover are also implemented. Thread closing and delivery failure
-distinct from wake failure remain proposals.
+Thread creation, participant addition, and the six message/wake facts through
+`message.wake_failed` are implemented. A participant thread's creation fact freezes
+its initial roster and participant revision; later additions are separate facts.
+Cross-project sends retain the sender's origin project/task and exact recipient
+binding in bounded event data. Structured-meeting creation, checkpoints,
+proposals, stalls, conclusion, and takeover are also implemented. Thread closing
+and delivery failure distinct from wake failure remain proposals.
 
 ```text
 thread.created
+thread.participant_added
 message.sent
 message.delivered
 message.read

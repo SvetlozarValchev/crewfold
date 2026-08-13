@@ -1,0 +1,20 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "wrong-task-mailbox-probe",
+  "acceptance": {
+    "required_evidence": []
+  },
+  "steps": [
+    {
+      "kind": "progress",
+      "message": "This step must remain unreachable because the participant message is outside this task."
+    }
+  ],
+  "process": {
+    "timeout_millis": 5000
+  },
+  "mailbox": {
+    "wait_for_kind": "request",
+    "wait_timeout_millis": 1500
+  }
+}

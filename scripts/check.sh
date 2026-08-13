@@ -61,6 +61,9 @@ printf 'Scoped MCP capability black-box acceptance\n'
 printf 'Durable agent messaging black-box acceptance\n'
 "$repo_root/test/scenarios/agent-messaging/run.sh"
 
+printf 'Participant-bound cross-project collaboration black-box acceptance\n'
+"$repo_root/test/scenarios/cross-project-collaboration/run.sh"
+
 printf 'Claims, overlap, and drift black-box acceptance\n'
 "$repo_root/test/scenarios/claims-overlap/run.sh"
 

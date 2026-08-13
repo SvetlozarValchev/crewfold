@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:thread-participant-input:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent", "task"],
+  "properties": {
+    "agent": {"type": "string", "minLength": 1, "maxLength": 128},
+    "task": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

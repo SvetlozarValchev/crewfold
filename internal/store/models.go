@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 11
+	LatestSchemaVersion = 12
 
 	MutationAfterProjection = "after_projection"
 	MutationAfterEvent      = "after_event"
@@ -271,6 +271,28 @@ type SendMessageCommand struct {
 	ReplyToMessageID    string
 	IdempotencyKey      string
 	CorrelationID       string
+}
+
+type CreateParticipantThreadCommand struct {
+	WorkspaceIdentifier string
+	Subject             string
+	Participants        []domain.ParticipantBindingInput
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type InviteThreadParticipantCommand struct {
+	WorkspaceIdentifier         string
+	ThreadID                    string
+	Participant                 domain.ParticipantBindingInput
+	ExpectedParticipantRevision int64
+	IdempotencyKey              string
+	CorrelationID               string
+}
+
+type ParticipantThreadMutationResult struct {
+	Collaboration domain.ParticipantThread `json:"collaboration"`
+	EventSequence int64                    `json:"event_sequence"`
 }
 
 type AddClaimCommand struct {

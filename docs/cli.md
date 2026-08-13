@@ -332,6 +332,17 @@ crewfold inbox --workspace personal --agent engine-review \
   --socket /path/to/crewfold.sock
 crewfold thread show THREAD_ID --workspace personal \
   --socket /path/to/crewfold.sock
+crewfold thread create --workspace personal \
+  --subject "plugandrev / engine-sim-offline contract" \
+  --participant plug-agent=TASK_PLUG \
+  --participant engine-agent=TASK_ENGINE \
+  --socket /path/to/crewfold.sock
+crewfold thread invite THREAD_ID --workspace personal \
+  --agent integration-reviewer --task TASK_REVIEW \
+  --expected-participant-revision 1 \
+  --socket /path/to/crewfold.sock
+crewfold thread participants THREAD_ID --workspace personal \
+  --socket /path/to/crewfold.sock
 ```
 
 These owner-facing commands are implemented. `message send` creates a thread when
@@ -346,6 +357,17 @@ message delivered, read, or acknowledged. `thread show` returns ordered immutabl
 messages plus per-message delivery and wake status. Delivery/read/acknowledgement
 mutations are authenticated agent operations exposed through MCP rather than
 owner impersonation in the CLI.
+
+`thread create` is the explicit owner boundary for cross-project collaboration.
+It requires a subject and two through eight `AGENT=TASK` bindings with unique
+agents and unique tasks whose active assignments span at least two projects.
+`thread invite` adds one exact
+binding with optimistic `--expected-participant-revision`; stale revisions change
+nothing. `thread participants` is owner inspection. Agents keep using the existing
+MCP inbox/send/read/acknowledge tools: a supplied participant `thread_id` permits
+cross-project exchange only when the run's agent, task, and project exactly match
+the roster. The roster never broadcasts a message and does not create a task
+dependency, claim, meeting, or accepted knowledge record.
 
 ## Meetings
 

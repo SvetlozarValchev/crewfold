@@ -576,6 +576,12 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleMessageSend(request), false
 	case localapi.MethodInboxList:
 		return s.handleInboxList(request), false
+	case localapi.MethodThreadCreate:
+		return s.handleThreadCreate(request), false
+	case localapi.MethodThreadInvite:
+		return s.handleThreadInvite(request), false
+	case localapi.MethodThreadParticipants:
+		return s.handleThreadParticipants(request), false
 	case localapi.MethodThreadShow:
 		return s.handleThreadShow(request), false
 	case localapi.MethodRunStart:

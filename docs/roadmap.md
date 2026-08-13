@@ -72,7 +72,7 @@ implementation commit is `e37fdcf32b2e5f69766405d6585ff24277a1ab3c`.
 | M12 ✓ | Claims/overlap | Detect declared and observed conflicting work deterministically | M8, M9 |
 | M13 ✓ | Meetings | Resolve a two-/three-agent overlap into durable task/claim changes | M12 |
 | M14 ✓ | Canonical knowledge | Deliver explicitly accepted decisions/findings without transcripts | M13 |
-| M15 ◐ | Curator/retrieval | Scoped retrieval is implemented; curation, reconciliation, and refresh remain | M14 |
+| M15 ◐ | Curator/retrieval | Scoped retrieval and participant-bound cross-project mail are implemented; curation, reconciliation, and refresh remain | M14 |
 | M16 | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
 | M17 | Local checks/CI watcher | Route fresh check evidence without granting merge authority | M16 |
 | M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
@@ -140,8 +140,9 @@ changes task ownership or ordering.
 ### Knowledge preview — M14 through M15
 
 M14 lets agents resume from owner-accepted decisions/findings linked by exact
-revision. M15 adds a curator, deterministic search, contradiction handling, and
-explicit refresh without making retrieval authoritative.
+revision. M15 adds a curator, deterministic search, participant-bound
+cross-project negotiation, contradiction handling, and explicit refresh without
+making retrieval or conversation authoritative.
 
 ### Personal alpha — M16 through M17
 
@@ -224,8 +225,17 @@ deterministic ranking and explanations, retrieval diagnostics, and an explicitly
 rebuildable index whose removal cannot affect exact canonical reads. The accepted
 contract is [ADR-0009](decisions/0009-deterministic-derived-knowledge-retrieval.md).
 
+A second completed slice lets agents working in different registered projects
+communicate through an explicit owner-created thread. Each participant is bound
+to an exact agent, task, and project; direct mail remains project-isolated,
+wrong-task runs remain invisible, and each durable message has one recipient. The
+accepted contract is
+[ADR-0010](decisions/0010-participant-bound-cross-project-collaboration.md).
+
 Remaining M15 slices add curator proposals, contradiction handling, explicit
-context deltas, and portable export. Native provider resume, active-turn steering,
+context deltas, and portable export. Participant rosters in context are deferred
+to packet v4/deltas; packet v3 only keeps its bounded authorized inbox summary.
+Native provider resume, active-turn steering,
 app-server ownership, remote users, and broader organizational authority remain
 outside this milestone. Every completed capability scenario remains required.
 

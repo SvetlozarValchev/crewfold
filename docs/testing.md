@@ -232,6 +232,23 @@ run then receives the message through its immutable Crewfold briefing and
 completes the dependent task. The scenario asserts that provider-private session
 identifiers never cross logs or context and that raw transcripts remain excluded.
 
+### Participant-bound cross-project fixture
+
+The provider-free cross-project scenario registers adjacent `plugandrev` and
+`engine-sim-offline` repositories as separate projects. The owner binds the exact
+application and library tasks into one participant thread. A recorded engine
+fixture sends while the plug fixture is offline; after daemon restart the exact
+plug task sees the bounded inbox summary, reads, acknowledges, and replies through
+the ordinary MCP mailbox tools. The surviving engine run then reads and
+acknowledges that reply before both complete. A second run for another plug task
+proves that agent identity alone cannot receive or wake for the message.
+
+The same scenario proves ordinary direct mail remains invisible across projects,
+invites one third-project participant with optimistic roster revision, keeps every
+message single-recipient, and verifies message origins. Before/after projections
+prove collaboration does not fabricate knowledge, dependencies, claims, or
+meetings. No provider account, model call, remote, or shared Git ancestry is used.
+
 The real Claude canary has an independent two-flag acknowledgement gate:
 
 ```sh

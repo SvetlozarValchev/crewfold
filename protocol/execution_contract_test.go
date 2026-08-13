@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"crewfold/internal/execution"
@@ -91,5 +92,35 @@ func TestCheckedInAgentMessagingScenariosSatisfySemanticContract(t *testing.T) {
 		if _, err := execution.LoadScenario(path); err != nil {
 			t.Errorf("execution.LoadScenario(%q) error = %v", path, err)
 		}
+	}
+}
+
+func TestCheckedInCrossProjectCollaborationScenariosSatisfySemanticContract(t *testing.T) {
+	t.Parallel()
+
+	paths, err := filepath.Glob("../test/fixtures/cross-project-collaboration/*.json")
+	if err != nil {
+		t.Fatalf("filepath.Glob() error = %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("cross-project scenario count = %d, want 2; paths = %v", len(paths), paths)
+	}
+	for _, path := range paths {
+		if _, err := execution.LoadScenario(path); err != nil {
+			t.Errorf("execution.LoadScenario(%q) error = %v", path, err)
+		}
+	}
+	templatePath := "../test/fixtures/cross-project-collaboration/engine.json.in"
+	data, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := strings.ReplaceAll(string(data), "THREAD_ID", "thread_00000000000000000000000000000001")
+	renderedPath := filepath.Join(t.TempDir(), "engine.json")
+	if err := os.WriteFile(renderedPath, []byte(rendered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execution.LoadScenario(renderedPath); err != nil {
+		t.Errorf("execution.LoadScenario(rendered engine fixture) error = %v", err)
 	}
 }

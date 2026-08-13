@@ -266,11 +266,15 @@ func runFixtureMailbox(ctx context.Context, client fixtureToolClient, plan domai
 		return nil
 	}
 	if plan.DeniedRecipientProbe != "" {
-		result, err := client.CallTool(ctx, "crewfold_send_message", map[string]any{
+		arguments := map[string]any{
 			"recipient_agent": plan.DeniedRecipientProbe, "kind": domain.MessageInform,
 			"subject": "Denied recipient probe", "body": "This message must be denied.",
 			"artifact_ids": []string{}, "idempotency_key": "fixture-denied-recipient",
-		})
+		}
+		if plan.Send != nil && plan.Send.ThreadID != "" {
+			arguments["thread_id"] = plan.Send.ThreadID
+		}
+		result, err := client.CallTool(ctx, "crewfold_send_message", arguments)
 		if err != nil || !result.IsError || fixtureToolErrorCode(result) != "denied_by_policy" {
 			return errors.New("unauthorized message recipient probe was not denied")
 		}
@@ -285,9 +289,30 @@ func runFixtureMailbox(ctx context.Context, client fixtureToolClient, plan domai
 			return errors.New("oversized message probe was not rejected")
 		}
 	}
+	if plan.DeniedArtifactProbe {
+		published, err := client.CallTool(ctx, "crewfold_publish_artifact", map[string]any{
+			"name": "participant-thread-probe", "media_type": "text/plain", "content": "must remain run-scoped",
+			"idempotency_key": "fixture-participant-artifact",
+		})
+		if err != nil || published.IsError {
+			return errors.New("publish participant artifact probe failed")
+		}
+		var artifact domain.RunArtifact
+		if err := json.Unmarshal(published.StructuredContent, &artifact); err != nil || artifact.ID == "" {
+			return errors.New("decode participant artifact probe failed")
+		}
+		result, err := client.CallTool(ctx, "crewfold_send_message", map[string]any{
+			"recipient_agent": plan.Send.RecipientAgent, "thread_id": plan.Send.ThreadID, "kind": domain.MessageInform,
+			"subject": "Denied participant artifact probe", "body": "This cross-project attachment must be denied.",
+			"artifact_ids": []string{artifact.ID}, "idempotency_key": "fixture-participant-artifact-send",
+		})
+		if err != nil || !result.IsError || fixtureToolErrorCode(result) != "denied_by_policy" {
+			return errors.New("participant-bound artifact probe was not denied")
+		}
+	}
 	threadID := ""
 	if plan.Send != nil {
-		mutation, err := sendFixtureMessage(ctx, client, *plan.Send, "", "", "fixture-mail-send")
+		mutation, err := sendFixtureMessage(ctx, client, *plan.Send, plan.Send.ThreadID, "", "fixture-mail-send")
 		if err != nil {
 			return err
 		}

@@ -232,12 +232,21 @@ func validateFixtureMailbox(mailbox domain.FixtureMailbox) error {
 	if mailbox.RequireInboxSummary && mailbox.WaitForKind == "" {
 		return errors.New("fixture inbox summary assertion requires an incoming message kind")
 	}
+	if mailbox.DeniedArtifactProbe && (mailbox.Send == nil || strings.TrimSpace(mailbox.Send.ThreadID) == "") {
+		return errors.New("fixture denied artifact probe requires an initial participant-thread send")
+	}
 	for label, message := range map[string]*domain.FixtureMailboxMessage{"send": mailbox.Send, "reply": mailbox.Reply} {
 		if message == nil {
 			continue
 		}
 		if label == "send" && strings.TrimSpace(message.RecipientAgent) == "" {
 			return errors.New("fixture mailbox send requires one recipient agent")
+		}
+		if label == "reply" && strings.TrimSpace(message.ThreadID) != "" {
+			return errors.New("fixture mailbox reply inherits its incoming thread")
+		}
+		if message.ThreadID != "" && (!strings.HasPrefix(message.ThreadID, "thread_") || len(message.ThreadID) > 128 || strings.ContainsAny(message.ThreadID, "\r\n\x00")) {
+			return fmt.Errorf("fixture mailbox %s contains an invalid thread ID", label)
 		}
 		if !supportedFixtureMessageKind(message.Kind) || strings.TrimSpace(message.Body) == "" || len(message.Body) > 4096 || len(message.Subject) > 160 {
 			return fmt.Errorf("fixture mailbox %s contains invalid or unbounded fields", label)

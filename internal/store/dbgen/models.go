@@ -92,3 +92,23 @@ type MeetingProposal struct {
 	DecidedAt    *string `json:"decided_at"`
 	DecisionNote *string `json:"decision_note"`
 }
+
+type ThreadParticipant struct {
+	ID                 string `json:"id"`
+	ThreadID           string `json:"thread_id"`
+	WorkspaceID        string `json:"workspace_id"`
+	AgentID            string `json:"agent_id"`
+	AgentName          string `json:"agent_name"`
+	TaskID             string `json:"task_id"`
+	TaskTitle          string `json:"task_title"`
+	ProjectID          string `json:"project_id"`
+	ProjectName        string `json:"project_name"`
+	AssignmentID       string `json:"assignment_id"`
+	AssignmentRevision int64  `json:"assignment_revision"`
+	AgentRevision      int64  `json:"agent_revision"`
+	TaskRevision       int64  `json:"task_revision"`
+	Ordinal            int64  `json:"ordinal"`
+	Status             string `json:"status"`
+	InvitedAt          string `json:"invited_at"`
+	InvitedBy          string `json:"invited_by"`
+}

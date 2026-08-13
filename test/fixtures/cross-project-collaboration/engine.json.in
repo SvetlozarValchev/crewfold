@@ -1,0 +1,32 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "engine-contract-explanation",
+  "acceptance": {
+    "required_evidence": ["application_requirements_received"]
+  },
+  "steps": [
+    {
+      "kind": "completion",
+      "message": "Engine and application agents exchanged and acknowledged the integration contract.",
+      "evidence": ["application_requirements_received"],
+      "handoff": "Both project-scoped requirements are preserved in the durable participant thread."
+    }
+  ],
+  "process": {
+    "timeout_millis": 15000
+  },
+  "mailbox": {
+    "send": {
+      "recipient_agent": "plug-agent",
+      "thread_id": "THREAD_ID",
+      "kind": "request",
+      "subject": "Define offline simulation integration",
+      "body": "engine-sim-offline exposes deterministic step and snapshot boundaries; tell us which plugandrev adapter guarantees are required."
+    },
+    "wait_for_kind": "inform",
+    "acknowledge_received": true,
+    "wait_timeout_millis": 25000,
+    "denied_recipient_probe": "outsider-agent",
+    "denied_artifact_probe": true
+  }
+}

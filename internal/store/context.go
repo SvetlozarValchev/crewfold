@@ -133,7 +133,7 @@ func (s *Store) buildContextPacketWithKnowledgeInTransaction(ctx context.Context
 	if err != nil {
 		return domain.ContextPacket{}, 0, err
 	}
-	inbox, err := inboxSummaryInTransaction(ctx, tx, agent.ID, task.ProjectID)
+	inbox, err := inboxSummaryInTransaction(ctx, tx, agent.ID, task.ProjectID, task.ID)
 	if err != nil {
 		return domain.ContextPacket{}, 0, err
 	}

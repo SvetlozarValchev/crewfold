@@ -68,6 +68,7 @@ type FixtureProcess struct {
 
 type FixtureMailboxMessage struct {
 	RecipientAgent string `json:"recipient_agent,omitempty"`
+	ThreadID       string `json:"thread_id,omitempty"`
 	Kind           string `json:"kind"`
 	Subject        string `json:"subject,omitempty"`
 	Body           string `json:"body"`
@@ -79,6 +80,7 @@ type FixtureMailbox struct {
 	Reply                   *FixtureMailboxMessage `json:"reply,omitempty"`
 	AcknowledgeReceived     bool                   `json:"acknowledge_received,omitempty"`
 	RequireInboxSummary     bool                   `json:"require_inbox_summary,omitempty"`
+	DeniedArtifactProbe     bool                   `json:"denied_artifact_probe,omitempty"`
 	WaitTimeoutMillis       int                    `json:"wait_timeout_millis,omitempty"`
 	DeniedRecipientProbe    string                 `json:"denied_recipient_probe,omitempty"`
 	OversizedRecipientProbe string                 `json:"oversized_recipient_probe,omitempty"`

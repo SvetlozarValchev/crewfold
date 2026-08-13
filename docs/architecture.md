@@ -150,6 +150,14 @@ cannot select a different sender or run in message tool arguments. The implement
 project, and primary provenance to the authenticated run and its task. It cannot
 accept or otherwise govern the resulting proposal.
 
+Project scope remains the mailbox default. An owner-created participant thread is
+the sole cross-project exception: it binds every member to an exact agent, task,
+and project. The same existing inbox/read/send/acknowledge tools accept a message
+only when the authenticated run exactly matches a binding; a different task for
+the same agent has no authority. Agents cannot create or extend the roster, and a
+message still has one recipient. This enables an application and a library agent
+to negotiate across adjacent repositories without opening workspace-wide chat.
+
 ### Command handlers
 
 Enforce domain invariants, create stable IDs, evaluate expected revisions, and
@@ -238,9 +246,12 @@ An explicit idempotent rebuild reconstructs and integrity-checks the projection
 without mutating knowledge, context, or the event journal. No second database,
 embedding service, or background model is involved.
 
-The later M15 context curator will propose broader knowledge, reconcile
-contradictions, and drive explicit deltas. It does not yet run, and retrieval
-cannot automatically accept, summarize, or deliver knowledge.
+The second independently testable M15 slice adds participant-bound cross-project
+collaboration without changing packet v3. A new packet's bounded inbox summary may
+include exact authorized participant mail, but full bodies stay behind explicit
+MCP reads. Roster delivery through context v4/deltas remains later M15 work. The
+later curator will propose broader knowledge and reconcile contradictions;
+retrieval cannot automatically accept, summarize, or deliver knowledge.
 
 ### Outcome and briefing projector
 

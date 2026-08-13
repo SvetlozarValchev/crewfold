@@ -18,9 +18,9 @@ Crewfold currently implements this foundation of the model:
 - ready, assigned, active, blocked, and cancelled coordination transitions;
 - a workspace status projection and immutable event history;
 - deterministic and direct fixture execution with run-scoped MCP capabilities;
-- immutable base context with a bounded project-scoped inbox summary;
-- durable single-recipient agent threads, delivery/read/acknowledgement state, and
-  best-effort wake diagnostics.
+- immutable base context with a bounded authority-scoped inbox summary;
+- durable single-recipient messages in direct or owner-created participant
+  threads, delivery/read/acknowledgement state, and best-effort wake diagnostics.
 
 The current runtime can start only fixed provider-free fixtures; it does not start
 Codex, Claude Code, Herdr, or arbitrary shell commands. Claims, meetings, managers,
@@ -60,14 +60,23 @@ Direct terminal prompting remains a runtime control mechanism. It is used by
 Crewfold to deliver a wake-up or instruction to a session, not as the only record
 of the underlying message.
 
-The implemented mailbox sends one immutable message to one enabled agent. An
-offline recipient remains queued until a later live run lists its project-scoped
-inbox. A live recipient also creates a durable best-effort wake job; wake failure
-is diagnostic state and cannot erase or falsely deliver the message. Listing,
-reading, and acknowledging are separate transitions. Agent replies stay within
-the original participants, and owner inspection never advances recipient state.
-Group threads, thread closing, human recipients, and live runtime prompting are
-not implemented yet.
+The implemented mailbox sends one immutable message to one enabled agent. Direct
+mail remains project-scoped. For a deliberate cross-project negotiation, the owner
+creates a participant thread that binds each member to an exact active assigned
+task and its project; every agent and task appears at most once. Only a run
+matching that complete binding can consume or
+send within it; another task run for the same agent remains outside. An offline
+recipient remains queued until a later authorized run lists its inbox. A live
+recipient also creates a durable best-effort wake job; wake failure is diagnostic
+state and cannot erase or falsely deliver the message. Listing, reading, and
+acknowledging are separate transitions. Every message still has one recipient,
+and owner inspection never advances recipient state. Agent-created rosters,
+broadcast, thread closing, human recipients, and arbitrary live prompting are not
+implemented.
+
+Participant conversation does not imply orchestration state. It creates no task
+dependency, claim, meeting, or accepted knowledge; those require their own
+explicit commands and authority.
 
 ### Message kinds
 
