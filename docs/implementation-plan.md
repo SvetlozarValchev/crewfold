@@ -1226,6 +1226,15 @@ decision.
 
 ### M21 — Local web workbench
 
+**Implementation checkpoint:** Slice 1 and the security-bearing foundation of
+slice 2 are implemented: exact XDG paths, a private systemd user unit,
+`service install|start|stop|status`, `crewfold open`, pinned React/Vite assets
+embedded in Go, exact IPv4-loopback serving, single-use Unix-socket bootstrap,
+strict owner sessions, and authenticated live daemon status. The shell explicitly
+shows onboarding as unavailable rather than rendering fixture state. SSE,
+onboarding, conversational execution, planning, inspection, and the full M21 exit
+gate remain open.
+
 **Question answered:** Can one developer start, direct, inspect, understand, and
 intervene in a real local crew from one owner interface instead of composing the
 control plane through commands?

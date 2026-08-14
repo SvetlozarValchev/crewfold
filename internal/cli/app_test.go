@@ -231,7 +231,7 @@ func TestInvalidOutputAndCommandArgumentsAreUsageErrors(t *testing.T) {
 func TestHelpTopics(t *testing.T) {
 	t.Parallel()
 
-	for _, topic := range []string{"version", "doctor", "daemon", "status", "workspace", "project", "checkout", "agent", "objective", "task", "context", "message", "inbox", "thread", "run", "events", "help"} {
+	for _, topic := range []string{"version", "doctor", "daemon", "service", "open", "status", "workspace", "project", "checkout", "agent", "objective", "task", "context", "message", "inbox", "thread", "run", "events", "help"} {
 		t.Run(topic, func(t *testing.T) {
 			t.Parallel()
 
@@ -966,6 +966,7 @@ func TestDaemonRunPassesRequiredConfiguration(t *testing.T) {
 		"daemon", "run",
 		"--data-dir", "/tmp/crewfold-test-data",
 		"--socket=/tmp/crewfold-test.sock",
+		"--web-address", "127.0.0.1:43121",
 		"--codex-sandbox", "danger-full-access",
 		"--codex-external-sandbox", "true",
 		"--codex-tool-network-access", "true",
@@ -982,6 +983,9 @@ func TestDaemonRunPassesRequiredConfiguration(t *testing.T) {
 	}
 	if received.SocketPath != "/tmp/crewfold-test.sock" {
 		t.Fatalf("received.SocketPath = %q", received.SocketPath)
+	}
+	if received.WebAddress != "127.0.0.1:43121" {
+		t.Fatalf("received.WebAddress = %q", received.WebAddress)
 	}
 	if received.Logger == nil {
 		t.Fatal("received.Logger = nil")
@@ -1179,6 +1183,10 @@ type fakeDaemonClient struct {
 	fullDoctor                localapi.FullDoctorResult
 	backupCreate              localapi.BackupCreateResult
 	backupCreateParams        localapi.BackupCreateParams
+	webBootstrap              localapi.WebBootstrapResult
+	webBootstrapErr           error
+	webBootstrapErrors        []error
+	webBootstrapCalls         int
 	knowledgeIndexStatus      localapi.KnowledgeIndexStatusResult
 	knowledgeIndexRebuild     localapi.KnowledgeIndexRebuildResult
 	knowledgeSearch           localapi.KnowledgeSearchResult
@@ -1323,6 +1331,16 @@ func (client *fakeDaemonClient) SystemDoctorFull(context.Context) (localapi.Full
 func (client *fakeDaemonClient) BackupCreate(_ context.Context, params localapi.BackupCreateParams) (localapi.BackupCreateResult, error) {
 	client.backupCreateParams = params
 	return client.backupCreate, nil
+}
+
+func (client *fakeDaemonClient) WebBootstrap(context.Context) (localapi.WebBootstrapResult, error) {
+	client.webBootstrapCalls++
+	if len(client.webBootstrapErrors) > 0 {
+		err := client.webBootstrapErrors[0]
+		client.webBootstrapErrors = client.webBootstrapErrors[1:]
+		return localapi.WebBootstrapResult{}, err
+	}
+	return client.webBootstrap, client.webBootstrapErr
 }
 
 func (client *fakeDaemonClient) KnowledgeIndexStatus(_ context.Context, workspace string) (localapi.KnowledgeIndexStatusResult, error) {

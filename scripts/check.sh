@@ -11,6 +11,9 @@ export GOPROXY=off
 printf 'Generated database query consistency\n'
 "$repo_root/scripts/check-generated-db.sh"
 
+printf 'Embedded workbench asset consistency\n'
+"$repo_root/scripts/check-web-assets.sh"
+
 go_root=$($go_runner env GOROOT)
 gofmt="$go_root/bin/gofmt"
 unformatted=$(find cmd internal protocol -type f -name '*.go' -print0 | xargs -0 "$gofmt" -l)
@@ -36,6 +39,9 @@ fi
 
 printf 'Buildable repository black-box acceptance\n'
 "$repo_root/test/scenarios/buildable-repository/run.sh"
+
+printf 'Authenticated local web workbench shell acceptance\n'
+"$repo_root/test/scenarios/web-workbench-shell/run.sh"
 
 printf 'Daemon API spine black-box acceptance\n'
 "$repo_root/test/scenarios/daemon-api-spine/run.sh"

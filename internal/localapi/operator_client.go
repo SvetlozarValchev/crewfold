@@ -43,8 +43,9 @@ var operatorReadResultDiscriminators = map[string][2]string{
 }
 
 // operatorResultSchemaPaths is the executable current-contract registry for
-// every result the TUI can consume. Validation happens on the raw JSON before
-// Go zero values can erase omitted-vs-null or optional-field presence.
+// every result consumed by the TUI or another security-bearing owner surface.
+// Validation happens on raw JSON before Go zero values can erase omitted-vs-null
+// or optional-field presence.
 type operatorResultContract struct {
 	path, schema, kind string
 }
@@ -79,6 +80,7 @@ var operatorResultContracts = map[string]operatorResultContract{
 	MethodApprovalDeny:         {"local/v1/approval-mutation.result.schema.json", ApprovalMutationSchema, "approval_mutation"},
 	MethodSystemDoctorFull:     {"local/v1/full-doctor.result.schema.json", FullDoctorSchema, "full_doctor"},
 	MethodBackupCreate:         {"local/v1/backup-create.result.schema.json", BackupCreateSchema, "backup"},
+	MethodWebBootstrap:         {"local/v1/web-bootstrap.result.schema.json", WebBootstrapSchema, "web_bootstrap"},
 }
 
 func validateStrictOperatorResultWire(method string, raw []byte) error {

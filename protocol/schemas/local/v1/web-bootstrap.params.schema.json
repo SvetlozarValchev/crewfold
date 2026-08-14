@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:web-bootstrap-params:v1",
+  "title": "Crewfold web bootstrap parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "maxProperties": 0
+}

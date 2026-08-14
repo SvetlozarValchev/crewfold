@@ -42,6 +42,7 @@ func TestOperatorRequestParamContractRegistryIsComplete(t *testing.T) {
 		localapi.MethodApprovalDeny:         "local/v1/approval-decision.params.schema.json",
 		localapi.MethodSystemDoctorFull:     "local/v1/system-doctor-full.params.schema.json",
 		localapi.MethodBackupCreate:         "local/v1/backup-create.params.schema.json",
+		localapi.MethodWebBootstrap:         "local/v1/web-bootstrap.params.schema.json",
 	}
 	if !reflect.DeepEqual(operatorRequestParamContracts, want) {
 		t.Fatalf("operator request contract registry = %#v, want %#v", operatorRequestParamContracts, want)
@@ -79,6 +80,7 @@ func TestOperatorRequestSchemasRejectPresenceSensitiveInvalidValues(t *testing.T
 		"full doctor has params":   `{"id":"doctor-extra","protocol":1,"method":"system.doctor.full","params":{"quick":true}}`,
 		"relative backup target":   `{"id":"backup-relative","protocol":1,"method":"backup.create","params":{"target_path":"relative","idempotency_key":"backup"}}`,
 		"empty backup key":         `{"id":"backup-key","protocol":1,"method":"backup.create","params":{"target_path":"/private/new-backup","idempotency_key":""}}`,
+		"web bootstrap has params": `{"id":"web-extra","protocol":1,"method":"web.bootstrap","params":{"origin":"http://attacker.invalid"}}`,
 	} {
 		name, request := name, request
 		t.Run(name, func(t *testing.T) {

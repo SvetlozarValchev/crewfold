@@ -7,9 +7,10 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M20 are complete. M21 is the next implementation
-milestone; its product and architecture contract is accepted, but implementation
-has not started.** Evidence is
+Current status: **M0 through M20 are complete. M21 implementation is underway.
+Its first vertical slice provides private XDG paths, the Linux user-service
+lifecycle, `crewfold open`, embedded React assets, one-time owner bootstrap, and
+authenticated live daemon status; onboarding and work orchestration remain.** Evidence is
 recorded in the [M0 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -282,9 +283,9 @@ but they do not carry their implementation cost now.
 
 M21 is next. Its accepted design contract is
 [ADR-0020](decisions/0020-local-web-workbench.md), and its interactive reference is
-[`web/workbench-mock.html`](../web/workbench-mock.html). Implementation has not
-started. Entry work is the Linux owner-local service, default private paths, and
-secure embedded read-only web shell. Later slices add onboarding, durable
+[`web/workbench-mock.html`](../web/workbench-mock.html). The Linux owner-local
+service, default private paths, and secure embedded read-only web shell/status
+boundary form the first implemented checkpoint. Later slices add onboarding, durable
 conversation-to-command execution, editable plan launch, agent inspection,
 optional Herdr terminal streaming, and the complete browser-only acceptance path.
 

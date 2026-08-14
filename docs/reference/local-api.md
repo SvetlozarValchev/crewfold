@@ -140,6 +140,36 @@ The server waits for handlers to exit and removes only the socket file it create
 
 An idle or partially written client cannot hold shutdown open indefinitely.
 
+### `web.bootstrap`
+
+Takes exactly `{}` over the owner-only Unix socket. It mints one 32-byte random
+grant retained only as a digest for 60 seconds and returns:
+
+```json
+{
+  "schema": "urn:crewfold:schema:local-api:web-bootstrap-result:v1",
+  "type": "web_bootstrap",
+  "url": "http://127.0.0.1:43121/#bootstrap=<64-lower-hex>",
+  "expires_at": "<canonical-timestamp>"
+}
+```
+
+The fragment is not sent in the initial HTTP request. Workbench JavaScript posts
+it once from the exact listener origin to `/api/v1/session`; replay, expiry,
+unknown/duplicate fields, another Host, or another Origin fail closed. Successful
+exchange clears the fragment, sets an HttpOnly `SameSite=Strict` owner cookie on
+one random 256-bit API-path prefix, and returns that prefix plus a separate
+in-memory CSRF token. Scoping the cookie to an unguessable path prevents a browser
+from attaching it to ordinary requests sent to another service on `127.0.0.1`.
+The current authenticated browser API contains only read-only
+`<api_base>/status`. Static assets and the shell are public
+only to exact loopback Host and disclose no daemon data before session exchange.
+
+The listener is exact `127.0.0.1`, sends no wildcard CORS policy, denies framing,
+sets `nosniff` and no-referrer policy, and restricts scripts, styles, connections,
+objects, forms, and ancestors with CSP. Remote bind, terminal streaming, SSE,
+onboarding, and browser mutations are not part of this first slice.
+
 ### `database.status`
 
 Takes no parameters. It reports:

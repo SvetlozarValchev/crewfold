@@ -10,8 +10,10 @@ owner-local web workbench without creating a second production service.
 The current implementation includes the Go binary, local Unix transport, SQLite
 storage, read-only installed-Git observation, and provider-neutral durable work
 coordination. It also includes a run-scoped MCP facade and immutable base context
-packets for the trusted fixture provider. Later rows remain the proposed baseline
-until their capability is implemented.
+packets for the trusted fixture provider. M21 now also includes pinned and embedded
+React/Vite production assets plus the authenticated loopback shell/status boundary;
+onboarding, SSE invalidation, terminal WebSockets, and command surfaces remain
+planned. Later rows remain the proposed baseline until their capability is implemented.
 
 ## Core
 

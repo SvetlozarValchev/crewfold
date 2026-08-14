@@ -17,6 +17,7 @@ const (
 	MethodHello                 = "system.hello"
 	MethodStatus                = "system.status"
 	MethodStop                  = "system.stop"
+	MethodWebBootstrap          = "web.bootstrap"
 	MethodDatabaseStatus        = "database.status"
 	MethodWorkspaceInit         = "workspace.init"
 	MethodWorkspaceShow         = "workspace.show"
@@ -105,6 +106,7 @@ const (
 
 	StatusSchema                    = "urn:crewfold:schema:local-api:status-result:v1"
 	StopSchema                      = "urn:crewfold:schema:local-api:stop-result:v1"
+	WebBootstrapSchema              = "urn:crewfold:schema:local-api:web-bootstrap-result:v1"
 	DatabaseStatusSchema            = "urn:crewfold:schema:local-api:database-status-result:v1"
 	WorkspaceInitSchema             = "urn:crewfold:schema:local-api:workspace-init-result:v1"
 	WorkspaceShowSchema             = "urn:crewfold:schema:local-api:workspace-show-result:v1"
@@ -232,6 +234,19 @@ type StopResult struct {
 	Schema string `json:"schema"`
 	Type   string `json:"type"`
 	Status string `json:"status"`
+}
+
+// WebBootstrapParams is intentionally empty. The daemon binds the minted
+// one-time grant to its one current owner-local web listener.
+type WebBootstrapParams struct{}
+
+// WebBootstrapResult contains a short-lived URL whose fragment is never sent
+// in an HTTP request. The browser exchanges it once for an owner session.
+type WebBootstrapResult struct {
+	Schema    string `json:"schema"`
+	Type      string `json:"type"`
+	URL       string `json:"url"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 type DatabaseStatusResult struct {

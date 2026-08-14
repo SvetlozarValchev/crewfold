@@ -12,8 +12,9 @@ import (
 )
 
 // operatorRequestParamContracts is the executable current-contract registry
-// for every request the operator TUI can issue. Validation runs on raw JSON so
-// omitted fields, explicit nulls, and explicit zero values remain distinct.
+// for every strict operator, recovery, and workbench request. Validation runs
+// on raw JSON so omitted fields, explicit nulls, and explicit zero values remain
+// distinct.
 var operatorRequestParamContracts = map[string]string{
 	localapi.MethodWorkspaceShow:        "local/v1/workspace-show.params.schema.json",
 	localapi.MethodProjectShow:          "local/v1/project-show.params.schema.json",
@@ -44,6 +45,7 @@ var operatorRequestParamContracts = map[string]string{
 	localapi.MethodApprovalDeny:         "local/v1/approval-decision.params.schema.json",
 	localapi.MethodSystemDoctorFull:     "local/v1/system-doctor-full.params.schema.json",
 	localapi.MethodBackupCreate:         "local/v1/backup-create.params.schema.json",
+	localapi.MethodWebBootstrap:         "local/v1/web-bootstrap.params.schema.json",
 }
 
 func validateOperatorRequestParams(request localapi.Request) error {

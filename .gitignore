@@ -2,7 +2,6 @@
 /bin/
 /dist/
 /coverage/
-/web/dist/
 /.tools/
 
 # Go
@@ -12,6 +11,7 @@
 # JavaScript tooling used by the future web console and SDK
 node_modules/
 .pnpm-store/
+*.tsbuildinfo
 
 # Local Crewfold runtime state
 .crewfold/runtime/

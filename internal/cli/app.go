@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"crewfold/internal/appdirs"
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/daemon"
 	"crewfold/internal/domain"
@@ -21,6 +22,7 @@ import (
 	"crewfold/internal/loadtest"
 	"crewfold/internal/localapi"
 	"crewfold/internal/recovery"
+	"crewfold/internal/service"
 	"crewfold/internal/tui"
 )
 
@@ -58,6 +60,9 @@ type App struct {
 	restoreBackup   func(context.Context, string, string) (recovery.PendingRestore, error)
 	activateBackup  func(context.Context, string, bool) (recovery.ActivatedRestore, error)
 	inspectRepair   func(context.Context, string) (recovery.RepairInspection, error)
+	resolveAppDirs  func() (appdirs.Paths, error)
+	runService      service.Runner
+	openURL         func(context.Context, string) error
 }
 
 type daemonClient interface {
@@ -68,6 +73,7 @@ type daemonClient interface {
 	DatabaseStatus(context.Context) (localapi.DatabaseStatusResult, error)
 	SystemDoctorFull(context.Context) (localapi.FullDoctorResult, error)
 	BackupCreate(context.Context, localapi.BackupCreateParams) (localapi.BackupCreateResult, error)
+	WebBootstrap(context.Context) (localapi.WebBootstrapResult, error)
 	KnowledgeIndexStatus(context.Context, string) (localapi.KnowledgeIndexStatusResult, error)
 	WorkspaceInit(context.Context, string, string) (localapi.WorkspaceInitResult, error)
 	WorkspaceShow(context.Context, string) (localapi.WorkspaceShowResult, error)
@@ -196,6 +202,16 @@ func New(stdout, stderr io.Writer, info buildinfo.Info) *App {
 		restoreBackup:   recovery.RestorePending,
 		activateBackup:  recovery.Activate,
 		inspectRepair:   recovery.InspectOffline,
+		resolveAppDirs:  appdirs.Default,
+		runService: func(ctx context.Context, name string, arguments ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, arguments...).CombinedOutput()
+		},
+		openURL: func(ctx context.Context, url string) error {
+			command := exec.CommandContext(ctx, "xdg-open", url)
+			command.Stdout = io.Discard
+			command.Stderr = io.Discard
+			return command.Run()
+		},
 		newClient: func(socketPath string) daemonClient {
 			return localapi.NewClient(socketPath)
 		},
@@ -237,6 +253,10 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runTest(ctx, mode, args[1:])
 	case "daemon":
 		return a.runDaemonCommand(ctx, mode, args[1:])
+	case "service":
+		return a.runServiceCommand(ctx, mode, args[1:])
+	case "open":
+		return a.runOpen(ctx, mode, args[1:])
 	case "status":
 		return a.runStatus(ctx, mode, args[1:])
 	case "workspace":
@@ -756,7 +776,7 @@ func (a *App) runDaemonForeground(ctx context.Context, mode outputMode, args []s
 		fmt.Fprint(a.stdout, daemonRunHelp)
 		return ExitOK
 	}
-	options, failure := parseOptions(args, "data-dir", "socket", "herdr-binary", "herdr-session", "codex-binary", "codex-home", "codex-sandbox", "codex-external-sandbox", "codex-tool-network-access", "claude-binary", "claude-config-dir", "claude-max-budget-usd", "claude-external-sandbox")
+	options, failure := parseOptions(args, "data-dir", "socket", "web-address", "herdr-binary", "herdr-session", "codex-binary", "codex-home", "codex-sandbox", "codex-external-sandbox", "codex-tool-network-access", "claude-binary", "claude-config-dir", "claude-max-budget-usd", "claude-external-sandbox")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -808,6 +828,7 @@ func (a *App) runDaemonForeground(ctx context.Context, mode outputMode, args []s
 	err = a.runDaemon(ctx, daemon.Config{
 		DataDir:                   dataDir,
 		SocketPath:                socketPath,
+		WebAddress:                options["web-address"],
 		Version:                   a.info,
 		Logger:                    logger,
 		HerdrExecutable:           options["herdr-binary"],
@@ -938,6 +959,10 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, testHelp)
 	case "daemon":
 		fmt.Fprint(a.stdout, daemonHelp)
+	case "service":
+		fmt.Fprint(a.stdout, serviceHelp)
+	case "open":
+		fmt.Fprint(a.stdout, openHelp)
 	case "status":
 		fmt.Fprint(a.stdout, statusHelp)
 	case "workspace":
@@ -1664,6 +1689,8 @@ Commands:
   test           Run the isolated provider-free personal-scale profile
   daemon run     Run the local daemon in the foreground
   daemon stop    Ask a running daemon to stop cleanly
+  service        Install and control the owner-local background service
+  open           Open the authenticated local web workbench
   status         Query daemon health through its local socket
   workspace      Initialize or inspect a durable workspace
   project        Register or inspect a project and its source locations
@@ -1692,7 +1719,7 @@ Commands:
   outcome        Record and decide explicit deliverable assessments
   checkpoint     Freeze immutable owner event cursors
   briefing       Inspect bounded evidence-backed management projections
-	ui             Operate the crew from one terminal dashboard
+  ui             Operate the crew from one terminal dashboard
   events         Inspect the durable event journal
   help [command] Show command help
 
@@ -1755,22 +1782,41 @@ func runAttachedProcess(ctx context.Context, attachment localapi.RunAttachResult
 }
 
 const daemonHelp = `Usage:
-  crewfold daemon run --data-dir <path> --socket <path>
+  crewfold daemon run --data-dir <path> --socket <path> [--web-address 127.0.0.1:<port>]
   crewfold daemon stop --socket <path>
 
 Run the local daemon in the foreground or ask it to stop through the local API.
-There is no background-service installer. The selected data directory contains the
-SQLite coordination database.
+Use 'crewfold service install' for ordinary owner-local background operation.
+The selected data directory contains the SQLite coordination database.
 `
 
 const daemonRunHelp = `Usage:
-  crewfold daemon run --data-dir <path> --socket <path> [provider/runtime options] [--output text|json]
+  crewfold daemon run --data-dir <path> --socket <path> [--web-address 127.0.0.1:<port>] [provider/runtime options] [--output text|json]
 
 Run the local daemon in the foreground. Logs are newline-delimited JSON on stderr.
 The socket is owner-only and the data directory is locked for this process. Codex
 tool network access defaults to false and does not change workspace filesystem
 isolation. Claude defaults to a 1.00 USD per-run ceiling and a fail-closed native
 sandbox; use --claude-external-sandbox true only inside an independent boundary.
+`
+
+const serviceHelp = `Usage:
+  crewfold service install [--output text|json]
+  crewfold service start [--output text|json]
+  crewfold service stop [--output text|json]
+  crewfold service status [--output text|json]
+
+Install or control the private Linux systemd user service using Crewfold's XDG
+state, configuration, and runtime defaults. Install enables and starts the unit.
+No workspace, repository, provider call, model charge, or credential is created.
+`
+
+const openHelp = `Usage:
+  crewfold open [--socket <path>] [--output text|json]
+
+Request a single-use owner bootstrap through the private local API and open the
+embedded loopback workbench in the desktop browser. The grant is passed only as
+an argument to xdg-open and is never printed or logged.
 `
 
 const daemonStopHelp = `Usage:

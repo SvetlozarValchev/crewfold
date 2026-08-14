@@ -21,7 +21,11 @@ than forcing the core to understand every terminal UI.
 ## Status
 
 Crewfold has completed M20 personal-beta hardening. M21, the owner-local web
-workbench, is designed but implementation has not started; the OSS release
+workbench, is underway: its first committed implementation slice supplies private
+XDG service defaults, a systemd user-service lifecycle, `crewfold open`, embedded
+React assets, a loopback-only HTTP boundary, one-time Unix-socket bootstrap, and
+live authenticated daemon status. Repository onboarding, conversational execution,
+work graphs, and agent inspection remain the next M21 slices; the OSS release
 candidate follows as M22. The current binary provides a
 foreground local daemon, an owner-only Unix socket, and durable workspace,
 project, repository, checkout, agent, objective, task, dependency, assignment,
@@ -138,9 +142,11 @@ machine. Only a resource-bounded subset runs concurrently.
 
 ```mermaid
 flowchart LR
-    Human[Human owner] --> CLI[CLI / TUI]
+    Human[Human owner] --> Web[Local web workbench]
+    Human --> CLI[CLI / TUI]
     Agents[Codex, Claude Code, other agents] --> MCP[Crewfold MCP server]
-    CLI --> Daemon[Crewfold daemon]
+    Web --> Daemon[Crewfold daemon]
+    CLI --> Daemon
     MCP --> Daemon
     Daemon --> Store[(SQLite)]
     Daemon --> Scheduler[Scheduler and supervisor]
@@ -184,7 +190,7 @@ session formats.
 | `protocol/` | Versioned API, event, and adapter schemas |
 | `integrations/herdr/` | Preferred interactive runtime driver |
 | `integrations/providers/` | Provider adapter contracts and implementations |
-| `web/` | M21 local-workbench design and interactive product mock |
+| `web/` | M21 React workbench, embedded production assets, and interactive product mock |
 | `docs/` | Product, architecture, protocol, and operating decisions |
 
 Start with the [documentation map](docs/README.md), then read the

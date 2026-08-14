@@ -18,9 +18,12 @@ gated live conformance call is pending. Owner-granted manager proposals,
 immutable launch profiles, deterministic supervisor passes, and exact approval
 decisions are also implemented. Owner-created deliverable commitments,
 owner-reviewed outcome assessments, immutable checkpoints, and bounded structured
-management briefings are implemented. The Go-native operator dashboard is
-launched with `crewfold ui`; ordinary commands continue to support text and JSON
-output. M20 freezes full health, quiescent backup, source-independent
+management briefings are implemented. The first M21 workbench slice adds private
+XDG defaults, `crewfold service install|start|stop|status`, and `crewfold open`.
+The embedded browser shell proves authenticated live daemon status; onboarding and
+work mutation remain pending. The Go-native operator dashboard is launched with
+`crewfold ui`; ordinary commands continue to support text and JSON output. M20
+freezes full health, quiescent backup, source-independent
 verify/restore, explicit restore activation, offline repair inspection, and the
 provider-free personal-100 load surface documented below. Teams and
 broader/model-assisted knowledge curation remain outside the current product
@@ -36,6 +39,31 @@ The daemon, workspace, source, agent/task/run, context, message, claim, meeting,
 canonical-knowledge, manager, supervisor, approval, outcome, checkpoint, and
 briefing examples below are implemented.
 
+## Local service and web workbench
+
+```sh
+crewfold service install
+crewfold open
+crewfold service status
+crewfold service stop
+crewfold service start
+```
+
+`service install` resolves the current owner's XDG state, configuration, and
+runtime roots, writes a private systemd user unit, reloads the user manager, and
+enables and starts Crewfold. The defaults are
+`${XDG_STATE_HOME:-$HOME/.local/state}/crewfold` for data and
+`${XDG_RUNTIME_DIR}/crewfold/crewfold.sock` when `XDG_RUNTIME_DIR` exists, otherwise
+`<state>/runtime/crewfold.sock`. Installation creates no workspace, project,
+provider call, model charge, or credential.
+
+`crewfold open` contacts that private socket, asks the daemon for one short-lived
+single-use browser grant, passes the fragment-bearing URL directly to `xdg-open`,
+and never prints or logs the grant. The loopback page exchanges it for an
+HttpOnly/SameSite-Strict session and displays live daemon version/protocol/process
+state. This first shell has no onboarding or command execution yet and labels that
+boundary explicitly.
+
 ## Operator dashboard
 
 ```sh
@@ -44,7 +72,7 @@ crewfold ui --socket /path/to/crewfold.sock --workspace personal \
   --project world-engine --color never
 ```
 
-The full-screen dashboard is the primary interactive control panel. Its exact
+The full-screen dashboard is the keyboard/SSH operational fallback. Its exact
 screens are Overview, Briefing, Work, Decisions, Checks, Coordination, and
 Activity. It reads only the canonical owner-local API, follows its applied event
 cursor across reconnects, retains visibly stale state while the daemon is
@@ -87,9 +115,11 @@ crewfold workspace show personal --socket /path/to/crewfold.sock
 crewfold events list --workspace personal --socket /path/to/crewfold.sock --after 0
 ```
 
-The current interface retains explicit `--data-dir`/`--socket` paths. Background
-start, default path discovery, and watching are later capabilities. If
-`workspace init` omits an
+The foreground interface retains explicit `--data-dir`/`--socket` paths for
+development, diagnosis, and isolated testing. Ordinary desktop operation uses the
+service defaults above. `daemon run` also accepts an exact
+`--web-address 127.0.0.1:<port>`; omission selects an ephemeral IPv4-loopback port
+discoverable only through `web.bootstrap`. If `workspace init` omits an
 idempotency key, the client generates a unique one; callers that may retry should
 supply a stable key.
 

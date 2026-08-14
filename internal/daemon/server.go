@@ -35,6 +35,8 @@ const (
 type Config struct {
 	DataDir                   string
 	SocketPath                string
+	WebAddress                string
+	DisableWeb                bool
 	Version                   buildinfo.Info
 	Logger                    *slog.Logger
 	StoreOptions              store.Options
@@ -103,6 +105,7 @@ type server struct {
 	leaseReconcileCtx         context.Context
 	leaseReconcileCancel      context.CancelFunc
 	messageWakeSignal         chan struct{}
+	web                       *workbenchServer
 }
 
 // Run owns the daemon lifecycle until the context is cancelled or system.stop is
@@ -245,6 +248,15 @@ func Run(ctx context.Context, config Config) error {
 	}
 	defer leaseReconcileCancel()
 	defer instance.cleanupSocket()
+	if !resolved.DisableWeb {
+		workbench, webErr := newWorkbenchServer(resolved.WebAddress, instance)
+		if webErr != nil {
+			return webErr
+		}
+		instance.web = workbench
+		defer workbench.close()
+		go workbench.serve()
+	}
 	instance.startRunWorker()
 	instance.startCheckWorker()
 	instance.startCheckWatcher()
@@ -632,6 +644,8 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 			Type:   "stop_acknowledgement",
 			Status: "stopping",
 		}), true
+	case localapi.MethodWebBootstrap:
+		return s.handleWebBootstrap(request), false
 	case localapi.MethodDatabaseStatus:
 		return s.handleDatabaseStatus(request), false
 	case localapi.MethodSystemDoctorFull:
