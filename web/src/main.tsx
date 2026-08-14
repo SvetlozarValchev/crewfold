@@ -1,5 +1,7 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
 import {
   Activity, AlertCircle, BookOpenText, Bot, Boxes, Check, CheckCircle2, ChevronDown, ChevronRight,
   CircleDot, ClipboardCheck, Clock3, Code2, Command, Database, FileCheck2, GitBranch,
@@ -8,6 +10,7 @@ import {
   Search, Send, Settings, ShieldCheck, Sparkles, Square, Stethoscope, TerminalSquare,
   Users, Workflow, X, XCircle,
 } from "lucide-react";
+import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
 type ConnectionState = "connecting" | "connected" | "unauthorized" | "failed";
@@ -169,15 +172,6 @@ async function loadOwnerConversation(apiBase: string, workspace: string, project
   if (!response.ok) throw new Error(`conversation read failed (${response.status})`);
   const value = (await response.json()) as { turns?: OwnerTurnDetail[] };
   return value.turns ?? [];
-}
-
-function safeTerminalText(value: string): string {
-  return [...value].map((char) => {
-    const code = char.codePointAt(0) ?? 0;
-    if (char === "\n" || char === "\t") return char;
-    if (code < 0x20 || code >= 0x7f && code <= 0x9f || code === 0x2028 || code === 0x2029 || code >= 0x202a && code <= 0x202e || code >= 0x2066 && code <= 0x2069) return "�";
-    return char;
-  }).join("");
 }
 
 function bootstrapFromFragment(): string {
@@ -493,9 +487,68 @@ function HealthView({ apiBase, csrf, status }: { apiBase: string; csrf: string; 
 
 function LiveTerminal({ apiBase, csrf, workspace, run, close }: { apiBase: string; csrf: string; workspace: string; run: Run; close: () => void }) {
   const [state, setState] = useState("connecting");
-  const [output, setOutput] = useState("");
   const [input, setInput] = useState("");
+  const [followOutput, setFollowOutput] = useState(true);
+  const [unseenOutput, setUnseenOutput] = useState(false);
+  const host = useRef<HTMLDivElement | null>(null);
   const socket = useRef<WebSocket | null>(null);
+  const terminal = useRef<Terminal | null>(null);
+  const fit = useRef<FitAddon | null>(null);
+  const follow = useRef(true);
+  const decoder = useRef(new TextDecoder());
+
+  const sendInput = useCallback((value: string) => {
+    if (socket.current?.readyState !== WebSocket.OPEN || !value) return;
+    socket.current.send(JSON.stringify({ type: "input", data: value }));
+  }, []);
+  const sendSize = useCallback(() => {
+    if (socket.current?.readyState !== WebSocket.OPEN || !terminal.current) return;
+    socket.current.send(JSON.stringify({ type: "resize", cols: terminal.current.cols, rows: terminal.current.rows }));
+  }, []);
+
+  useEffect(() => {
+    if (!host.current) return;
+    const nextTerminal = new Terminal({
+      allowProposedApi: false,
+      cursorBlink: true,
+      cursorStyle: "bar",
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      fontSize: 11,
+      lineHeight: 1.2,
+      minimumContrastRatio: 4.5,
+      scrollback: 2000,
+      scrollOnUserInput: true,
+      theme: { background: "#070a0b", foreground: "#d5dcda", cursor: "#79d9d0", cursorAccent: "#070a0b", selectionBackground: "#28433f", black: "#070a0b", brightBlack: "#677472", red: "#f07d72", brightRed: "#ff9a91", green: "#a5c76b", brightGreen: "#c2e48a", yellow: "#d7b86e", brightYellow: "#efd08a", blue: "#79a8d9", brightBlue: "#9bc4ee", magenta: "#b99ad9", brightMagenta: "#d3b4ef", cyan: "#79d9d0", brightCyan: "#a0eee6", white: "#d5dcda", brightWhite: "#f4f7f6" },
+    });
+    const fitAddon = new FitAddon();
+    nextTerminal.loadAddon(fitAddon);
+    nextTerminal.open(host.current);
+    terminal.current = nextTerminal;
+    fit.current = fitAddon;
+    const fitToPanel = () => {
+      if (!host.current || host.current.clientWidth === 0 || host.current.clientHeight === 0) return;
+      try { fitAddon.fit(); sendSize(); } catch { /* the inspector is closing */ }
+    };
+    fitToPanel();
+    const resizeObserver = new ResizeObserver(fitToPanel);
+    resizeObserver.observe(host.current);
+    const inputSubscription = nextTerminal.onData(sendInput);
+    const scrollSubscription = nextTerminal.onScroll((position) => {
+      const atBottom = position >= nextTerminal.buffer.active.baseY;
+      follow.current = atBottom;
+      setFollowOutput(atBottom);
+      if (atBottom) setUnseenOutput(false);
+    });
+    return () => {
+      resizeObserver.disconnect();
+      inputSubscription.dispose();
+      scrollSubscription.dispose();
+      terminal.current = null;
+      fit.current = null;
+      nextTerminal.dispose();
+    };
+  }, [sendInput, sendSize]);
+
   useEffect(() => {
     let active = true;
     const connect = async () => {
@@ -507,15 +560,12 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close }: { apiBase: strin
         const next = new WebSocket(address, grant.protocol);
         next.binaryType = "arraybuffer";
         socket.current = next;
-        next.onopen = () => { if (!active) return; setState("connected"); next.send(JSON.stringify({ type: "resize", cols: 100, rows: 32 })); };
+        next.onopen = () => { if (!active) return; setState("connected"); try { fit.current?.fit(); } catch { /* panel closed */ } sendSize(); };
         next.onmessage = (event) => {
           if (!active) return;
-          const raw = event.data instanceof ArrayBuffer ? new TextDecoder().decode(event.data) : String(event.data);
-          const safe = safeTerminalText(raw);
-          setOutput((current) => {
-            const combined = current + safe;
-            return combined.length > 65536 ? "[earlier terminal display omitted]\n" + combined.slice(-65536) : combined;
-          });
+          const raw = event.data instanceof ArrayBuffer ? decoder.current.decode(event.data, { stream: true }) : String(event.data);
+          if (!follow.current) setUnseenOutput(true);
+          terminal.current?.write(raw, () => { if (follow.current) terminal.current?.scrollToBottom(); });
         };
         next.onerror = () => { if (active) setState("unavailable"); };
         next.onclose = () => { if (active) setState("closed"); };
@@ -524,10 +574,16 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close }: { apiBase: strin
       }
     };
     void connect();
-    return () => { active = false; socket.current?.close(1000, "inspector closed"); socket.current = null; };
-  }, [apiBase, csrf, run.id, workspace]);
-  const send = (value: string) => { if (socket.current?.readyState !== WebSocket.OPEN || !value) return; socket.current.send(JSON.stringify({ type: "input", data: value })); };
-  return <section className="live-terminal" aria-label="Live Herdr terminal"><div className="section-title"><h3>Live Herdr terminal</h3><span><CircleDot size={11} />{state}</span></div><p>Operational bytes are untrusted and display-sanitized. Canonical state remains in the inspector.</p><pre aria-live="polite">{output || "Waiting for terminal output…"}</pre><form onSubmit={(event) => { event.preventDefault(); send(input + "\n"); setInput(""); }}><input aria-label="Terminal input" value={input} maxLength={4095} onChange={(event) => setInput(event.target.value)} placeholder="Send terminal input…" /><button className="secondary-button" disabled={state !== "connected" || !input}><Send size={14} />Send</button><button type="button" className="secondary-button" disabled={state !== "connected"} onClick={() => send("\u0003")}><AlertCircle size={14} />Ctrl-C</button><button type="button" className="secondary-button" onClick={close}><X size={14} />Close</button></form></section>;
+    return () => { active = false; socket.current?.close(1000, "inspector closed"); socket.current = null; decoder.current = new TextDecoder(); };
+  }, [apiBase, csrf, run.id, sendSize, workspace]);
+
+  const toggleFollow = () => {
+    const next = !follow.current;
+    follow.current = next;
+    setFollowOutput(next);
+    if (next) { terminal.current?.scrollToBottom(); setUnseenOutput(false); }
+  };
+  return <section className="live-terminal" aria-label="Live Herdr terminal"><div className="section-title"><h3>Live Herdr terminal</h3><span><CircleDot size={11} />{state}</span></div><p>Real terminal rendering with bounded local scrollback. Canonical state remains in the inspector.</p><div className="terminal-toolbar"><span>Click the terminal to type · wheel to inspect scrollback</span><button type="button" className={followOutput ? "follow-active" : ""} onClick={toggleFollow}><ChevronDown size={13} />{unseenOutput ? "New output" : followOutput ? "Following" : "Follow output"}</button></div><div ref={host} className="terminal-canvas" role="application" aria-label="Interactive Herdr terminal output" /><form onSubmit={(event) => { event.preventDefault(); sendInput(input + "\r"); setInput(""); }}><input aria-label="Terminal input" value={input} maxLength={4095} onChange={(event) => setInput(event.target.value)} placeholder="Paste or send terminal input…" /><button className="secondary-button" disabled={state !== "connected" || !input}><Send size={14} />Send</button><button type="button" className="secondary-button" disabled={state !== "connected"} onClick={() => sendInput("\u0003")}><AlertCircle size={14} />Ctrl-C</button><button type="button" className="secondary-button" onClick={close}><X size={14} />Close</button></form></section>;
 }
 
 function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspectRun, mutable }: { data: WorkbenchData; task: TaskDetail | null; run: Run | null; agent: Agent | null; apiBase: string; csrf: string; close: () => void; reload: () => Promise<void>; inspectRun: (run: Run) => void; mutable: boolean }) {

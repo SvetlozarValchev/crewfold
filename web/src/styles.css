@@ -263,10 +263,16 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .changed-paths { display: grid; gap: 4px; }
 .changed-paths code { padding: 5px 7px; overflow: hidden; border-radius: 5px; color: var(--muted); background: var(--panel); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .changed-paths small { color: var(--faint); font-size: 8px; }
-.live-terminal { border: 1px solid rgba(121, 217, 208, .28) !important; border-radius: 9px; background: #070a0b; }
+.live-terminal { overflow: hidden; border: 1px solid rgba(121, 217, 208, .28) !important; border-radius: 9px; background: #070a0b; }
 .live-terminal .section-title span { display: flex; align-items: center; gap: 5px; color: var(--cyan); font-size: 9px; }
 .live-terminal > p { margin: -1px 0 9px !important; color: var(--faint) !important; font-size: 9px !important; }
-.live-terminal pre { min-height: 220px; max-height: 420px; }
+.terminal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; color: var(--faint); font-size: 8px; }
+.terminal-toolbar button { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; min-height: 27px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: var(--panel); font-size: 8px; }
+.terminal-toolbar button.follow-active { border-color: rgba(121, 217, 208, .35); color: var(--cyan); background: rgba(61, 152, 145, .08); }
+.terminal-canvas { width: 100%; height: clamp(260px, 42vh, 430px); min-width: 0; margin-bottom: 8px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: #070a0b; }
+.terminal-canvas .xterm { height: 100%; padding: 8px; box-sizing: border-box; }
+.terminal-canvas .xterm-viewport { overflow-x: hidden !important; scrollbar-width: thin; scrollbar-color: #485351 #0b1011; }
+.terminal-canvas .xterm-screen { max-width: 100%; }
 .live-terminal form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 6px; }
 .live-terminal form input { min-width: 0; height: 34px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); font-size: 10px; }
 .live-terminal form .secondary-button { width: auto; }
@@ -343,6 +349,9 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
   .decision-row .row-actions { width: 100%; justify-content: flex-end; }
   .live-terminal form { grid-template-columns: 1fr 1fr; }
   .live-terminal form input { grid-column: 1 / -1; }
+  .terminal-toolbar { align-items: flex-start; }
+  .terminal-toolbar > span { max-width: 55%; }
+  .terminal-canvas { height: 310px; }
   .panel-heading { display: grid; }
 }
 
