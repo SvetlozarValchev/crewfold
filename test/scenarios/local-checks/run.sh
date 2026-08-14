@@ -43,6 +43,11 @@ cleanup() {
   if [ "$status" -ne 0 ]
   then
     printf 'owner-granted local-check acceptance failed\n' >&2
+    if [ -f "$scenario_root/failed-check.json" ]
+    then
+      printf 'failed-check.json:\n' >&2
+      sed -n '1,20p' "$scenario_root/failed-check.json" >&2
+    fi
     if [ -f "$daemon_log" ]
     then
       tail -n 200 "$daemon_log" >&2

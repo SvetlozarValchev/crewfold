@@ -105,9 +105,9 @@ The scenario asserts that Crewfold:
 - identifies the few remaining risks, unknowns, and owner decisions;
 - drills each material aggregate claim into its durable provenance.
 
-Narrative wording may receive tolerant rendering tests. The structured briefing
-contract, claim identifiers, evidence classifications, and checkpoint diff are
-strictly asserted.
+The structured briefing contract, claim identifiers, evidence classifications,
+and checkpoint diff are strictly asserted. There is no narrative-rendering test
+or alternate briefing representation.
 
 ## Required test fixtures
 
@@ -387,13 +387,21 @@ default so confined Docker installations can bind-mount it; an operator may set
 
 ### Management workload fixture
 
-A provider-free fixture represents enough parallel work that transcript review is
-not a valid acceptance technique. It contains achieved, partial, not-achieved,
-and unknown conclusions plus rejected and superseded assessment revisions;
-material decisions; compatible and breaking changes; fresh and stale checks;
-independent and self-reported evidence; unresolved risk; duplicate tasks; and
-contradictory findings. Stable IDs and event cursors allow briefing and “since
-checkpoint” assertions without model-dependent prose.
+The provider-free `outcome-briefings` scenario creates ten task histories and an
+immutable pre-work commitment for each without a provider transcript. It covers
+accepted achieved and partial judgments, a proposal that remains unaccepted, a
+rejected unknown judgment, an accepted successor that atomically supersedes the
+old current judgment, unresolved risk/unknown state, restart, and an exact project
+checkpoint. Public CLI assertions bound claims/bytes, preserve older current
+diagnoses in the checkpoint view, restrict change-history claims to the exclusive
+lower bound, drill one claim through exact provenance, and prove show/explain emit
+no event.
+
+Store and protocol fixtures add not-achieved conclusions, material decisions,
+compatible and breaking effects, fresh/stale mechanical checks, exact independent
+review provenance, duplicate work, contradictions, omission fairness, and fault
+barriers. Stable IDs and event cursors allow every briefing assertion without
+model-dependent prose.
 
 ### Manager/supervisor authority fixture
 

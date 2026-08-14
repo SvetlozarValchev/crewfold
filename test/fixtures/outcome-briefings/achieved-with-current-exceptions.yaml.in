@@ -1,0 +1,23 @@
+commitment: __COMMITMENT_ID__
+assessment:
+  conclusion: achieved
+  delivered_scope:
+    - Exact owner-reviewed outcome contract
+  unmet_scope: []
+  decision_revision_ids: []
+  evidence:
+    - source_type: handoff
+      source_id: __HANDOFF_ID__
+  effects:
+    - kind: stability
+      direction: positive
+      summary: Deterministic structured claims remain restart-stable
+  deviations: []
+  risks:
+    - severity: medium
+      summary: Current accepted delivery still needs operator-scale validation
+      mitigation: Exercise the M19 operator surface at realistic scale
+  unknowns:
+    - summary: Current accepted delivery has not yet been exercised through the M19 dashboard
+  follow_up_task_ids: []
+  owner_attention: []

@@ -363,15 +363,15 @@ there is no provider steering or background push.
 Builds the management view from structured commitments, outcome assessments,
 decisions, checks, evidence, risks, overlaps, and follow-up work. Its base
 aggregation is deterministic and available even when no manager model or curator
-is running. It supports both an “as of” event cursor and a change view since an
-owner checkpoint.
+is running. Each read captures the current workspace event high-water and may
+apply one exact same-scope owner checkpoint as an exclusive lower bound. The
+public API does not accept a caller-selected historical cursor.
 
 The projector preserves provenance and source authority for every material claim.
-It explicitly marks weak, stale, missing, disputed, or contradictory support. A
-manager model may render or recommend from this projection, but model prose cannot
-alter its facts, silently reconcile conflicts, or become the only representation
-of project state. Session transcripts are optional evidence and are not required
-to build the projection.
+It explicitly marks weak, stale, missing, disputed, or contradictory support.
+The bounded structured projection is the only briefing representation; no model
+or narrative renderer sits on its correctness path. Session transcripts are
+optional evidence and are not required to build the projection.
 
 ### Watchers
 

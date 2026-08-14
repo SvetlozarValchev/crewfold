@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:outcome-assessment-detail:v1",
+  "title": "Crewfold outcome assessment detail v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assessment", "commitment", "delivered_scope", "unmet_scope", "decisions", "evidence", "effects", "deviations", "risks", "unknowns", "follow_up_tasks", "owner_attention"],
+  "properties": {
+    "assessment": {"$ref": "outcome-assessment.schema.json"},
+    "commitment": {"$ref": "deliverable-commitment.schema.json"},
+    "delivered_scope": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 2048}},
+    "unmet_scope": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 2048}},
+    "decisions": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/decision"}},
+    "evidence": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/evidence"}},
+    "effects": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/effect"}},
+    "deviations": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/deviation"}},
+    "risks": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/risk"}},
+    "unknowns": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/unknown"}},
+    "follow_up_tasks": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/follow_up_task"}},
+    "owner_attention": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/owner_attention"}}
+  },
+  "$defs": {
+    "decision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["revision_id", "content_sha256", "event_sequence", "current", "disputed"],
+      "properties": {
+        "revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+        "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "event_sequence": {"type": "integer", "minimum": 1},
+        "current": {"type": "boolean"},
+        "disputed": {"type": "boolean"}
+      }
+    },
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_type", "source_id", "source_revision", "source_sha256", "event_sequence", "class", "effect", "pinned_freshness", "current_freshness", "current", "disputed", "contradictory"],
+      "properties": {
+        "source_type": {"enum": ["handoff", "check_requirement_evidence"]},
+        "source_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "source_revision": {"type": "integer", "minimum": 1},
+        "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "event_sequence": {"type": "integer", "minimum": 1},
+        "class": {"enum": ["agent_self_report", "mechanical_check", "independent_review"]},
+        "effect": {"enum": ["supports", "contradicts", "inconclusive"]},
+        "pinned_freshness": {"enum": ["fresh", "stale", "unknown"]},
+        "current_freshness": {"enum": ["fresh", "stale", "unknown"]},
+        "current": {"type": "boolean"},
+        "disputed": {"type": "boolean"},
+        "contradictory": {"type": "boolean"},
+        "diagnosis": {"type": "string", "maxLength": 2048}
+      },
+      "oneOf": [
+        {"required": ["source_type", "source_id"], "properties": {"source_type": {"const": "handoff"}, "source_id": {"type": "string", "pattern": "^handoff_[0-9a-f]{32}$"}}},
+        {"required": ["source_type", "source_id"], "properties": {"source_type": {"const": "check_requirement_evidence"}, "source_id": {"type": "string", "pattern": "^checkevidence_[0-9a-f]{32}$"}}}
+      ]
+    },
+    "effect": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ordinal", "kind", "direction", "summary"],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 31},
+        "kind": {"enum": ["compatibility", "stability"]},
+        "direction": {"enum": ["positive", "neutral", "negative", "uncertain"]},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 2048}
+      }
+    },
+    "deviation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ordinal", "kind", "summary"],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 31},
+        "kind": {"enum": ["scope_change", "duplicate_work"]},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "related_task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+        "related_task_revision": {"type": "integer", "minimum": 1}
+      },
+      "dependentRequired": {"related_task_id": ["related_task_revision"], "related_task_revision": ["related_task_id"]}
+    },
+    "risk": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ordinal", "severity", "summary"],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 31},
+        "severity": {"enum": ["low", "medium", "high", "critical"]},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "mitigation": {"type": "string", "maxLength": 2048}
+      }
+    },
+    "unknown": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ordinal", "summary"],
+      "properties": {"ordinal": {"type": "integer", "minimum": 0, "maximum": 31}, "summary": {"type": "string", "minLength": 1, "maxLength": 2048}}
+    },
+    "follow_up_task": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ordinal", "task_id", "task_revision", "event_sequence"],
+      "properties": {"ordinal": {"type": "integer", "minimum": 0, "maximum": 31}, "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"}, "task_revision": {"type": "integer", "minimum": 1}, "event_sequence": {"type": "integer", "minimum": 1}}
+    },
+    "owner_attention": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ordinal", "urgency", "action", "reason"],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 31},
+        "urgency": {"enum": ["now", "next", "later"]},
+        "action": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 2048}
+      }
+    }
+  }
+}

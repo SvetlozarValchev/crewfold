@@ -16,9 +16,11 @@ offline-proven Codex provider adapter. The Claude Code adapter, provider doctor,
 and recorded Codex-to-Claude handoff are also implemented; only its separately
 gated live conformance call is pending. Owner-granted manager proposals,
 immutable launch profiles, deterministic supervisor passes, and exact approval
-decisions are also implemented. It supports text and JSON output. Teams,
-broader/model-assisted knowledge curation, management briefings, and the TUI
-remain future contracts.
+decisions are also implemented. Owner-created deliverable commitments,
+owner-reviewed outcome assessments, immutable checkpoints, and bounded structured
+management briefings are implemented. It supports text and JSON output. Teams,
+broader/model-assisted knowledge curation, and the operator TUI remain future
+contracts.
 
 ## Goals
 
@@ -27,8 +29,8 @@ readable output by default and stable structured output with `--output json`.
 Mutations return the durable entity and event cursor they created.
 
 The daemon, workspace, source, agent/task/run, context, message, claim, meeting,
-canonical-knowledge, manager, supervisor, and approval examples below are
-implemented. Outcome/briefing examples remain intended contracts.
+canonical-knowledge, manager, supervisor, approval, outcome, checkpoint, and
+briefing examples below are implemented.
 
 ## Daemon and workspace
 
@@ -887,20 +889,76 @@ merges, deploys, or chooses integration order.
 ## Outcomes and management briefings
 
 ```sh
-crewfold outcome propose --task TASK_A outcome.yaml
-crewfold outcome accept OUTCOME_REVISION
-crewfold checkpoint create --project world-engine
-crewfold briefing show --project world-engine --since CHECKPOINT_ID
-crewfold briefing explain BRIEFING_CLAIM_ID
+crewfold outcome commitment add release-ready --task TASK_A \
+  --title "Release-ready contact cache" \
+  --criterion "deterministic contacts pass" \
+  --criterion "compatibility effects are recorded" \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold outcome commitment show OUTCOME_COMMITMENT_ID \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold outcome commitment list --task TASK_A \
+  --workspace personal --socket /path/to/crewfold.sock
+
+crewfold outcome propose --task TASK_A outcome.yaml \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold outcome show OUTCOME_ASSESSMENT_ID \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold outcome list --task TASK_A \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold outcome accept OUTCOME_ASSESSMENT_ID --expected-state-revision 1 \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold outcome reject OUTCOME_ASSESSMENT_ID --expected-state-revision 1 \
+  --workspace personal --socket /path/to/crewfold.sock
+
+crewfold checkpoint create --project world-engine \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold checkpoint show CHECKPOINT_ID \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold checkpoint list --project world-engine \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold briefing show --project world-engine --since CHECKPOINT_ID \
+  --workspace personal --socket /path/to/crewfold.sock
+crewfold briefing explain BRIEFING_CLAIM_ID --briefing BRIEFING_ID \
+  --workspace personal --socket /path/to/crewfold.sock
 ```
 
-An outcome assessment has a review state separate from its conclusion, so an
-authorized reviewer can accept that a deliverable is only partial or not achieved.
+The commitment is an immutable owner promise bound to one exact task and must
+exist before its assessment. `outcome propose` accepts one UTF-8 JSON or YAML
+document, bounded to 64 KiB, with exactly this wrapper:
+
+```yaml
+commitment: outcommit_0123456789abcdef0123456789abcdef
+assessment:
+  conclusion: partial
+  delivered_scope: ["deterministic contact ordering"]
+  unmet_scope: ["operator dashboard"]
+  decision_revision_ids: []
+  evidence: []
+  effects: []
+  deviations: []
+  risks: []
+  unknowns: []
+  follow_up_task_ids: []
+  owner_attention: []
+```
+
+The required `--task` is transport authority input and is not duplicated in the
+document. The daemon resolves the named commitment and rejects a task mismatch.
+All assessment arrays are required, including when empty. Evidence input may
+refer only to a `handoff` or `check_requirement_evidence`; Crewfold derives its
+class, freshness, strength, and current truth.
+
+An outcome assessment has a review state separate from its conclusion, so the
+local owner can accept that a deliverable is partial, not achieved, or unknown.
+Accepting a successor atomically supersedes the prior current accepted assessment;
+rejecting a proposal leaves the current accepted assessment unchanged.
 `briefing show` derives a bounded view of commitments, accepted delivery,
 decisions, verification, compatibility/stability effects, risks, unknowns, and
-owner actions. `briefing explain` follows a material claim to its durable source
-records and event cursor. Neither command requires provider transcripts or an
-optional model-rendered narrative.
+owner actions at the current captured workspace high-water. Its optional exact
+checkpoint is an exclusive lower bound; callers cannot select a historical
+cursor. `briefing explain` follows a material claim within the exact briefing to
+its durable source records and event cursor. Briefing reads emit no event and do
+not require provider transcripts.
 
 ## Output and scripting rules
 

@@ -3,7 +3,9 @@
 Status: implemented run-scoped briefing, reporting, artifact, durable mailbox,
 canonical-knowledge proposal, contradiction report, live-context
 fetch/acknowledgement, owner-granted manager-proposal tools, and the current
-check-watch surface. Claims, meetings, and outcome tools remain planned.
+check-watch surface. Claims and meetings remain outside this MCP surface.
+Outcome commitments, assessments, checkpoints, and management briefings are
+implemented only on the owner-local CLI/API and deliberately have no MCP tool.
 
 ## Transport and authentication
 
@@ -478,9 +480,9 @@ tool results with `isError: true` and the same structured body.
 ## Deferred tools and resources
 
 Claims, meetings, outcome assessments, and project briefings are deliberately
-absent. Their future URIs and tools will use the same scope,
-idempotency, audit, and domain-authority rules. Knowledge governance remains an
-owner-only local API rather than a deferred agent tool. Manager proposal
+absent. Outcome commitments, assessments, checkpoints, and management briefings
+are owner-local operations and do not have agent or run-scoped MCP variants.
+Knowledge governance remains an owner-only local API. Manager proposal
 acceptance, launch-profile/grant mutation, supervisor policy/action control, and
 approval decisions likewise remain owner-only local API operations. Check
 definition/requirement/grant/route/policy mutation, repair acceptance, and

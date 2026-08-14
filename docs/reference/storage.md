@@ -659,6 +659,59 @@ decision/effect. Each database bundle is wholly absent or wholly committed.
 Content-addressed blob preparation may leave an unauthoritative orphan but cannot
 produce a valid result without its exact typed metadata.
 
+## Owner outcomes, checkpoints, and briefing projection
+
+`deliverable_commitments` stores one immutable owner promise at an exact
+workspace/project/objective/task scope. Its ordered acceptance criteria and
+canonical content hash are frozen at creation; `(task_id, commitment_key)` is
+unique. `outcome_commitment_receipts` binds every commitment to the one durable
+creation event.
+
+`outcome_assessments` is the revision stream for one commitment. Partial unique
+indexes permit at most one `proposed` row and one current `accepted` row per
+commitment. The only mutable columns are the sealed governance transition from
+proposed to accepted/rejected and the sealed accepted-to-superseded transition.
+All content and scope columns remain immutable. A successor acceptance updates
+the old current row, the successor, governance receipts, acceptance basis,
+events, and the idempotency response in one immediate transaction; rejection
+does not alter the current accepted row.
+
+Typed bounded child tables retain ordered decision revisions, evidence sources,
+compatibility/stability effects, deviations, risks, unknowns, follow-up tasks,
+and owner attention. Caller evidence is constrained to exact handoff or check-
+requirement-evidence records. The Store derives and freezes source revision,
+hash, event sequence, evidence class/effect, and pinned freshness; current
+freshness and dispute diagnoses remain read-time derived facts. Submission,
+governance, and acceptance-basis receipts make event and authority provenance
+exact.
+
+`owner_checkpoints` stores an immutable task, objective, project, or workspace
+scope with its exact event sequence, creation time, and `local-owner` identity.
+There is no checkpoint lifecycle column.
+
+`outcome_projector_state` is the per-workspace restart cursor. The projector
+reads the closed event union and advances this cursor in transactions covering at
+most 1000 events. Outcome assessment commits and briefing materialization are
+separate transactions from those cursor pages. An unknown event fails closed and
+records the diagnostic without interpreting the payload. `management_briefings`
+stores the exact scope, captured current high-water, optional checkpoint lower
+bound, evaluation time, caught-up diagnosis, canonical content hash, and byte
+size. Briefing rows contain at most 64 KiB of canonical JSON.
+
+`management_briefing_claims` stores at most 128 whole ordered claims. Every
+`claim_id` is `bclaim_` plus the lowercase SHA-256 of canonical scope, semantic
+kind, exact ordered sources, and status. `management_briefing_claim_sources`
+stores the ordered exact entity revisions, hashes, and event sequences used by
+each claim. Omission counts remain inside canonical briefing content and are
+aggregated by the seven closed sections and `claim_limit|byte_limit` reason.
+Reads and explanations append no event.
+
+Outcome writes are protected by a dedicated Store mutation seal and current-
+schema triggers reject direct inserts, illegal transitions, child ordinal gaps,
+scope/provenance mismatches, updates to immutable records, and deletes. The
+projector uses a sealed Store-only write path for derived projection state. The
+seal does not extend caller or agent authority.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:

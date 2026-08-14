@@ -12,7 +12,9 @@ context refresh and inspection. M16 adds owner-granted manager invocation and
 proposal decisions, exact launch profiles, deterministic supervision, and an
 owner approval queue. M17 retains protocol v1 and adds owner check-definition,
 criterion, exact grant/route/policy, execution/inspection/watch, and repair-
-decision methods.
+decision methods. M18 retains the same protocol version and adds only the
+owner-local commitment, outcome-assessment, checkpoint, and structured briefing
+methods documented below.
 
 ## Transport
 
@@ -1010,6 +1012,91 @@ check_repair_denied
 No check result, watch pass, notification, or repair proposal invokes Git commit,
 push, merge, deployment, task completion, policy acceptance, or integration-order
 selection.
+
+## M18 outcome and briefing methods
+
+The M18 protocol is one current owner-local surface. Unknown fields are invalid,
+mutations require idempotency keys, and no request accepts an actor, role, agent,
+MCP capability, evidence class, freshness label, verification strength, or
+briefing rendering option.
+
+Commitment methods are:
+
+```text
+outcome.commitment.create
+outcome.commitment.show
+outcome.commitment.list
+```
+
+Create accepts `workspace`, exact `task`, owner-visible `key`, `title`, optional
+`description`, one to 32 ordered `acceptance_criteria`, and `idempotency_key`.
+The task, objective, and project scope are resolved from the exact current task.
+The immutable commitment must exist before any assessment that cites it. Show
+accepts only `workspace` and `commitment`; list accepts workspace plus bounded
+project, objective, task, and limit filters.
+
+Assessment methods are:
+
+```text
+outcome.assessment.propose
+outcome.assessment.show
+outcome.assessment.list
+outcome.assessment.accept
+outcome.assessment.reject
+```
+
+Propose requires `workspace`, exact `task`, exact `commitment`, structured
+`assessment`, and `idempotency_key`; `supersedes_outcome` is present only for a
+successor to the exact current accepted assessment. The Store rejects a task that
+does not match the commitment. Assessment input has a closed conclusion
+`achieved|partial|not_achieved|unknown` and required ordered arrays for delivered
+scope, unmet scope, exact decision revision IDs, evidence, effects, deviations,
+risks, unknowns, follow-up tasks, and owner attention. Caller evidence source type
+is closed to `handoff|check_requirement_evidence`. The Store resolves each source
+and derives class, freshness, strength, dispute state, and current truth.
+
+Show accepts only workspace and assessment ID. List accepts bounded project,
+objective, task, commitment, review-state, conclusion, and limit filters. Accept
+and reject require the exact assessment, `expected_state_revision`, optional
+bounded `decision_note`, and an idempotency key. A successful successor acceptance
+atomically marks the old current assessment `superseded` and the successor
+`accepted`. Rejection leaves the current accepted assessment unchanged.
+
+Checkpoint methods are:
+
+```text
+checkpoint.create
+checkpoint.show
+checkpoint.list
+```
+
+Create freezes one exact `task|objective|project|workspace` scope, current event
+sequence, timestamp, and local-owner identity. Show accepts only workspace and
+checkpoint ID. List accepts one exact scope and a bounded limit. Checkpoints are
+immutable and have no lifecycle mutation.
+
+Briefing methods are:
+
+```text
+briefing.show
+briefing.explain
+```
+
+Show accepts `workspace`, exact `scope_type`, exact `scope_identifier`, and an
+optional same-scope `since_checkpoint`. It always captures the current workspace
+high-water; the checkpoint cursor is an exclusive lower bound. There is no
+caller-selected historical event cursor. A result contains at most 128 whole
+claims and 64 KiB of canonical JSON, plus deterministic omission counts for each
+closed section and `claim_limit|byte_limit` reason. Every
+claim ID is `bclaim_` followed by 64 lowercase SHA-256 hexadecimal characters and
+has exact ordered provenance. Explain accepts workspace, the exact briefing ID,
+and one claim ID from that briefing, returning the structured claim, provenance,
+and current diagnoses. Neither read appends an event.
+
+Published parameters and result schemas are the closed files under
+`protocol/schemas/local/v1/`; reusable domain records are under
+`protocol/schemas/domain/v1/`. There is no outcome MCP method, checkpoint archive
+method, or alternate briefing representation.
 
 ### `coordination.status`
 

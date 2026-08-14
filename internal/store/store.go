@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,8 @@ type Store struct {
 	restoreActive              *atomic.Bool
 	supervisorActionSealActive *atomic.Bool
 	checkMutationSealActive    *atomic.Bool
+	outcomeMutationSealActive  *atomic.Bool
+	outcomeMutationMu          sync.Mutex
 }
 
 func Open(ctx context.Context, dataDir string, options Options) (*Store, error) {
@@ -44,6 +47,7 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 	restoreActive := new(atomic.Bool)
 	supervisorActionSealActive := new(atomic.Bool)
 	checkMutationSealActive := new(atomic.Bool)
+	outcomeMutationSealActive := new(atomic.Bool)
 	database, err := driver.Open(dsn, func(connection *sqlite3.Conn) error {
 		if err := registerSQLiteExtensions(connection); err != nil {
 			return err
@@ -58,6 +62,54 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 					return
 				}
 				functionContext.ResultInt(0)
+			}); err != nil {
+			return err
+		}
+		if err := connection.CreateFunction("crewfold_outcome_mutation_seal_active", 0, sqlite3.INNOCUOUS,
+			func(functionContext sqlite3.Context, _ ...sqlite3.Value) {
+				if outcomeMutationSealActive.Load() {
+					functionContext.ResultInt(1)
+					return
+				}
+				functionContext.ResultInt(0)
+			}); err != nil {
+			return err
+		}
+		if err := connection.CreateFunction("crewfold_outcome_event_known", 1, sqlite3.DETERMINISTIC|sqlite3.INNOCUOUS,
+			func(functionContext sqlite3.Context, arguments ...sqlite3.Value) {
+				if len(arguments) == 1 && arguments[0].Type() == sqlite3.TEXT && knownOutcomeProjectorEvent(arguments[0].Text()) {
+					functionContext.ResultInt(1)
+					return
+				}
+				functionContext.ResultInt(0)
+			}); err != nil {
+			return err
+		}
+		if err := connection.CreateFunction("crewfold_outcome_claim_id", 4, sqlite3.DETERMINISTIC|sqlite3.INNOCUOUS,
+			func(functionContext sqlite3.Context, arguments ...sqlite3.Value) {
+				if len(arguments) != 4 || arguments[0].Type() != sqlite3.TEXT || arguments[1].Type() != sqlite3.TEXT || arguments[2].Type() != sqlite3.TEXT || arguments[3].Type() != sqlite3.TEXT {
+					functionContext.ResultNull()
+					return
+				}
+				functionContext.ResultText(outcomeBriefingClaimID(arguments[0].Text(), arguments[1].Text(), arguments[2].Text(), arguments[3].Text()))
+			}); err != nil {
+			return err
+		}
+		if err := connection.CreateFunction("crewfold_outcome_acceptance_basis_sha", 4, sqlite3.DETERMINISTIC|sqlite3.INNOCUOUS,
+			func(functionContext sqlite3.Context, arguments ...sqlite3.Value) {
+				if len(arguments) != 4 || arguments[0].Type() != sqlite3.TEXT || arguments[1].Type() != sqlite3.TEXT || arguments[2].Type() != sqlite3.INTEGER || arguments[3].Type() != sqlite3.INTEGER {
+					functionContext.ResultNull()
+					return
+				}
+				value, err := hashCommand("outcome.policy_acceptance", map[string]any{
+					"assessment_id": arguments[0].Text(), "content_sha256": arguments[1].Text(),
+					"event_sequence": arguments[2].Int64(), "state_revision": arguments[3].Int64(),
+				})
+				if err != nil {
+					functionContext.ResultNull()
+					return
+				}
+				functionContext.ResultText(value)
 			}); err != nil {
 			return err
 		}
@@ -80,7 +132,7 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 	if clock == nil {
 		clock = time.Now
 	}
-	storage := &Store{db: database, path: path, mutationHook: options.MutationHook, clock: clock, restoreActive: restoreActive, supervisorActionSealActive: supervisorActionSealActive, checkMutationSealActive: checkMutationSealActive}
+	storage := &Store{db: database, path: path, mutationHook: options.MutationHook, clock: clock, restoreActive: restoreActive, supervisorActionSealActive: supervisorActionSealActive, checkMutationSealActive: checkMutationSealActive, outcomeMutationSealActive: outcomeMutationSealActive}
 	if err := database.PingContext(ctx); err != nil {
 		_ = database.Close()
 		return nil, &Error{Code: CodeStorageFailed, Message: "connect to SQLite database", Cause: err}

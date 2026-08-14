@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:outcome-decision-params:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "outcome", "expected_state_revision", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "outcome": {"type": "string", "pattern": "^outassess_[0-9a-f]{32}$"},
+    "expected_state_revision": {"type": "integer", "minimum": 1},
+    "decision_note": {"type": "string", "maxLength": 4096},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

@@ -321,6 +321,40 @@ type CuratorRule struct {
 	EventSequence int64  `json:"event_sequence"`
 }
 
+type DeliverableCommitment struct {
+	ID                     string `json:"id"`
+	WorkspaceID            string `json:"workspace_id"`
+	ProjectID              string `json:"project_id"`
+	ObjectiveID            string `json:"objective_id"`
+	TaskID                 string `json:"task_id"`
+	CommitmentKey          string `json:"commitment_key"`
+	Title                  string `json:"title"`
+	Description            string `json:"description"`
+	AcceptanceCriteriaJson string `json:"acceptance_criteria_json"`
+	ContentJson            string `json:"content_json"`
+	ContentSha256          string `json:"content_sha256"`
+	CreatedAt              string `json:"created_at"`
+	CreatedBy              string `json:"created_by"`
+}
+
+type Event struct {
+	Sequence       int64   `json:"sequence"`
+	EventID        string  `json:"event_id"`
+	Type           string  `json:"type"`
+	SchemaVersion  int64   `json:"schema_version"`
+	OccurredAt     string  `json:"occurred_at"`
+	RecordedAt     string  `json:"recorded_at"`
+	ActorID        string  `json:"actor_id"`
+	ActorType      string  `json:"actor_type"`
+	WorkspaceID    string  `json:"workspace_id"`
+	EntityType     string  `json:"entity_type"`
+	EntityID       string  `json:"entity_id"`
+	EntityRevision int64   `json:"entity_revision"`
+	CorrelationID  string  `json:"correlation_id"`
+	CausationID    *string `json:"causation_id"`
+	DataJson       string  `json:"data_json"`
+}
+
 type KnowledgeAuthorityCheck struct {
 	ID             string  `json:"id"`
 	WorkspaceID    string  `json:"workspace_id"`
@@ -422,6 +456,62 @@ type KnowledgeTaskScopeAnchor struct {
 	CreatedBy   string `json:"created_by"`
 }
 
+type ManagementBriefing struct {
+	ID                   string  `json:"id"`
+	Revision             int64   `json:"revision"`
+	WorkspaceID          string  `json:"workspace_id"`
+	ScopeType            string  `json:"scope_type"`
+	ScopeID              string  `json:"scope_id"`
+	EventCursor          int64   `json:"event_cursor"`
+	CutoffEventSequence  int64   `json:"cutoff_event_sequence"`
+	CheckpointID         string  `json:"checkpoint_id"`
+	SinceEventSequence   int64   `json:"since_event_sequence"`
+	EvaluatedAt          string  `json:"evaluated_at"`
+	CaughtUp             int64   `json:"caught_up"`
+	UnknownEventType     *string `json:"unknown_event_type"`
+	UnknownEventSequence *int64  `json:"unknown_event_sequence"`
+	ContentJson          string  `json:"content_json"`
+	ContentSha256        string  `json:"content_sha256"`
+	ByteSize             int64   `json:"byte_size"`
+	CreatedAt            string  `json:"created_at"`
+}
+
+type ManagementBriefingClaim struct {
+	BriefingID          string  `json:"briefing_id"`
+	Ordinal             int64   `json:"ordinal"`
+	ClaimID             string  `json:"claim_id"`
+	SemanticKey         string  `json:"semantic_key"`
+	Kind                string  `json:"kind"`
+	Urgency             string  `json:"urgency"`
+	Summary             string  `json:"summary"`
+	Status              string  `json:"status"`
+	ProjectID           *string `json:"project_id"`
+	SourceEventSequence int64   `json:"source_event_sequence"`
+	ClaimJson           string  `json:"claim_json"`
+}
+
+type ManagementBriefingClaimSource struct {
+	BriefingID       string `json:"briefing_id"`
+	ClaimID          string `json:"claim_id"`
+	Ordinal          int64  `json:"ordinal"`
+	EntityType       string `json:"entity_type"`
+	EntityID         string `json:"entity_id"`
+	EntityRevision   int64  `json:"entity_revision"`
+	ContentSha256    string `json:"content_sha256"`
+	EventSequence    int64  `json:"event_sequence"`
+	EvidenceClass    string `json:"evidence_class"`
+	EvidenceEffect   string `json:"evidence_effect"`
+	PinnedFreshness  string `json:"pinned_freshness"`
+	CurrentFreshness string `json:"current_freshness"`
+}
+
+type ManagementBriefingReceipt struct {
+	BriefingID  string `json:"briefing_id"`
+	ClaimCount  int64  `json:"claim_count"`
+	SourceCount int64  `json:"source_count"`
+	SealedAt    string `json:"sealed_at"`
+}
+
 type Meeting struct {
 	ID                 string  `json:"id"`
 	WorkspaceID        string  `json:"workspace_id"`
@@ -484,6 +574,144 @@ type MeetingProposal struct {
 	ProposedAt   string  `json:"proposed_at"`
 	DecidedAt    *string `json:"decided_at"`
 	DecisionNote *string `json:"decision_note"`
+}
+
+type OutcomeAssessment struct {
+	ID                     string  `json:"id"`
+	WorkspaceID            string  `json:"workspace_id"`
+	ProjectID              string  `json:"project_id"`
+	ObjectiveID            string  `json:"objective_id"`
+	TaskID                 string  `json:"task_id"`
+	CommitmentID           string  `json:"commitment_id"`
+	Revision               int64   `json:"revision"`
+	StateRevision          int64   `json:"state_revision"`
+	ReviewState            string  `json:"review_state"`
+	Conclusion             string  `json:"conclusion"`
+	DeliveredScopeJson     string  `json:"delivered_scope_json"`
+	UnmetScopeJson         string  `json:"unmet_scope_json"`
+	ContentJson            string  `json:"content_json"`
+	ContentSha256          string  `json:"content_sha256"`
+	SupersedesAssessmentID *string `json:"supersedes_assessment_id"`
+	ProposedAt             string  `json:"proposed_at"`
+	ProposedBy             string  `json:"proposed_by"`
+	DecidedAt              *string `json:"decided_at"`
+	DecidedBy              *string `json:"decided_by"`
+	DecisionNote           *string `json:"decision_note"`
+}
+
+type OutcomeAssessmentAcceptanceBasis struct {
+	AssessmentID  string `json:"assessment_id"`
+	EventSequence int64  `json:"event_sequence"`
+	SourceSha256  string `json:"source_sha256"`
+	CreatedAt     string `json:"created_at"`
+	CreatedBy     string `json:"created_by"`
+}
+
+type OutcomeAssessmentDecisionRef struct {
+	AssessmentID  string `json:"assessment_id"`
+	Ordinal       int64  `json:"ordinal"`
+	RevisionID    string `json:"revision_id"`
+	ContentSha256 string `json:"content_sha256"`
+	EventSequence int64  `json:"event_sequence"`
+}
+
+type OutcomeAssessmentDeviation struct {
+	AssessmentID        string  `json:"assessment_id"`
+	Ordinal             int64   `json:"ordinal"`
+	Kind                string  `json:"kind"`
+	Summary             string  `json:"summary"`
+	RelatedTaskID       *string `json:"related_task_id"`
+	RelatedTaskRevision *int64  `json:"related_task_revision"`
+}
+
+type OutcomeAssessmentEffect struct {
+	AssessmentID string `json:"assessment_id"`
+	Ordinal      int64  `json:"ordinal"`
+	Kind         string `json:"kind"`
+	Direction    string `json:"direction"`
+	Summary      string `json:"summary"`
+}
+
+type OutcomeAssessmentEvidenceRef struct {
+	AssessmentID    string `json:"assessment_id"`
+	Ordinal         int64  `json:"ordinal"`
+	SourceType      string `json:"source_type"`
+	SourceID        string `json:"source_id"`
+	SourceRevision  int64  `json:"source_revision"`
+	SourceSha256    string `json:"source_sha256"`
+	EventSequence   int64  `json:"event_sequence"`
+	Class           string `json:"class"`
+	Effect          string `json:"effect"`
+	PinnedFreshness string `json:"pinned_freshness"`
+}
+
+type OutcomeAssessmentFollowUpTask struct {
+	AssessmentID  string `json:"assessment_id"`
+	Ordinal       int64  `json:"ordinal"`
+	TaskID        string `json:"task_id"`
+	TaskRevision  int64  `json:"task_revision"`
+	EventSequence int64  `json:"event_sequence"`
+}
+
+type OutcomeAssessmentGovernance struct {
+	AssessmentID            string  `json:"assessment_id"`
+	Decision                string  `json:"decision"`
+	DecisionEventSequence   int64   `json:"decision_event_sequence"`
+	SupersededAssessmentID  *string `json:"superseded_assessment_id"`
+	SupersededEventSequence *int64  `json:"superseded_event_sequence"`
+	DecidedAt               string  `json:"decided_at"`
+}
+
+type OutcomeAssessmentOwnerAttention struct {
+	AssessmentID string `json:"assessment_id"`
+	Ordinal      int64  `json:"ordinal"`
+	Urgency      string `json:"urgency"`
+	Action       string `json:"action"`
+	Reason       string `json:"reason"`
+}
+
+type OutcomeAssessmentRisk struct {
+	AssessmentID string `json:"assessment_id"`
+	Ordinal      int64  `json:"ordinal"`
+	Severity     string `json:"severity"`
+	Summary      string `json:"summary"`
+	Mitigation   string `json:"mitigation"`
+}
+
+type OutcomeAssessmentSubmission struct {
+	AssessmentID  string `json:"assessment_id"`
+	EventSequence int64  `json:"event_sequence"`
+	ChildCount    int64  `json:"child_count"`
+	SubmittedAt   string `json:"submitted_at"`
+}
+
+type OutcomeAssessmentUnknown struct {
+	AssessmentID string `json:"assessment_id"`
+	Ordinal      int64  `json:"ordinal"`
+	Summary      string `json:"summary"`
+}
+
+type OutcomeCommitmentReceipt struct {
+	CommitmentID  string `json:"commitment_id"`
+	EventSequence int64  `json:"event_sequence"`
+	CreatedAt     string `json:"created_at"`
+}
+
+type OutcomeProjectorState struct {
+	WorkspaceID       string `json:"workspace_id"`
+	LastEventSequence int64  `json:"last_event_sequence"`
+	Revision          int64  `json:"revision"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
+type OwnerCheckpoint struct {
+	ID            string `json:"id"`
+	WorkspaceID   string `json:"workspace_id"`
+	ScopeType     string `json:"scope_type"`
+	ScopeID       string `json:"scope_id"`
+	EventSequence int64  `json:"event_sequence"`
+	CreatedAt     string `json:"created_at"`
+	CreatedBy     string `json:"created_by"`
 }
 
 type Repository struct {

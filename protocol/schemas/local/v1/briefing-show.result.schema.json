@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:briefing-show-result:v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "type", "briefing"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:briefing-show-result:v1"},
+    "type": {"const": "management_briefing"},
+    "briefing": {"$ref": "../../domain/v1/management-briefing.schema.json"}
+  }
+}

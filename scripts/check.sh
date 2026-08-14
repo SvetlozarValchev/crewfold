@@ -28,8 +28,8 @@ $go_runner test ./...
 
 if [ "$($go_runner env CGO_ENABLED)" = "1" ] && command -v gcc >/dev/null 2>&1
 then
-  printf 'go test -race ./...\n'
-  $go_runner test -race ./...
+  printf 'go test -race -timeout 20m ./...\n'
+  $go_runner test -race -timeout 20m ./...
 else
   printf 'go test -race ./... skipped: race detector prerequisites unavailable\n'
 fi
@@ -93,6 +93,9 @@ printf 'Manager proposals and deterministic supervisor public smoke\n'
 
 printf 'Owner-granted local checks and arbitrary-role check-watch acceptance\n'
 "$repo_root/test/scenarios/local-checks/run.sh"
+
+printf 'Owner-reviewed outcomes and bounded management briefings acceptance\n'
+"$repo_root/test/scenarios/outcome-briefings/run.sh"
 
 printf 'Herdr runtime black-box acceptance\n'
 "$repo_root/test/scenarios/herdr-runtime/run.sh"

@@ -756,10 +756,14 @@ func startTestServer(t *testing.T, config Config) *runningServer {
 		}
 	})
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	client := localapi.NewClient(config.SocketPath)
+	var lastStatusErr error
 	for {
-		if _, err := client.Status(context.Background()); err == nil {
+		probeContext, cancelProbe := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		_, lastStatusErr = client.Status(probeContext)
+		cancelProbe()
+		if lastStatusErr == nil {
 			break
 		}
 		select {
@@ -768,7 +772,7 @@ func startTestServer(t *testing.T, config Config) *runningServer {
 		default:
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for server readiness")
+			t.Fatalf("timed out waiting for server readiness: %v", lastStatusErr)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

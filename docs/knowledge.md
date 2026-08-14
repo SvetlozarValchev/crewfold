@@ -309,10 +309,9 @@ is a current derived view across commitments, accepted outcome assessments,
 decisions, evidence, checks, risks, overlaps, and follow-up work. It must not be
 stored as a second, loosely governed version of project truth.
 
-The planned briefing projection remains bounded and provenance-linked. Optional
-model rendering may compress it for an audience but may not invent acceptance,
-erase disagreement, or upgrade evidence strength. Raw transcripts are never
-required to build it.
+The briefing projection remains bounded and provenance-linked. It is the complete
+representation rather than input to a second model-rendered narrative. Raw
+transcripts are never required to build it.
 
 ## Exact contradictions and export
 

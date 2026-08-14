@@ -112,7 +112,9 @@ func knownSupervisorJournalEvent(value string) bool {
 		"check.freshness_observed", "check.freshness_stale",
 		"check.notification_queued", "check.notification_unroutable",
 		"check.repair_proposed", "check.repair_accepted", "check.repair_rejected", "check.repair_stale",
-		"check.watch_completed":
+		"check.watch_completed",
+		"outcome.commitment_created", "outcome.assessment_proposed", "outcome.assessment_accepted",
+		"outcome.assessment_rejected", "outcome.assessment_superseded", "owner_checkpoint.created":
 		return true
 	default:
 		return false

@@ -124,7 +124,10 @@ evidence, and current repository state.
 
 ### 8. Review outcomes and continue
 
-Crewfold derives an owner briefing across runs, tasks, objectives, and projects.
+The owner first records an immutable deliverable commitment for the exact task,
+then proposes and explicitly accepts or rejects its structured assessment.
+Crewfold derives an owner briefing across tasks, objectives, projects, and the
+workspace.
 It separates attempted activity from accepted delivery; connects decisions and
 rationale to outcomes; grades verification strength and freshness; surfaces
 duplicates, contradictions, risks, and unknowns; and identifies decisions that
@@ -184,18 +187,23 @@ supporting records without reading each session.
 ### Outcomes and management understanding
 
 - Record deliverable commitments and acceptance independently from agent activity.
+- Require the local owner to create each immutable task-scoped commitment before
+  its assessment; agents and run-scoped tools have no outcome authority.
 - Give outcome assessments a proposed, accepted, rejected, or superseded review
   state and an achieved, partial, not-achieved, or unknown conclusion.
 - Link outcomes to evidence, decisions, compatibility effects, risks, unknowns,
   and follow-up work.
 - Preserve material rationale and constraints without storing hidden model
   reasoning or requiring full transcripts.
-- Distinguish self-reported evidence, mechanical checks, independent review, and
-  policy-accepted verification.
+- Let assessment input cite only exact handoffs or check-requirement evidence;
+  derive self-report, mechanical check, exact independent-review provenance, and
+  accepted-governance verification rather than accepting caller labels.
 - Maintain revisioned projections at run, task, objective, project, and workspace
   scope.
 - Produce a bounded “since checkpoint” briefing of delivered changes, deviations,
   failed verification, active risk, unknowns, and required owner actions.
+- Capture the current workspace event high-water for each briefing and permit
+  only an exact same-scope checkpoint as its exclusive lower bound.
 - Make every aggregate claim explainable through durable source records.
 - Keep stale, disputed, and contradictory evidence visible rather than blending
   it into a confident narrative.

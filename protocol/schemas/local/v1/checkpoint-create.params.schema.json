@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:checkpoint-create-params:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "scope_type", "scope_identifier", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "scope_type": {"enum": ["task", "objective", "project", "workspace"]},
+    "scope_identifier": {"type": "string", "minLength": 1, "maxLength": 128},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  },
+  "oneOf": [
+    {"properties": {"scope_type": {"const": "task"}, "scope_identifier": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"}}, "required": ["scope_type", "scope_identifier"]},
+    {"properties": {"scope_type": {"const": "objective"}, "scope_identifier": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"}}, "required": ["scope_type", "scope_identifier"]},
+    {"properties": {"scope_type": {"const": "project"}}, "required": ["scope_type", "scope_identifier"]},
+    {"properties": {"scope_type": {"const": "workspace"}}, "required": ["scope_type", "scope_identifier"]}
+  ]
+}

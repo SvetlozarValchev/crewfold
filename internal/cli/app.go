@@ -53,6 +53,7 @@ type App struct {
 
 type daemonClient interface {
 	checkDaemonClient
+	outcomeDaemonClient
 	Status(context.Context) (localapi.StatusResult, error)
 	Stop(context.Context) (localapi.StopResult, error)
 	DatabaseStatus(context.Context) (localapi.DatabaseStatusResult, error)
@@ -259,6 +260,12 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runApproval(ctx, mode, args[1:])
 	case "check":
 		return a.runCheck(ctx, mode, args[1:])
+	case "outcome":
+		return a.runOutcome(ctx, mode, args[1:])
+	case "checkpoint":
+		return a.runCheckpoint(ctx, mode, args[1:])
+	case "briefing":
+		return a.runBriefing(ctx, mode, args[1:])
 	case "events":
 		return a.runEvents(ctx, mode, args[1:])
 	default:
@@ -883,6 +890,12 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, approvalHelp)
 	case "check":
 		fmt.Fprint(a.stdout, checkHelp)
+	case "outcome":
+		fmt.Fprint(a.stdout, outcomeHelp)
+	case "checkpoint":
+		fmt.Fprint(a.stdout, checkpointHelp)
+	case "briefing":
+		fmt.Fprint(a.stdout, briefingHelp)
 	case "events":
 		fmt.Fprint(a.stdout, eventsHelp)
 	case "help":
@@ -1556,6 +1569,9 @@ Commands:
   supervisor     Configure, run, and explain deterministic scheduling
   approval       Decide supervisor actions requiring local-owner authority
   check          Define, run, inspect, route, and govern local checks
+  outcome        Record and decide explicit deliverable assessments
+  checkpoint     Freeze immutable owner event cursors
+  briefing       Inspect bounded evidence-backed management projections
   events         Inspect the durable event journal
   help [command] Show command help
 

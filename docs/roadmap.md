@@ -248,6 +248,9 @@ deterministic management briefings. Every material briefing claim must retain an
 exact provenance path to durable decisions, evidence, verification freshness,
 risks, unknowns, deviations, or follow-up work. A run, handoff, or check result
 can support an assessment but cannot make delivery accepted by implication.
+Its current structured briefing/claim/explanation schemas are also the fixed read
+model the M19 operator TUI must consume; M19 does not start until the M18 public
+scenario and review gate pass.
 
 M17 is complete at implementation commit
 `91d4cb4d3f62f058d20c9b18bc2d408b988e78b8`; its

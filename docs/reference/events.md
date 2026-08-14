@@ -297,18 +297,17 @@ context.packet_dispatched
 ## Outcomes and owner checkpoints
 
 ```text
+outcome.commitment_created
 outcome.assessment_proposed
 outcome.assessment_accepted
 outcome.assessment_rejected
 outcome.assessment_superseded
 owner_checkpoint.created
-owner_checkpoint.archived
 ```
 
 Management briefings are rebuildable projections at an event cursor, so querying
-or rendering one does not append a fact event. Optional rendering or projector
-failures are operational diagnostics unless they change durable coordination
-state.
+or explaining one does not append a fact event. Checkpoints are immutable and
+have no archive lifecycle. There is no narrative-rendering operation or event.
 
 ## Manager proposals and deterministic supervision
 

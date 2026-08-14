@@ -1,0 +1,19 @@
+commitment: __COMMITMENT_ID__
+assessment:
+  conclusion: achieved
+  delivered_scope:
+    - Exact owner-reviewed outcome contract
+  unmet_scope: []
+  decision_revision_ids: []
+  evidence:
+    - source_type: handoff
+      source_id: __HANDOFF_ID__
+  effects:
+    - kind: stability
+      direction: positive
+      summary: Deterministic structured claims remain restart-stable
+  deviations: []
+  risks: []
+  unknowns: []
+  follow_up_task_ids: []
+  owner_attention: []

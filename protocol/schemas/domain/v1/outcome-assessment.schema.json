@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:outcome-assessment:v1",
+  "title": "Crewfold outcome assessment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "workspace_id", "project_id", "objective_id", "task_id", "commitment_id", "revision", "state_revision", "review_state", "conclusion", "content_sha256", "proposed_at", "proposed_by"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^outassess_[0-9a-f]{32}$"},
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "objective_id": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
+    "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "commitment_id": {"type": "string", "pattern": "^outcommit_[0-9a-f]{32}$"},
+    "revision": {"type": "integer", "minimum": 1},
+    "state_revision": {"type": "integer", "minimum": 1},
+    "review_state": {"enum": ["proposed", "accepted", "rejected", "superseded"]},
+    "conclusion": {"enum": ["achieved", "partial", "not_achieved", "unknown"]},
+    "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "supersedes_assessment_id": {"type": "string", "pattern": "^outassess_[0-9a-f]{32}$"},
+    "proposed_at": {"type": "string", "format": "date-time"},
+    "proposed_by": {"const": "local-owner"},
+    "decided_at": {"type": "string", "format": "date-time"},
+    "decided_by": {"const": "local-owner"},
+    "decision_note": {"type": "string", "maxLength": 4096}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"review_state": {"const": "proposed"}}, "required": ["review_state"]},
+      "then": {"not": {"anyOf": [{"required": ["decided_at"]}, {"required": ["decided_by"]}, {"required": ["decision_note"]}]}},
+      "else": {"required": ["decided_at", "decided_by"]}
+    }
+  ]
+}

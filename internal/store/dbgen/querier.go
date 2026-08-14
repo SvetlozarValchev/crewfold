@@ -10,9 +10,11 @@ import (
 
 type Querier interface {
 	AcceptKnowledgeRevision(ctx context.Context, arg AcceptKnowledgeRevisionParams) (int64, error)
+	AcceptOutcomeAssessmentProjection(ctx context.Context, arg AcceptOutcomeAssessmentProjectionParams) (int64, error)
 	AcknowledgeRunContextDelta(ctx context.Context, arg AcknowledgeRunContextDeltaParams) (int64, error)
 	AdvanceCheckNotificationThread(ctx context.Context, arg AdvanceCheckNotificationThreadParams) (int64, error)
 	AdvanceCheckWatchState(ctx context.Context, arg AdvanceCheckWatchStateParams) (int64, error)
+	AdvanceOutcomeProjectorState(ctx context.Context, arg AdvanceOutcomeProjectorStateParams) (int64, error)
 	AdvanceRunContextDeltaScan(ctx context.Context, arg AdvanceRunContextDeltaScanParams) (int64, error)
 	BindCheckRuntime(ctx context.Context, arg BindCheckRuntimeParams) (int64, error)
 	CheckLaunchReceiptAuthorityMatches(ctx context.Context, arg CheckLaunchReceiptAuthorityMatchesParams) (int64, error)
@@ -36,8 +38,10 @@ type Querier interface {
 	FindAcceptedKnowledgeSuccessor(ctx context.Context, arg FindAcceptedKnowledgeSuccessorParams) (string, error)
 	FindActiveMeetingForOverlap(ctx context.Context, overlapID string) (string, error)
 	FindLiveKnowledgeSuccessor(ctx context.Context, supersedesRevisionID *string) (string, error)
+	FindManagementBriefing(ctx context.Context, arg FindManagementBriefingParams) (ManagementBriefing, error)
 	FindThreadParticipantByBinding(ctx context.Context, arg FindThreadParticipantByBindingParams) (ThreadParticipant, error)
 	FinishTerminalCheckRun(ctx context.Context, arg FinishTerminalCheckRunParams) error
+	GetAcceptedDecisionForOutcome(ctx context.Context, arg GetAcceptedDecisionForOutcomeParams) (GetAcceptedDecisionForOutcomeRow, error)
 	GetActiveCheckDefinitionByName(ctx context.Context, arg GetActiveCheckDefinitionByNameParams) (GetActiveCheckDefinitionByNameRow, error)
 	GetActiveTaskCheckRequirementByDefinition(ctx context.Context, arg GetActiveTaskCheckRequirementByDefinitionParams) (TaskCheckRequirement, error)
 	GetCheckDefinitionByID(ctx context.Context, arg GetCheckDefinitionByIDParams) (GetCheckDefinitionByIDRow, error)
@@ -70,7 +74,9 @@ type Querier interface {
 	GetCuratorAutoAcceptanceByKnowledge(ctx context.Context, arg GetCuratorAutoAcceptanceByKnowledgeParams) (CuratorAutoAcceptance, error)
 	GetCuratorDerivationByKnowledge(ctx context.Context, arg GetCuratorDerivationByKnowledgeParams) (CuratorDerivation, error)
 	GetCuratorMeetingProposalSource(ctx context.Context, proposalID string) (GetCuratorMeetingProposalSourceRow, error)
+	GetCurrentAcceptedOutcomeAssessmentID(ctx context.Context, commitmentID string) (string, error)
 	GetCurrentCheckTaskOwner(ctx context.Context, arg GetCurrentCheckTaskOwnerParams) (GetCurrentCheckTaskOwnerRow, error)
+	GetDeliverableCommitment(ctx context.Context, arg GetDeliverableCommitmentParams) (DeliverableCommitment, error)
 	GetEffectiveCuratorRule(ctx context.Context, arg GetEffectiveCuratorRuleParams) (CuratorRule, error)
 	GetEligibleParticipantAssignment(ctx context.Context, arg GetEligibleParticipantAssignmentParams) (GetEligibleParticipantAssignmentRow, error)
 	GetFrozenCheckCheckoutState(ctx context.Context, checkoutID string) (GetFrozenCheckCheckoutStateRow, error)
@@ -89,10 +95,30 @@ type Querier interface {
 	GetLatestCheckRepairProposalByResult(ctx context.Context, arg GetLatestCheckRepairProposalByResultParams) (CheckRepairProposal, error)
 	GetLatestCheckRunForRequirement(ctx context.Context, arg GetLatestCheckRunForRequirementParams) (GetLatestCheckRunForRequirementRow, error)
 	GetLatestTaskRunCheckoutID(ctx context.Context, arg GetLatestTaskRunCheckoutIDParams) (string, error)
+	GetManagementBriefing(ctx context.Context, arg GetManagementBriefingParams) (ManagementBriefing, error)
+	GetManagementBriefingClaim(ctx context.Context, arg GetManagementBriefingClaimParams) (ManagementBriefingClaim, error)
+	GetManagementBriefingReceipt(ctx context.Context, briefingID string) (ManagementBriefingReceipt, error)
 	GetMeeting(ctx context.Context, arg GetMeetingParams) (Meeting, error)
 	GetMeetingContribution(ctx context.Context, arg GetMeetingContributionParams) (MeetingContribution, error)
 	GetMeetingProposal(ctx context.Context, meetingID string) (MeetingProposal, error)
 	GetNextPendingCheckRunID(ctx context.Context, now interface{}) (string, error)
+	GetOutcomeAssessment(ctx context.Context, arg GetOutcomeAssessmentParams) (OutcomeAssessment, error)
+	GetOutcomeAssessmentAcceptanceBasis(ctx context.Context, assessmentID string) (OutcomeAssessmentAcceptanceBasis, error)
+	GetOutcomeAssessmentGovernance(ctx context.Context, assessmentID string) (OutcomeAssessmentGovernance, error)
+	GetOutcomeAssessmentSubmission(ctx context.Context, assessmentID string) (OutcomeAssessmentSubmission, error)
+	GetOutcomeAssessmentSuccessorGovernance(ctx context.Context, assessmentID *string) (GetOutcomeAssessmentSuccessorGovernanceRow, error)
+	GetOutcomeCheckEvidence(ctx context.Context, arg GetOutcomeCheckEvidenceParams) (GetOutcomeCheckEvidenceRow, error)
+	GetOutcomeCommitmentReceipt(ctx context.Context, commitmentID string) (OutcomeCommitmentReceipt, error)
+	GetOutcomeCommitmentScope(ctx context.Context, arg GetOutcomeCommitmentScopeParams) (GetOutcomeCommitmentScopeRow, error)
+	GetOutcomeHandoffEvidence(ctx context.Context, arg GetOutcomeHandoffEvidenceParams) (GetOutcomeHandoffEvidenceRow, error)
+	GetOutcomeJournalEvent(ctx context.Context, eventSequence int64) (Event, error)
+	GetOutcomeProjectorState(ctx context.Context, workspaceID string) (OutcomeProjectorState, error)
+	GetOutcomeScopeObjective(ctx context.Context, arg GetOutcomeScopeObjectiveParams) (GetOutcomeScopeObjectiveRow, error)
+	GetOutcomeScopeProject(ctx context.Context, arg GetOutcomeScopeProjectParams) (GetOutcomeScopeProjectRow, error)
+	GetOutcomeScopeProjectByName(ctx context.Context, arg GetOutcomeScopeProjectByNameParams) (GetOutcomeScopeProjectByNameRow, error)
+	GetOutcomeScopeTask(ctx context.Context, arg GetOutcomeScopeTaskParams) (GetOutcomeScopeTaskRow, error)
+	GetOutcomeTaskRevision(ctx context.Context, arg GetOutcomeTaskRevisionParams) (GetOutcomeTaskRevisionRow, error)
+	GetOwnerCheckpoint(ctx context.Context, arg GetOwnerCheckpointParams) (OwnerCheckpoint, error)
 	GetParticipantThreadState(ctx context.Context, arg GetParticipantThreadStateParams) (GetParticipantThreadStateRow, error)
 	GetPortableKnowledgeAnchorIdentity(ctx context.Context, taskID string) (GetPortableKnowledgeAnchorIdentityRow, error)
 	GetPortableKnowledgeImportReceipt(ctx context.Context, arg GetPortableKnowledgeImportReceiptParams) (KnowledgeImport, error)
@@ -130,6 +156,7 @@ type Querier interface {
 	InsertCuratorAutoAcceptance(ctx context.Context, arg InsertCuratorAutoAcceptanceParams) error
 	InsertCuratorDerivation(ctx context.Context, arg InsertCuratorDerivationParams) error
 	InsertCuratorRule(ctx context.Context, arg InsertCuratorRuleParams) error
+	InsertDeliverableCommitment(ctx context.Context, arg InsertDeliverableCommitmentParams) error
 	InsertInitialCheckRequirementEvidence(ctx context.Context, arg InsertInitialCheckRequirementEvidenceParams) error
 	InsertInitialCheckResultFreshness(ctx context.Context, arg InsertInitialCheckResultFreshnessParams) error
 	InsertKnowledgeAuthorityCheck(ctx context.Context, arg InsertKnowledgeAuthorityCheckParams) error
@@ -140,6 +167,10 @@ type Querier interface {
 	InsertKnowledgeRevision(ctx context.Context, arg InsertKnowledgeRevisionParams) error
 	InsertKnowledgeSource(ctx context.Context, arg InsertKnowledgeSourceParams) error
 	InsertKnowledgeTaskScopeAnchor(ctx context.Context, arg InsertKnowledgeTaskScopeAnchorParams) error
+	InsertManagementBriefing(ctx context.Context, arg InsertManagementBriefingParams) error
+	InsertManagementBriefingClaim(ctx context.Context, arg InsertManagementBriefingClaimParams) error
+	InsertManagementBriefingClaimSource(ctx context.Context, arg InsertManagementBriefingClaimSourceParams) error
+	InsertManagementBriefingReceipt(ctx context.Context, arg InsertManagementBriefingReceiptParams) error
 	InsertMeeting(ctx context.Context, arg InsertMeetingParams) error
 	InsertMeetingAction(ctx context.Context, arg InsertMeetingActionParams) error
 	InsertMeetingAssignment(ctx context.Context, arg InsertMeetingAssignmentParams) error
@@ -150,6 +181,21 @@ type Querier interface {
 	InsertMeetingTaskRole(ctx context.Context, arg InsertMeetingTaskRoleParams) error
 	InsertObservedCheckEvidence(ctx context.Context, arg InsertObservedCheckEvidenceParams) error
 	InsertObservedCheckFreshness(ctx context.Context, arg InsertObservedCheckFreshnessParams) error
+	InsertOutcomeAssessment(ctx context.Context, arg InsertOutcomeAssessmentParams) error
+	InsertOutcomeAssessmentAcceptanceBasis(ctx context.Context, arg InsertOutcomeAssessmentAcceptanceBasisParams) error
+	InsertOutcomeAssessmentDecisionRef(ctx context.Context, arg InsertOutcomeAssessmentDecisionRefParams) error
+	InsertOutcomeAssessmentDeviation(ctx context.Context, arg InsertOutcomeAssessmentDeviationParams) error
+	InsertOutcomeAssessmentEffect(ctx context.Context, arg InsertOutcomeAssessmentEffectParams) error
+	InsertOutcomeAssessmentEvidenceRef(ctx context.Context, arg InsertOutcomeAssessmentEvidenceRefParams) error
+	InsertOutcomeAssessmentFollowUpTask(ctx context.Context, arg InsertOutcomeAssessmentFollowUpTaskParams) error
+	InsertOutcomeAssessmentGovernance(ctx context.Context, arg InsertOutcomeAssessmentGovernanceParams) error
+	InsertOutcomeAssessmentOwnerAttention(ctx context.Context, arg InsertOutcomeAssessmentOwnerAttentionParams) error
+	InsertOutcomeAssessmentRisk(ctx context.Context, arg InsertOutcomeAssessmentRiskParams) error
+	InsertOutcomeAssessmentSubmission(ctx context.Context, arg InsertOutcomeAssessmentSubmissionParams) error
+	InsertOutcomeAssessmentUnknown(ctx context.Context, arg InsertOutcomeAssessmentUnknownParams) error
+	InsertOutcomeCommitmentReceipt(ctx context.Context, arg InsertOutcomeCommitmentReceiptParams) error
+	InsertOutcomeProjectorState(ctx context.Context, arg InsertOutcomeProjectorStateParams) error
+	InsertOwnerCheckpoint(ctx context.Context, arg InsertOwnerCheckpointParams) error
 	InsertParticipantThread(ctx context.Context, arg InsertParticipantThreadParams) error
 	InsertPortableKnowledgeAnchor(ctx context.Context, arg InsertPortableKnowledgeAnchorParams) error
 	InsertPortableKnowledgeContradiction(ctx context.Context, arg InsertPortableKnowledgeContradictionParams) error
@@ -165,9 +211,11 @@ type Querier interface {
 	InsertTerminalCheckResult(ctx context.Context, arg InsertTerminalCheckResultParams) error
 	InsertThreadParticipant(ctx context.Context, arg InsertThreadParticipantParams) error
 	LeaseCheckJob(ctx context.Context, arg LeaseCheckJobParams) (int64, error)
+	ListAcceptedOutcomeAssessmentClaims(ctx context.Context, arg ListAcceptedOutcomeAssessmentClaimsParams) ([]ListAcceptedOutcomeAssessmentClaimsRow, error)
 	ListAllOpenKnowledgeContradictionsForRevision(ctx context.Context, arg ListAllOpenKnowledgeContradictionsForRevisionParams) ([]KnowledgeContradiction, error)
 	ListAllRunContextDeltas(ctx context.Context, runID string) ([]ContextDelta, error)
 	ListApplicableCheckRoutes(ctx context.Context, arg ListApplicableCheckRoutesParams) ([]ListApplicableCheckRoutesRow, error)
+	ListAssessmentAcceptedEvent(ctx context.Context, arg ListAssessmentAcceptedEventParams) (int64, error)
 	ListCheckArtifactLogMetadata(ctx context.Context, checkResultID string) ([]ListCheckArtifactLogMetadataRow, error)
 	ListCheckArtifactsForResult(ctx context.Context, checkResultID string) ([]CheckArtifact, error)
 	ListCheckDefinitionArguments(ctx context.Context, definitionID string) ([]string, error)
@@ -194,16 +242,31 @@ type Querier interface {
 	ListCuratorEligibleRevisionIDs(ctx context.Context, arg ListCuratorEligibleRevisionIDsParams) ([]string, error)
 	ListCuratorMeetingProposalCandidates(ctx context.Context, arg ListCuratorMeetingProposalCandidatesParams) ([]ListCuratorMeetingProposalCandidatesRow, error)
 	ListCuratorQueueRevisionIDs(ctx context.Context, arg ListCuratorQueueRevisionIDsParams) ([]string, error)
+	ListDeliverableCommitments(ctx context.Context, arg ListDeliverableCommitmentsParams) ([]DeliverableCommitment, error)
 	ListGrantedCheckRunIDs(ctx context.Context, arg ListGrantedCheckRunIDsParams) ([]string, error)
 	ListKnowledgeAuthorityChecks(ctx context.Context, arg ListKnowledgeAuthorityChecksParams) ([]KnowledgeAuthorityCheck, error)
 	ListKnowledgeContradictionAuthorityChecks(ctx context.Context, arg ListKnowledgeContradictionAuthorityChecksParams) ([]KnowledgeContradictionAuthorityCheck, error)
 	ListKnowledgeContradictionIDs(ctx context.Context, arg ListKnowledgeContradictionIDsParams) ([]string, error)
 	ListKnowledgeRevisionIDs(ctx context.Context, arg ListKnowledgeRevisionIDsParams) ([]string, error)
 	ListKnowledgeRevisionSources(ctx context.Context, revisionID string) ([]KnowledgeSource, error)
+	ListManagementBriefingClaimSources(ctx context.Context, arg ListManagementBriefingClaimSourcesParams) ([]ManagementBriefingClaimSource, error)
+	ListManagementBriefingClaims(ctx context.Context, briefingID string) ([]ManagementBriefingClaim, error)
 	ListMeetingActions(ctx context.Context, proposalID string) ([]MeetingAction, error)
 	ListMeetingContributions(ctx context.Context, meetingID string) ([]MeetingContribution, error)
 	ListMeetingParticipants(ctx context.Context, meetingID string) ([]MeetingParticipant, error)
 	ListOpenKnowledgeContradictionsForRevision(ctx context.Context, arg ListOpenKnowledgeContradictionsForRevisionParams) ([]KnowledgeContradiction, error)
+	ListOpenOutcomeContradictions(ctx context.Context, arg ListOpenOutcomeContradictionsParams) ([]ListOpenOutcomeContradictionsRow, error)
+	ListOutcomeAssessmentDecisionRefs(ctx context.Context, assessmentID string) ([]OutcomeAssessmentDecisionRef, error)
+	ListOutcomeAssessmentDeviations(ctx context.Context, assessmentID string) ([]OutcomeAssessmentDeviation, error)
+	ListOutcomeAssessmentEffects(ctx context.Context, assessmentID string) ([]OutcomeAssessmentEffect, error)
+	ListOutcomeAssessmentEvidenceRefs(ctx context.Context, assessmentID string) ([]OutcomeAssessmentEvidenceRef, error)
+	ListOutcomeAssessmentFollowUpTasks(ctx context.Context, assessmentID string) ([]OutcomeAssessmentFollowUpTask, error)
+	ListOutcomeAssessmentIDs(ctx context.Context, arg ListOutcomeAssessmentIDsParams) ([]string, error)
+	ListOutcomeAssessmentOwnerAttention(ctx context.Context, assessmentID string) ([]OutcomeAssessmentOwnerAttention, error)
+	ListOutcomeAssessmentRisks(ctx context.Context, assessmentID string) ([]OutcomeAssessmentRisk, error)
+	ListOutcomeAssessmentUnknowns(ctx context.Context, assessmentID string) ([]OutcomeAssessmentUnknown, error)
+	ListOutcomeProjectorEvents(ctx context.Context, arg ListOutcomeProjectorEventsParams) ([]ListOutcomeProjectorEventsRow, error)
+	ListOwnerCheckpoints(ctx context.Context, arg ListOwnerCheckpointsParams) ([]OwnerCheckpoint, error)
 	ListPortableKnowledgeContradictions(ctx context.Context, arg ListPortableKnowledgeContradictionsParams) ([]KnowledgeContradiction, error)
 	ListPortableKnowledgeItems(ctx context.Context, arg ListPortableKnowledgeItemsParams) ([]ListPortableKnowledgeItemsRow, error)
 	ListPortableKnowledgeRevisionIDsForItem(ctx context.Context, itemID string) ([]string, error)
@@ -213,6 +276,7 @@ type Querier interface {
 	ListTaskCheckRequirementIDs(ctx context.Context, arg ListTaskCheckRequirementIDsParams) ([]string, error)
 	ListThreadParticipants(ctx context.Context, threadID string) ([]ThreadParticipant, error)
 	ListThreadParticipantsByAgent(ctx context.Context, arg ListThreadParticipantsByAgentParams) ([]ThreadParticipant, error)
+	ListUnassessedOutcomeCommitments(ctx context.Context, arg ListUnassessedOutcomeCommitmentsParams) ([]ListUnassessedOutcomeCommitmentsRow, error)
 	MarkCheckRunRunning(ctx context.Context, arg MarkCheckRunRunningParams) (int64, error)
 	MarkCheckRunStarting(ctx context.Context, arg MarkCheckRunStartingParams) (int64, error)
 	MarkKnowledgeRevisionStale(ctx context.Context, arg MarkKnowledgeRevisionStaleParams) (int64, error)
@@ -223,11 +287,18 @@ type Querier interface {
 	MarkSupersededCheckRepairsStale(ctx context.Context, arg MarkSupersededCheckRepairsStaleParams) ([]MarkSupersededCheckRepairsStaleRow, error)
 	MaxEventSequence(ctx context.Context) (int64, error)
 	MaxKnowledgeRevisionNumber(ctx context.Context, itemID string) (int64, error)
+	MaxWorkspaceEventSequence(ctx context.Context, workspaceID string) (int64, error)
 	MeetingDependencyExists(ctx context.Context, arg MeetingDependencyExistsParams) (bool, error)
+	NextManagementBriefingRevision(ctx context.Context, arg NextManagementBriefingRevisionParams) (int64, error)
+	NextOutcomeAssessmentRevision(ctx context.Context, commitmentID string) (int64, error)
+	OutcomeContradictionTouchesScopeDecision(ctx context.Context, arg OutcomeContradictionTouchesScopeDecisionParams) (bool, error)
+	OutcomeDecisionHasOpenContradiction(ctx context.Context, arg OutcomeDecisionHasOpenContradictionParams) (bool, error)
+	OutcomeHandoffIsIndependentReview(ctx context.Context, arg OutcomeHandoffIsIndependentReviewParams) (bool, error)
 	PortableKnowledgeEventHighWater(ctx context.Context) (int64, error)
 	PortableKnowledgeSnapshotPreflight(ctx context.Context, arg PortableKnowledgeSnapshotPreflightParams) (PortableKnowledgeSnapshotPreflightRow, error)
 	RecoverAllCheckJobLeases(ctx context.Context, now string) error
 	RejectKnowledgeRevision(ctx context.Context, arg RejectKnowledgeRevisionParams) (int64, error)
+	RejectOutcomeAssessmentProjection(ctx context.Context, arg RejectOutcomeAssessmentProjectionParams) (int64, error)
 	ReleaseCheckJobLease(ctx context.Context, arg ReleaseCheckJobLeaseParams) (int64, error)
 	ReleaseMeetingClaim(ctx context.Context, arg ReleaseMeetingClaimParams) error
 	ReleaseTaskAssignmentsForMeeting(ctx context.Context, arg ReleaseTaskAssignmentsForMeetingParams) error
@@ -241,6 +312,7 @@ type Querier interface {
 	SetMeetingTaskAssigned(ctx context.Context, arg SetMeetingTaskAssignedParams) error
 	SetMeetingTaskCancelled(ctx context.Context, arg SetMeetingTaskCancelledParams) error
 	SupersedeKnowledgeRevision(ctx context.Context, arg SupersedeKnowledgeRevisionParams) (int64, error)
+	SupersedeOutcomeAssessmentProjection(ctx context.Context, arg SupersedeOutcomeAssessmentProjectionParams) (int64, error)
 	TouchMeetingTask(ctx context.Context, arg TouchMeetingTaskParams) error
 	UpdateCheckPolicy(ctx context.Context, arg UpdateCheckPolicyParams) (int64, error)
 	UpdateCheckRepairProposalStatus(ctx context.Context, arg UpdateCheckRepairProposalStatusParams) (int64, error)

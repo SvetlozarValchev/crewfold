@@ -1022,11 +1022,18 @@ than they can personally inspect?
 **Visible result**
 
 ```sh
+crewfold outcome commitment add release-ready --task TASK_ID \
+  --title "Release-ready deliverable" --criterion "owner criterion"
 crewfold outcome propose --task TASK_ID outcome.yaml
-crewfold outcome accept OUTCOME_REVISION
+crewfold outcome show OUTCOME_ASSESSMENT_ID
+crewfold outcome list --task TASK_ID
+crewfold outcome accept OUTCOME_ASSESSMENT_ID --expected-state-revision 1
+crewfold outcome reject OUTCOME_ASSESSMENT_ID --expected-state-revision 1
 crewfold checkpoint create --project demo
+crewfold checkpoint show CHECKPOINT_ID
+crewfold checkpoint list --project demo
 crewfold briefing show --project demo --since CHECKPOINT_ID
-crewfold briefing explain BRIEFING_CLAIM_ID
+crewfold briefing explain BRIEFING_CLAIM_ID --briefing BRIEFING_ID
 ```
 
 **Deliverables**
@@ -1039,13 +1046,17 @@ crewfold briefing explain BRIEFING_CLAIM_ID
 - Deterministic projections across task, objective, project, and workspace scope.
 - Owner checkpoints and bounded change briefings with stable structured output.
 - Claim-level explanation and drill-down to the durable records and event cursor.
-- Optional audience-specific narrative rendering that cannot alter projection facts
-  and is not required for core operation.
+- One current structured representation with no model or narrative renderer.
+- Strict proposal JSON/YAML with the exact `{commitment, assessment}` wrapper;
+  task scope remains explicit CLI/API authority input and is cross-checked against
+  the pre-existing commitment.
+- Current captured workspace high-water plus an optional exact checkpoint as an
+  exclusive lower bound; callers cannot select a historical event cursor.
 
 **Automated acceptance**
 
-- A completed run and proposed handoff do not appear as accepted delivery until an
-  authorized outcome assessment is accepted.
+- A completed run and proposed handoff do not appear as accepted delivery until
+  the local owner accepts an explicit outcome assessment.
 - A transcript-free fixture with at least ten agent/task histories answers what
   changed, why, how much to trust it, what remains, and what needs the owner.
 - Self-reported, mechanically checked, independently reviewed, stale, missing,
@@ -1056,13 +1067,14 @@ crewfold briefing explain BRIEFING_CLAIM_ID
   the correct project briefing without flooding unrelated scopes.
 - “Since checkpoint” includes each relevant change once, stays within its size
   budget, and every material claim has a stable provenance path.
+- Caller evidence is closed to handoff or exact check-requirement evidence;
+  classification, freshness, strength, and current truth are derived.
 
 **Failure injection**
 
-- Stop the daemon after committing an outcome assessment but before the projector
-  acknowledges it; restart produces one correct briefing revision and no duplicate
-  checkpoint change. If an optional narrative renderer fails, the structured
-  briefing remains available with a degraded-rendering diagnosis.
+- Stop the daemon after committing an outcome assessment before returning its
+  response; restart returns the one committed assessment and a stable briefing
+  with no duplicate checkpoint change.
 
 **Exit gate**
 

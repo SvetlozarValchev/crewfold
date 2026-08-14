@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:briefing-explain-params:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "briefing", "claim"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "briefing": {"type": "string", "pattern": "^briefing_[0-9a-f]{32}$"},
+    "claim": {"type": "string", "pattern": "^bclaim_[0-9a-f]{64}$"}
+  }
+}

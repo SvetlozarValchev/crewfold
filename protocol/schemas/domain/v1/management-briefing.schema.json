@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:management-briefing:v1",
+  "title": "Crewfold bounded management briefing v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "revision", "scope", "event_cursor", "cutoff_event_sequence", "since_event_sequence", "evaluated_at", "caught_up", "claims", "omitted", "content_sha256", "byte_size"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^briefing_[0-9a-f]{32}$"},
+    "revision": {"type": "integer", "minimum": 1},
+    "scope": {"$ref": "#/$defs/scope"},
+    "event_cursor": {"type": "integer", "minimum": 0},
+    "cutoff_event_sequence": {"type": "integer", "minimum": 0},
+    "checkpoint_id": {"type": "string", "pattern": "^outcpnt_[0-9a-f]{32}$"},
+    "since_event_sequence": {"type": "integer", "minimum": 0},
+    "evaluated_at": {"type": "string", "format": "date-time"},
+    "caught_up": {"type": "boolean"},
+    "unknown_event_type": {"type": "string", "minLength": 1, "maxLength": 128},
+    "unknown_event_sequence": {"type": "integer", "minimum": 1},
+    "claims": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/claim"}},
+    "omitted": {"type": "array", "maxItems": 14, "items": {"$ref": "#/$defs/omission"}},
+    "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "byte_size": {"type": "integer", "minimum": 1, "maximum": 65536}
+  },
+  "dependentRequired": {"unknown_event_type": ["unknown_event_sequence"], "unknown_event_sequence": ["unknown_event_type"]},
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "workspace_id"],
+      "properties": {
+        "type": {"enum": ["task", "objective", "project", "workspace"]},
+        "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+        "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+        "objective_id": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
+        "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"}
+      },
+      "oneOf": [
+        {"properties": {"type": {"const": "workspace"}}, "required": ["type"], "not": {"anyOf": [{"required": ["project_id"]}, {"required": ["objective_id"]}, {"required": ["task_id"]}]}},
+        {"properties": {"type": {"const": "project"}}, "required": ["type", "project_id"], "not": {"anyOf": [{"required": ["objective_id"]}, {"required": ["task_id"]}]}},
+        {"properties": {"type": {"const": "objective"}}, "required": ["type", "project_id", "objective_id"], "not": {"required": ["task_id"]}},
+        {"properties": {"type": {"const": "task"}}, "required": ["type", "project_id", "objective_id", "task_id"]}
+      ]
+    },
+    "claim_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entity_type", "entity_id", "revision", "event_sequence"],
+      "properties": {
+        "entity_type": {"enum": ["outcome_assessment", "deliverable_commitment", "outcome_assessment_acceptance_basis", "knowledge_contradiction", "knowledge_revision", "check_requirement_evidence", "task", "handoff"]},
+        "entity_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "revision": {"type": "integer", "minimum": 1},
+        "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "event_sequence": {"type": "integer", "minimum": 1},
+        "evidence_class": {"enum": ["agent_self_report", "mechanical_check", "independent_review"]},
+        "evidence_effect": {"enum": ["supports", "contradicts", "inconclusive"]},
+        "pinned_freshness": {"enum": ["fresh", "stale", "unknown"]},
+        "current_freshness": {"enum": ["fresh", "stale", "unknown"]}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"entity_type": {"enum": ["handoff", "check_requirement_evidence"]}},
+            "required": ["entity_type"]
+          },
+          "then": {"required": ["evidence_class", "evidence_effect", "pinned_freshness", "current_freshness"]},
+          "else": {
+            "not": {
+              "anyOf": [
+                {"required": ["evidence_class"]},
+                {"required": ["evidence_effect"]},
+                {"required": ["pinned_freshness"]},
+                {"required": ["current_freshness"]}
+              ]
+            }
+          }
+        }
+      ],
+      "oneOf": [
+        {"properties": {"entity_type": {"const": "outcome_assessment"}, "entity_id": {"type": "string", "pattern": "^outassess_[0-9a-f]{32}$"}}, "required": ["entity_type", "entity_id"]},
+        {"properties": {"entity_type": {"const": "deliverable_commitment"}, "entity_id": {"type": "string", "pattern": "^outcommit_[0-9a-f]{32}$"}}, "required": ["entity_type", "entity_id"]},
+        {"properties": {"entity_type": {"const": "outcome_assessment_acceptance_basis"}, "entity_id": {"type": "string", "pattern": "^outassess_[0-9a-f]{32}$"}}, "required": ["entity_type", "entity_id"]},
+        {"properties": {"entity_type": {"const": "knowledge_contradiction"}, "entity_id": {"type": "string", "pattern": "^kcon_[0-9a-f]{32}$"}}, "required": ["entity_type", "entity_id"]},
+        {"properties": {"entity_type": {"const": "knowledge_revision"}, "entity_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"}}, "required": ["entity_type", "entity_id"]},
+        {"properties": {"entity_type": {"const": "check_requirement_evidence"}, "entity_id": {"type": "string", "pattern": "^checkevidence_[0-9a-f]{32}$"}}, "required": ["entity_type", "entity_id"]},
+        {"properties": {"entity_type": {"const": "task"}, "entity_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"}}, "required": ["entity_type", "entity_id"]},
+        {"properties": {"entity_type": {"const": "handoff"}, "entity_id": {"type": "string", "pattern": "^handoff_[0-9a-f]{32}$"}}, "required": ["entity_type", "entity_id"]}
+      ]
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "urgency", "summary", "status", "sources", "source_event_sequence"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^bclaim_[0-9a-f]{64}$"},
+        "kind": {"enum": ["required_decision", "contradiction", "risk", "unknown", "verification_gap", "deviation", "unmet_commitment", "accepted_delivery", "rationale", "change"]},
+        "urgency": {"enum": ["now", "next", "later"]},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "status": {"enum": ["required", "open", "low", "medium", "high", "critical", "missing", "stale", "disputed", "contradictory", "recorded", "unmet", "achieved", "partial", "not_achieved", "unknown", "accepted"]},
+        "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+        "sources": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/claim_source"}},
+        "source_event_sequence": {"type": "integer", "minimum": 1}
+      },
+      "oneOf": [
+        {"properties": {"kind": {"const": "required_decision"}, "status": {"const": "required"}}, "required": ["kind", "status"]},
+        {"properties": {"kind": {"enum": ["contradiction", "unknown"]}, "status": {"const": "open"}}, "required": ["kind", "status"]},
+        {"properties": {"kind": {"const": "risk"}, "status": {"enum": ["low", "medium", "high", "critical"]}}, "required": ["kind", "status"]},
+        {"properties": {"kind": {"const": "verification_gap"}, "status": {"enum": ["missing", "stale", "disputed", "contradictory"]}}, "required": ["kind", "status"]},
+        {"properties": {"kind": {"enum": ["deviation", "change"]}, "status": {"const": "recorded"}}, "required": ["kind", "status"]},
+        {"properties": {"kind": {"const": "unmet_commitment"}, "status": {"const": "unmet"}}, "required": ["kind", "status"]},
+        {"properties": {"kind": {"const": "accepted_delivery"}, "status": {"enum": ["achieved", "partial", "not_achieved", "unknown"]}}, "required": ["kind", "status"]},
+        {"properties": {"kind": {"const": "rationale"}, "status": {"const": "accepted"}}, "required": ["kind", "status"]}
+      ]
+    },
+    "omission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section", "reason", "count"],
+      "properties": {
+        "section": {"enum": ["required_decisions", "contradictions", "risks_unknowns", "verification_gaps", "deviations_unmet", "accepted_delivery", "rationale_change"]},
+        "reason": {"enum": ["claim_limit", "byte_limit"]},
+        "count": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

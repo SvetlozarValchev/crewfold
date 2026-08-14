@@ -4,7 +4,10 @@ go 1.26.0
 
 toolchain go1.26.5
 
-require github.com/ncruces/go-sqlite3 v0.35.3
+require (
+	github.com/ncruces/go-sqlite3 v0.35.3
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/ncruces/go-sqlite3-wasm/v3 v3.2.35304 // indirect

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:outcome-propose-params:v1",
+  "$comment": "The server additionally enforces a 49152-byte maximum canonical assessment JSON representation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "task", "commitment", "assessment", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "task": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "commitment": {"type": "string", "pattern": "^outcommit_[0-9a-f]{32}$"},
+    "supersedes_outcome": {"type": "string", "pattern": "^outassess_[0-9a-f]{32}$"},
+    "assessment": {"$ref": "../../domain/v1/outcome-assessment-input.schema.json"},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

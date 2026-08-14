@@ -5367,6 +5367,598 @@ CREATE TRIGGER check_watch_receipt_reject_update BEFORE UPDATE ON check_watch_re
 
 CREATE TRIGGER check_watch_receipt_reject_delete BEFORE DELETE ON check_watch_receipts BEGIN SELECT RAISE(ABORT,'check-watch receipts are immutable'); END;
 
+CREATE TABLE deliverable_commitments (
+ id TEXT PRIMARY KEY CHECK(length(id)=42 AND substr(id,1,10)='outcommit_' AND substr(id,11) NOT GLOB '*[^0-9a-f]*'),
+ workspace_id TEXT NOT NULL REFERENCES workspaces(id), project_id TEXT NOT NULL REFERENCES projects(id),
+ objective_id TEXT NOT NULL REFERENCES objectives(id), task_id TEXT NOT NULL REFERENCES tasks(id),
+ commitment_key TEXT NOT NULL CHECK(length(CAST(commitment_key AS BLOB)) BETWEEN 1 AND 128 AND instr(commitment_key,char(0))=0),
+ title TEXT NOT NULL CHECK(length(CAST(title AS BLOB)) BETWEEN 1 AND 256 AND instr(title,char(0))=0),
+ description TEXT NOT NULL CHECK(length(CAST(description AS BLOB))<=4096 AND instr(description,char(0))=0),
+ acceptance_criteria_json TEXT NOT NULL CHECK(json_valid(acceptance_criteria_json) AND json_type(acceptance_criteria_json)='array' AND json_array_length(acceptance_criteria_json) BETWEEN 1 AND 32 AND length(CAST(acceptance_criteria_json AS BLOB))<=16384),
+ content_json TEXT NOT NULL CHECK(json_valid(content_json) AND json_type(content_json)='object' AND length(CAST(content_json AS BLOB))<=24576),
+ content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+ created_at TEXT NOT NULL, created_by TEXT NOT NULL CHECK(created_by='local-owner'),
+ UNIQUE(task_id,commitment_key)
+) STRICT;
+
+CREATE TABLE outcome_commitment_receipts (
+ commitment_id TEXT PRIMARY KEY REFERENCES deliverable_commitments(id),
+ event_sequence INTEGER NOT NULL UNIQUE REFERENCES events(sequence), created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE outcome_assessments (
+ id TEXT PRIMARY KEY CHECK(length(id)=42 AND substr(id,1,10)='outassess_' AND substr(id,11) NOT GLOB '*[^0-9a-f]*'),
+ workspace_id TEXT NOT NULL REFERENCES workspaces(id), project_id TEXT NOT NULL REFERENCES projects(id),
+ objective_id TEXT NOT NULL REFERENCES objectives(id), task_id TEXT NOT NULL REFERENCES tasks(id),
+ commitment_id TEXT NOT NULL REFERENCES deliverable_commitments(id), revision INTEGER NOT NULL CHECK(revision>0),
+ state_revision INTEGER NOT NULL CHECK(state_revision>0), review_state TEXT NOT NULL CHECK(review_state IN ('proposed','accepted','rejected','superseded')),
+ conclusion TEXT NOT NULL CHECK(conclusion IN ('achieved','partial','not_achieved','unknown')),
+ delivered_scope_json TEXT NOT NULL CHECK(json_valid(delivered_scope_json) AND json_type(delivered_scope_json)='array' AND json_array_length(delivered_scope_json)<=32),
+ unmet_scope_json TEXT NOT NULL CHECK(json_valid(unmet_scope_json) AND json_type(unmet_scope_json)='array' AND json_array_length(unmet_scope_json)<=32),
+ content_json TEXT NOT NULL CHECK(json_valid(content_json) AND json_type(content_json)='object' AND length(CAST(content_json AS BLOB))<=49152),
+ content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+ supersedes_assessment_id TEXT REFERENCES outcome_assessments(id),
+ proposed_at TEXT NOT NULL, proposed_by TEXT NOT NULL CHECK(proposed_by='local-owner'),
+ decided_at TEXT, decided_by TEXT CHECK(decided_by IS NULL OR decided_by='local-owner'), decision_note TEXT CHECK(decision_note IS NULL OR length(CAST(decision_note AS BLOB))<=4096),
+ UNIQUE(commitment_id,revision), CHECK(supersedes_assessment_id IS NULL OR supersedes_assessment_id<>id),
+ CHECK((review_state='proposed' AND state_revision=1 AND decided_at IS NULL AND decided_by IS NULL AND decision_note IS NULL)
+    OR (review_state IN ('accepted','rejected','superseded') AND state_revision>=2 AND decided_at IS NOT NULL AND decided_by='local-owner'))
+) STRICT;
+
+CREATE UNIQUE INDEX outcome_assessment_one_proposed ON outcome_assessments(commitment_id) WHERE review_state='proposed';
+CREATE UNIQUE INDEX outcome_assessment_one_current_accepted ON outcome_assessments(commitment_id) WHERE review_state='accepted';
+
+CREATE TABLE outcome_assessment_decision_refs (
+ assessment_id TEXT NOT NULL REFERENCES outcome_assessments(id) DEFERRABLE INITIALLY DEFERRED,
+ ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 31), revision_id TEXT NOT NULL REFERENCES knowledge_revisions(id),
+ content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64), event_sequence INTEGER NOT NULL REFERENCES events(sequence),
+ PRIMARY KEY(assessment_id,ordinal), UNIQUE(assessment_id,revision_id)
+) STRICT;
+
+CREATE TABLE outcome_assessment_evidence_refs (
+ assessment_id TEXT NOT NULL REFERENCES outcome_assessments(id) DEFERRABLE INITIALLY DEFERRED,
+ ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 31), source_type TEXT NOT NULL CHECK(source_type IN ('handoff','check_requirement_evidence')),
+ source_id TEXT NOT NULL, source_revision INTEGER NOT NULL CHECK(source_revision>0),
+ source_sha256 TEXT NOT NULL CHECK(length(source_sha256)=64), event_sequence INTEGER NOT NULL REFERENCES events(sequence),
+ class TEXT NOT NULL CHECK(class IN ('agent_self_report','mechanical_check','independent_review')),
+ effect TEXT NOT NULL CHECK(effect IN ('supports','contradicts','inconclusive')),
+ pinned_freshness TEXT NOT NULL CHECK(pinned_freshness IN ('fresh','stale','unknown')),
+ PRIMARY KEY(assessment_id,ordinal), UNIQUE(assessment_id,source_type,source_id)
+) STRICT;
+
+CREATE TABLE outcome_assessment_effects (
+ assessment_id TEXT NOT NULL REFERENCES outcome_assessments(id) DEFERRABLE INITIALLY DEFERRED,
+ ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 31), kind TEXT NOT NULL CHECK(kind IN ('compatibility','stability')),
+ direction TEXT NOT NULL CHECK(direction IN ('positive','neutral','negative','uncertain')),
+ summary TEXT NOT NULL CHECK(length(CAST(summary AS BLOB)) BETWEEN 1 AND 2048 AND instr(summary,char(0))=0),
+ PRIMARY KEY(assessment_id,ordinal)
+) STRICT;
+
+CREATE TABLE outcome_assessment_deviations (
+ assessment_id TEXT NOT NULL REFERENCES outcome_assessments(id) DEFERRABLE INITIALLY DEFERRED,
+ ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 31), kind TEXT NOT NULL CHECK(kind IN ('scope_change','duplicate_work')),
+ summary TEXT NOT NULL CHECK(length(CAST(summary AS BLOB)) BETWEEN 1 AND 2048 AND instr(summary,char(0))=0),
+ related_task_id TEXT REFERENCES tasks(id), related_task_revision INTEGER CHECK(related_task_revision IS NULL OR related_task_revision>0),
+ PRIMARY KEY(assessment_id,ordinal), CHECK((related_task_id IS NULL)=(related_task_revision IS NULL))
+) STRICT;
+
+CREATE TABLE outcome_assessment_risks (
+ assessment_id TEXT NOT NULL REFERENCES outcome_assessments(id) DEFERRABLE INITIALLY DEFERRED,
+ ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 31), severity TEXT NOT NULL CHECK(severity IN ('low','medium','high','critical')),
+ summary TEXT NOT NULL CHECK(length(CAST(summary AS BLOB)) BETWEEN 1 AND 2048 AND instr(summary,char(0))=0),
+ mitigation TEXT NOT NULL CHECK(length(CAST(mitigation AS BLOB))<=2048 AND instr(mitigation,char(0))=0),
+ PRIMARY KEY(assessment_id,ordinal)
+) STRICT;
+
+CREATE TABLE outcome_assessment_unknowns (
+ assessment_id TEXT NOT NULL REFERENCES outcome_assessments(id) DEFERRABLE INITIALLY DEFERRED,
+ ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 31),
+ summary TEXT NOT NULL CHECK(length(CAST(summary AS BLOB)) BETWEEN 1 AND 2048 AND instr(summary,char(0))=0),
+ PRIMARY KEY(assessment_id,ordinal)
+) STRICT;
+
+CREATE TABLE outcome_assessment_follow_up_tasks (
+ assessment_id TEXT NOT NULL REFERENCES outcome_assessments(id) DEFERRABLE INITIALLY DEFERRED,
+ ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 31), task_id TEXT NOT NULL REFERENCES tasks(id), task_revision INTEGER NOT NULL CHECK(task_revision>0), event_sequence INTEGER NOT NULL REFERENCES events(sequence),
+ PRIMARY KEY(assessment_id,ordinal), UNIQUE(assessment_id,task_id)
+) STRICT;
+
+CREATE TABLE outcome_assessment_owner_attention (
+ assessment_id TEXT NOT NULL REFERENCES outcome_assessments(id) DEFERRABLE INITIALLY DEFERRED,
+ ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 31), urgency TEXT NOT NULL CHECK(urgency IN ('now','next','later')),
+ action TEXT NOT NULL CHECK(length(CAST(action AS BLOB)) BETWEEN 1 AND 2048 AND instr(action,char(0))=0),
+ reason TEXT NOT NULL CHECK(length(CAST(reason AS BLOB)) BETWEEN 1 AND 2048 AND instr(reason,char(0))=0),
+ PRIMARY KEY(assessment_id,ordinal)
+) STRICT;
+
+CREATE TABLE outcome_assessment_submissions (
+ assessment_id TEXT PRIMARY KEY REFERENCES outcome_assessments(id), event_sequence INTEGER NOT NULL UNIQUE REFERENCES events(sequence),
+ child_count INTEGER NOT NULL CHECK(child_count BETWEEN 0 AND 256), submitted_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE outcome_assessment_governance (
+ assessment_id TEXT PRIMARY KEY REFERENCES outcome_assessments(id), decision TEXT NOT NULL CHECK(decision IN ('accepted','rejected')),
+ decision_event_sequence INTEGER NOT NULL UNIQUE REFERENCES events(sequence), superseded_assessment_id TEXT REFERENCES outcome_assessments(id),
+ superseded_event_sequence INTEGER UNIQUE REFERENCES events(sequence), decided_at TEXT NOT NULL,
+ CHECK((superseded_assessment_id IS NULL)=(superseded_event_sequence IS NULL))
+) STRICT;
+
+CREATE TABLE outcome_assessment_acceptance_basis (
+ assessment_id TEXT PRIMARY KEY REFERENCES outcome_assessments(id), event_sequence INTEGER NOT NULL UNIQUE REFERENCES events(sequence),
+ source_sha256 TEXT NOT NULL CHECK(length(source_sha256)=64), created_at TEXT NOT NULL, created_by TEXT NOT NULL CHECK(created_by='local-owner')
+) STRICT;
+
+CREATE TABLE owner_checkpoints (
+ id TEXT PRIMARY KEY CHECK(length(id)=40 AND substr(id,1,8)='outcpnt_' AND substr(id,9) NOT GLOB '*[^0-9a-f]*'),
+ workspace_id TEXT NOT NULL REFERENCES workspaces(id), scope_type TEXT NOT NULL CHECK(scope_type IN ('task','objective','project','workspace')),
+ scope_id TEXT NOT NULL, event_sequence INTEGER NOT NULL UNIQUE REFERENCES events(sequence),
+ created_at TEXT NOT NULL, created_by TEXT NOT NULL CHECK(created_by='local-owner')
+) STRICT;
+
+CREATE TABLE outcome_projector_state (
+ workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id), last_event_sequence INTEGER NOT NULL CHECK(last_event_sequence>=0),
+ revision INTEGER NOT NULL CHECK(revision>0), updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE management_briefings (
+ id TEXT PRIMARY KEY CHECK(length(id)=41 AND substr(id,1,9)='briefing_' AND substr(id,10) NOT GLOB '*[^0-9a-f]*'),
+ revision INTEGER NOT NULL CHECK(revision>0), workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+ scope_type TEXT NOT NULL CHECK(scope_type IN ('task','objective','project','workspace')), scope_id TEXT NOT NULL,
+ event_cursor INTEGER NOT NULL CHECK(event_cursor>=0), cutoff_event_sequence INTEGER NOT NULL CHECK(cutoff_event_sequence>=event_cursor),
+ checkpoint_id TEXT NOT NULL, since_event_sequence INTEGER NOT NULL CHECK(since_event_sequence>=0), evaluated_at TEXT NOT NULL,
+ caught_up INTEGER NOT NULL CHECK(caught_up IN (0,1)), unknown_event_type TEXT, unknown_event_sequence INTEGER,
+ content_json TEXT NOT NULL CHECK(json_valid(content_json) AND json_type(content_json)='object' AND length(CAST(content_json AS BLOB))<=65536),
+ content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64), byte_size INTEGER NOT NULL CHECK(byte_size BETWEEN 1 AND 65536),
+ created_at TEXT NOT NULL, UNIQUE(workspace_id,scope_type,scope_id,event_cursor,checkpoint_id,content_sha256),
+ CHECK((unknown_event_type IS NULL)=(unknown_event_sequence IS NULL))
+) STRICT;
+
+CREATE TABLE management_briefing_claims (
+ briefing_id TEXT NOT NULL REFERENCES management_briefings(id), ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 127),
+ claim_id TEXT NOT NULL CHECK(length(claim_id)=71 AND substr(claim_id,1,7)='bclaim_' AND substr(claim_id,8) NOT GLOB '*[^0-9a-f]*'), semantic_key TEXT NOT NULL CHECK(length(CAST(semantic_key AS BLOB)) BETWEEN 1 AND 256), kind TEXT NOT NULL CHECK(kind IN ('required_decision','contradiction','risk','unknown','verification_gap','deviation','unmet_commitment','accepted_delivery','rationale','change')),
+ urgency TEXT NOT NULL CHECK(urgency IN ('now','next','later')), summary TEXT NOT NULL, status TEXT NOT NULL,
+ project_id TEXT, source_event_sequence INTEGER NOT NULL CHECK(source_event_sequence>0), claim_json TEXT NOT NULL CHECK(json_valid(claim_json)),
+ PRIMARY KEY(briefing_id,ordinal), UNIQUE(briefing_id,claim_id)
+) STRICT;
+
+CREATE TABLE management_briefing_claim_sources (
+ briefing_id TEXT NOT NULL, claim_id TEXT NOT NULL, ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 31),
+ entity_type TEXT NOT NULL CHECK(entity_type IN ('outcome_assessment','deliverable_commitment','outcome_assessment_acceptance_basis','knowledge_contradiction','knowledge_revision','check_requirement_evidence','task','handoff')), entity_id TEXT NOT NULL, entity_revision INTEGER NOT NULL CHECK(entity_revision>0),
+ content_sha256 TEXT NOT NULL CHECK(content_sha256='' OR (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*')), event_sequence INTEGER NOT NULL REFERENCES events(sequence),
+ evidence_class TEXT NOT NULL CHECK(evidence_class IN ('','agent_self_report','mechanical_check','independent_review')),
+ evidence_effect TEXT NOT NULL CHECK(evidence_effect IN ('','supports','contradicts','inconclusive')),
+ pinned_freshness TEXT NOT NULL CHECK(pinned_freshness IN ('','fresh','stale','unknown')),
+ current_freshness TEXT NOT NULL CHECK(current_freshness IN ('','fresh','stale','unknown')),
+ PRIMARY KEY(briefing_id,claim_id,ordinal), FOREIGN KEY(briefing_id,claim_id) REFERENCES management_briefing_claims(briefing_id,claim_id)
+ ,CHECK((entity_type IN ('handoff','check_requirement_evidence') AND evidence_class<>'' AND evidence_effect<>'' AND pinned_freshness<>'' AND current_freshness<>'') OR (entity_type NOT IN ('handoff','check_requirement_evidence') AND evidence_class='' AND evidence_effect='' AND pinned_freshness='' AND current_freshness=''))
+) STRICT;
+
+CREATE TABLE management_briefing_receipts (
+ briefing_id TEXT PRIMARY KEY REFERENCES management_briefings(id),
+ claim_count INTEGER NOT NULL CHECK(claim_count BETWEEN 0 AND 128),
+ source_count INTEGER NOT NULL CHECK(source_count BETWEEN 0 AND 4096),
+ sealed_at TEXT NOT NULL
+) STRICT;
+
+CREATE TRIGGER outcome_commitment_require_store_insert BEFORE INSERT ON deliverable_commitments BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1
+  OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1
+  OR lower(hex(sha256(CAST(NEW.content_json AS BLOB)))) IS NOT NEW.content_sha256
+  OR json_extract(NEW.content_json,'$.workspace_id') IS NOT NEW.workspace_id
+  OR json_extract(NEW.content_json,'$.project_id') IS NOT NEW.project_id
+  OR json_extract(NEW.content_json,'$.objective_id') IS NOT NEW.objective_id
+  OR json_extract(NEW.content_json,'$.task_id') IS NOT NEW.task_id
+  OR json_extract(NEW.content_json,'$.key') IS NOT NEW.commitment_key
+  OR json_extract(NEW.content_json,'$.title') IS NOT NEW.title
+  OR COALESCE(json_extract(NEW.content_json,'$.description'),'') IS NOT NEW.description
+  OR json(json_extract(NEW.content_json,'$.acceptance_criteria')) IS NOT json(NEW.acceptance_criteria_json)
+  OR NOT EXISTS(SELECT 1 FROM tasks task JOIN objectives objective ON objective.id=task.objective_id
+    WHERE task.id=NEW.task_id AND task.workspace_id=NEW.workspace_id AND task.project_id=NEW.project_id
+      AND task.objective_id=NEW.objective_id AND objective.workspace_id=NEW.workspace_id
+      AND objective.project_id=NEW.project_id AND objective.status='active'
+      AND task.status IN ('ready','assigned') AND NOT EXISTS(SELECT 1 FROM runs run WHERE run.task_id=task.id))
+ THEN RAISE(ABORT,'invalid canonical deliverable commitment construction') END;
+END;
+CREATE TRIGGER outcome_commitment_reject_update BEFORE UPDATE ON deliverable_commitments BEGIN SELECT RAISE(ABORT,'deliverable commitments are immutable'); END;
+CREATE TRIGGER outcome_commitment_reject_delete BEFORE DELETE ON deliverable_commitments BEGIN SELECT RAISE(ABORT,'deliverable commitments are immutable'); END;
+CREATE TRIGGER outcome_commitment_receipt_require_store_insert BEFORE INSERT ON outcome_commitment_receipts BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1
+  OR NOT EXISTS(SELECT 1 FROM deliverable_commitments commitment JOIN events event ON event.sequence=NEW.event_sequence
+   WHERE commitment.id=NEW.commitment_id AND commitment.created_at=NEW.created_at
+    AND event.workspace_id=commitment.workspace_id AND event.entity_type='deliverable_commitment'
+    AND event.entity_id=commitment.id AND event.entity_revision=1 AND event.type='outcome.commitment_created'
+    AND event.occurred_at=commitment.created_at AND event.recorded_at=commitment.created_at
+    AND event.actor_id='local-owner' AND event.actor_type='human'
+    AND json_type(event.data_json)='object' AND (SELECT COUNT(*) FROM json_each(event.data_json))=5
+    AND json_extract(event.data_json,'$.content_sha256')=commitment.content_sha256
+    AND json_extract(event.data_json,'$.key')=commitment.commitment_key
+    AND json_extract(event.data_json,'$.objective_id')=commitment.objective_id
+    AND json_extract(event.data_json,'$.project_id')=commitment.project_id
+    AND json_extract(event.data_json,'$.task_id')=commitment.task_id)
+ THEN RAISE(ABORT,'invalid deliverable commitment event receipt') END;
+END;
+CREATE TRIGGER outcome_commitment_receipt_reject_update BEFORE UPDATE ON outcome_commitment_receipts BEGIN SELECT RAISE(ABORT,'outcome receipts are immutable'); END;
+CREATE TRIGGER outcome_commitment_receipt_reject_delete BEFORE DELETE ON outcome_commitment_receipts BEGIN SELECT RAISE(ABORT,'outcome receipts are immutable'); END;
+
+CREATE TRIGGER outcome_assessment_require_store_insert BEFORE INSERT ON outcome_assessments BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR crewfold_timestamp_canonical(NEW.proposed_at) IS NOT 1
+  OR NEW.review_state<>'proposed' OR NEW.state_revision<>1 OR NEW.proposed_by<>'local-owner'
+  OR NEW.revision<>COALESCE((SELECT MAX(revision)+1 FROM outcome_assessments WHERE commitment_id=NEW.commitment_id),1)
+  OR lower(hex(sha256(CAST(NEW.content_json AS BLOB)))) IS NOT NEW.content_sha256
+  OR json_extract(NEW.content_json,'$.workspace_id') IS NOT NEW.workspace_id
+  OR json_extract(NEW.content_json,'$.project_id') IS NOT NEW.project_id
+  OR json_extract(NEW.content_json,'$.objective_id') IS NOT NEW.objective_id
+  OR json_extract(NEW.content_json,'$.task_id') IS NOT NEW.task_id
+  OR json_extract(NEW.content_json,'$.commitment_id') IS NOT NEW.commitment_id
+  OR json_extract(NEW.content_json,'$.revision') IS NOT NEW.revision
+  OR COALESCE(json_extract(NEW.content_json,'$.supersedes_assessment_id'),'') IS NOT COALESCE(NEW.supersedes_assessment_id,'')
+  OR json_extract(NEW.content_json,'$.assessment.conclusion') IS NOT NEW.conclusion
+  OR json(json_extract(NEW.content_json,'$.assessment.delivered_scope')) IS NOT json(NEW.delivered_scope_json)
+  OR json(json_extract(NEW.content_json,'$.assessment.unmet_scope')) IS NOT json(NEW.unmet_scope_json)
+  OR NOT EXISTS(SELECT 1 FROM deliverable_commitments commitment WHERE commitment.id=NEW.commitment_id
+    AND commitment.workspace_id=NEW.workspace_id AND commitment.project_id=NEW.project_id
+    AND commitment.objective_id=NEW.objective_id AND commitment.task_id=NEW.task_id)
+  OR (NEW.supersedes_assessment_id IS NULL AND EXISTS(SELECT 1 FROM outcome_assessments current WHERE current.commitment_id=NEW.commitment_id AND current.review_state='accepted'))
+  OR (NEW.supersedes_assessment_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM outcome_assessments current WHERE current.id=NEW.supersedes_assessment_id AND current.commitment_id=NEW.commitment_id AND current.review_state='accepted'))
+  OR (NEW.conclusion='achieved' AND (json_array_length(NEW.delivered_scope_json)=0 OR json_array_length(NEW.unmet_scope_json)<>0))
+  OR (NEW.conclusion='partial' AND (json_array_length(NEW.delivered_scope_json)=0 OR json_array_length(NEW.unmet_scope_json)=0))
+  OR (NEW.conclusion='not_achieved' AND (json_array_length(NEW.delivered_scope_json)<>0 OR json_array_length(NEW.unmet_scope_json)=0))
+  OR (NEW.conclusion='unknown' AND json_array_length(json_extract(NEW.content_json,'$.assessment.unknowns'))=0)
+ THEN RAISE(ABORT,'invalid canonical outcome assessment construction') END;
+END;
+CREATE TRIGGER outcome_assessment_validate_update BEFORE UPDATE ON outcome_assessments BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1
+ OR NEW.id<>OLD.id OR NEW.workspace_id<>OLD.workspace_id OR NEW.project_id<>OLD.project_id OR NEW.objective_id<>OLD.objective_id OR NEW.task_id<>OLD.task_id OR NEW.commitment_id<>OLD.commitment_id OR NEW.revision<>OLD.revision
+ OR NEW.conclusion<>OLD.conclusion OR NEW.delivered_scope_json<>OLD.delivered_scope_json OR NEW.unmet_scope_json<>OLD.unmet_scope_json OR NEW.content_json<>OLD.content_json OR NEW.content_sha256<>OLD.content_sha256
+ OR COALESCE(NEW.supersedes_assessment_id,'')<>COALESCE(OLD.supersedes_assessment_id,'') OR NEW.proposed_at<>OLD.proposed_at OR NEW.proposed_by<>OLD.proposed_by
+ OR NOT ((OLD.review_state='proposed' AND NEW.review_state IN ('accepted','rejected') AND NEW.state_revision=2)
+      OR (OLD.review_state='accepted' AND NEW.review_state='superseded' AND NEW.state_revision=OLD.state_revision+1 AND NEW.decided_at=OLD.decided_at AND NEW.decided_by=OLD.decided_by AND COALESCE(NEW.decision_note,'')=COALESCE(OLD.decision_note,'')))
+ THEN RAISE(ABORT,'invalid outcome assessment governance transition') END;
+END;
+CREATE TRIGGER outcome_assessment_reject_delete BEFORE DELETE ON outcome_assessments BEGIN SELECT RAISE(ABORT,'outcome assessments are durable'); END;
+
+CREATE TRIGGER outcome_decision_ref_require_store_insert BEFORE INSERT ON outcome_assessment_decision_refs BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.ordinal<>COALESCE((SELECT MAX(ordinal)+1 FROM outcome_assessment_decision_refs WHERE assessment_id=NEW.assessment_id),0)
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment WHERE assessment.id=NEW.assessment_id AND json_extract(assessment.content_json,'$.assessment.decision_revision_ids['||NEW.ordinal||']')=NEW.revision_id)
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment JOIN knowledge_revisions revision ON revision.id=NEW.revision_id JOIN knowledge_items item ON item.id=revision.item_id JOIN events event ON event.sequence=NEW.event_sequence
+   WHERE assessment.id=NEW.assessment_id AND revision.review_status='accepted' AND revision.content_hash=NEW.content_sha256
+    AND item.workspace_id=assessment.workspace_id AND item.project_id=assessment.project_id AND item.type='decision'
+    AND (item.task_scope_id IS NULL OR item.task_scope_id=assessment.task_id)
+    AND event.workspace_id=assessment.workspace_id AND event.entity_type='knowledge_revision' AND event.entity_id=revision.id AND event.type='knowledge.accepted')
+ THEN RAISE(ABORT,'invalid outcome decision reference') END;
+END;
+CREATE TRIGGER outcome_evidence_ref_require_store_insert BEFORE INSERT ON outcome_assessment_evidence_refs BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.ordinal<>COALESCE((SELECT MAX(ordinal)+1 FROM outcome_assessment_evidence_refs WHERE assessment_id=NEW.assessment_id),0)
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment WHERE assessment.id=NEW.assessment_id
+    AND json_extract(assessment.content_json,'$.assessment.evidence['||NEW.ordinal||'].source_type')=NEW.source_type
+    AND json_extract(assessment.content_json,'$.assessment.evidence['||NEW.ordinal||'].source_id')=NEW.source_id)
+  OR (NEW.source_type='handoff' AND NOT EXISTS(SELECT 1 FROM outcome_assessments assessment JOIN run_handoffs handoff ON handoff.id=NEW.source_id JOIN runs run ON run.id=handoff.run_id JOIN events event ON event.sequence=NEW.event_sequence
+    WHERE assessment.id=NEW.assessment_id AND run.workspace_id=assessment.workspace_id AND run.project_id=assessment.project_id AND run.status='completed' AND event.workspace_id=assessment.workspace_id
+      AND event.entity_type='task' AND event.type='task.handoff_recorded' AND json_extract(event.data_json,'$.handoff_id')=handoff.id
+      AND event.entity_revision=NEW.source_revision AND NEW.effect='supports' AND NEW.pinned_freshness='fresh'
+      AND NEW.source_sha256=lower(hex(sha256(CAST(json_object('created_at',handoff.created_at,'evidence_json',json(handoff.evidence_json),'id',handoff.id,'run_id',handoff.run_id,'summary',handoff.summary,'task_id',handoff.task_id) AS BLOB))))
+      AND ((handoff.task_id=assessment.task_id AND NEW.class='agent_self_report') OR (handoff.task_id<>assessment.task_id AND NEW.class='independent_review' AND EXISTS(
+       SELECT 1 FROM manager_proposal_effects effect JOIN manager_proposal_actions action ON action.id=effect.action_id AND action.proposal_id=effect.proposal_id
+       JOIN manager_proposals proposal ON proposal.id=effect.proposal_id
+       WHERE effect.entity_type='task' AND effect.entity_id=handoff.task_id AND effect.effect_type='created'
+        AND action.type='request_review' AND proposal.status='accepted' AND proposal.workspace_id=assessment.workspace_id
+        AND json_extract(action.payload_json,'$.task.task_id')=assessment.task_id)))))
+  OR (NEW.source_type='check_requirement_evidence' AND NOT EXISTS(SELECT 1 FROM outcome_assessments assessment JOIN check_requirement_evidence evidence ON evidence.id=NEW.source_id JOIN check_results result ON result.id=evidence.check_result_id JOIN check_runs run ON run.id=result.check_run_id JOIN check_result_freshness fresh ON fresh.check_result_id=result.id AND fresh.revision=evidence.freshness_revision JOIN events event ON event.sequence=NEW.event_sequence
+    WHERE assessment.id=NEW.assessment_id AND run.workspace_id=assessment.workspace_id AND run.project_id=assessment.project_id AND run.task_id=assessment.task_id
+      AND evidence.freshness_revision=NEW.source_revision AND evidence.class=NEW.class AND evidence.effect=NEW.effect AND fresh.status=NEW.pinned_freshness
+      AND NEW.source_sha256=lower(hex(sha256(CAST(json_object('check_result_id',evidence.check_result_id,'class',evidence.class,'effect',evidence.effect,'freshness_revision',evidence.freshness_revision,'id',evidence.id,'pinned_freshness',fresh.status,'requirement_id',evidence.requirement_id,'requirement_revision',evidence.requirement_revision) AS BLOB))))
+      AND event.workspace_id=assessment.workspace_id AND event.entity_type='check_result' AND event.entity_id=result.id AND event.entity_revision=evidence.freshness_revision
+      AND event.type IN ('check.result_recorded','check.freshness_observed','check.freshness_stale')))
+ THEN RAISE(ABORT,'invalid outcome evidence reference') END;
+END;
+CREATE TRIGGER outcome_effect_require_store_insert BEFORE INSERT ON outcome_assessment_effects BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.ordinal<>COALESCE((SELECT MAX(ordinal)+1 FROM outcome_assessment_effects WHERE assessment_id=NEW.assessment_id),0)
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment WHERE assessment.id=NEW.assessment_id
+    AND json_extract(assessment.content_json,'$.assessment.effects['||NEW.ordinal||'].kind')=NEW.kind
+    AND json_extract(assessment.content_json,'$.assessment.effects['||NEW.ordinal||'].direction')=NEW.direction
+    AND json_extract(assessment.content_json,'$.assessment.effects['||NEW.ordinal||'].summary')=NEW.summary)
+ THEN RAISE(ABORT,'invalid normalized outcome effect') END;
+END;
+CREATE TRIGGER outcome_deviation_require_store_insert BEFORE INSERT ON outcome_assessment_deviations BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.ordinal<>COALESCE((SELECT MAX(ordinal)+1 FROM outcome_assessment_deviations WHERE assessment_id=NEW.assessment_id),0)
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment WHERE assessment.id=NEW.assessment_id
+    AND json_extract(assessment.content_json,'$.assessment.deviations['||NEW.ordinal||'].kind')=NEW.kind
+    AND json_extract(assessment.content_json,'$.assessment.deviations['||NEW.ordinal||'].summary')=NEW.summary
+    AND COALESCE(json_extract(assessment.content_json,'$.assessment.deviations['||NEW.ordinal||'].related_task_id'),'')=COALESCE(NEW.related_task_id,''))
+  OR (NEW.related_task_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM outcome_assessments assessment JOIN tasks task ON task.id=NEW.related_task_id
+    WHERE assessment.id=NEW.assessment_id AND task.workspace_id=assessment.workspace_id AND task.project_id=assessment.project_id AND task.revision=NEW.related_task_revision))
+ THEN RAISE(ABORT,'invalid normalized outcome deviation') END;
+END;
+CREATE TRIGGER outcome_risk_require_store_insert BEFORE INSERT ON outcome_assessment_risks BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.ordinal<>COALESCE((SELECT MAX(ordinal)+1 FROM outcome_assessment_risks WHERE assessment_id=NEW.assessment_id),0)
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment WHERE assessment.id=NEW.assessment_id
+    AND json_extract(assessment.content_json,'$.assessment.risks['||NEW.ordinal||'].severity')=NEW.severity
+    AND json_extract(assessment.content_json,'$.assessment.risks['||NEW.ordinal||'].summary')=NEW.summary
+    AND COALESCE(json_extract(assessment.content_json,'$.assessment.risks['||NEW.ordinal||'].mitigation'),'')=NEW.mitigation)
+ THEN RAISE(ABORT,'invalid normalized outcome risk') END;
+END;
+CREATE TRIGGER outcome_unknown_require_store_insert BEFORE INSERT ON outcome_assessment_unknowns BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.ordinal<>COALESCE((SELECT MAX(ordinal)+1 FROM outcome_assessment_unknowns WHERE assessment_id=NEW.assessment_id),0)
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment WHERE assessment.id=NEW.assessment_id
+    AND json_extract(assessment.content_json,'$.assessment.unknowns['||NEW.ordinal||'].summary')=NEW.summary)
+ THEN RAISE(ABORT,'invalid normalized outcome unknown') END;
+END;
+CREATE TRIGGER outcome_follow_up_require_store_insert BEFORE INSERT ON outcome_assessment_follow_up_tasks BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.ordinal<>COALESCE((SELECT MAX(ordinal)+1 FROM outcome_assessment_follow_up_tasks WHERE assessment_id=NEW.assessment_id),0)
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment JOIN tasks task ON task.id=NEW.task_id WHERE assessment.id=NEW.assessment_id
+    AND json_extract(assessment.content_json,'$.assessment.follow_up_task_ids['||NEW.ordinal||']')=NEW.task_id
+    AND task.workspace_id=assessment.workspace_id AND task.project_id=assessment.project_id AND task.revision=NEW.task_revision
+    AND EXISTS(SELECT 1 FROM events event WHERE event.sequence=NEW.event_sequence AND event.workspace_id=task.workspace_id AND event.entity_type='task' AND event.entity_id=task.id AND event.entity_revision=task.revision))
+ THEN RAISE(ABORT,'invalid normalized outcome follow-up task') END;
+END;
+CREATE TRIGGER outcome_attention_require_store_insert BEFORE INSERT ON outcome_assessment_owner_attention BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.ordinal<>COALESCE((SELECT MAX(ordinal)+1 FROM outcome_assessment_owner_attention WHERE assessment_id=NEW.assessment_id),0)
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment WHERE assessment.id=NEW.assessment_id
+    AND json_extract(assessment.content_json,'$.assessment.owner_attention['||NEW.ordinal||'].urgency')=NEW.urgency
+    AND json_extract(assessment.content_json,'$.assessment.owner_attention['||NEW.ordinal||'].action')=NEW.action
+    AND json_extract(assessment.content_json,'$.assessment.owner_attention['||NEW.ordinal||'].reason')=NEW.reason)
+ THEN RAISE(ABORT,'invalid normalized outcome owner attention') END;
+END;
+CREATE TRIGGER outcome_submission_require_store_insert BEFORE INSERT ON outcome_assessment_submissions BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR crewfold_timestamp_canonical(NEW.submitted_at) IS NOT 1
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment WHERE assessment.id=NEW.assessment_id
+   AND json_type(assessment.content_json,'$.assessment.decision_revision_ids')='array'
+   AND json_type(assessment.content_json,'$.assessment.evidence')='array'
+   AND json_type(assessment.content_json,'$.assessment.effects')='array'
+   AND json_type(assessment.content_json,'$.assessment.deviations')='array'
+   AND json_type(assessment.content_json,'$.assessment.risks')='array'
+   AND json_type(assessment.content_json,'$.assessment.unknowns')='array'
+   AND json_type(assessment.content_json,'$.assessment.follow_up_task_ids')='array'
+   AND json_type(assessment.content_json,'$.assessment.owner_attention')='array'
+   AND json_array_length(assessment.content_json,'$.assessment.decision_revision_ids')=(SELECT COUNT(*) FROM outcome_assessment_decision_refs WHERE assessment_id=NEW.assessment_id)
+   AND json_array_length(assessment.content_json,'$.assessment.evidence')=(SELECT COUNT(*) FROM outcome_assessment_evidence_refs WHERE assessment_id=NEW.assessment_id)
+   AND json_array_length(assessment.content_json,'$.assessment.effects')=(SELECT COUNT(*) FROM outcome_assessment_effects WHERE assessment_id=NEW.assessment_id)
+   AND json_array_length(assessment.content_json,'$.assessment.deviations')=(SELECT COUNT(*) FROM outcome_assessment_deviations WHERE assessment_id=NEW.assessment_id)
+   AND json_array_length(assessment.content_json,'$.assessment.risks')=(SELECT COUNT(*) FROM outcome_assessment_risks WHERE assessment_id=NEW.assessment_id)
+   AND json_array_length(assessment.content_json,'$.assessment.unknowns')=(SELECT COUNT(*) FROM outcome_assessment_unknowns WHERE assessment_id=NEW.assessment_id)
+   AND json_array_length(assessment.content_json,'$.assessment.follow_up_task_ids')=(SELECT COUNT(*) FROM outcome_assessment_follow_up_tasks WHERE assessment_id=NEW.assessment_id)
+   AND json_array_length(assessment.content_json,'$.assessment.owner_attention')=(SELECT COUNT(*) FROM outcome_assessment_owner_attention WHERE assessment_id=NEW.assessment_id)
+   AND NEW.child_count=json_array_length(assessment.content_json,'$.assessment.decision_revision_ids')
+                      +json_array_length(assessment.content_json,'$.assessment.evidence')
+                      +json_array_length(assessment.content_json,'$.assessment.effects')
+                      +json_array_length(assessment.content_json,'$.assessment.deviations')
+                      +json_array_length(assessment.content_json,'$.assessment.risks')
+                      +json_array_length(assessment.content_json,'$.assessment.unknowns')
+                      +json_array_length(assessment.content_json,'$.assessment.follow_up_task_ids')
+                      +json_array_length(assessment.content_json,'$.assessment.owner_attention'))
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment JOIN events event ON event.sequence=NEW.event_sequence
+   WHERE assessment.id=NEW.assessment_id AND assessment.proposed_at=NEW.submitted_at
+    AND event.workspace_id=assessment.workspace_id AND event.entity_type='outcome_assessment' AND event.entity_id=assessment.id
+    AND event.entity_revision=1 AND event.type='outcome.assessment_proposed' AND event.occurred_at=assessment.proposed_at
+    AND event.recorded_at=assessment.proposed_at AND event.actor_id='local-owner' AND event.actor_type='human'
+    AND json_type(event.data_json)='object' AND (SELECT COUNT(*) FROM json_each(event.data_json))=6
+    AND json_extract(event.data_json,'$.assessment_revision')=assessment.revision
+    AND json_extract(event.data_json,'$.commitment_id')=assessment.commitment_id
+    AND json_extract(event.data_json,'$.conclusion')=assessment.conclusion
+    AND json_extract(event.data_json,'$.content_sha256')=assessment.content_sha256
+    AND COALESCE(json_extract(event.data_json,'$.supersedes_assessment_id'),'')=COALESCE(assessment.supersedes_assessment_id,'')
+    AND json_extract(event.data_json,'$.task_id')=assessment.task_id)
+ THEN RAISE(ABORT,'invalid outcome assessment submission receipt') END;
+END;
+CREATE TRIGGER outcome_governance_require_store_insert BEFORE INSERT ON outcome_assessment_governance BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR crewfold_timestamp_canonical(NEW.decided_at) IS NOT 1
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment JOIN outcome_assessment_submissions submission ON submission.assessment_id=assessment.id JOIN events event ON event.sequence=NEW.decision_event_sequence
+   WHERE assessment.id=NEW.assessment_id AND assessment.review_state=NEW.decision AND assessment.state_revision=2
+    AND assessment.decided_at=NEW.decided_at AND event.workspace_id=assessment.workspace_id
+    AND event.entity_type='outcome_assessment' AND event.entity_id=assessment.id AND event.entity_revision=2
+    AND event.type=CASE NEW.decision WHEN 'accepted' THEN 'outcome.assessment_accepted' ELSE 'outcome.assessment_rejected' END
+    AND submission.event_sequence<NEW.decision_event_sequence
+    AND event.occurred_at=NEW.decided_at AND event.recorded_at=NEW.decided_at
+    AND event.actor_id='local-owner' AND event.actor_type='human'
+    AND json_type(event.data_json)='object' AND (SELECT COUNT(*) FROM json_each(event.data_json))=4
+    AND json_extract(event.data_json,'$.assessment_revision')=assessment.revision
+    AND json_extract(event.data_json,'$.commitment_id')=assessment.commitment_id
+    AND json_extract(event.data_json,'$.conclusion')=assessment.conclusion
+    AND COALESCE(json_extract(event.data_json,'$.decision_note'),'')=COALESCE(assessment.decision_note,'')
+    AND (NEW.decision<>'accepted' OR assessment.conclusion NOT IN ('achieved','partial') OR EXISTS(
+      SELECT 1 FROM outcome_assessment_evidence_refs evidence WHERE evidence.assessment_id=assessment.id AND evidence.effect='supports')))
+  OR (NEW.decision='accepted' AND NOT EXISTS(SELECT 1 FROM outcome_assessment_acceptance_basis basis JOIN outcome_assessments assessment ON assessment.id=basis.assessment_id
+    WHERE basis.assessment_id=NEW.assessment_id AND basis.event_sequence=NEW.decision_event_sequence
+     AND basis.created_at=NEW.decided_at AND basis.created_by='local-owner'
+     AND basis.source_sha256=crewfold_outcome_acceptance_basis_sha(assessment.id,assessment.content_sha256,NEW.decision_event_sequence,2)))
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment WHERE assessment.id=NEW.assessment_id
+    AND ((NEW.decision='accepted' AND assessment.supersedes_assessment_id IS NOT NULL
+      AND NEW.superseded_assessment_id=assessment.supersedes_assessment_id AND NEW.superseded_event_sequence IS NOT NULL)
+     OR ((NEW.decision<>'accepted' OR assessment.supersedes_assessment_id IS NULL)
+      AND NEW.superseded_assessment_id IS NULL AND NEW.superseded_event_sequence IS NULL)))
+  OR (NEW.superseded_assessment_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM outcome_assessments successor JOIN outcome_assessments prior ON prior.id=NEW.superseded_assessment_id JOIN events event ON event.sequence=NEW.superseded_event_sequence
+   WHERE successor.id=NEW.assessment_id AND successor.supersedes_assessment_id=prior.id AND successor.commitment_id=prior.commitment_id
+    AND successor.review_state='accepted' AND prior.review_state='superseded' AND event.workspace_id=successor.workspace_id
+    AND event.entity_type='outcome_assessment' AND event.entity_id=prior.id AND event.entity_revision=prior.state_revision
+    AND event.type='outcome.assessment_superseded' AND event.occurred_at=NEW.decided_at
+    AND event.recorded_at=NEW.decided_at AND event.actor_id='local-owner' AND event.actor_type='human'
+    AND json_type(event.data_json)='object' AND (SELECT COUNT(*) FROM json_each(event.data_json))=2
+    AND json_extract(event.data_json,'$.commitment_id')=successor.commitment_id
+    AND json_extract(event.data_json,'$.successor_assessment_id')=successor.id))
+ THEN RAISE(ABORT,'invalid outcome assessment governance receipt') END;
+END;
+CREATE TRIGGER outcome_acceptance_basis_require_store_insert BEFORE INSERT ON outcome_assessment_acceptance_basis BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1
+  OR NOT EXISTS(SELECT 1 FROM outcome_assessments assessment JOIN events event ON event.sequence=NEW.event_sequence
+   WHERE assessment.id=NEW.assessment_id AND assessment.review_state='accepted' AND assessment.state_revision=2
+    AND event.workspace_id=assessment.workspace_id AND event.entity_type='outcome_assessment' AND event.entity_id=assessment.id
+    AND event.entity_revision=2 AND event.type='outcome.assessment_accepted' AND event.occurred_at=NEW.created_at)
+  OR NEW.source_sha256<>crewfold_outcome_acceptance_basis_sha(NEW.assessment_id,(SELECT content_sha256 FROM outcome_assessments WHERE id=NEW.assessment_id),NEW.event_sequence,2)
+ THEN RAISE(ABORT,'invalid outcome acceptance basis') END;
+END;
+
+CREATE TRIGGER outcome_decision_ref_immutable_update BEFORE UPDATE ON outcome_assessment_decision_refs BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_decision_ref_immutable_delete BEFORE DELETE ON outcome_assessment_decision_refs BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_evidence_ref_immutable_update BEFORE UPDATE ON outcome_assessment_evidence_refs BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_evidence_ref_immutable_delete BEFORE DELETE ON outcome_assessment_evidence_refs BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_effect_immutable_update BEFORE UPDATE ON outcome_assessment_effects BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_effect_immutable_delete BEFORE DELETE ON outcome_assessment_effects BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_deviation_immutable_update BEFORE UPDATE ON outcome_assessment_deviations BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_deviation_immutable_delete BEFORE DELETE ON outcome_assessment_deviations BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_risk_immutable_update BEFORE UPDATE ON outcome_assessment_risks BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_risk_immutable_delete BEFORE DELETE ON outcome_assessment_risks BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_unknown_immutable_update BEFORE UPDATE ON outcome_assessment_unknowns BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_unknown_immutable_delete BEFORE DELETE ON outcome_assessment_unknowns BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_follow_up_immutable_update BEFORE UPDATE ON outcome_assessment_follow_up_tasks BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_follow_up_immutable_delete BEFORE DELETE ON outcome_assessment_follow_up_tasks BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_attention_immutable_update BEFORE UPDATE ON outcome_assessment_owner_attention BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_attention_immutable_delete BEFORE DELETE ON outcome_assessment_owner_attention BEGIN SELECT RAISE(ABORT,'outcome children are immutable'); END;
+CREATE TRIGGER outcome_submission_immutable_update BEFORE UPDATE ON outcome_assessment_submissions BEGIN SELECT RAISE(ABORT,'outcome submissions are immutable'); END;
+CREATE TRIGGER outcome_submission_immutable_delete BEFORE DELETE ON outcome_assessment_submissions BEGIN SELECT RAISE(ABORT,'outcome submissions are immutable'); END;
+CREATE TRIGGER outcome_governance_immutable_update BEFORE UPDATE ON outcome_assessment_governance BEGIN SELECT RAISE(ABORT,'outcome governance is immutable'); END;
+CREATE TRIGGER outcome_governance_immutable_delete BEFORE DELETE ON outcome_assessment_governance BEGIN SELECT RAISE(ABORT,'outcome governance is immutable'); END;
+CREATE TRIGGER outcome_acceptance_basis_immutable_update BEFORE UPDATE ON outcome_assessment_acceptance_basis BEGIN SELECT RAISE(ABORT,'outcome acceptance basis is immutable'); END;
+CREATE TRIGGER outcome_acceptance_basis_immutable_delete BEFORE DELETE ON outcome_assessment_acceptance_basis BEGIN SELECT RAISE(ABORT,'outcome acceptance basis is immutable'); END;
+
+CREATE TRIGGER owner_checkpoint_require_store_insert BEFORE INSERT ON owner_checkpoints BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1
+  OR (NEW.scope_type='workspace' AND NEW.scope_id<>NEW.workspace_id)
+  OR (NEW.scope_type='project' AND NOT EXISTS(SELECT 1 FROM projects project WHERE project.id=NEW.scope_id AND project.workspace_id=NEW.workspace_id))
+  OR (NEW.scope_type='objective' AND NOT EXISTS(SELECT 1 FROM objectives objective WHERE objective.id=NEW.scope_id AND objective.workspace_id=NEW.workspace_id))
+  OR (NEW.scope_type='task' AND NOT EXISTS(SELECT 1 FROM tasks task WHERE task.id=NEW.scope_id AND task.workspace_id=NEW.workspace_id AND task.objective_id IS NOT NULL))
+  OR NOT EXISTS(SELECT 1 FROM events event WHERE event.sequence=NEW.event_sequence AND event.workspace_id=NEW.workspace_id
+    AND event.entity_type='owner_checkpoint' AND event.entity_id=NEW.id AND event.entity_revision=1
+    AND event.type='owner_checkpoint.created' AND event.occurred_at=NEW.created_at AND event.recorded_at=NEW.created_at
+    AND event.actor_id='local-owner' AND event.actor_type='human'
+    AND json_type(event.data_json)='object' AND (SELECT COUNT(*) FROM json_each(event.data_json))=2
+    AND json_extract(event.data_json,'$.scope_id')=NEW.scope_id AND json_extract(event.data_json,'$.scope_type')=NEW.scope_type)
+ THEN RAISE(ABORT,'invalid canonical owner checkpoint construction') END;
+END;
+CREATE TRIGGER owner_checkpoint_reject_update BEFORE UPDATE ON owner_checkpoints BEGIN SELECT RAISE(ABORT,'owner checkpoints are immutable'); END;
+CREATE TRIGGER owner_checkpoint_reject_delete BEFORE DELETE ON owner_checkpoints BEGIN SELECT RAISE(ABORT,'owner checkpoints are immutable'); END;
+CREATE TRIGGER outcome_projector_require_store_insert BEFORE INSERT ON outcome_projector_state BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.last_event_sequence<>0 OR NEW.revision<>1 OR crewfold_timestamp_canonical(NEW.updated_at) IS NOT 1 THEN RAISE(ABORT,'invalid outcome projector initialization') END;
+END;
+CREATE TRIGGER outcome_projector_require_store_update BEFORE UPDATE ON outcome_projector_state BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.workspace_id<>OLD.workspace_id OR NEW.revision<>OLD.revision+1
+  OR NEW.last_event_sequence<=OLD.last_event_sequence OR crewfold_timestamp_canonical(NEW.updated_at) IS NOT 1
+  OR (NEW.last_event_sequence<>0 AND NOT EXISTS(SELECT 1 FROM events event WHERE event.workspace_id=NEW.workspace_id AND event.sequence=NEW.last_event_sequence))
+  OR EXISTS(SELECT 1 FROM events event WHERE event.workspace_id=NEW.workspace_id AND event.sequence>OLD.last_event_sequence AND event.sequence<=NEW.last_event_sequence AND crewfold_outcome_event_known(event.type) IS NOT 1)
+ THEN RAISE(ABORT,'invalid outcome projector cursor advance') END;
+END;
+CREATE TRIGGER outcome_projector_reject_delete BEFORE DELETE ON outcome_projector_state BEGIN SELECT RAISE(ABORT,'outcome projector cursor is durable'); END;
+CREATE TRIGGER management_briefing_require_store_insert BEFORE INSERT ON management_briefings BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR crewfold_timestamp_canonical(NEW.evaluated_at) IS NOT 1 OR NEW.created_at<>NEW.evaluated_at
+  OR lower(hex(sha256(CAST(NEW.content_json AS BLOB)))) IS NOT NEW.content_sha256 OR length(CAST(NEW.content_json AS BLOB))<>NEW.byte_size
+  OR json_extract(NEW.content_json,'$.scope.type')<>NEW.scope_type OR json_extract(NEW.content_json,'$.scope.workspace_id')<>NEW.workspace_id
+  OR NEW.scope_id<>CASE NEW.scope_type WHEN 'workspace' THEN json_extract(NEW.content_json,'$.scope.workspace_id') WHEN 'project' THEN json_extract(NEW.content_json,'$.scope.project_id') WHEN 'objective' THEN json_extract(NEW.content_json,'$.scope.objective_id') ELSE json_extract(NEW.content_json,'$.scope.task_id') END
+  OR json_extract(NEW.content_json,'$.event_cursor')<>NEW.event_cursor OR json_extract(NEW.content_json,'$.cutoff_event_sequence')<>NEW.cutoff_event_sequence
+  OR COALESCE(json_extract(NEW.content_json,'$.checkpoint_id'),'')<>NEW.checkpoint_id OR json_extract(NEW.content_json,'$.since_event_sequence')<>NEW.since_event_sequence
+  OR json_extract(NEW.content_json,'$.evaluated_at')<>NEW.evaluated_at OR json_extract(NEW.content_json,'$.caught_up')<>NEW.caught_up
+  OR COALESCE(json_extract(NEW.content_json,'$.unknown_event_type'),'')<>COALESCE(NEW.unknown_event_type,'')
+  OR COALESCE(json_extract(NEW.content_json,'$.unknown_event_sequence'),0)<>COALESCE(NEW.unknown_event_sequence,0)
+  OR NEW.revision<>COALESCE((SELECT MAX(revision)+1 FROM management_briefings WHERE workspace_id=NEW.workspace_id AND scope_type=NEW.scope_type AND scope_id=NEW.scope_id),1)
+  OR (NEW.checkpoint_id<>'' AND NOT EXISTS(SELECT 1 FROM owner_checkpoints checkpoint WHERE checkpoint.id=NEW.checkpoint_id AND checkpoint.workspace_id=NEW.workspace_id AND checkpoint.scope_type=NEW.scope_type AND checkpoint.scope_id=NEW.scope_id AND checkpoint.event_sequence=NEW.since_event_sequence))
+  OR (NEW.checkpoint_id='' AND NEW.since_event_sequence<>0)
+  OR (NEW.event_cursor<>0 AND NOT EXISTS(SELECT 1 FROM outcome_projector_state state WHERE state.workspace_id=NEW.workspace_id AND state.last_event_sequence=NEW.event_cursor))
+  OR NEW.event_cursor>NEW.cutoff_event_sequence OR NEW.caught_up<>(NEW.event_cursor=NEW.cutoff_event_sequence AND NEW.unknown_event_type IS NULL)
+  OR (NEW.unknown_event_type IS NULL AND NEW.event_cursor<>NEW.cutoff_event_sequence)
+  OR (NEW.unknown_event_type IS NOT NULL AND NOT EXISTS(SELECT 1 FROM events event WHERE event.workspace_id=NEW.workspace_id
+    AND event.sequence=NEW.unknown_event_sequence AND event.type=NEW.unknown_event_type
+    AND event.sequence>NEW.event_cursor AND event.sequence<=NEW.cutoff_event_sequence
+    AND crewfold_outcome_event_known(event.type) IS NOT 1
+    AND event.sequence=(SELECT MIN(unknown.sequence) FROM events unknown WHERE unknown.workspace_id=NEW.workspace_id
+      AND unknown.sequence>NEW.event_cursor AND unknown.sequence<=NEW.cutoff_event_sequence
+      AND crewfold_outcome_event_known(unknown.type) IS NOT 1)))
+ THEN RAISE(ABORT,'invalid canonical management briefing construction') END;
+END;
+CREATE TRIGGER management_briefing_reject_update BEFORE UPDATE ON management_briefings BEGIN SELECT RAISE(ABORT,'management briefings are immutable'); END;
+CREATE TRIGGER management_briefing_reject_delete BEFORE DELETE ON management_briefings BEGIN SELECT RAISE(ABORT,'management briefings are immutable'); END;
+CREATE TRIGGER management_claim_require_store_insert BEFORE INSERT ON management_briefing_claims BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.ordinal<>COALESCE((SELECT MAX(ordinal)+1 FROM management_briefing_claims WHERE briefing_id=NEW.briefing_id),0)
+  OR NEW.claim_id<>json_extract(NEW.claim_json,'$.id') OR NEW.kind<>json_extract(NEW.claim_json,'$.kind') OR NEW.urgency<>json_extract(NEW.claim_json,'$.urgency') OR NEW.summary<>json_extract(NEW.claim_json,'$.summary') OR NEW.status<>json_extract(NEW.claim_json,'$.status') OR COALESCE(NEW.project_id,'')<>COALESCE(json_extract(NEW.claim_json,'$.project_id'),'') OR NEW.source_event_sequence<>json_extract(NEW.claim_json,'$.source_event_sequence')
+  OR json_type(NEW.claim_json,'$.sources')<>'array' OR json_array_length(NEW.claim_json,'$.sources') NOT BETWEEN 1 AND 32
+  OR NEW.source_event_sequence<>(SELECT MAX(json_extract(source.value,'$.event_sequence')) FROM json_each(NEW.claim_json,'$.sources') source)
+  OR NOT EXISTS(SELECT 1 FROM management_briefings briefing WHERE briefing.id=NEW.briefing_id
+    AND json(json_extract(briefing.content_json,'$.claims['||NEW.ordinal||']'))=json(NEW.claim_json))
+  OR NEW.claim_id<>crewfold_outcome_claim_id((SELECT json_extract(briefing.content_json,'$.scope') FROM management_briefings briefing WHERE briefing.id=NEW.briefing_id),NEW.semantic_key,NEW.status,json_extract(NEW.claim_json,'$.sources'))
+ THEN RAISE(ABORT,'invalid canonical management briefing claim') END;
+END;
+CREATE TRIGGER management_claim_reject_update BEFORE UPDATE ON management_briefing_claims BEGIN SELECT RAISE(ABORT,'briefing claims are immutable'); END;
+CREATE TRIGGER management_claim_reject_delete BEFORE DELETE ON management_briefing_claims BEGIN SELECT RAISE(ABORT,'briefing claims are immutable'); END;
+CREATE TRIGGER management_claim_source_require_store_insert BEFORE INSERT ON management_briefing_claim_sources BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR NEW.ordinal<>COALESCE((SELECT MAX(ordinal)+1 FROM management_briefing_claim_sources WHERE briefing_id=NEW.briefing_id AND claim_id=NEW.claim_id),0)
+  OR NOT EXISTS(SELECT 1 FROM management_briefing_claims claim JOIN events event ON event.sequence=NEW.event_sequence
+   WHERE claim.briefing_id=NEW.briefing_id AND claim.claim_id=NEW.claim_id
+    AND json_extract(claim.claim_json,'$.sources['||NEW.ordinal||'].entity_type')=NEW.entity_type
+    AND json_extract(claim.claim_json,'$.sources['||NEW.ordinal||'].entity_id')=NEW.entity_id
+    AND json_extract(claim.claim_json,'$.sources['||NEW.ordinal||'].revision')=NEW.entity_revision
+    AND COALESCE(json_extract(claim.claim_json,'$.sources['||NEW.ordinal||'].content_sha256'),'')=NEW.content_sha256
+    AND json_extract(claim.claim_json,'$.sources['||NEW.ordinal||'].event_sequence')=NEW.event_sequence
+    AND COALESCE(json_extract(claim.claim_json,'$.sources['||NEW.ordinal||'].evidence_class'),'')=NEW.evidence_class
+    AND COALESCE(json_extract(claim.claim_json,'$.sources['||NEW.ordinal||'].evidence_effect'),'')=NEW.evidence_effect
+    AND COALESCE(json_extract(claim.claim_json,'$.sources['||NEW.ordinal||'].pinned_freshness'),'')=NEW.pinned_freshness
+    AND COALESCE(json_extract(claim.claim_json,'$.sources['||NEW.ordinal||'].current_freshness'),'')=NEW.current_freshness)
+  OR NOT EXISTS(SELECT 1 FROM management_briefings briefing JOIN management_briefing_claims claim ON claim.briefing_id=briefing.id AND claim.claim_id=NEW.claim_id JOIN events event ON event.sequence=NEW.event_sequence
+   WHERE briefing.id=NEW.briefing_id AND event.workspace_id=briefing.workspace_id
+    AND (NEW.entity_type NOT IN ('handoff','check_requirement_evidence') OR EXISTS(
+      SELECT 1 FROM outcome_assessment_evidence_refs reference
+      WHERE reference.source_type=NEW.entity_type AND reference.source_id=NEW.entity_id
+       AND reference.source_revision=NEW.entity_revision AND reference.source_sha256=NEW.content_sha256
+       AND reference.event_sequence=NEW.event_sequence AND reference.class=NEW.evidence_class
+       AND reference.effect=NEW.evidence_effect AND reference.pinned_freshness=NEW.pinned_freshness
+       AND EXISTS(SELECT 1 FROM json_each(claim.claim_json,'$.sources') base
+        WHERE json_extract(base.value,'$.entity_type')='outcome_assessment'
+         AND json_extract(base.value,'$.entity_id')=reference.assessment_id)))
+    AND (
+    (NEW.entity_type='outcome_assessment' AND event.entity_type='outcome_assessment' AND event.entity_id=NEW.entity_id
+      AND event.entity_revision=NEW.entity_revision AND event.type IN ('outcome.assessment_accepted','outcome.assessment_superseded')
+      AND EXISTS(SELECT 1 FROM outcome_assessments assessment WHERE assessment.id=NEW.entity_id AND assessment.workspace_id=briefing.workspace_id AND assessment.content_sha256=NEW.content_sha256))
+    OR (NEW.entity_type='deliverable_commitment' AND event.entity_type='deliverable_commitment' AND event.entity_id=NEW.entity_id
+      AND event.entity_revision=NEW.entity_revision AND event.type='outcome.commitment_created'
+      AND EXISTS(SELECT 1 FROM deliverable_commitments commitment WHERE commitment.id=NEW.entity_id AND commitment.workspace_id=briefing.workspace_id AND commitment.content_sha256=NEW.content_sha256))
+    OR (NEW.entity_type='outcome_assessment_acceptance_basis' AND NEW.entity_revision=1
+      AND event.entity_type='outcome_assessment' AND event.entity_id=NEW.entity_id AND event.entity_revision=2 AND event.type='outcome.assessment_accepted'
+      AND EXISTS(SELECT 1 FROM outcome_assessment_acceptance_basis basis WHERE basis.assessment_id=NEW.entity_id AND basis.event_sequence=NEW.event_sequence AND basis.source_sha256=NEW.content_sha256))
+    OR (NEW.entity_type='knowledge_contradiction' AND NEW.content_sha256='' AND event.entity_type='knowledge_contradiction'
+      AND event.entity_id=NEW.entity_id AND event.entity_revision=NEW.entity_revision AND event.type='contradiction.confirmed'
+      AND EXISTS(SELECT 1 FROM knowledge_contradictions contradiction WHERE contradiction.id=NEW.entity_id AND contradiction.workspace_id=briefing.workspace_id AND contradiction.confirm_event_sequence=NEW.event_sequence))
+    OR (NEW.entity_type='knowledge_revision' AND event.entity_type='knowledge_revision' AND event.entity_id=NEW.entity_id
+      AND event.entity_revision=NEW.entity_revision AND event.type='knowledge.accepted'
+      AND EXISTS(SELECT 1 FROM knowledge_revisions revision JOIN knowledge_items item ON item.id=revision.item_id WHERE revision.id=NEW.entity_id AND item.workspace_id=briefing.workspace_id AND revision.content_hash=NEW.content_sha256))
+    OR (NEW.entity_type='task' AND NEW.content_sha256='' AND event.entity_type='task' AND event.entity_id=NEW.entity_id
+      AND event.entity_revision=NEW.entity_revision
+      AND event.sequence=(SELECT MAX(exact.sequence) FROM events exact WHERE exact.workspace_id=briefing.workspace_id
+        AND exact.entity_type='task' AND exact.entity_id=NEW.entity_id AND exact.entity_revision=NEW.entity_revision)
+      AND EXISTS(SELECT 1 FROM tasks task WHERE task.id=NEW.entity_id AND task.workspace_id=briefing.workspace_id AND task.revision=NEW.entity_revision))
+    OR (NEW.entity_type='handoff' AND event.entity_type='task' AND event.type='task.handoff_recorded'
+      AND event.entity_revision=NEW.entity_revision AND json_extract(event.data_json,'$.handoff_id')=NEW.entity_id
+      AND EXISTS(SELECT 1 FROM run_handoffs handoff JOIN runs run ON run.id=handoff.run_id WHERE handoff.id=NEW.entity_id
+       AND run.workspace_id=briefing.workspace_id AND run.status='completed' AND event.entity_id=handoff.task_id
+       AND NEW.evidence_effect='supports' AND NEW.pinned_freshness='fresh' AND NEW.current_freshness='fresh'
+       AND NEW.content_sha256=lower(hex(sha256(CAST(json_object('created_at',handoff.created_at,'evidence_json',json(handoff.evidence_json),'id',handoff.id,'run_id',handoff.run_id,'summary',handoff.summary,'task_id',handoff.task_id) AS BLOB))))
+       AND NEW.evidence_class IN ('agent_self_report','independent_review')))
+    OR (NEW.entity_type='check_requirement_evidence' AND event.entity_type='check_result'
+      AND EXISTS(SELECT 1 FROM check_requirement_evidence evidence JOIN check_results result ON result.id=evidence.check_result_id
+       JOIN check_runs run ON run.id=result.check_run_id
+       JOIN check_result_freshness pinned ON pinned.check_result_id=result.id AND pinned.revision=evidence.freshness_revision
+       JOIN check_result_freshness current ON current.check_result_id=result.id AND current.revision=(SELECT MAX(latest.revision) FROM check_result_freshness latest WHERE latest.check_result_id=result.id)
+       WHERE evidence.id=NEW.entity_id AND run.workspace_id=briefing.workspace_id AND event.entity_id=result.id
+        AND NEW.entity_revision=evidence.freshness_revision AND event.entity_revision=evidence.freshness_revision
+        AND event.type IN ('check.result_recorded','check.freshness_observed','check.freshness_stale')
+        AND NEW.evidence_class=evidence.class AND NEW.evidence_effect=evidence.effect
+        AND NEW.pinned_freshness=pinned.status AND NEW.current_freshness=current.status
+        AND NEW.content_sha256=lower(hex(sha256(CAST(json_object('check_result_id',evidence.check_result_id,'class',evidence.class,'effect',evidence.effect,'freshness_revision',evidence.freshness_revision,'id',evidence.id,'pinned_freshness',pinned.status,'requirement_id',evidence.requirement_id,'requirement_revision',evidence.requirement_revision) AS BLOB))))))
+   ))
+ THEN RAISE(ABORT,'invalid canonical management briefing provenance') END;
+END;
+CREATE TRIGGER management_claim_source_reject_update BEFORE UPDATE ON management_briefing_claim_sources BEGIN SELECT RAISE(ABORT,'briefing claim sources are immutable'); END;
+CREATE TRIGGER management_claim_source_reject_delete BEFORE DELETE ON management_briefing_claim_sources BEGIN SELECT RAISE(ABORT,'briefing claim sources are immutable'); END;
+CREATE TRIGGER management_briefing_receipt_require_store_insert BEFORE INSERT ON management_briefing_receipts BEGIN
+ SELECT CASE WHEN crewfold_outcome_mutation_seal_active() IS NOT 1 OR crewfold_timestamp_canonical(NEW.sealed_at) IS NOT 1
+  OR NOT EXISTS(SELECT 1 FROM management_briefings briefing WHERE briefing.id=NEW.briefing_id AND briefing.created_at=NEW.sealed_at
+   AND json_type(briefing.content_json,'$.claims')='array' AND json_type(briefing.content_json,'$.omitted')='array'
+   AND NEW.claim_count=json_array_length(briefing.content_json,'$.claims')
+   AND NEW.claim_count=(SELECT COUNT(*) FROM management_briefing_claims claim WHERE claim.briefing_id=NEW.briefing_id)
+   AND NEW.source_count=(SELECT COALESCE(SUM(json_array_length(json_extract(item.value,'$.sources'))),0) FROM json_each(briefing.content_json,'$.claims') item)
+   AND NEW.source_count=(SELECT COUNT(*) FROM management_briefing_claim_sources source WHERE source.briefing_id=NEW.briefing_id)
+   AND NOT EXISTS(SELECT 1 FROM management_briefing_claims claim WHERE claim.briefing_id=NEW.briefing_id
+    AND json_array_length(claim.claim_json,'$.sources')<>(SELECT COUNT(*) FROM management_briefing_claim_sources source WHERE source.briefing_id=claim.briefing_id AND source.claim_id=claim.claim_id)))
+ THEN RAISE(ABORT,'invalid complete management briefing receipt') END;
+END;
+CREATE TRIGGER management_briefing_receipt_reject_update BEFORE UPDATE ON management_briefing_receipts BEGIN SELECT RAISE(ABORT,'management briefing receipts are immutable'); END;
+CREATE TRIGGER management_briefing_receipt_reject_delete BEFORE DELETE ON management_briefing_receipts BEGIN SELECT RAISE(ABORT,'management briefing receipts are immutable'); END;
+
 -- The disposable retrieval projection still needs one current generation on a
 -- clean database. Its source set and canonical event interval are both empty.
 INSERT INTO knowledge_search(revision_id,workspace_id,title,body)

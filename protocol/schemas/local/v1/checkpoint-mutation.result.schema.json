@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:checkpoint-mutation-result:v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "type", "checkpoint", "event_sequence"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:checkpoint-mutation-result:v1"},
+    "type": {"const": "checkpoint_mutation"},
+    "checkpoint": {"$ref": "../../domain/v1/owner-checkpoint.schema.json"},
+    "event_sequence": {"type": "integer", "minimum": 1}
+  }
+}

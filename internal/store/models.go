@@ -44,6 +44,22 @@ const (
 	MutationAfterCheckRepairEffect              = "after_check_repair_effect"
 	MutationAfterCheckRepairEvent               = "after_check_repair_event"
 	MutationAfterCheckRepairIdempotency         = "after_check_repair_idempotency"
+	MutationAfterOutcomeCommitment              = "after_outcome_commitment"
+	MutationAfterOutcomeCommitmentEvent         = "after_outcome_commitment_event"
+	MutationAfterOutcomeCommitmentIdempotency   = "after_outcome_commitment_idempotency"
+	MutationAfterOutcomeAssessment              = "after_outcome_assessment"
+	MutationAfterOutcomeAssessmentChildren      = "after_outcome_assessment_children"
+	MutationAfterOutcomeAssessmentEvent         = "after_outcome_assessment_event"
+	MutationAfterOutcomeAssessmentIdempotency   = "after_outcome_assessment_idempotency"
+	MutationAfterOutcomeGovernanceDecision      = "after_outcome_governance_decision"
+	MutationAfterOutcomeGovernanceEvents        = "after_outcome_governance_events"
+	MutationAfterOutcomeGovernanceIdempotency   = "after_outcome_governance_idempotency"
+	MutationAfterOwnerCheckpoint                = "after_owner_checkpoint"
+	MutationAfterOwnerCheckpointEvent           = "after_owner_checkpoint_event"
+	MutationAfterOwnerCheckpointIdempotency     = "after_owner_checkpoint_idempotency"
+	MutationAfterBriefingClaims                 = "after_briefing_claims"
+	MutationAfterBriefingCursor                 = "after_briefing_cursor"
+	MutationAfterBriefingRevision               = "after_briefing_revision"
 )
 
 type Workspace = domain.Workspace
@@ -82,6 +98,98 @@ type DatabaseHealth struct {
 	JournalMode         string `json:"journal_mode"`
 	ForeignKeys         bool   `json:"foreign_keys"`
 	IntegrityCheck      string `json:"integrity_check"`
+}
+
+type CreateDeliverableCommitmentCommand struct {
+	WorkspaceIdentifier string
+	TaskID              string
+	Key                 string
+	Title               string
+	Description         string
+	AcceptanceCriteria  []string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListDeliverableCommitmentsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	ObjectiveID         string
+	TaskID              string
+	Limit               int
+}
+
+type DeliverableCommitmentMutationResult struct {
+	Commitment    domain.DeliverableCommitment `json:"commitment"`
+	EventSequence int64                        `json:"event_sequence"`
+}
+
+type ProposeOutcomeAssessmentCommand struct {
+	WorkspaceIdentifier    string
+	TaskID                 string
+	CommitmentID           string
+	SupersedesAssessmentID string
+	Input                  domain.OutcomeAssessmentInput
+	IdempotencyKey         string
+	CorrelationID          string
+}
+
+type ListOutcomeAssessmentsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	ObjectiveID         string
+	TaskID              string
+	CommitmentID        string
+	ReviewState         string
+	Conclusion          string
+	Limit               int
+}
+
+type DecideOutcomeAssessmentCommand struct {
+	WorkspaceIdentifier   string
+	AssessmentID          string
+	ExpectedStateRevision int64
+	DecisionNote          string
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type OutcomeAssessmentMutationResult struct {
+	Detail        domain.OutcomeAssessmentDetail `json:"detail"`
+	EventSequence int64                          `json:"event_sequence"`
+}
+
+type CreateOwnerCheckpointCommand struct {
+	WorkspaceIdentifier string
+	ScopeType           string
+	ScopeIdentifier     string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListOwnerCheckpointsQuery struct {
+	WorkspaceIdentifier string
+	ScopeType           string
+	ScopeIdentifier     string
+	Limit               int
+}
+
+type OwnerCheckpointMutationResult struct {
+	Checkpoint    domain.OwnerCheckpoint `json:"checkpoint"`
+	EventSequence int64                  `json:"event_sequence"`
+}
+
+type ShowManagementBriefingQuery struct {
+	WorkspaceIdentifier string
+	ScopeType           string
+	ScopeIdentifier     string
+	SinceCheckpointID   string
+}
+
+type ExplainManagementBriefingClaimQuery struct {
+	WorkspaceIdentifier string
+	BriefingID          string
+	ClaimID             string
 }
 
 type InitWorkspaceCommand struct {

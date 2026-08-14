@@ -637,7 +637,8 @@ a conflict rather than an implicit merge.
 ### Outcome assessment
 
 A revisioned judgment about whether a promised deliverable was achieved. It is
-distinct from activity, a run result, and task lifecycle state. An assessment
+distinct from activity, a run result, and task lifecycle state. The immutable
+`DeliverableCommitment` for the exact task must predate it. An assessment
 contains:
 
 - the objective, task, and deliverable commitment it evaluates;
@@ -647,27 +648,36 @@ contains:
 - material decision and rationale references;
 - evidence and verification references, including strength and freshness;
 - residual risks, disputed claims, unknowns, and follow-up work;
-- assessor, authority, revision, and effective timestamp.
+- fixed `local-owner` proposer/decider identity, revision, and effective
+  timestamps.
 
-Agents and automated checks may propose assessments. Policy or an authorized
-reviewer accepts or rejects the assessment. Separating review state from
-conclusion allows an authority to accept a `partial` or `not_achieved` finding
-without pretending the deliverable succeeded. A completed run is therefore never
-sufficient by itself to assert that an outcome was delivered.
+The local owner creates commitments and proposes, accepts, or rejects
+assessments. Agents and automated checks can supply linked evidence, but receive
+no outcome mutation authority. Separating review state from conclusion allows the
+owner to accept a `partial` or `not_achieved` finding without pretending the
+deliverable succeeded. A completed run is therefore never sufficient by itself
+to assert that an outcome was delivered.
+
+Input evidence identifies only an exact handoff or check-requirement-evidence
+record. Proposal-time pinned freshness and evaluated current freshness are both
+returned. Class, effect, freshness, current/disputed/contradictory truth, and
+diagnosis are derived; the caller cannot provide them.
 
 ### Management briefing
 
-A revisioned, derived projection over objective, task, outcome, decision,
+A deterministic derived projection over objective, task, outcome, decision,
 evidence, check, risk, overlap, and message records. A briefing declares its scope,
-event cursor, “as of” time, and optional base checkpoint. Its structured sections
+captured current event cursor, evaluation time, and optional exact base
+checkpoint. The checkpoint is an exclusive lower bound; there is no
+caller-selected historical cursor. Its structured sections
 cover commitments, accepted delivery, deviations, rationale, verification,
 compatibility and stability, risks and unknowns, required decisions, and proposed
 next actions.
 
 A briefing is not a new source of truth and is not an agent-authored summary blob.
-Every material claim refers to the durable records from which it was derived. An
-optional narrative rendering may improve readability but cannot add facts or hide
-conflicts in the structured projection.
+Every material claim refers to the durable records from which it was derived.
+The bounded structured projection is the complete representation; Crewfold has
+no second narrative-rendering path.
 
 ### Event
 

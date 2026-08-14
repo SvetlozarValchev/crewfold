@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:outcome-query-params:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace"],
+  "properties": {
+    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "outcome": {"type": "string", "pattern": "^outassess_[0-9a-f]{32}$"},
+    "project": {"type": "string", "minLength": 1, "maxLength": 128},
+    "objective": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
+    "task": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "commitment": {"type": "string", "pattern": "^outcommit_[0-9a-f]{32}$"},
+    "review_state": {"enum": ["proposed", "accepted", "rejected", "superseded"]},
+    "conclusion": {"enum": ["achieved", "partial", "not_achieved", "unknown"]},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+  }
+}

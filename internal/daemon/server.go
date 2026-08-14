@@ -829,6 +829,32 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleCheckRepairDecision(request, true), false
 	case localapi.MethodCheckRepairReject:
 		return s.handleCheckRepairDecision(request, false), false
+	case localapi.MethodOutcomeCommitmentCreate:
+		return s.handleOutcomeCommitmentCreate(request), false
+	case localapi.MethodOutcomeCommitmentShow:
+		return s.handleOutcomeCommitmentShow(request), false
+	case localapi.MethodOutcomeCommitmentList:
+		return s.handleOutcomeCommitmentList(request), false
+	case localapi.MethodOutcomePropose:
+		return s.handleOutcomePropose(request), false
+	case localapi.MethodOutcomeShow:
+		return s.handleOutcomeShow(request), false
+	case localapi.MethodOutcomeList:
+		return s.handleOutcomeList(request), false
+	case localapi.MethodOutcomeAccept:
+		return s.handleOutcomeDecision(request, true), false
+	case localapi.MethodOutcomeReject:
+		return s.handleOutcomeDecision(request, false), false
+	case localapi.MethodCheckpointCreate:
+		return s.handleCheckpointCreate(request), false
+	case localapi.MethodCheckpointShow:
+		return s.handleCheckpointShow(request), false
+	case localapi.MethodCheckpointList:
+		return s.handleCheckpointList(request), false
+	case localapi.MethodBriefingShow:
+		return s.handleBriefingShow(request), false
+	case localapi.MethodBriefingExplain:
+		return s.handleBriefingExplain(request), false
 	case localapi.MethodEventsList:
 		return s.handleEventsList(request), false
 	default:

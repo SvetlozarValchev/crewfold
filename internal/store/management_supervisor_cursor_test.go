@@ -217,6 +217,8 @@ func TestKnownSupervisorJournalEventUnion(t *testing.T) {
 		"check.run_requested", "check.run_starting", "check.run_runtime_observed", "check.run_started", "check.run_finished", "check.result_recorded",
 		"check.freshness_observed", "check.freshness_stale", "check.notification_queued", "check.notification_unroutable",
 		"check.repair_proposed", "check.repair_accepted", "check.repair_rejected", "check.repair_stale", "check.watch_completed",
+		"outcome.commitment_created", "outcome.assessment_proposed", "outcome.assessment_accepted",
+		"outcome.assessment_rejected", "outcome.assessment_superseded", "owner_checkpoint.created",
 	} {
 		if !knownSupervisorJournalEvent(eventType) {
 			t.Fatalf("known event %q was rejected", eventType)

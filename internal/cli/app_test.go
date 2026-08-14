@@ -1091,113 +1091,134 @@ func TestDaemonCommandsRejectMissingAndUnknownOptions(t *testing.T) {
 }
 
 type fakeDaemonClient struct {
-	status                  localapi.StatusResult
-	statusErr               error
-	stop                    localapi.StopResult
-	stopErr                 error
-	databaseStatus          localapi.DatabaseStatusResult
-	databaseStatusErr       error
-	knowledgeIndexStatus    localapi.KnowledgeIndexStatusResult
-	knowledgeIndexRebuild   localapi.KnowledgeIndexRebuildResult
-	knowledgeSearch         localapi.KnowledgeSearchResult
-	knowledgeSearchParams   localapi.KnowledgeSearchParams
-	knowledgeRebuildParams  localapi.KnowledgeIndexRebuildParams
-	knowledgeIndexWorkspace string
-	workspaceInit           localapi.WorkspaceInitResult
-	workspaceInitErr        error
-	workspaceShow           localapi.WorkspaceShowResult
-	workspaceShowErr        error
-	projectAdd              localapi.ProjectAddResult
-	projectAddErr           error
-	projectInspect          localapi.ProjectInspectResult
-	projectInspectErr       error
-	checkoutAdd             localapi.CheckoutAddResult
-	checkoutAddErr          error
-	checkoutList            localapi.CheckoutListResult
-	checkoutListErr         error
-	eventsList              localapi.EventsListResult
-	eventsListErr           error
-	agentMutation           localapi.AgentMutationResult
-	agentShow               localapi.AgentShowResult
-	agentList               localapi.AgentListResult
-	objectiveMutation       localapi.ObjectiveMutationResult
-	objectiveShow           localapi.ObjectiveShowResult
-	objectiveList           localapi.ObjectiveListResult
-	taskMutation            localapi.TaskMutationResult
-	taskShow                localapi.TaskShowResult
-	taskList                localapi.TaskListResult
-	taskTimeline            localapi.TaskTimelineResult
-	runMutation             localapi.RunMutationResult
-	runShow                 localapi.RunShowResult
-	runList                 localapi.RunListResult
-	runLogs                 localapi.RunLogsResult
-	runControl              localapi.RunControlResult
-	runAttach               localapi.RunAttachResult
-	runStartParams          localapi.RunStartParams
-	runResumeParams         localapi.RunResumeParams
-	runStopParams           localapi.RunStopParams
-	runLogsWorkspace        string
-	runLogsRun              string
-	runLogsTail             int
-	runControlWorkspace     string
-	runControlRun           string
-	runPromptText           string
-	runAttachTakeover       bool
-	coordination            localapi.CoordinationStatusResult
-	messageSend             localapi.MessageSendResult
-	inboxList               localapi.InboxListResult
-	participantMutation     localapi.ParticipantThreadMutationResult
-	participantThread       localapi.ParticipantThreadResult
-	threadShow              localapi.ThreadShowResult
-	messageSendParams       localapi.MessageSendParams
-	threadCreateParams      localapi.ThreadCreateParams
-	threadInviteParams      localapi.ThreadInviteParams
-	threadParticipantsArgs  []string
-	agentCreateParams       localapi.AgentCreateParams
-	objectiveCreateParams   localapi.ObjectiveCreateParams
-	taskCreateParams        localapi.TaskCreateParams
-	taskAssignParams        localapi.TaskAssignParams
-	contextBuildParams      localapi.ContextBuildParams
-	contextRefresh          localapi.ContextRefreshResult
-	contextRefreshParams    localapi.ContextRefreshParams
-	contextDeltaList        localapi.ContextDeltaListResult
-	contextDeltaListParams  localapi.ContextDeltaListParams
-	contextDeltaShow        localapi.ContextDeltaShowResult
-	contextDeltaExplain     localapi.ContextDeltaExplainResult
-	contextDeltaQueryArgs   []string
-	knowledgeMutation       localapi.KnowledgeMutationResult
-	knowledgeShow           localapi.KnowledgeShowResult
-	knowledgeList           localapi.KnowledgeListResult
-	knowledgePropose        localapi.KnowledgeProposeParams
-	knowledgeDecision       localapi.KnowledgeDecisionParams
-	knowledgeStale          localapi.KnowledgeMarkStaleParams
-	knowledgeDispute        localapi.KnowledgeDisputeResult
-	knowledgeDisputeArgs    []string
-	knowledgeExport         localapi.KnowledgeExportResult
-	knowledgeImport         localapi.KnowledgeImportResult
-	knowledgeExportParams   localapi.KnowledgeExportParams
-	knowledgeImportParams   localapi.KnowledgeImportParams
-	curatorQueue            localapi.CuratorQueueResult
-	curatorRuleMutation     localapi.CuratorRuleMutationResult
-	curatorProcess          localapi.CuratorProcessResult
-	curatorQueueParams      localapi.CuratorQueueParams
-	curatorRuleParams       localapi.CuratorRuleConfigureParams
-	curatorProcessParams    localapi.CuratorProcessParams
-	conMutation             localapi.ContradictionMutationResult
-	conShow                 localapi.ContradictionShowResult
-	conList                 localapi.ContradictionListResult
-	conReportParams         localapi.ContradictionReportParams
-	conListParams           localapi.ContradictionListParams
-	conDecisionParams       localapi.ContradictionDecisionParams
-	conAction               string
-	coordinationWorkspace   string
-	initName                string
-	initKey                 string
-	showIdentifier          string
-	projectArgs             []string
-	checkoutArgs            []string
-	eventsAfter             int64
-	eventsLimit             int
+	status                    localapi.StatusResult
+	statusErr                 error
+	stop                      localapi.StopResult
+	stopErr                   error
+	databaseStatus            localapi.DatabaseStatusResult
+	databaseStatusErr         error
+	knowledgeIndexStatus      localapi.KnowledgeIndexStatusResult
+	knowledgeIndexRebuild     localapi.KnowledgeIndexRebuildResult
+	knowledgeSearch           localapi.KnowledgeSearchResult
+	knowledgeSearchParams     localapi.KnowledgeSearchParams
+	knowledgeRebuildParams    localapi.KnowledgeIndexRebuildParams
+	knowledgeIndexWorkspace   string
+	workspaceInit             localapi.WorkspaceInitResult
+	workspaceInitErr          error
+	workspaceShow             localapi.WorkspaceShowResult
+	workspaceShowErr          error
+	projectAdd                localapi.ProjectAddResult
+	projectAddErr             error
+	projectInspect            localapi.ProjectInspectResult
+	projectInspectErr         error
+	checkoutAdd               localapi.CheckoutAddResult
+	checkoutAddErr            error
+	checkoutList              localapi.CheckoutListResult
+	checkoutListErr           error
+	eventsList                localapi.EventsListResult
+	eventsListErr             error
+	agentMutation             localapi.AgentMutationResult
+	agentShow                 localapi.AgentShowResult
+	agentList                 localapi.AgentListResult
+	objectiveMutation         localapi.ObjectiveMutationResult
+	objectiveShow             localapi.ObjectiveShowResult
+	objectiveList             localapi.ObjectiveListResult
+	taskMutation              localapi.TaskMutationResult
+	taskShow                  localapi.TaskShowResult
+	taskList                  localapi.TaskListResult
+	taskTimeline              localapi.TaskTimelineResult
+	runMutation               localapi.RunMutationResult
+	runShow                   localapi.RunShowResult
+	runList                   localapi.RunListResult
+	runLogs                   localapi.RunLogsResult
+	runControl                localapi.RunControlResult
+	runAttach                 localapi.RunAttachResult
+	runStartParams            localapi.RunStartParams
+	runResumeParams           localapi.RunResumeParams
+	runStopParams             localapi.RunStopParams
+	runLogsWorkspace          string
+	runLogsRun                string
+	runLogsTail               int
+	runControlWorkspace       string
+	runControlRun             string
+	runPromptText             string
+	runAttachTakeover         bool
+	coordination              localapi.CoordinationStatusResult
+	messageSend               localapi.MessageSendResult
+	inboxList                 localapi.InboxListResult
+	participantMutation       localapi.ParticipantThreadMutationResult
+	participantThread         localapi.ParticipantThreadResult
+	threadShow                localapi.ThreadShowResult
+	messageSendParams         localapi.MessageSendParams
+	threadCreateParams        localapi.ThreadCreateParams
+	threadInviteParams        localapi.ThreadInviteParams
+	threadParticipantsArgs    []string
+	agentCreateParams         localapi.AgentCreateParams
+	objectiveCreateParams     localapi.ObjectiveCreateParams
+	taskCreateParams          localapi.TaskCreateParams
+	taskAssignParams          localapi.TaskAssignParams
+	contextBuildParams        localapi.ContextBuildParams
+	contextRefresh            localapi.ContextRefreshResult
+	contextRefreshParams      localapi.ContextRefreshParams
+	contextDeltaList          localapi.ContextDeltaListResult
+	contextDeltaListParams    localapi.ContextDeltaListParams
+	contextDeltaShow          localapi.ContextDeltaShowResult
+	contextDeltaExplain       localapi.ContextDeltaExplainResult
+	contextDeltaQueryArgs     []string
+	knowledgeMutation         localapi.KnowledgeMutationResult
+	knowledgeShow             localapi.KnowledgeShowResult
+	knowledgeList             localapi.KnowledgeListResult
+	knowledgePropose          localapi.KnowledgeProposeParams
+	knowledgeDecision         localapi.KnowledgeDecisionParams
+	knowledgeStale            localapi.KnowledgeMarkStaleParams
+	knowledgeDispute          localapi.KnowledgeDisputeResult
+	knowledgeDisputeArgs      []string
+	knowledgeExport           localapi.KnowledgeExportResult
+	knowledgeImport           localapi.KnowledgeImportResult
+	knowledgeExportParams     localapi.KnowledgeExportParams
+	knowledgeImportParams     localapi.KnowledgeImportParams
+	curatorQueue              localapi.CuratorQueueResult
+	curatorRuleMutation       localapi.CuratorRuleMutationResult
+	curatorProcess            localapi.CuratorProcessResult
+	curatorQueueParams        localapi.CuratorQueueParams
+	curatorRuleParams         localapi.CuratorRuleConfigureParams
+	curatorProcessParams      localapi.CuratorProcessParams
+	conMutation               localapi.ContradictionMutationResult
+	conShow                   localapi.ContradictionShowResult
+	conList                   localapi.ContradictionListResult
+	conReportParams           localapi.ContradictionReportParams
+	conListParams             localapi.ContradictionListParams
+	conDecisionParams         localapi.ContradictionDecisionParams
+	conAction                 string
+	coordinationWorkspace     string
+	initName                  string
+	initKey                   string
+	showIdentifier            string
+	projectArgs               []string
+	checkoutArgs              []string
+	eventsAfter               int64
+	eventsLimit               int
+	outcomeCommitmentMutation localapi.OutcomeCommitmentMutationResult
+	outcomeCommitmentShow     localapi.OutcomeCommitmentShowResult
+	outcomeCommitmentList     localapi.OutcomeCommitmentListResult
+	outcomeMutation           localapi.OutcomeMutationResult
+	outcomeShow               localapi.OutcomeShowResult
+	outcomeList               localapi.OutcomeListResult
+	checkpointMutation        localapi.CheckpointMutationResult
+	checkpointShow            localapi.CheckpointShowResult
+	checkpointList            localapi.CheckpointListResult
+	briefingShow              localapi.BriefingShowResult
+	briefingExplain           localapi.BriefingExplainResult
+	outcomeCommitmentParams   localapi.OutcomeCommitmentCreateParams
+	outcomeCommitmentQuery    localapi.OutcomeCommitmentQueryParams
+	outcomeProposeParams      localapi.OutcomeProposeParams
+	outcomeQueryParams        localapi.OutcomeQueryParams
+	outcomeDecisionParams     localapi.OutcomeDecisionParams
+	outcomeDecisionAction     string
+	checkpointCreateParams    localapi.CheckpointCreateParams
+	checkpointQueryParams     localapi.CheckpointQueryParams
+	briefingShowParams        localapi.BriefingShowParams
+	briefingExplainParams     localapi.BriefingExplainParams
 }
 
 func (client *fakeDaemonClient) Status(context.Context) (localapi.StatusResult, error) {
@@ -1665,6 +1686,73 @@ func (client *fakeDaemonClient) EventsList(_ context.Context, after int64, limit
 	client.eventsAfter = after
 	client.eventsLimit = limit
 	return client.eventsList, client.eventsListErr
+}
+
+func (client *fakeDaemonClient) OutcomeCommitmentCreate(_ context.Context, params localapi.OutcomeCommitmentCreateParams) (localapi.OutcomeCommitmentMutationResult, error) {
+	client.outcomeCommitmentParams = params
+	return client.outcomeCommitmentMutation, nil
+}
+
+func (client *fakeDaemonClient) OutcomeCommitmentShow(_ context.Context, workspace, commitment string) (localapi.OutcomeCommitmentShowResult, error) {
+	client.outcomeCommitmentQuery = localapi.OutcomeCommitmentQueryParams{Workspace: workspace, Commitment: commitment}
+	return client.outcomeCommitmentShow, nil
+}
+
+func (client *fakeDaemonClient) OutcomeCommitmentList(_ context.Context, params localapi.OutcomeCommitmentQueryParams) (localapi.OutcomeCommitmentListResult, error) {
+	client.outcomeCommitmentQuery = params
+	return client.outcomeCommitmentList, nil
+}
+
+func (client *fakeDaemonClient) OutcomePropose(_ context.Context, params localapi.OutcomeProposeParams) (localapi.OutcomeMutationResult, error) {
+	client.outcomeProposeParams = params
+	return client.outcomeMutation, nil
+}
+
+func (client *fakeDaemonClient) OutcomeShow(_ context.Context, workspace, outcome string) (localapi.OutcomeShowResult, error) {
+	client.outcomeQueryParams = localapi.OutcomeQueryParams{Workspace: workspace, Outcome: outcome}
+	return client.outcomeShow, nil
+}
+
+func (client *fakeDaemonClient) OutcomeList(_ context.Context, params localapi.OutcomeQueryParams) (localapi.OutcomeListResult, error) {
+	client.outcomeQueryParams = params
+	return client.outcomeList, nil
+}
+
+func (client *fakeDaemonClient) OutcomeAccept(_ context.Context, params localapi.OutcomeDecisionParams) (localapi.OutcomeMutationResult, error) {
+	client.outcomeDecisionParams = params
+	client.outcomeDecisionAction = "accept"
+	return client.outcomeMutation, nil
+}
+
+func (client *fakeDaemonClient) OutcomeReject(_ context.Context, params localapi.OutcomeDecisionParams) (localapi.OutcomeMutationResult, error) {
+	client.outcomeDecisionParams = params
+	client.outcomeDecisionAction = "reject"
+	return client.outcomeMutation, nil
+}
+
+func (client *fakeDaemonClient) CheckpointCreate(_ context.Context, params localapi.CheckpointCreateParams) (localapi.CheckpointMutationResult, error) {
+	client.checkpointCreateParams = params
+	return client.checkpointMutation, nil
+}
+
+func (client *fakeDaemonClient) CheckpointShow(_ context.Context, workspace, checkpoint string) (localapi.CheckpointShowResult, error) {
+	client.checkpointQueryParams = localapi.CheckpointQueryParams{Workspace: workspace, Checkpoint: checkpoint}
+	return client.checkpointShow, nil
+}
+
+func (client *fakeDaemonClient) CheckpointList(_ context.Context, params localapi.CheckpointQueryParams) (localapi.CheckpointListResult, error) {
+	client.checkpointQueryParams = params
+	return client.checkpointList, nil
+}
+
+func (client *fakeDaemonClient) BriefingShow(_ context.Context, params localapi.BriefingShowParams) (localapi.BriefingShowResult, error) {
+	client.briefingShowParams = params
+	return client.briefingShow, nil
+}
+
+func (client *fakeDaemonClient) BriefingExplain(_ context.Context, params localapi.BriefingExplainParams) (localapi.BriefingExplainResult, error) {
+	client.briefingExplainParams = params
+	return client.briefingExplain, nil
 }
 
 func newTestApp() (*App, *bytes.Buffer, *bytes.Buffer) {

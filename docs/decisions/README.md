@@ -23,6 +23,7 @@ deployment shape, or difficult-to-reverse dependencies.
 
 Current decisions:
 
+- [ADR-0017: Owner-reviewed outcomes and bounded management briefings](0017-owner-reviewed-outcomes-and-bounded-briefings.md)
 - [ADR-0016: Owner-granted local checks as fresh mechanical evidence](0016-owner-granted-local-check-evidence.md)
 - [ADR-0015: Owner-granted manager proposals and deterministic supervision](0015-owner-granted-manager-proposals-and-deterministic-supervision.md)
 - [ADR-0014: Explicit bounded live context deltas](0014-explicit-bounded-live-context-deltas.md)
