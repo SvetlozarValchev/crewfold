@@ -38,7 +38,7 @@ func KnownEventType(value string) bool {
 		"task.reassigned", "task.role_designated", "task.claim_requirement_created",
 		"run.requested", "run.starting", "run.started", "run.runtime_observed", "run.progress_reported",
 		"run.blocked", "run.completion_proposed", "run.completed", "run.start_failed", "run.failed",
-		"run.resumed", "run.stop_requested", "run.stopped", "run.lost", "run.report_received",
+		"run.resumed", "run.stop_requested", "run.stopped", "run.lost", "run.lost_resolved", "run.report_received",
 		"run.artifact_published", "run.tool_called", "run.tool_denied",
 		"claim.added", "claim.released", "claim.expired", "claim.drift_opened", "claim.drift_resolved",
 		"overlap.opened", "overlap.resolved",

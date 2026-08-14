@@ -200,9 +200,9 @@ WHERE run_id=?`, runID)
 	if jobResetErr != nil {
 		t.Fatalf("terminal run rollback succeeded before job rollback was rejected: %v", jobResetErr)
 	}
-	work, found, claimErr := storage.ClaimRunJob(context.Background(), 30*time.Second)
+	work, found, claimErr := storage.ClaimRunLaunchJob(context.Background(), 30*time.Second)
 	if claimErr != nil {
-		t.Fatalf("ClaimRunJob after raw terminal rollback = %v", claimErr)
+		t.Fatalf("ClaimRunLaunchJob after raw terminal rollback = %v", claimErr)
 	}
 	if found && work.Run.ID == runID {
 		t.Fatalf("raw terminal run/job rollback relaunched run %s using its original receipt and event", runID)

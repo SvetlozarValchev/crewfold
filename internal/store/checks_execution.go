@@ -579,7 +579,7 @@ func (s *Store) RecordCheckRuntimeBinding(ctx context.Context, runID, runtimeHan
 	run.RuntimeHandle = runtimeHandle
 	run.Revision++
 	run.UpdatedAt = now
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "check_run", run.ID, run.Revision, "check.run_runtime_observed", correlationID, now, "crewfold-check-worker", "subsystem", map[string]any{"runtime_handle": runtimeHandle}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "check_run", run.ID, run.Revision, "check.run_runtime_observed", correlationID, now, "crewfold-check-worker", "subsystem", map[string]any{"runtime_bound": true}); err != nil {
 		return domain.CheckRun{}, err
 	}
 	if err := s.runMutationHook(MutationAfterCheckRuntimeBinding); err != nil {

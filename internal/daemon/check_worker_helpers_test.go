@@ -109,7 +109,7 @@ func TestObserveCheckGitTurnsOversizedDirtySetIntoUnavailableObservation(t *test
 		HeadCommit: strings.Repeat("a", 40), Dirty: true, DirtyPaths: paths,
 	}}}
 	work := storeCheckWorkForObservationTest()
-	observation := server.observeCheckGit(work)
+	observation := server.observeCheckGit(context.Background(), work)
 	if observation.Available || observation.DiagnosticCode != "dirty_path_bound_exceeded" || len(observation.DirtyPaths) != 0 {
 		t.Fatalf("oversized observation = %#v; want bounded unavailable diagnosis", observation)
 	}
@@ -121,7 +121,7 @@ func TestObserveCheckGitCanonicalizesDirtyPathOrder(t *testing.T) {
 		Repository: domain.RepositoryObservation{Fingerprint: "fingerprint", ObjectFormat: "sha1"},
 		HeadCommit: strings.Repeat("a", 40), Dirty: true, DirtyPaths: []string{"z.go", "a.go"},
 	}}}
-	observation := server.observeCheckGit(storeCheckWorkForObservationTest())
+	observation := server.observeCheckGit(context.Background(), storeCheckWorkForObservationTest())
 	if !observation.Available || !reflect.DeepEqual(observation.DirtyPaths, []string{"a.go", "z.go"}) {
 		t.Fatalf("canonical observation = %#v", observation)
 	}
@@ -173,7 +173,7 @@ func TestObserveCheckGitTurnsMalformedTextIntoUnavailableObservation(t *testing.
 				Branch:     test.branch, HeadCommit: strings.Repeat("a", 40), Dirty: len(test.dirtyPaths) != 0,
 				DirtyPaths: append([]string{}, test.dirtyPaths...),
 			}}}
-			observation := server.observeCheckGit(storeCheckWorkForObservationTest())
+			observation := server.observeCheckGit(context.Background(), storeCheckWorkForObservationTest())
 			if observation.Available || observation.DiagnosticCode != test.diagnostic || len(observation.DirtyPaths) != 0 {
 				t.Fatalf("malformed observation = %#v; want unavailable %q", observation, test.diagnostic)
 			}
@@ -201,7 +201,7 @@ func TestObserveCheckGitTurnsMalformedHeadAndDirtyStateIntoUnavailableObservatio
 				Repository: domain.RepositoryObservation{Fingerprint: "fingerprint", ObjectFormat: "sha1"},
 				Branch:     "main", HeadCommit: test.headCommit, Dirty: test.dirty, DirtyPaths: append([]string{}, test.dirtyPaths...),
 			}}}
-			observation := server.observeCheckGit(storeCheckWorkForObservationTest())
+			observation := server.observeCheckGit(context.Background(), storeCheckWorkForObservationTest())
 			if observation.Available || observation.DiagnosticCode != test.diagnostic || len(observation.DirtyPaths) != 0 {
 				t.Fatalf("malformed observation = %#v; want unavailable %q", observation, test.diagnostic)
 			}

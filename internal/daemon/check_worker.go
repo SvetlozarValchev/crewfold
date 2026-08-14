@@ -18,7 +18,10 @@ import (
 
 const (
 	checkJobLease                         = 30 * time.Second
-	checkPollDelay                        = 25 * time.Millisecond
+	checkIdlePollDelay                    = 250 * time.Millisecond
+	checkActivePollDelay                  = 250 * time.Millisecond
+	checkAdapterCallTimeout               = 5 * time.Second
+	checkLaunchCallTimeout                = 10 * time.Second
 	maximumCheckObservationDirtyPaths     = 256
 	maximumCheckObservationPathBytes      = 1024
 	maximumCheckObservationPathBytesTotal = 256 * 1024
@@ -31,27 +34,29 @@ func (s *server) startCheckWorker() {
 	s.workers.Add(1)
 	go func() {
 		defer s.workers.Done()
-		for {
-			select {
-			case <-s.stopCh:
-				return
-			default:
-			}
-			work, found, err := s.store.ClaimCheckJob(context.Background(), checkJobLease)
+		ctx := s.leaseReconcileCtx
+		for ctx.Err() == nil {
+			work, found, err := s.store.ClaimCheckJob(ctx, checkJobLease)
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				s.config.Logger.Error("check worker could not claim work", "component", "check_worker", "error", err)
-				if !s.waitForCheckWork() {
+				if !s.waitForCheckWork(ctx) {
 					return
 				}
 				continue
 			}
 			if !found {
-				if !s.waitForCheckWork() {
+				if !s.waitForCheckWork(ctx) {
 					return
 				}
 				continue
 			}
-			if err := s.processCheckWork(work); err != nil {
+			if err := s.processCheckWork(ctx, work); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				s.config.Logger.Error("check worker stopped after a fault barrier", "component", "check_worker", "check_run_id", work.Run.ID, "error", err)
 				s.requestStop("check worker fault barrier")
 				return
@@ -60,18 +65,18 @@ func (s *server) startCheckWorker() {
 	}()
 }
 
-func (s *server) waitForCheckWork() bool {
-	timer := time.NewTimer(checkPollDelay)
+func (s *server) waitForCheckWork(ctx context.Context) bool {
+	timer := time.NewTimer(checkIdlePollDelay)
 	defer timer.Stop()
 	select {
-	case <-s.stopCh:
+	case <-ctx.Done():
 		return false
 	case <-timer.C:
 		return true
 	}
 }
 
-func (s *server) processCheckWork(work store.CheckWork) error {
+func (s *server) processCheckWork(ctx context.Context, work store.CheckWork) error {
 	correlationID := fmt.Sprintf("check-worker-%s-%d", work.Run.ID, work.Run.Revision)
 	preparer := s.checkRuntime.(execution.RuntimeLaunchPreparer)
 	statusInspector := s.checkRuntime.(execution.RuntimeStatusInspector)
@@ -85,21 +90,26 @@ func (s *server) processCheckWork(work store.CheckWork) error {
 			workingDirectory = unresolvedCheckWorkingDirectory(work.Checkout.Path, work.Definition.WorkingDirectory)
 		}
 		placement, launch := checkLaunchSpec(work, workingDirectory)
-		prepared, prepareErr := preparer.PrepareLaunch(context.Background(), work.Run.ID, placement, launch)
+		prepareContext, cancelPrepare := context.WithTimeout(ctx, checkAdapterCallTimeout)
+		prepared, prepareErr := preparer.PrepareLaunch(prepareContext, work.Run.ID, placement, launch)
+		cancelPrepare()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if prepareErr != nil {
 			// Preparation is side-effect free and every stored definition has already
 			// passed validation. Failure here is an adapter/configuration fault; do not
 			// invent a terminal result without a launch receipt.
 			return prepareErr
 		}
-		launchObservation := s.observeCheckGit(work)
+		launchObservation := s.observeCheckGit(ctx, work)
 		launchable := pathErr == nil
 		preflightFailureCode, preflightFailureDiagnostic := "", ""
 		if pathErr != nil {
 			preflightFailureCode = "working_directory_invalid"
 			preflightFailureDiagnostic = boundedCheckDiagnostic(pathErr.Error())
 		}
-		detail, err := s.store.MarkCheckStarting(context.Background(), store.MarkCheckStartingCommand{
+		detail, err := s.store.MarkCheckStarting(ctx, store.MarkCheckStartingCommand{
 			CheckRunID: work.Run.ID, OperationID: work.Run.ID, EffectiveSpecSHA256: prepared.SpecSHA256,
 			EffectiveWorkingDirectory: workingDirectory, Launchable: launchable,
 			PreflightFailureCode: preflightFailureCode, PreflightFailureDiagnostic: preflightFailureDiagnostic,
@@ -107,7 +117,7 @@ func (s *server) processCheckWork(work store.CheckWork) error {
 		})
 		if err != nil {
 			if store.ErrorCode(err) == store.CodeCheckCapacityDeferred {
-				return s.store.DeferCheckJob(context.Background(), work.Run.ID, 250*time.Millisecond)
+				return s.store.DeferCheckJob(ctx, work.Run.ID, checkActivePollDelay)
 			}
 			return err
 		}
@@ -119,7 +129,7 @@ func (s *server) processCheckWork(work store.CheckWork) error {
 			return errors.New("check start committed without an immutable launch receipt")
 		}
 		if !work.LaunchReceipt.Launchable {
-			return s.finishCheck(work, domain.CheckOutcomeStartFailed, nil, false,
+			return s.finishCheck(ctx, work, domain.CheckOutcomeStartFailed, nil, false,
 				work.LaunchReceipt.PreflightFailureCode, work.LaunchReceipt.PreflightFailureDiagnostic,
 				domain.RunLogs{}, correlationID)
 		}
@@ -127,10 +137,10 @@ func (s *server) processCheckWork(work store.CheckWork) error {
 
 	if work.Run.Status == domain.CheckRunStarting {
 		if work.LaunchReceipt == nil {
-			return s.finishCheck(work, domain.CheckOutcomeUnknown, nil, false, "launch_receipt_missing", "starting check has no immutable launch receipt", domain.RunLogs{}, correlationID)
+			return s.finishCheck(ctx, work, domain.CheckOutcomeUnknown, nil, false, "launch_receipt_missing", "starting check has no immutable launch receipt", domain.RunLogs{}, correlationID)
 		}
 		if !work.LaunchReceipt.Launchable {
-			return s.finishCheck(work, domain.CheckOutcomeStartFailed, nil, false,
+			return s.finishCheck(ctx, work, domain.CheckOutcomeStartFailed, nil, false,
 				work.LaunchReceipt.PreflightFailureCode, work.LaunchReceipt.PreflightFailureDiagnostic,
 				domain.RunLogs{}, correlationID)
 		}
@@ -139,30 +149,40 @@ func (s *server) processCheckWork(work store.CheckWork) error {
 			// canonical working directory. Requiring the checkout path to remain
 			// resolvable here could strand an already-running child after a crash.
 			placement, launch := checkLaunchSpec(work, work.LaunchReceipt.EffectiveWorkingDirectory)
-			prepared, err := preparer.PrepareLaunch(context.Background(), work.Run.ID, placement, launch)
+			prepareContext, cancelPrepare := context.WithTimeout(ctx, checkAdapterCallTimeout)
+			prepared, err := preparer.PrepareLaunch(prepareContext, work.Run.ID, placement, launch)
+			cancelPrepare()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if err != nil || prepared.SpecSHA256 != work.LaunchReceipt.EffectiveSpecSHA256 {
 				diagnostic := "runtime could not reproduce the receipted launch specification"
 				if err != nil {
 					diagnostic += ": " + err.Error()
 				}
-				return s.finishCheck(work, domain.CheckOutcomeUnknown, nil, false, "launch_spec_mismatch", diagnostic, domain.RunLogs{}, correlationID)
+				return s.finishCheck(ctx, work, domain.CheckOutcomeUnknown, nil, false, "launch_spec_mismatch", diagnostic, domain.RunLogs{}, correlationID)
 			}
-			binding, err := s.checkRuntime.Launch(context.Background(), work.Run.ID, placement, launch)
+			launchContext, cancelLaunch := context.WithTimeout(ctx, checkLaunchCallTimeout)
+			binding, err := s.checkRuntime.Launch(launchContext, work.Run.ID, placement, launch)
+			cancelLaunch()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if err != nil {
 				var unavailable *execution.RuntimeUnavailableError
 				if errors.As(err, &unavailable) {
-					return s.store.DeferCheckJob(context.Background(), work.Run.ID, 250*time.Millisecond)
+					return s.store.DeferCheckJob(ctx, work.Run.ID, checkActivePollDelay)
 				}
 				var definite *execution.StartError
 				if errors.As(err, &definite) {
-					return s.finishCheck(work, domain.CheckOutcomeStartFailed, nil, false, "runtime_start_failed", err.Error(), domain.RunLogs{}, correlationID)
+					return s.finishCheck(ctx, work, domain.CheckOutcomeStartFailed, nil, false, "runtime_start_failed", err.Error(), domain.RunLogs{}, correlationID)
 				}
-				return s.finishCheck(work, domain.CheckOutcomeUnknown, nil, false, "runtime_launch_unknown", err.Error(), domain.RunLogs{}, correlationID)
+				return s.finishCheck(ctx, work, domain.CheckOutcomeUnknown, nil, false, "runtime_launch_unknown", err.Error(), domain.RunLogs{}, correlationID)
 			}
 			if err := s.checkWorkerBarrier("after_check_runtime_launch", work.Run); err != nil {
 				return err
 			}
-			updated, err := s.store.RecordCheckRuntimeBinding(context.Background(), work.Run.ID, binding.RuntimeHandle, correlationID)
+			updated, err := s.store.RecordCheckRuntimeBinding(ctx, work.Run.ID, binding.RuntimeHandle, correlationID)
 			if err != nil {
 				return err
 			}
@@ -171,15 +191,21 @@ func (s *server) processCheckWork(work store.CheckWork) error {
 				return err
 			}
 		} else {
-			if _, err := s.checkRuntime.Reconcile(context.Background(), work.Run.ID, work.Run.RuntimeHandle); err != nil {
+			reconcileContext, cancelReconcile := context.WithTimeout(ctx, checkAdapterCallTimeout)
+			_, err := s.checkRuntime.Reconcile(reconcileContext, work.Run.ID, work.Run.RuntimeHandle)
+			cancelReconcile()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err != nil {
 				var unavailable *execution.RuntimeUnavailableError
 				if errors.As(err, &unavailable) {
-					return s.store.DeferCheckJob(context.Background(), work.Run.ID, 250*time.Millisecond)
+					return s.store.DeferCheckJob(ctx, work.Run.ID, checkActivePollDelay)
 				}
-				return s.finishCheck(work, domain.CheckOutcomeUnknown, nil, false, "runtime_reconcile_unknown", err.Error(), domain.RunLogs{}, correlationID)
+				return s.finishCheck(ctx, work, domain.CheckOutcomeUnknown, nil, false, "runtime_reconcile_unknown", err.Error(), domain.RunLogs{}, correlationID)
 			}
 		}
-		detail, err := s.store.MarkCheckRunning(context.Background(), work.Run.ID, correlationID)
+		detail, err := s.store.MarkCheckRunning(ctx, work.Run.ID, correlationID)
 		if err != nil {
 			return err
 		}
@@ -189,33 +215,38 @@ func (s *server) processCheckWork(work store.CheckWork) error {
 	if work.Run.Status != domain.CheckRunRunning {
 		return nil
 	}
-	status, err := statusInspector.InspectStatus(context.Background(), work.Run.ID, work.Run.RuntimeHandle)
+	inspectContext, cancelInspect := context.WithTimeout(ctx, checkAdapterCallTimeout)
+	status, err := statusInspector.InspectStatus(inspectContext, work.Run.ID, work.Run.RuntimeHandle)
+	cancelInspect()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil {
 		var unavailable *execution.RuntimeUnavailableError
 		if errors.As(err, &unavailable) {
-			return s.store.DeferCheckJob(context.Background(), work.Run.ID, 250*time.Millisecond)
+			return s.store.DeferCheckJob(ctx, work.Run.ID, checkActivePollDelay)
 		}
-		return s.finishCheck(work, domain.CheckOutcomeUnknown, nil, false, "runtime_inspection_unknown", err.Error(), domain.RunLogs{}, correlationID)
+		return s.finishCheck(ctx, work, domain.CheckOutcomeUnknown, nil, false, "runtime_inspection_unknown", err.Error(), domain.RunLogs{}, correlationID)
 	}
 	switch status.State {
 	case execution.RuntimeStateStarting, execution.RuntimeStateRunning:
-		return s.store.DeferCheckJob(context.Background(), work.Run.ID, checkPollDelay)
+		return s.store.DeferCheckJob(ctx, work.Run.ID, checkActivePollDelay)
 	case execution.RuntimeStateExited:
 		if !status.ExitKnown {
-			return s.finishCheckWithRuntimeLogs(work, domain.CheckOutcomeUnknown, nil, status.Forced, "exit_status_unknown", status.Diagnostic, correlationID)
+			return s.finishCheckWithRuntimeLogs(ctx, work, domain.CheckOutcomeUnknown, nil, status.Forced, "exit_status_unknown", status.Diagnostic, correlationID)
 		}
 		outcome := domain.CheckOutcomeFailed
 		if status.ExitCode == 0 {
 			outcome = domain.CheckOutcomePassed
 		}
 		exitCode := status.ExitCode
-		return s.finishCheckWithRuntimeLogs(work, outcome, &exitCode, status.Forced, "", status.Diagnostic, correlationID)
+		return s.finishCheckWithRuntimeLogs(ctx, work, outcome, &exitCode, status.Forced, "", status.Diagnostic, correlationID)
 	case execution.RuntimeStateTimedOut:
-		return s.finishCheckWithRuntimeLogs(work, domain.CheckOutcomeTimedOut, checkExitCode(status), status.Forced, "runtime_timeout", status.Diagnostic, correlationID)
+		return s.finishCheckWithRuntimeLogs(ctx, work, domain.CheckOutcomeTimedOut, checkExitCode(status), status.Forced, "runtime_timeout", status.Diagnostic, correlationID)
 	case execution.RuntimeStateStopped, execution.RuntimeStateUnknown:
-		return s.finishCheckWithRuntimeLogs(work, domain.CheckOutcomeUnknown, checkExitCode(status), status.Forced, "runtime_outcome_unknown", status.Diagnostic, correlationID)
+		return s.finishCheckWithRuntimeLogs(ctx, work, domain.CheckOutcomeUnknown, checkExitCode(status), status.Forced, "runtime_outcome_unknown", status.Diagnostic, correlationID)
 	default:
-		return s.finishCheck(work, domain.CheckOutcomeUnknown, nil, status.Forced, "runtime_state_invalid", "runtime returned an unsupported lifecycle state", domain.RunLogs{}, correlationID)
+		return s.finishCheck(ctx, work, domain.CheckOutcomeUnknown, nil, status.Forced, "runtime_state_invalid", "runtime returned an unsupported lifecycle state", domain.RunLogs{}, correlationID)
 	}
 }
 
@@ -272,8 +303,8 @@ func resolveCheckWorkingDirectory(checkoutPath, relative string) (string, error)
 	return candidate, nil
 }
 
-func (s *server) observeCheckGit(work store.CheckWork) domain.CheckGitObservation {
-	return s.observeCheckGitTarget(context.Background(), work.Checkout.Path, work.Repository.ID, work.Repository.Fingerprint, work.Repository.ObjectFormat, work.Checkout.ID)
+func (s *server) observeCheckGit(ctx context.Context, work store.CheckWork) domain.CheckGitObservation {
+	return s.observeCheckGitTarget(ctx, work.Checkout.Path, work.Repository.ID, work.Repository.Fingerprint, work.Repository.ObjectFormat, work.Checkout.ID)
 }
 
 func (s *server) observeCheckGitCandidate(ctx context.Context, candidate store.CheckWatchCandidate) domain.CheckGitObservation {
@@ -349,26 +380,31 @@ func boundedCheckDiagnostic(value string) string {
 	return value
 }
 
-func (s *server) checkLogs(run domain.CheckRun) (domain.RunLogs, error) {
+func (s *server) checkLogs(ctx context.Context, run domain.CheckRun) (domain.RunLogs, error) {
 	if run.RuntimeHandle == "" {
 		return domain.RunLogs{}, nil
 	}
-	logs, err := s.checkRuntime.Logs(context.Background(), run.ID, run.RuntimeHandle, 0)
+	logsContext, cancelLogs := context.WithTimeout(ctx, checkAdapterCallTimeout)
+	logs, err := s.checkRuntime.Logs(logsContext, run.ID, run.RuntimeHandle, 0)
+	cancelLogs()
 	if err != nil {
 		return domain.RunLogs{}, err
 	}
 	return logs, nil
 }
 
-func (s *server) finishCheckWithRuntimeLogs(work store.CheckWork, outcome string, exitCode *int, forced bool, diagnosticCode, diagnostic, correlationID string) error {
-	logs, err := s.checkLogs(work.Run)
-	if err != nil {
-		return s.finishCheck(work, domain.CheckOutcomeUnknown, nil, forced, "runtime_output_unknown", err.Error(), domain.RunLogs{}, correlationID)
+func (s *server) finishCheckWithRuntimeLogs(ctx context.Context, work store.CheckWork, outcome string, exitCode *int, forced bool, diagnosticCode, diagnostic, correlationID string) error {
+	logs, err := s.checkLogs(ctx, work.Run)
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	return s.finishCheck(work, outcome, exitCode, forced, diagnosticCode, diagnostic, logs, correlationID)
+	if err != nil {
+		return s.finishCheck(ctx, work, domain.CheckOutcomeUnknown, nil, forced, "runtime_output_unknown", err.Error(), domain.RunLogs{}, correlationID)
+	}
+	return s.finishCheck(ctx, work, outcome, exitCode, forced, diagnosticCode, diagnostic, logs, correlationID)
 }
 
-func (s *server) finishCheck(work store.CheckWork, outcome string, exitCode *int, forced bool, diagnosticCode, diagnostic string, logs domain.RunLogs, correlationID string) error {
+func (s *server) finishCheck(ctx context.Context, work store.CheckWork, outcome string, exitCode *int, forced bool, diagnosticCode, diagnostic string, logs domain.RunLogs, correlationID string) error {
 	artifacts := make([]store.PreparedCheckArtifact, 0, 3)
 	for _, item := range []struct {
 		kind string
@@ -380,22 +416,22 @@ func (s *server) finishCheck(work store.CheckWork, outcome string, exitCode *int
 		if item.log.Text == "" && item.log.OmittedBytes == 0 {
 			continue
 		}
-		artifact, err := s.store.PrepareCheckArtifact(context.Background(), item.kind, []byte(item.log.Text), item.log.OmittedBytes)
+		artifact, err := s.store.PrepareCheckArtifact(ctx, item.kind, []byte(item.log.Text), item.log.OmittedBytes)
 		if err != nil {
 			return err
 		}
 		artifacts = append(artifacts, artifact)
 	}
 	if diagnostic = boundedCheckDiagnostic(diagnostic); diagnostic != "" {
-		artifact, err := s.store.PrepareCheckArtifact(context.Background(), domain.CheckArtifactDiagnostic, []byte(diagnostic), 0)
+		artifact, err := s.store.PrepareCheckArtifact(ctx, domain.CheckArtifactDiagnostic, []byte(diagnostic), 0)
 		if err != nil {
 			return err
 		}
 		artifacts = append(artifacts, artifact)
 	}
-	_, err := s.store.FinishCheckRun(context.Background(), store.FinishCheckRunCommand{
+	_, err := s.store.FinishCheckRun(ctx, store.FinishCheckRunCommand{
 		CheckRunID: work.Run.ID, Outcome: outcome, ExitCode: exitCode, Forced: forced,
-		DiagnosticCode: diagnosticCode, Diagnostic: diagnostic, TerminalObservation: s.observeCheckGit(work),
+		DiagnosticCode: diagnosticCode, Diagnostic: diagnostic, TerminalObservation: s.observeCheckGit(ctx, work),
 		Artifacts: artifacts, CorrelationID: correlationID,
 	})
 	return err

@@ -103,6 +103,29 @@ func (s *server) handleRunStop(request localapi.Request) localapi.Response {
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunMutationResult{Schema: localapi.RunMutationSchema, Type: "run_mutation", Detail: result.Detail, EventSequence: result.EventSequence})
 }
 
+func (s *server) handleRunLostResolve(request localapi.Request) localapi.Response {
+	var params localapi.RunLostResolveParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "run.lost.resolve requires workspace, run, expected_revision, note, literal runtime_retired_confirmed true, and idempotency_key")
+	}
+	result, err := s.store.ResolveLostRun(context.Background(), store.ResolveLostRunCommand{
+		WorkspaceIdentifier:     params.Workspace,
+		RunID:                   params.Run,
+		ExpectedRevision:        params.ExpectedRevision,
+		Note:                    params.Note,
+		RuntimeRetiredConfirmed: params.RuntimeRetiredConfirmed,
+		IdempotencyKey:          params.IdempotencyKey,
+		CorrelationID:           request.ID,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunLossResolutionResult{
+		Schema: localapi.RunLossResolutionSchema, Type: "run_loss_resolution", Detail: result.Detail,
+		Resolution: result.Resolution, EventSequence: result.EventSequence,
+	})
+}
+
 func (s *server) handleRunLogs(request localapi.Request) localapi.Response {
 	var params localapi.RunLogsParams
 	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Run) == "" || params.Tail < 0 || params.Tail > 10000 {

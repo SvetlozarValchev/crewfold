@@ -47,6 +47,113 @@ func (rejectingBindingProvider) Next(context.Context, domain.Run, domain.FakeSce
 	return domain.RunObservation{}, false, errors.New("unreachable provider observation")
 }
 
+type uncertainObservationProvider struct{}
+
+func (uncertainObservationProvider) Name() string { return "uncertain-observation" }
+
+func (uncertainObservationProvider) Prepare(ctx context.Context, run domain.Run, scenario domain.FakeScenario) (execution.LaunchSpec, error) {
+	return (execution.FakeProvider{}).Prepare(ctx, run, scenario)
+}
+
+func (uncertainObservationProvider) Bind(_ context.Context, run domain.Run, binding execution.RuntimeBinding) (execution.ProviderBinding, error) {
+	if binding.RuntimeHandle == "" {
+		return execution.ProviderBinding{}, errors.New("missing runtime binding")
+	}
+	return execution.ProviderBinding{ProviderHandle: "uncertain-provider:" + run.ID}, nil
+}
+
+func (uncertainObservationProvider) Next(context.Context, domain.Run, domain.FakeScenario, execution.RuntimeSnapshot) (domain.RunObservation, bool, error) {
+	return domain.RunObservation{}, false, errors.New("provider lost the terminal observation")
+}
+
+func TestRunLostResolutionReplaysAcrossDistinctRequestsAndRejectsSemanticConflict(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("Git is unavailable: %v", err)
+	}
+
+	fixtureRoot := t.TempDir()
+	createGitFixture(t, fixtureRoot)
+	config := testConfig(t)
+	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"fake": execution.NewFakeRuntime()}
+	config.ProviderAdapters = map[string]execution.ProviderAdapter{
+		"fake":                  execution.FakeProvider{},
+		"uncertain-observation": uncertainObservationProvider{},
+	}
+	running := startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+	project, _ := initializeRunWorkerAPI(t, client, fixtureRoot)
+	agent, err := client.AgentCreate(context.Background(), localapi.AgentCreateParams{
+		Workspace: "personal", Name: "uncertain-observer", Role: "implementer", Provider: "uncertain-observation", Runtime: "fake",
+		MaxConcurrency: 1, IdempotencyKey: "uncertain-observation-agent",
+	})
+	if err != nil {
+		t.Fatalf("AgentCreate(uncertain observation) error = %v", err)
+	}
+	task := createAssignedRunWorkerTask(t, client, project.Project.ID, agent.Agent.ID, "owner resolves lost runtime")
+	started, err := client.RunStart(context.Background(), localapi.RunStartParams{
+		Workspace: "personal", Task: task.Detail.Task.ID, Runtime: "fake", Provider: "uncertain-observation",
+		Scenario:             domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "owner-resolves-lost", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "unobservable"}}},
+		ExpectedTaskRevision: task.Detail.Task.Revision, IdempotencyKey: "start-owner-resolves-lost",
+	})
+	if err != nil {
+		t.Fatalf("RunStart() error = %v", err)
+	}
+	lost := waitForRunStatus(t, client, started.Detail.Run.ID, domain.RunLost)
+	if lost.Detail.Task.Status != domain.TaskBlocked || lost.Detail.Task.AssignmentID == "" || lost.Detail.Run.FinishedAt != "" {
+		t.Fatalf("lost run = %#v", lost.Detail)
+	}
+
+	params := localapi.RunLostResolveParams{
+		Workspace: "personal", Run: lost.Detail.Run.ID, ExpectedRevision: lost.Detail.Run.Revision,
+		Note: "owner independently verified the runtime was retired", RuntimeRetiredConfirmed: true,
+		IdempotencyKey: "resolve-owner-lost-runtime",
+	}
+	resolved, err := client.RunLostResolve(context.Background(), params)
+	if err != nil {
+		t.Fatalf("RunLostResolve() error = %v", err)
+	}
+	replayed, err := client.RunLostResolve(context.Background(), params)
+	if err != nil {
+		t.Fatalf("RunLostResolve(distinct transport request replay) error = %v", err)
+	}
+	if replayed.EventSequence != resolved.EventSequence || replayed.Detail.Run.ID != resolved.Detail.Run.ID ||
+		replayed.Detail.Run.Revision != resolved.Detail.Run.Revision || replayed.Resolution != resolved.Resolution {
+		t.Fatalf("RunLostResolve(replay) = %#v; want exact %#v", replayed, resolved)
+	}
+	if resolved.Detail.Run.Status != domain.RunFailed || resolved.Detail.Run.FailureCode != "runtime_retired_by_owner" ||
+		resolved.Detail.Task.Status != domain.TaskBlocked || resolved.Detail.Task.AssignmentID != "" ||
+		resolved.Resolution.Resolution != "owner_confirmed_effects_ended" || resolved.Resolution.EventSequence != resolved.EventSequence {
+		t.Fatalf("resolved run = %#v", resolved)
+	}
+	changed := params
+	changed.Note = "different semantic retirement assertion"
+	if _, err := client.RunLostResolve(context.Background(), changed); localAPIErrorCode(err) != store.CodeIdempotencyConflict {
+		t.Fatalf("RunLostResolve(changed semantic replay) error = %v, code = %q", err, localAPIErrorCode(err))
+	}
+	timeline, err := client.EventsTimeline(context.Background(), localapi.EventsTimelineParams{
+		Workspace: "personal", EntityType: "run", EntityID: lost.Detail.Run.ID, PageParams: localapi.PageParams{Limit: 100},
+	})
+	if err != nil {
+		t.Fatalf("EventsTimeline() error = %v", err)
+	}
+	resolutionEvents := 0
+	for _, event := range timeline.Events {
+		if event.Type == "run.lost_resolved" {
+			resolutionEvents++
+		}
+	}
+	if resolutionEvents != 1 {
+		t.Fatalf("run.lost_resolved event count = %d, want 1", resolutionEvents)
+	}
+
+	if _, err := client.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := running.wait(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 func TestRunWorkerCompletesBlocksResumesAndRejectsInsufficientEvidence(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("Git is unavailable: %v", err)
@@ -186,7 +293,7 @@ func TestRunLaunchReconcilesIdempotentlyAfterDaemonRestart(t *testing.T) {
 	second := startTestServer(t, config)
 	restarted := localapi.NewClient(config.SocketPath)
 	completed := waitForRunStatus(t, restarted, started.Detail.Run.ID, domain.RunCompleted)
-	if completed.Detail.Run.RuntimeHandle == "" || completed.Detail.Handoff == nil || runtimeDriver.LaunchCount() != 1 {
+	if completed.Detail.Run.RuntimeHandle != "" || completed.Detail.Run.ProviderHandle != "" || completed.Detail.Handoff == nil || runtimeDriver.LaunchCount() != 1 {
 		t.Fatalf("completed after restart = %#v; launch count=%d", completed.Detail, runtimeDriver.LaunchCount())
 	}
 	if _, err := restarted.Stop(context.Background()); err != nil {

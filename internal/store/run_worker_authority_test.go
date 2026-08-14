@@ -201,9 +201,9 @@ func TestClaimRunJobUsesFrozenSupervisorAuthorityAfterCommit(t *testing.T) {
 			storage, fixture, runID := committedSupervisorRunForWorkerTest(t, key, testCase.retry)
 			testCase.mutate(t, storage, fixture)
 
-			work, found, err := storage.ClaimRunJob(context.Background(), 30*time.Second)
+			work, found, err := storage.ClaimRunLaunchJob(context.Background(), 30*time.Second)
 			if err != nil || !found || work.Run.ID != runID || work.Run.Status != domain.RunRequested {
-				t.Fatalf("ClaimRunJob() = %#v, found=%t, error=%v; want committed run %s", work, found, err, runID)
+				t.Fatalf("ClaimRunLaunchJob() = %#v, found=%t, error=%v; want committed run %s", work, found, err, runID)
 			}
 			starting, err := storage.MarkRunStarting(context.Background(), runID, "worker-start-frozen-authority")
 			if err != nil || starting.Status != domain.RunStarting {
@@ -227,9 +227,9 @@ WHERE run.id=?`, runID).Scan(&leaseText); err != nil {
 	}
 	storage.clock = func() time.Time { return leaseDeadline.Add(time.Nanosecond) }
 
-	work, found, err := storage.ClaimRunJob(context.Background(), 30*time.Second)
+	work, found, err := storage.ClaimRunLaunchJob(context.Background(), 30*time.Second)
 	if err != nil || !found || work.Run.ID != runID {
-		t.Fatalf("ClaimRunJob(after assignment deadline) = %#v, found=%t, error=%v", work, found, err)
+		t.Fatalf("ClaimRunLaunchJob(after assignment deadline) = %#v, found=%t, error=%v", work, found, err)
 	}
 	starting, err := storage.MarkRunStarting(context.Background(), runID, "worker-start-committed-after-lease")
 	if err != nil || starting.Status != domain.RunStarting || starting.WorkspaceID != fixture.workspace.ID {

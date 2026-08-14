@@ -193,8 +193,8 @@ type Run struct {
 	ScenarioName    string       `json:"scenario_name"`
 	Status          string       `json:"status"`
 	StepCursor      int          `json:"step_cursor"`
-	RuntimeHandle   string       `json:"runtime_handle,omitempty"`
-	ProviderHandle  string       `json:"provider_handle,omitempty"`
+	RuntimeHandle   string       `json:"-"`
+	ProviderHandle  string       `json:"-"`
 	BlockedQuestion string       `json:"blocked_question,omitempty"`
 	ResultSummary   string       `json:"result_summary,omitempty"`
 	FailureCode     string       `json:"failure_code,omitempty"`
@@ -260,6 +260,16 @@ type RunDetail struct {
 	Checkout Checkout           `json:"checkout"`
 	Timeline []RunTimelineEntry `json:"timeline"`
 	Handoff  *Handoff           `json:"handoff,omitempty"`
+}
+
+type RunLossResolution struct {
+	RunID         string `json:"run_id"`
+	LostRevision  int64  `json:"lost_revision"`
+	Resolution    string `json:"resolution"`
+	Note          string `json:"note"`
+	EventSequence int64  `json:"event_sequence"`
+	ResolvedAt    string `json:"resolved_at"`
+	ResolvedBy    string `json:"resolved_by"`
 }
 
 type TaskTimeline struct {

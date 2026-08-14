@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +119,20 @@ func TestCheckRuntimeBindingNamedFaultBarrierRollsBackAndReplays(t *testing.T) {
 	replayed, err := fixture.storage.RecordCheckRuntimeBinding(context.Background(), work.Run.ID, runtimeHandle, "fault-check-runtime-binding")
 	if err != nil || !reflect.DeepEqual(replayed, bound) {
 		t.Fatalf("RecordCheckRuntimeBinding(replay) = %#v, %v; want %#v", replayed, err, bound)
+	}
+	publicJSON, err := json.Marshal(bound)
+	if err != nil {
+		t.Fatalf("marshal bound check: %v", err)
+	}
+	if strings.Contains(string(publicJSON), runtimeHandle) || strings.Contains(string(publicJSON), "runtime_handle") {
+		t.Fatalf("public check JSON leaked its internal binding: %s", publicJSON)
+	}
+	var eventJSON string
+	if err := fixture.storage.db.QueryRow("SELECT data_json FROM events WHERE entity_id=? AND type='check.run_runtime_observed'", work.Run.ID).Scan(&eventJSON); err != nil {
+		t.Fatalf("query check runtime event: %v", err)
+	}
+	if strings.Contains(eventJSON, runtimeHandle) || strings.Contains(eventJSON, "runtime_handle") {
+		t.Fatalf("check runtime journal payload leaked its internal binding: %s", eventJSON)
 	}
 	assertCheckRowCount(t, fixture.storage, 1, `SELECT COUNT(*) FROM events WHERE type='check.run_runtime_observed' AND entity_id=?`, work.Run.ID)
 }

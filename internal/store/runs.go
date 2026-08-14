@@ -28,6 +28,7 @@ const (
 	runStopRequestedEvent      = "run.stop_requested"
 	runStoppedEvent            = "run.stopped"
 	runLostEvent               = "run.lost"
+	runLostResolvedEvent       = "run.lost_resolved"
 	taskCompletionProposed     = "task.completion_proposed"
 	taskChangesRequestedEvent  = "task.changes_requested"
 	taskCompletedEvent         = "task.completed"
@@ -38,6 +39,59 @@ const (
 	defaultRunCapabilityTTL    = time.Hour
 	maximumRunCapabilityTTL    = 24 * time.Hour
 )
+
+const runLossResolutionOwnerConfirmed = "owner_confirmed_effects_ended"
+
+type ResolveLostRunCommand struct {
+	WorkspaceIdentifier     string
+	RunID                   string
+	ExpectedRevision        int64
+	Note                    string
+	RuntimeRetiredConfirmed bool
+	IdempotencyKey          string
+	CorrelationID           string
+}
+
+type RunLossResolutionResult struct {
+	Detail        domain.RunDetail         `json:"detail"`
+	Resolution    domain.RunLossResolution `json:"resolution"`
+	EventSequence int64                    `json:"event_sequence"`
+}
+
+func runStartRequestHash(command CreateRunCommand) (string, error) {
+	return hashCommand("run.start", map[string]any{
+		"workspace":                           command.WorkspaceIdentifier,
+		"task_id":                             command.TaskID,
+		"checkout_id":                         command.CheckoutIdentifier,
+		"context_packet_id":                   command.ContextPacketID,
+		"runtime":                             command.Runtime,
+		"provider":                            command.Provider,
+		"scenario":                            command.Scenario,
+		"expected_task_revision":              command.ExpectedTaskRevision,
+		"capability_ttl":                      command.CapabilityTTL,
+		"check_watch_grant_id":                command.CheckWatchGrantID,
+		"expected_check_watch_grant_revision": command.ExpectedCheckWatchGrantRevision,
+	})
+}
+
+func runResumeRequestHash(workspaceIdentifier, runID string, expectedRevision int64) (string, error) {
+	return hashCommand("run.resume", map[string]any{
+		"workspace": workspaceIdentifier, "run_id": runID, "expected_revision": expectedRevision,
+	})
+}
+
+func runStopRequestHash(workspaceIdentifier, runID string, expectedRevision, gracePeriodMillis int64) (string, error) {
+	return hashCommand("run.stop", map[string]any{
+		"workspace": workspaceIdentifier, "run_id": runID, "expected_revision": expectedRevision, "grace_period_millis": gracePeriodMillis,
+	})
+}
+
+func runLostResolveRequestHash(command ResolveLostRunCommand) (string, error) {
+	return hashCommand("run.lost.resolve", map[string]any{
+		"workspace": command.WorkspaceIdentifier, "run_id": command.RunID, "expected_revision": command.ExpectedRevision,
+		"note": command.Note, "runtime_retired_confirmed": command.RuntimeRetiredConfirmed,
+	})
+}
 
 func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMutationResult, error) {
 	workspaceIdentifier := strings.TrimSpace(command.WorkspaceIdentifier)
@@ -75,7 +129,7 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	command.CapabilityTTL = capabilityTTL
 	command.IdempotencyKey = key
 	command.CorrelationID = correlationID
-	requestHash, err := hashCommand("run.start", command)
+	requestHash, err := runStartRequestHash(command)
 	if err != nil {
 		return RunMutationResult{}, storageFailure("hash run start", err)
 	}
@@ -276,6 +330,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?)`,
 	if err != nil {
 		return RunMutationResult{}, err
 	}
+	detail.Run.RuntimeHandle = ""
+	detail.Run.ProviderHandle = ""
 	result := RunMutationResult{Detail: detail, EventSequence: sequence}
 	if err := s.runMutationHook(MutationAfterEvent); err != nil {
 		return RunMutationResult{}, err
@@ -335,9 +391,28 @@ func (s *Store) TaskTimeline(ctx context.Context, workspaceIdentifier, taskID st
 	return domain.TaskTimeline{Task: task, Runs: runs, Entries: entries}, nil
 }
 
-func (s *Store) ClaimRunJob(ctx context.Context, lease time.Duration) (RunWork, bool, error) {
+type runJobClass string
+
+const (
+	runJobLaunch  runJobClass = "launch"
+	runJobControl runJobClass = "control"
+)
+
+func (s *Store) ClaimRunLaunchJob(ctx context.Context, lease time.Duration) (RunWork, bool, error) {
+	return s.claimRunJob(ctx, lease, runJobLaunch)
+}
+
+func (s *Store) ClaimRunControlJob(ctx context.Context, lease time.Duration) (RunWork, bool, error) {
+	return s.claimRunJob(ctx, lease, runJobControl)
+}
+
+func (s *Store) claimRunJob(ctx context.Context, lease time.Duration, class runJobClass) (RunWork, bool, error) {
 	if lease <= 0 {
 		lease = 30 * time.Second
+	}
+	statusPredicate := "(run.status = 'requested' OR (run.status = 'starting' AND run.runtime_handle IS NULL))"
+	if class == runJobControl {
+		statusPredicate = "((run.status = 'starting' AND run.runtime_handle IS NOT NULL) OR run.status IN ('active','stopping'))"
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -350,7 +425,11 @@ func (s *Store) ClaimRunJob(ctx context.Context, lease time.Duration) (RunWork, 
 		return RunWork{}, false, storageFailure("recover expired run jobs", err)
 	}
 	var runID string
-	err = tx.QueryRowContext(ctx, "SELECT run_id FROM run_jobs WHERE status = 'pending' AND julianday(available_at) <= julianday(?) ORDER BY available_at, run_id LIMIT 1", now).Scan(&runID)
+	err = tx.QueryRowContext(ctx, `SELECT job.run_id
+FROM run_jobs job
+JOIN runs run ON run.id = job.run_id
+WHERE job.status = 'pending' AND julianday(job.available_at) <= julianday(?) AND `+statusPredicate+`
+ORDER BY job.available_at, job.run_id LIMIT 1`, now).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		if err := tx.Commit(); err != nil {
 			return RunWork{}, false, storageFailure("commit empty run job claim", err)
@@ -401,7 +480,7 @@ SELECT EXISTS (
 	    AND ((run.status='requested' AND event.type='run.requested')
 	      OR (run.status='starting' AND run.runtime_handle IS NULL AND event.type='run.starting')
 	      OR (run.status='starting' AND run.runtime_handle IS NOT NULL AND event.type='run.runtime_observed'
-	        AND json_extract(event.data_json,'$.runtime_handle')=run.runtime_handle)
+	        AND json_extract(event.data_json,'$.runtime_bound')=1)
 	      OR (run.status='active' AND event.type IN ('run.started','run.progress_reported','run.resumed'))
 	      OR (run.status='stopping' AND event.type='run.stop_requested')))
 )
@@ -444,7 +523,7 @@ OR EXISTS (
 	    AND ((run.status='requested' AND event.type='run.requested')
 	      OR (run.status='starting' AND run.runtime_handle IS NULL AND event.type='run.starting')
 	      OR (run.status='starting' AND run.runtime_handle IS NOT NULL AND event.type='run.runtime_observed'
-	        AND json_extract(event.data_json,'$.runtime_handle')=run.runtime_handle)
+	        AND json_extract(event.data_json,'$.runtime_bound')=1)
 	      OR (run.status='active' AND event.type IN ('run.started','run.progress_reported','run.resumed'))
 	      OR (run.status='stopping' AND event.type='run.stop_requested')))
 )`, runID, runID).Scan(&validReceipt); err != nil {
@@ -571,7 +650,7 @@ func (s *Store) MarkRunStarted(ctx context.Context, runID, runtimeHandle, provid
 	if err := appendRunTimeline(ctx, tx, run.ID, runStartedEvent, "runtime and provider are bound", nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"runtime_handle": runtimeHandle, "provider_handle": providerHandle}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"runtime_bound": true, "provider_bound": true}); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskStarted, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
@@ -610,7 +689,7 @@ func (s *Store) RecordRunRuntimeBinding(ctx context.Context, runID, runtimeHandl
 		if err := setRunJob(ctx, tx, run.ID, "pending", now); err != nil {
 			return 0, err
 		}
-		return appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runRuntimeObservedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"runtime_handle": runtimeHandle})
+		return appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runRuntimeObservedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"runtime_bound": true})
 	})
 }
 
@@ -636,6 +715,7 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 	}
 	now := s.nowText()
 	run.Status, run.FailureCode, run.FailureMessage, run.FinishedAt = domain.RunStartFailed, "runtime_start_failed", message, now
+	run.RuntimeHandle, run.ProviderHandle = "", ""
 	run.Revision++
 	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
@@ -828,6 +908,7 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 		return err
 	}
 	run.Status, run.ResultSummary = domain.RunReview, summary
+	run.RuntimeHandle, run.ProviderHandle = "", ""
 	task.Status, task.BlockedReason, task.Revision = domain.TaskReview, "", task.Revision+1
 	if err := appendRunTimeline(ctx, tx, run.ID, runCompletionProposedEvent, summary, observation.Evidence, now); err != nil {
 		return err
@@ -895,7 +976,7 @@ func (s *Store) ResumeRun(ctx context.Context, command ResumeRunCommand) (RunMut
 	if err := validateMutationMetadata(key, correlationID, CodeInvalidRun); err != nil {
 		return RunMutationResult{}, err
 	}
-	requestHash, err := hashCommand("run.resume", command)
+	requestHash, err := runResumeRequestHash(workspaceIdentifier, runID, command.ExpectedRevision)
 	if err != nil {
 		return RunMutationResult{}, storageFailure("hash run resume", err)
 	}
@@ -972,6 +1053,8 @@ func (s *Store) ResumeRun(ctx context.Context, command ResumeRunCommand) (RunMut
 	if err != nil {
 		return RunMutationResult{}, err
 	}
+	detail.Run.RuntimeHandle = ""
+	detail.Run.ProviderHandle = ""
 	result := RunMutationResult{Detail: detail, EventSequence: sequence}
 	if err := recordIdempotency(ctx, tx, key, "run.resume", requestHash, result, now); err != nil {
 		return RunMutationResult{}, err
@@ -991,7 +1074,7 @@ func (s *Store) RequestRunStop(ctx context.Context, command StopRunCommand) (Run
 	if err := validateMutationMetadata(key, correlationID, CodeInvalidRun); err != nil {
 		return RunMutationResult{}, err
 	}
-	requestHash, err := hashCommand("run.stop", command)
+	requestHash, err := runStopRequestHash(workspaceIdentifier, runID, command.ExpectedRevision, command.GracePeriodMillis)
 	if err != nil {
 		return RunMutationResult{}, storageFailure("hash run stop", err)
 	}
@@ -1040,6 +1123,8 @@ func (s *Store) RequestRunStop(ctx context.Context, command StopRunCommand) (Run
 	if err != nil {
 		return RunMutationResult{}, err
 	}
+	detail.Run.RuntimeHandle = ""
+	detail.Run.ProviderHandle = ""
 	result := RunMutationResult{Detail: detail, EventSequence: sequence}
 	if err := recordIdempotency(ctx, tx, key, "run.stop", requestHash, result, now); err != nil {
 		return RunMutationResult{}, err
@@ -1068,6 +1153,7 @@ func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, d
 	}
 	now := s.nowText()
 	run.Status, run.StopGraceMillis, run.StopForced, run.ResultSummary, run.FinishedAt, run.Revision = domain.RunStopped, 0, forced, strings.TrimSpace(diagnostic), now, run.Revision+1
+	run.RuntimeHandle, run.ProviderHandle = "", ""
 	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
 	}
@@ -1166,6 +1252,172 @@ func (s *Store) LoseRun(ctx context.Context, runID, message, correlationID strin
 	return detail, nil
 }
 
+func (s *Store) ResolveLostRun(ctx context.Context, command ResolveLostRunCommand) (RunLossResolutionResult, error) {
+	command.WorkspaceIdentifier = strings.TrimSpace(command.WorkspaceIdentifier)
+	command.RunID = strings.TrimSpace(command.RunID)
+	command.Note = strings.TrimSpace(command.Note)
+	command.IdempotencyKey = strings.TrimSpace(command.IdempotencyKey)
+	command.CorrelationID = strings.TrimSpace(command.CorrelationID)
+	if command.WorkspaceIdentifier == "" || command.RunID == "" || command.ExpectedRevision < 1 || !command.RuntimeRetiredConfirmed || !validMessageText(command.Note, 2048) {
+		return RunLossResolutionResult{}, &Error{Code: CodeInvalidRun, Message: "lost-run resolution requires workspace, run, exact revision, a 1 to 2048 byte note, and explicit runtime retirement confirmation"}
+	}
+	if err := validateMutationMetadata(command.IdempotencyKey, command.CorrelationID, CodeInvalidRun); err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	requestHash, err := runLostResolveRequestHash(command)
+	if err != nil {
+		return RunLossResolutionResult{}, storageFailure("hash lost-run resolution", err)
+	}
+	var replay RunLossResolutionResult
+	if found, err := s.lookupIdempotencyBeforeEffects(ctx, command.IdempotencyKey, "run.lost.resolve", requestHash, &replay); err != nil {
+		return RunLossResolutionResult{}, err
+	} else if found {
+		return replay, nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RunLossResolutionResult{}, storageFailure("begin lost-run resolution", err)
+	}
+	defer tx.Rollback()
+	if found, err := lookupIdempotency(ctx, tx, command.IdempotencyKey, "run.lost.resolve", requestHash, &replay); err != nil {
+		return RunLossResolutionResult{}, err
+	} else if found {
+		return replay, nil
+	}
+	workspace, err := workspaceInTransaction(ctx, tx, command.WorkspaceIdentifier)
+	if err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	run, err := queryRun(ctx, tx, workspace.ID, command.RunID)
+	if err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	if run.Revision != command.ExpectedRevision {
+		return RunLossResolutionResult{}, revisionConflict("run", run.ID, command.ExpectedRevision, run.Revision)
+	}
+	if run.Status != domain.RunLost {
+		return RunLossResolutionResult{}, &Error{Code: CodeRunConflict, Message: "only a lost run can have its retired runtime resolved"}
+	}
+	task, err := queryTask(ctx, tx, workspace.ID, run.TaskID)
+	if err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	if task.Status != domain.TaskBlocked || task.AssignmentID != run.AssignmentID || task.AssignedAgentID != run.AgentID {
+		return RunLossResolutionResult{}, &Error{Code: CodeRunConflict, Message: "lost-run resolution requires its exact blocked task reservation"}
+	}
+	if !s.runLossResolutionActive.CompareAndSwap(false, true) {
+		return RunLossResolutionResult{}, storageFailure("enter owner lost-run resolution", errors.New("lost-run resolution seal is already active"))
+	}
+	sealHeld := true
+	defer func() {
+		if sealHeld {
+			s.runLossResolutionActive.Store(false)
+		}
+	}()
+
+	now := s.nowText()
+	lostRevision := run.Revision
+	run.Status = domain.RunFailed
+	run.FailureCode = "runtime_retired_by_owner"
+	run.FailureMessage = command.Note
+	run.RuntimeHandle = ""
+	run.ProviderHandle = ""
+	run.FinishedAt = now
+	run.Revision++
+	if err := updateRunProjectionForActor(ctx, tx, run, now, localOwnerActorID); err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	if err := setRunJob(ctx, tx, run.ID, "complete", now); err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	if err := appendRunTimeline(ctx, tx, run.ID, runLostResolvedEvent, command.Note, nil, now); err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	sequence, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runLostResolvedEvent, command.CorrelationID, now, map[string]any{
+		"prior_status":            domain.RunLost,
+		"status":                  domain.RunFailed,
+		"resolution":              runLossResolutionOwnerConfirmed,
+		"lost_revision":           lostRevision,
+		"note":                    command.Note,
+		"capacity_released":       true,
+		"binding_cleared":         true,
+		"logs_available":          false,
+		"logs_unavailable_reason": "runtime outcome was lost before owner retirement confirmation",
+	})
+	if err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	queries := dbgen.New(tx)
+	if err := queries.InsertRunLossResolution(ctx, dbgen.InsertRunLossResolutionParams{
+		RunID: run.ID, LostRevision: lostRevision, Note: command.Note, EventSequence: sequence, ResolvedAt: now,
+	}); err != nil {
+		return RunLossResolutionResult{}, storageFailure("insert lost-run resolution receipt", err)
+	}
+
+	assignmentResult, err := tx.ExecContext(ctx, `UPDATE task_assignments
+SET status='released', revision=revision+1, updated_at=?, updated_by=?
+WHERE id=? AND task_id=? AND agent_id=? AND status='active'`, now, localOwnerActorID, run.AssignmentID, run.TaskID, run.AgentID)
+	if err != nil {
+		return RunLossResolutionResult{}, storageFailure("release lost-run assignment", err)
+	}
+	if changed, err := assignmentResult.RowsAffected(); err != nil || changed != 1 {
+		return RunLossResolutionResult{}, storageFailure("verify lost-run assignment release", errors.New("exact active assignment was not released"))
+	}
+
+	claimRows, err := tx.QueryContext(ctx, claimSelect+" WHERE workspace_id=? AND task_id=? AND status='active' ORDER BY id", run.WorkspaceID, run.TaskID)
+	if err != nil {
+		return RunLossResolutionResult{}, storageFailure("list lost-run claims", err)
+	}
+	claims, err := scanClaims(claimRows)
+	if err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	for _, claim := range claims {
+		claim.Status = domain.ClaimReleased
+		claim.Revision++
+		if _, err := tx.ExecContext(ctx, `UPDATE work_claims
+SET status='released', revision=?, updated_at=?, updated_by=?
+WHERE id=? AND status='active'`, claim.Revision, now, localOwnerActorID, claim.ID); err != nil {
+			return RunLossResolutionResult{}, storageFailure("release lost-run claim", err)
+		}
+		claimSequence, err := appendEvent(ctx, tx, run.WorkspaceID, "claim", claim.ID, claim.Revision, claimReleasedEvent, command.CorrelationID, now, map[string]any{
+			"status": domain.ClaimReleased,
+			"run_id": run.ID,
+			"reason": "owner confirmed lost runtime retirement",
+		})
+		if err != nil {
+			return RunLossResolutionResult{}, err
+		}
+		if _, _, err := resolveClaimOverlapsForActor(ctx, tx, run.WorkspaceID, claim.ID, "lost runtime retired by owner", command.CorrelationID, now, claimSequence, localOwnerActorID, domain.EventActorHuman); err != nil {
+			return RunLossResolutionResult{}, err
+		}
+	}
+	if err := terminalizeSchedulingIntentForRun(ctx, tx, run, command.Note, command.CorrelationID, now); err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	detail, err := runDetailInTransaction(ctx, tx, run)
+	if err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	resolution := domain.RunLossResolution{
+		RunID: run.ID, LostRevision: lostRevision, Resolution: runLossResolutionOwnerConfirmed,
+		Note: command.Note, EventSequence: sequence, ResolvedAt: now, ResolvedBy: localOwnerActorID,
+	}
+	result := RunLossResolutionResult{Detail: detail, Resolution: resolution, EventSequence: sequence}
+	if err := recordIdempotency(ctx, tx, command.IdempotencyKey, "run.lost.resolve", requestHash, result, now); err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	// Clear the construction seal while this transaction still owns the only
+	// SQLite connection; commit cannot execute lifecycle triggers.
+	s.runLossResolutionActive.Store(false)
+	sealHeld = false
+	if err := tx.Commit(); err != nil {
+		return RunLossResolutionResult{}, storageFailure("commit lost-run resolution", err)
+	}
+	return result, nil
+}
+
 func (s *Store) DeferRunJob(ctx context.Context, runID string, delay time.Duration) error {
 	if delay < 0 {
 		delay = 0
@@ -1200,6 +1452,7 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message, correlationID
 	}
 	now := s.nowText()
 	run.Status, run.FailureCode, run.FailureMessage, run.FinishedAt = domain.RunFailed, strings.TrimSpace(code), strings.TrimSpace(message), now
+	run.RuntimeHandle, run.ProviderHandle = "", ""
 	run.Revision++
 	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
