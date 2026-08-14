@@ -1,7 +1,7 @@
 # Web workbench — M21 implementation
 
 M21 makes the owner-local browser workbench Crewfold's primary human interface.
-It will orchestrate objectives and work, inspect agents, explain delivery, and
+It orchestrates objectives and work, inspects agents, explains delivery, and
 render tasks, dependencies, messages, meetings, claims, knowledge revisions, and
 audit history.
 
@@ -23,9 +23,9 @@ Herdr remains an optional interactive runtime host.
 
 ## Product mock
 
-[`workbench-mock.html`](workbench-mock.html) is a standalone interactive product
-mock for reviewing the proposed local web workbench. It has no backend, makes no
-network requests, and is not an implemented Crewfold interface.
+[`workbench-mock.html`](workbench-mock.html) is the standalone design reference
+used before implementation. It has no backend and makes no network requests; the
+implemented workbench is the React application in `src/` embedded from `dist/`.
 
 ## Development
 

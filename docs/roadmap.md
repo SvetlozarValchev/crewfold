@@ -7,10 +7,11 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M20 are complete. M21 implementation is underway.
-Its first vertical slice provides private XDG paths, the Linux user-service
-lifecycle, `crewfold open`, embedded React assets, one-time owner bootstrap, and
-authenticated live daemon status; onboarding and work orchestration remain.** Evidence is
+Current status: **M0 through M21 are complete. M22 is next. The owner-local web
+workbench now provides service/open lifecycle, browser onboarding, durable
+query/plan/act work, editable reviewed launch plans, canonical inspection and
+understanding surfaces, bounded Git/log access, and separately authorized live
+terminal access.** Evidence is
 recorded in the [M0 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -95,6 +96,13 @@ personal-100 scale envelope, endurance/fault/security matrix, reproducible Linux
 candidate, and complete prior-scenario gate. Its implementation commit is
 `359522d8aa58a18a7d1151584a8f9bc48b4bfc56`.
 
+M21's [passed local-web-workbench review](reviews/local-web-workbench.md) records
+the exact local service/browser security boundary, browser-only onboarding and
+automatic work launch, durable reviewed plans and receipts, canonical work and
+crew inspection, optional live terminal grants, real-browser accessibility, and
+the provider-free end-to-end scenario. Its implementation commit is
+`6116b5d0b21bfba48007da464ff3bae0c8543416`.
+
 ## Sequence
 
 | Milestone | Increment | Demonstrable outcome | Depends on |
@@ -120,7 +128,7 @@ candidate, and complete prior-scenario gate. Its implementation commit is
 | M18 ✓ | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
 | M19 ✓ | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
 | M20 ✓ | Personal beta | Back up, restore, verify current-baseline integrity, and load-test 100 registered agent definitions | M19 |
-| M21 | Local web workbench | Orchestrate, inspect, understand, and intervene from one owner-local browser interface | M20 |
+| M21 ✓ | Local web workbench | Orchestrate, inspect, understand, and intervene from one owner-local browser interface | M20 |
 | M22 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M21 |
 
 ## Capability ladder
@@ -281,17 +289,17 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M21 is next. Its accepted design contract is
-[ADR-0020](decisions/0020-local-web-workbench.md), and its interactive reference is
-[`web/workbench-mock.html`](../web/workbench-mock.html). The Linux owner-local
-service, default private paths, and secure embedded read-only web shell/status
-boundary form the first implemented checkpoint. Later slices add onboarding, durable
-conversation-to-command execution, editable plan launch, agent inspection,
-optional Herdr terminal streaming, and the complete browser-only acceptance path.
+M22 is next: the public open-source release candidate. Packaging, adapter
+SDK/conformance, installation/tutorial polish, contribution governance, security
+contact, license selection, and any upstream publication build on M21's accepted
+single-place owner workflow rather than adding another control surface.
 
-The prior OSS release-readiness scope is M22. Packaging, adapter SDK/conformance,
-public governance/license work, and any upstream publication stay outside M21 and
-must build on its accepted single-place owner workflow.
+M21 is complete at implementation commit
+`6116b5d0b21bfba48007da464ff3bae0c8543416`; its
+[passed review](reviews/local-web-workbench.md) records the local service and
+browser-security boundary, repository onboarding, durable owner conversation and
+receipts, editable reviewed plans, automatic execution, canonical inspection,
+optional Herdr terminal access, and the real-browser public scenario.
 
 M20 is complete at implementation commit
 `359522d8aa58a18a7d1151584a8f9bc48b4bfc56`; its

@@ -20,13 +20,14 @@ than forcing the core to understand every terminal UI.
 
 ## Status
 
-Crewfold has completed M20 personal-beta hardening. M21, the owner-local web
-workbench, is underway: its first committed implementation slice supplies private
-XDG service defaults, a systemd user-service lifecycle, `crewfold open`, embedded
-React assets, a loopback-only HTTP boundary, one-time Unix-socket bootstrap, and
-live authenticated daemon status. Repository onboarding, conversational execution,
-work graphs, and agent inspection remain the next M21 slices; the OSS release
-candidate follows as M22. The current binary provides a
+Crewfold has completed M21's owner-local web workbench. Private XDG service
+defaults, `crewfold service install`, and `crewfold open` lead into one embedded
+React interface for repository onboarding, query/plan/act conversation, reviewed
+plan launch, work and crew inspection, inbox and decisions, evidence, activity,
+briefings, health, bounded Git/log views, and separately authorized live terminal
+access. The CLI remains the typed automation/recovery/administration surface; the
+TUI is an operational fallback; Herdr is an optional interactive runtime host.
+The OSS release candidate follows as M22. The current binary provides a
 foreground local daemon, an owner-only Unix socket, and durable workspace,
 project, repository, checkout, agent, objective, task, dependency, assignment,
 lease, budget, run, placement, timeline, handoff, and event records in SQLite. It
