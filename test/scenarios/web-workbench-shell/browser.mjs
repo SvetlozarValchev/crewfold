@@ -80,8 +80,9 @@ await evaluate(`(() => {
   area.form.requestSubmit();
   return true;
 })()`);
-await waitFor("document.body.innerText.includes('Committed four receipted effects and requested the selected agent launch')", "receipted owner act", 20000);
+await waitFor("document.body.innerText.includes('Committed 3 exact graph receipts; the supervisor now owns scheduling.')", "receipted owner act", 20000);
 await waitFor("document.body.innerText.includes('builder')", "created crew");
+await waitFor("document.body.innerText.includes('PROACTIVE REVIEW OF WORKER ACTIVITY THROUGH EVENT #') && document.body.innerText.includes('Manager is caught up')", "automatic manager review of worker completion", 20000);
 
 await evaluate(`(() => {
   [...document.querySelectorAll('.intent-mode button')].find((button) => button.textContent.trim() === 'plan').click();
@@ -92,24 +93,28 @@ await evaluate(`(() => {
   area.form.requestSubmit();
   return true;
 })()`);
-await waitFor("document.body.innerText.includes('Edit task, agent, and budget')", "editable frozen plan");
+await waitFor("document.body.innerText.includes('Edit objective, graph, profiles, and budgets')", "editable frozen plan");
 await waitFor(`(() => {
   if (document.querySelector('.plan-editor')) return true;
-  const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('Edit task, agent, and budget') && !candidate.disabled);
+  const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('Edit objective, graph, profiles, and budgets') && !candidate.disabled);
   if (button) button.click();
   return false;
 })()`, "plan editor");
 await evaluate(`(() => {
-  const priority = document.querySelector('.plan-editor input[type="number"]');
+  const priority = document.querySelector('.plan-task-list input[type="number"]');
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(priority, '720');
   priority.dispatchEvent(new Event('input', { bubbles: true }));
   priority.dispatchEvent(new Event('change', { bubbles: true }));
-  [...document.querySelectorAll('button')].find((button) => button.textContent.includes('Seal reviewed revision')).click();
+  [...document.querySelectorAll('button')].find((button) => button.textContent.includes('Seal reviewed graph revision')).click();
   return true;
 })()`);
 await waitFor("document.body.innerText.includes('Sealed reviewed plan revision 2')", "sealed edited plan");
-await evaluate(`(() => { [...document.querySelectorAll('button')].find((button) => button.textContent.includes('Execute reviewed plan')).click(); return true; })()`);
-await waitFor("document.body.innerText.includes('Committed the objective, created and assigned its first task')", "edited plan execution", 20000);
+await waitFor(`(() => {
+  const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('Execute reviewed graph') && !candidate.disabled);
+  if (button) button.click();
+  return Boolean(button);
+})()`, "enabled reviewed graph execution");
+await waitFor("document.body.innerText.includes('Committed the frozen graph exactly; the supervisor now schedules dependency-ready work through its launch profiles.')", "edited plan execution", 20000);
 
 await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Crew')).click(); return true; })()`);
 await waitFor("document.body.innerText.includes('Inspect agent')", "crew inspector action");

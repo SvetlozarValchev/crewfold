@@ -177,6 +177,9 @@ func TestM21WorkbenchRejectsOriginHostAndUnknownSessionFields(t *testing.T) {
 
 func TestM21WorkbenchRPCRequiresExactCSRFAndExposesOnlyOwnerMethods(t *testing.T) {
 	t.Parallel()
+	if !workbenchMethodAllowed(localapi.MethodLaunchProfileList) {
+		t.Fatal("owner workbench must expose launch_profile.list for canonical onboarding refresh and plan editing")
+	}
 
 	running := startTestServer(t, testConfig(t))
 	bootstrap, err := localapi.NewClient(running.config.SocketPath).WebBootstrap(context.Background())

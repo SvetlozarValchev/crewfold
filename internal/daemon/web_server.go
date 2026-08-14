@@ -505,7 +505,8 @@ var workbenchMethods = map[string]struct{}{
 	localapi.MethodApprovalList: {}, localapi.MethodApprovalInspect: {}, localapi.MethodApprovalAllow: {}, localapi.MethodApprovalDeny: {},
 	localapi.MethodSupervisorPolicyShow: {}, localapi.MethodSupervisorPolicyConfigure: {},
 	localapi.MethodSupervisorActionList: {}, localapi.MethodSupervisorActionShow: {},
-	localapi.MethodBriefingShow: {}, localapi.MethodBriefingExplain: {},
+	localapi.MethodLaunchProfileList: {},
+	localapi.MethodBriefingShow:      {}, localapi.MethodBriefingExplain: {},
 	localapi.MethodCheckList: {}, localapi.MethodCheckInspect: {}, localapi.MethodCheckLogs: {},
 	localapi.MethodSystemDoctorFull: {},
 }
