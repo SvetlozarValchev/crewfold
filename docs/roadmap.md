@@ -99,9 +99,10 @@ candidate, and complete prior-scenario gate. Its implementation commit is
 M21's [passed local-web-workbench review](reviews/local-web-workbench.md) records
 the exact local service/browser security boundary, browser-only onboarding and
 automatic work launch, durable reviewed plans and receipts, canonical work and
-crew inspection, optional live terminal grants, real-browser accessibility, and
-the provider-free end-to-end scenario. Its implementation commit is
-`6116b5d0b21bfba48007da464ff3bae0c8543416`.
+crew inspection, Herdr-first live terminal grants, real-browser accessibility,
+and the provider-free end-to-end scenario. Its implementation commit is
+`6116b5d0b21bfba48007da464ff3bae0c8543416`; the Herdr-first service, preflight,
+diagnosis, and retry correction is `a6a8f82`.
 
 ## Sequence
 
@@ -300,7 +301,8 @@ M21 is complete at implementation commit
 browser-security boundary, repository onboarding, durable owner conversation and
 receipts, editable reviewed plans, automatic execution, canonical inspection,
 Herdr-first interactive terminal access with an explicit Direct headless fallback,
-and the real-browser public scenario.
+and the real-browser public scenario. The post-acceptance Herdr-first correction
+is `a6a8f82`.
 
 M20 is complete at implementation commit
 `359522d8aa58a18a7d1151584a8f9bc48b4bfc56`; its

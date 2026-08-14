@@ -5,6 +5,7 @@
 - Milestone: `M21 — Local web workbench`
 - Review status: `passed`
 - Implementation commit: `6116b5d0b21bfba48007da464ff3bae0c8543416`
+- Herdr-first runtime correction: `a6a8f82`
 - Reviewer: `automated acceptance and real-browser review`
 - Date: `2026-08-15`
 
@@ -103,5 +104,6 @@ release publication.
 - Next milestone started: `no`
 
 M21 is accepted at implementation commit
-`6116b5d0b21bfba48007da464ff3bae0c8543416`. M22 remains the next milestone and
-was not started during this review.
+`6116b5d0b21bfba48007da464ff3bae0c8543416`, with the Herdr-first service,
+preflight, diagnosis, and retry correction in `a6a8f82`. M22 remains the next
+milestone and was not started during this review.
