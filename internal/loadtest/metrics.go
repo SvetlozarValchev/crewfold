@@ -49,6 +49,10 @@ func currentEnvironment() Environment {
 	environment.GOOS = runtime.GOOS
 	environment.GOARCH = runtime.GOARCH
 	environment.GoVersion = runtime.Version()
+	// Early operational failures occur before Store.Health can provide the
+	// runtime value. Keep those failed reports schema-valid without pretending
+	// that SQLite was observed.
+	environment.SQLiteVersion = "unavailable"
 	environment.LogicalCPUs = runtime.NumCPU()
 	return environment
 }

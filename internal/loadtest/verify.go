@@ -33,7 +33,7 @@ type logicalIndex struct {
 	projectIDs    map[string]string
 }
 
-func verifyPersonal100(ctx context.Context, storage *store.Store, labels labelSet, metrics *measurements) (verificationResult, error) {
+func verifyPersonal100(ctx context.Context, storage *store.Store, labels labelSet, fixture fixtureState, metrics *measurements) (verificationResult, error) {
 	result := verificationResult{}
 	logicalHash := sha256.New()
 	index := logicalIndex{
@@ -196,6 +196,8 @@ func verifyPersonal100(ctx context.Context, storage *store.Store, labels labelSe
 			expectedStatus = domain.TaskCompleted
 		} else if withinProject == 0 && projectIndex == 8 {
 			expectedStatus = domain.TaskCancelled
+		} else if projectIndex == 0 && withinProject == 3 {
+			expectedStatus = domain.TaskCancelled
 		}
 		if !projectExists || !objectiveExists || task.Title != expectedTitle || task.Description != "deterministic provider-free personal load task" || task.Status != expectedStatus || task.Priority != withinProject%11 || task.Budget != (domain.Budget{}) || len(detail.Dependencies) != 0 || detail.Assignment != nil {
 			return result, fmt.Errorf("personal-100 task %d differs from %s", taskIndex, expectedTitle)
@@ -218,6 +220,7 @@ func verifyPersonal100(ctx context.Context, storage *store.Store, labels labelSe
 	if len(runs) != 8 {
 		return result, fmt.Errorf("personal-100 terminal run count=%d", len(runs))
 	}
+	runsByProject := make(map[string]string, len(runs))
 	sort.Slice(runs, func(i, j int) bool {
 		return index.entityKeys[entityMapKey("task", runs[i].TaskID)] < index.entityKeys[entityMapKey("task", runs[j].TaskID)]
 	})
@@ -251,10 +254,17 @@ func verifyPersonal100(ctx context.Context, storage *store.Store, labels labelSe
 		index.entityKeys[entityMapKey("context_packet", packet.ID)] = logicalTask + "/context"
 		index.projectOwners[entityMapKey("run", summary.ID)] = logicalProject
 		index.projectOwners[entityMapKey("context_packet", packet.ID)] = logicalProject
+		if runsByProject[summary.ProjectID] != "" {
+			return result, fmt.Errorf("personal-100 project %s has multiple terminal runs", logicalProject)
+		}
+		runsByProject[summary.ProjectID] = summary.ID
 		writeLogical(logicalHash, "run", logicalProject, logicalTask, agentNames[summary.AgentID], summary.Runtime, summary.Provider, summary.Status, detail.Run.ScenarioName)
 		// Context Role and content hash include descriptive Role wording; exact
 		// scope/binding facts remain in the neutral topology hash.
 		writeLogical(logicalHash, "context_packet", logicalProject, logicalTask, agentNames[summary.AgentID], detail.Checkout.WriteMode, packet.Schema)
+	}
+	if err := verifyPersonalControl(ctx, storage, workspace, projects[4], agentsByID[fixture.phaseAgents[4].ID], runsByProject[projects[4].ID], fixture, index, logicalHash, &metrics.projectionReads); err != nil {
+		return result, err
 	}
 
 	eventCounts, err := verifyEventStream(ctx, storage, index, logicalHash, &metrics.eventPages)
@@ -274,6 +284,75 @@ func verifyPersonal100(ctx context.Context, storage *store.Store, labels labelSe
 	}
 	result.logicalSHA256 = hex.EncodeToString(logicalHash.Sum(nil))
 	return result, nil
+}
+
+func verifyPersonalControl(ctx context.Context, storage *store.Store, workspace domain.Workspace, project domain.Project, recipient domain.AgentDefinition, deliveredRunID string, fixture fixtureState, index logicalIndex, logicalHash hash.Hash, samples *[]time.Duration) error {
+	if fixture.controlThreadID == "" || len(fixture.controlMessages) != personalMessageOperations || recipient.ID == "" || deliveredRunID == "" {
+		return fmt.Errorf("personal-100 control topology is incomplete: thread=%q messages=%d recipient=%q run=%q", fixture.controlThreadID, len(fixture.controlMessages), recipient.ID, deliveredRunID)
+	}
+	detail, err := measured(samples, func() (domain.ThreadDetail, error) {
+		return storage.Thread(ctx, workspace.ID, fixture.controlThreadID)
+	})
+	if err != nil {
+		return fmt.Errorf("read personal-100 saturated control thread: %w", err)
+	}
+	thread := detail.Thread
+	if thread.ID != fixture.controlThreadID || thread.WorkspaceID != workspace.ID || thread.ProjectID != project.ID || thread.TaskID != "" ||
+		thread.Subject != "Personal-100 saturated control" || thread.Status != domain.ThreadOpen || thread.Revision != personalMessageOperations+1 ||
+		thread.CreatedAt == "" || thread.UpdatedAt == "" || thread.CreatedBy != "local-owner" || thread.UpdatedBy != "local-owner" {
+		return fmt.Errorf("personal-100 saturated control thread differs: %#v", thread)
+	}
+	if len(detail.Messages) != personalMessageOperations || len(detail.Recipients) != personalMessageOperations {
+		return fmt.Errorf("personal-100 saturated control thread has messages=%d recipients=%d", len(detail.Messages), len(detail.Recipients))
+	}
+
+	deliveries := make(map[string]domain.MessageDelivery, len(detail.Recipients))
+	for _, delivery := range detail.Recipients {
+		if _, duplicate := deliveries[delivery.MessageID]; duplicate {
+			return fmt.Errorf("personal-100 saturated control message %s has duplicate recipients", delivery.MessageID)
+		}
+		deliveries[delivery.MessageID] = delivery
+	}
+	seenOrdinals := make(map[int]bool, personalMessageOperations)
+	logicalProject := "project/" + project.Name
+	logicalThread := logicalProject + "/control-thread"
+	index.entityKeys[entityMapKey("thread", thread.ID)] = logicalThread
+	index.projectOwners[entityMapKey("thread", thread.ID)] = logicalProject
+	writeLogical(logicalHash, "control_thread", logicalProject, thread.Subject, thread.Status, strconv.FormatInt(thread.Revision, 10))
+	// The controlled clock deliberately gives every message the same timestamp;
+	// the Store's ID tie-break is random and therefore must not enter the neutral
+	// logical hash. Verify and hash in the workload's exact ordinal order.
+	messages := append([]domain.Message(nil), detail.Messages...)
+	sort.Slice(messages, func(left, right int) bool {
+		return fixture.controlMessages[messages[left].ID] < fixture.controlMessages[messages[right].ID]
+	})
+	for _, message := range messages {
+		ordinal, exists := fixture.controlMessages[message.ID]
+		if !exists || ordinal < 0 || ordinal >= personalMessageOperations || seenOrdinals[ordinal] {
+			return fmt.Errorf("personal-100 saturated control message %s has invalid ordinal %d", message.ID, ordinal)
+		}
+		seenOrdinals[ordinal] = true
+		expectedBody := fmt.Sprintf("personal-100 saturated control message %03d", ordinal)
+		if message.WorkspaceID != workspace.ID || message.ThreadID != thread.ID || message.ProjectID != project.ID || message.TaskID != "" ||
+			message.SenderType != "owner" || message.SenderID != "local-owner" || message.SenderAgentID != "" || message.SenderAgentName != "" || message.SenderRunID != "" ||
+			message.Kind != domain.MessageInform || message.Body != expectedBody || len(message.ArtifactIDs) != 0 || message.ReplyToMessageID != "" || message.CreatedAt == "" {
+			return fmt.Errorf("personal-100 saturated control message %03d differs: %#v", ordinal, message)
+		}
+		delivery, exists := deliveries[message.ID]
+		if !exists || delivery.RecipientAgentID != recipient.ID || delivery.RecipientName != recipient.Name ||
+			delivery.Status != domain.DeliveryDelivered || delivery.QueuedAt == "" || delivery.DeliveredAt == "" || delivery.ReadAt != "" || delivery.AcknowledgedAt != "" ||
+			delivery.DeliveredRunID != deliveredRunID || delivery.WakeStatus != domain.WakeSucceeded || delivery.WakeDiagnostic != "" {
+			return fmt.Errorf("personal-100 saturated control delivery %03d differs: %#v", ordinal, delivery)
+		}
+		logicalMessage := fmt.Sprintf("%s/control-message/%03d", logicalProject, ordinal)
+		index.entityKeys[entityMapKey("message", message.ID)] = logicalMessage
+		index.projectOwners[entityMapKey("message", message.ID)] = logicalProject
+		writeLogical(logicalHash, "control_message", logicalProject, strconv.Itoa(ordinal), recipient.Name, message.Kind, message.Body, delivery.Status, delivery.WakeStatus)
+	}
+	if len(seenOrdinals) != personalMessageOperations {
+		return fmt.Errorf("personal-100 saturated control ordinals=%d, want %d", len(seenOrdinals), personalMessageOperations)
+	}
+	return nil
 }
 
 func verifyPersonalCommitments(ctx context.Context, storage *store.Store, workspace domain.Workspace, projects []domain.Project, tasksByTitle map[string]domain.Task, index logicalIndex, logicalHash hash.Hash, samples *[]time.Duration) error {

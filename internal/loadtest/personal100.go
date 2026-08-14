@@ -32,10 +32,19 @@ const (
 	personalBriefingReads      = 20
 	personalBriefingClaims     = 128
 	personalBriefingBytes      = 64 * 1024
+	personalStatusOperations   = 100
+	personalMessageOperations  = 100
+	personalControlOperations  = personalStatusOperations + personalMessageOperations
+	personalControlEventDelta  = 1 + 3*personalMessageOperations
 
 	personalMaximumDuration      = 5 * time.Minute
 	personalMaximumRSS           = 512 * 1024 * 1024
 	personalMaximumBytes         = 1024 * 1024 * 1024
+	personalWarmStartupMax       = 2 * time.Second
+	personalControlP99           = time.Second
+	personalControlMax           = 2 * time.Second
+	personalReconciliationMax    = 2 * time.Second
+	personalRecoveryOperationMax = 60 * time.Second
 	personalProjectBriefingP99   = 2 * time.Second
 	personalProjectBriefingMax   = 5 * time.Second
 	personalWorkspaceBriefingP99 = 5 * time.Second
@@ -61,6 +70,15 @@ type measurements struct {
 	projectionReads    []time.Duration
 	projectBriefings   []time.Duration
 	workspaceBriefings []time.Duration
+	warmStartup        []time.Duration
+	statusOperations   []time.Duration
+	messageOperations  []time.Duration
+	controlOperations  []time.Duration
+	reconciliation     []time.Duration
+	doctor             []time.Duration
+	backupCreate       []time.Duration
+	backupVerify       []time.Duration
+	backupRestore      []time.Duration
 	generation         time.Duration
 	verification       time.Duration
 }
@@ -74,15 +92,19 @@ type projectFixture struct {
 }
 
 type fixtureState struct {
-	workspace     domain.Workspace
-	projects      []projectFixture
-	phaseAgents   []domain.AgentDefinition
-	entityKeys    map[string]string
-	projectOwners map[string]string
-	commitments   map[string]domain.DeliverableCommitment
-	quietSources  map[string]string
-	capacity      capacityProof
-	briefing      briefingProof
+	workspace            domain.Workspace
+	projects             []projectFixture
+	phaseAgents          []domain.AgentDefinition
+	entityKeys           map[string]string
+	projectOwners        map[string]string
+	commitments          map[string]domain.DeliverableCommitment
+	quietSources         map[string]string
+	providerRefusalAgent domain.AgentDefinition
+	providerRefusalTask  domain.Task
+	controlThreadID      string
+	controlMessages      map[string]int
+	capacity             capacityProof
+	briefing             briefingProof
 }
 
 type capacityProof struct {
@@ -91,7 +113,16 @@ type capacityProof struct {
 	peakProviderUnresolved      int64
 	peakProjectUnresolved       int64
 	startingRefusalEventDelta   int64
+	providerRefusalEventDelta   int64
 	unresolvedRefusalEventDelta int64
+	providerBProgress           int64
+	saturatedProviderA          int64
+	saturatedProviderB          int64
+	saturatedStarting           int64
+	controlEventDelta           int64
+	asyncWakeBlocked            int64
+	reconciliationEventDelta    int64
+	reconciliationSettled       int64
 	settledUnresolved           int64
 	settledStarting             int64
 }
@@ -147,9 +178,16 @@ func runPersonal100(ctx context.Context, labels labelSet, makeTemp tempDirectory
 		mutations: make([]time.Duration, 0, personalEventCount), eventPages: make([]time.Duration, 0, 128),
 		projectionReads: make([]time.Duration, 0, 64), projectBriefings: make([]time.Duration, 0, personalBriefingReads),
 		workspaceBriefings: make([]time.Duration, 0, personalBriefingReads),
+		statusOperations:   make([]time.Duration, 0, personalStatusOperations), messageOperations: make([]time.Duration, 0, personalMessageOperations),
+		controlOperations: make([]time.Duration, 0, personalControlOperations),
 	}
+	clock := newPersonalClock(time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC))
 	generationStarted := time.Now()
-	storage, err := store.Open(ctx, root, store.Options{Clock: time.Now})
+	storage, err := store.Open(ctx, root, store.Options{
+		Clock:                  clock.Now,
+		RuntimeNodeID:          "33333333333333333333333333333333",
+		RuntimeNodeFingerprint: "4444444444444444444444444444444444444444444444444444444444444444",
+	})
 	if err != nil {
 		return report, fmt.Errorf("open canonical personal-100 Store: %w", err)
 	}
@@ -168,14 +206,14 @@ func runPersonal100(ctx context.Context, labels labelSet, makeTemp tempDirectory
 		}
 	}()
 
-	fixture, err := buildPersonal100(ctx, storage, root, labels, &metrics)
+	fixture, err := buildPersonal100(ctx, storage, root, labels, &metrics, clock)
 	metrics.generation = time.Since(generationStarted)
 	if err != nil {
 		return report, err
 	}
 
 	verificationStarted := time.Now()
-	verification, err := verifyPersonal100(ctx, storage, labels, &metrics)
+	verification, err := verifyPersonal100(ctx, storage, labels, fixture, &metrics)
 	if err != nil {
 		metrics.verification = time.Since(verificationStarted)
 		return report, err
@@ -199,6 +237,9 @@ func runPersonal100(ctx context.Context, labels labelSet, makeTemp tempDirectory
 		return report, fmt.Errorf("close personal-100 Store: %w", err)
 	}
 	closed = true
+	if err := measurePersonalRecovery(ctx, root, clock, canonical, &metrics); err != nil {
+		return report, err
+	}
 	databaseInfo, err := os.Stat(databasePath)
 	if err != nil {
 		return report, fmt.Errorf("measure personal-100 database: %w", err)
@@ -218,6 +259,15 @@ func runPersonal100(ctx context.Context, labels labelSet, makeTemp tempDirectory
 		timing("projection_read", metrics.projectionReads),
 		timing("project_briefing", metrics.projectBriefings),
 		timing("workspace_briefing", metrics.workspaceBriefings),
+		timing("warm_startup", metrics.warmStartup),
+		timing("saturated_status", metrics.statusOperations),
+		timing("saturated_message", metrics.messageOperations),
+		timing("saturated_control", metrics.controlOperations),
+		timing("lease_reconciliation", metrics.reconciliation),
+		timing("doctor_full", metrics.doctor),
+		timing("backup_create", metrics.backupCreate),
+		timing("backup_verify", metrics.backupVerify),
+		timing("backup_restore", metrics.backupRestore),
 	}
 	report.Resources = Resources{
 		PeakRSSBytes:  peakRSSBytes(),
@@ -247,14 +297,15 @@ func validateLabels(labels labelSet) error {
 	return nil
 }
 
-func buildPersonal100(ctx context.Context, storage *store.Store, root string, labels labelSet, metrics *measurements) (fixtureState, error) {
+func buildPersonal100(ctx context.Context, storage *store.Store, root string, labels labelSet, metrics *measurements, clock *personalClock) (fixtureState, error) {
 	state := fixtureState{
-		projects:      make([]projectFixture, 0, personalProjectCount),
-		phaseAgents:   make([]domain.AgentDefinition, personalProjectCount),
-		entityKeys:    make(map[string]string, 1400),
-		projectOwners: make(map[string]string, 1300),
-		commitments:   make(map[string]domain.DeliverableCommitment, personalCommitmentCount),
-		quietSources:  make(map[string]string, personalQuietCommitments),
+		projects:        make([]projectFixture, 0, personalProjectCount),
+		phaseAgents:     make([]domain.AgentDefinition, personalProjectCount),
+		entityKeys:      make(map[string]string, 1400),
+		projectOwners:   make(map[string]string, 1300),
+		commitments:     make(map[string]domain.DeliverableCommitment, personalCommitmentCount),
+		quietSources:    make(map[string]string, personalQuietCommitments),
+		controlMessages: make(map[string]int, personalMessageOperations),
 	}
 	workspaceResult, err := measured(&metrics.mutations, func() (store.WorkspaceInitResult, error) {
 		return storage.InitWorkspace(ctx, store.InitWorkspaceCommand{
@@ -333,6 +384,9 @@ func buildPersonal100(ctx context.Context, storage *store.Store, root string, la
 		if index < personalProjectCount {
 			state.phaseAgents[projectIndex] = agent
 		}
+		if index == personalProjectCount {
+			state.providerRefusalAgent = agent
+		}
 
 		project := &state.projects[projectIndex]
 		profileResult, err := measured(&metrics.mutations, func() (store.MutationResult[domain.LaunchProfile], error) {
@@ -409,11 +463,14 @@ func buildPersonal100(ctx context.Context, storage *store.Store, root string, la
 			} else if taskIndex <= len(project.briefingTasks) {
 				project.briefingTasks[taskIndex-1] = task
 			}
+			if projectIndex == 0 && taskIndex == 3 {
+				state.providerRefusalTask = task
+			}
 			state.entityKeys[entityMapKey("task", task.ID)] = logicalProject + "/task/" + taskName
 			state.projectOwners[entityMapKey("task", task.ID)] = logicalProject
 		}
 	}
-	capacity, err := exercisePersonalCapacity(ctx, storage, &state, scenario, metrics)
+	capacity, err := exercisePersonalCapacity(ctx, storage, root, &state, scenario, metrics, clock)
 	if err != nil {
 		return state, err
 	}
@@ -635,50 +692,46 @@ func personalProvider(projectIndex int) string {
 	}
 }
 
-func exercisePersonalCapacity(ctx context.Context, storage *store.Store, state *fixtureState, scenario domain.FakeScenario, metrics *measurements) (capacityProof, error) {
+func exercisePersonalCapacity(ctx context.Context, storage *store.Store, root string, state *fixtureState, scenario domain.FakeScenario, metrics *measurements, clock *personalClock) (capacityProof, error) {
 	proof := capacityProof{}
 	assigned := make([]domain.Task, personalProjectCount)
 	activeRuns := make([]domain.Run, 0, 8)
+	assignTask := func(task domain.Task, agent domain.AgentDefinition, key string, leaseSeconds int64) (domain.Task, error) {
+		result, err := measured(&metrics.mutations, func() (store.TaskMutationResult, error) {
+			return storage.AssignTask(ctx, store.AssignTaskCommand{
+				WorkspaceIdentifier: state.workspace.ID, TaskID: task.ID, AgentIdentifier: agent.ID,
+				LeaseSeconds: leaseSeconds, ExpectedRevision: task.Revision,
+				IdempotencyKey: key, CorrelationID: key + "-request",
+			})
+		})
+		if err != nil {
+			return domain.Task{}, err
+		}
+		return result.Detail.Task, nil
+	}
 	assign := func(projectIndex int) error {
 		if assigned[projectIndex].ID != "" {
 			return nil
 		}
-		task := state.projects[projectIndex].phaseTask
-		agent := state.phaseAgents[projectIndex]
-		result, err := measured(&metrics.mutations, func() (store.TaskMutationResult, error) {
-			return storage.AssignTask(ctx, store.AssignTaskCommand{
-				WorkspaceIdentifier: state.workspace.ID,
-				TaskID:              task.ID,
-				AgentIdentifier:     agent.ID,
-				LeaseSeconds:        3600,
-				ExpectedRevision:    task.Revision,
-				IdempotencyKey:      fmt.Sprintf("load-capacity-assign-%02d", projectIndex),
-				CorrelationID:       fmt.Sprintf("load-capacity-assign-%02d-request", projectIndex),
-			})
-		})
+		result, err := assignTask(state.projects[projectIndex].phaseTask, state.phaseAgents[projectIndex], fmt.Sprintf("load-capacity-assign-%02d", projectIndex), 3600)
 		if err != nil {
 			return fmt.Errorf("assign personal-100 capacity task %d: %w", projectIndex, err)
 		}
-		assigned[projectIndex] = result.Detail.Task
+		assigned[projectIndex] = result
 		return nil
 	}
-	create := func(projectIndex int) (store.RunMutationResult, error) {
-		task := assigned[projectIndex]
-		agent := state.phaseAgents[projectIndex]
+	createTaskRun := func(task domain.Task, agent domain.AgentDefinition, checkout domain.Checkout, key string) (store.RunMutationResult, error) {
 		return measured(&metrics.mutations, func() (store.RunMutationResult, error) {
 			return storage.CreateRun(ctx, store.CreateRunCommand{
-				WorkspaceIdentifier:  state.workspace.ID,
-				TaskID:               task.ID,
-				CheckoutIdentifier:   state.projects[projectIndex].checkout.ID,
-				Runtime:              agent.Runtime,
-				Provider:             agent.Provider,
-				Scenario:             scenario,
-				ExpectedTaskRevision: task.Revision,
-				CapabilityTTL:        time.Hour,
-				IdempotencyKey:       fmt.Sprintf("load-capacity-run-%02d", projectIndex),
-				CorrelationID:        fmt.Sprintf("load-capacity-run-%02d-request", projectIndex),
+				WorkspaceIdentifier: state.workspace.ID, TaskID: task.ID, CheckoutIdentifier: checkout.ID,
+				Runtime: agent.Runtime, Provider: agent.Provider, Scenario: scenario,
+				ExpectedTaskRevision: task.Revision, CapabilityTTL: time.Hour,
+				IdempotencyKey: key, CorrelationID: key + "-request",
 			})
 		})
+	}
+	create := func(projectIndex int) (store.RunMutationResult, error) {
+		return createTaskRun(assigned[projectIndex], state.phaseAgents[projectIndex], state.projects[projectIndex].checkout, fmt.Sprintf("load-capacity-run-%02d", projectIndex))
 	}
 	activate := func(projectIndex int, created store.RunMutationResult) error {
 		starting, err := measured(&metrics.mutations, func() (domain.Run, error) {
@@ -703,38 +756,28 @@ func exercisePersonalCapacity(ctx context.Context, storage *store.Store, state *
 		return nil
 	}
 	observeHealth := func() (domain.ExecutionHealth, error) {
-		health, err := measured(&metrics.projectionReads, func() (domain.ExecutionHealth, error) {
-			return storage.ExecutionHealth(ctx)
-		})
+		health, err := measured(&metrics.projectionReads, func() (domain.ExecutionHealth, error) { return storage.ExecutionHealth(ctx) })
 		if err != nil {
 			return domain.ExecutionHealth{}, err
 		}
-		if health.Node.Unresolved > proof.peakUnresolved {
-			proof.peakUnresolved = health.Node.Unresolved
-		}
-		if health.Node.Starting > proof.peakStarting {
-			proof.peakStarting = health.Node.Starting
-		}
+		proof.peakUnresolved = maxInt64(proof.peakUnresolved, health.Node.Unresolved)
+		proof.peakStarting = maxInt64(proof.peakStarting, health.Node.Starting)
 		for _, provider := range health.Providers {
-			if provider.Unresolved > proof.peakProviderUnresolved {
-				proof.peakProviderUnresolved = provider.Unresolved
-			}
+			proof.peakProviderUnresolved = maxInt64(proof.peakProviderUnresolved, provider.Unresolved)
 		}
 		for _, project := range health.Projects {
-			if project.Unresolved > proof.peakProjectUnresolved {
-				proof.peakProjectUnresolved = project.Unresolved
-			}
+			proof.peakProjectUnresolved = maxInt64(proof.peakProjectUnresolved, project.Unresolved)
 		}
 		return health, nil
 	}
-	refusal := func(projectIndex int, dimension string, expectedActual, expectedLimit int) (int64, error) {
+	refusal := func(createAttempt func() (store.RunMutationResult, error), dimension, scope string, expectedActual, expectedLimit int) (int64, error) {
 		before, err := eventHighWater(ctx, storage, &metrics.eventPages)
 		if err != nil {
 			return 0, err
 		}
-		_, createErr := create(projectIndex)
+		_, createErr := createAttempt()
 		details, typed := store.ExecutionCapacityErrorDetails(createErr)
-		if store.ErrorCode(createErr) != store.CodeExecutionCapacityExhausted || !typed || details.Dimension != dimension || details.Scope != state.workspace.ID || details.Actual != expectedActual || details.Limit != expectedLimit {
+		if store.ErrorCode(createErr) != store.CodeExecutionCapacityExhausted || !typed || details.Dimension != dimension || details.Scope != scope || details.Actual != expectedActual || details.Limit != expectedLimit {
 			return 0, fmt.Errorf("personal-100 %s capacity attempt error=%v code=%q details=%#v", dimension, createErr, store.ErrorCode(createErr), details)
 		}
 		after, err := eventHighWater(ctx, storage, &metrics.eventPages)
@@ -744,56 +787,96 @@ func exercisePersonalCapacity(ctx context.Context, storage *store.Store, state *
 		return after - before, nil
 	}
 
-	for _, projectIndex := range []int{0, 1, 2} {
+	for projectIndex := 0; projectIndex < personalProjectCount-1; projectIndex++ {
 		if err := assign(projectIndex); err != nil {
 			return proof, err
 		}
 	}
-	first, err := create(0)
+	reconciliationAssigned, err := assignTask(state.projects[9].phaseTask, state.phaseAgents[9], "load-reconciliation-assign-09", 60)
 	if err != nil {
-		return proof, fmt.Errorf("create first personal-100 capacity run: %w", err)
+		return proof, fmt.Errorf("assign personal-100 controlled reconciliation task: %w", err)
 	}
-	second, err := create(1)
+	assigned[9] = reconciliationAssigned
+	providerRefusalAssigned, err := assignTask(state.providerRefusalTask, state.providerRefusalAgent, "load-capacity-provider-refusal-assign", 3600)
 	if err != nil {
-		return proof, fmt.Errorf("create second personal-100 capacity run: %w", err)
+		return proof, fmt.Errorf("assign personal-100 provider refusal task: %w", err)
 	}
-	if _, err := observeHealth(); err != nil {
-		return proof, err
-	}
-	proof.startingRefusalEventDelta, err = refusal(2, "workspace_starting", 2, 2)
-	if err != nil {
-		return proof, err
-	}
-	if err := activate(0, first); err != nil {
-		return proof, err
-	}
-	if err := activate(1, second); err != nil {
-		return proof, err
-	}
-	for firstProject := 2; firstProject < 8; firstProject += 2 {
-		if err := assign(firstProject); err != nil {
-			return proof, err
-		}
-		if err := assign(firstProject + 1); err != nil {
-			return proof, err
-		}
-		firstRun, err := create(firstProject)
+
+	for firstProject := 0; firstProject < 4; firstProject += 2 {
+		first, err := create(firstProject)
 		if err != nil {
-			return proof, fmt.Errorf("create personal-100 capacity run %d: %w", firstProject, err)
+			return proof, fmt.Errorf("create personal-100 provider-A run %d: %w", firstProject, err)
 		}
-		secondRun, err := create(firstProject + 1)
+		second, err := create(firstProject + 1)
 		if err != nil {
-			return proof, fmt.Errorf("create personal-100 capacity run %d: %w", firstProject+1, err)
+			return proof, fmt.Errorf("create personal-100 provider-A run %d: %w", firstProject+1, err)
 		}
 		if _, err := observeHealth(); err != nil {
 			return proof, err
 		}
-		if err := activate(firstProject, firstRun); err != nil {
+		if firstProject == 0 {
+			proof.startingRefusalEventDelta, err = refusal(func() (store.RunMutationResult, error) { return create(8) }, "workspace_starting", state.workspace.ID, 2, 2)
+			if err != nil {
+				return proof, err
+			}
+		}
+		if err := activate(firstProject, first); err != nil {
 			return proof, err
 		}
-		if err := activate(firstProject+1, secondRun); err != nil {
+		if err := activate(firstProject+1, second); err != nil {
 			return proof, err
 		}
+	}
+	providerHealth, err := observeHealth()
+	if err != nil {
+		return proof, err
+	}
+	if executionProviderUnresolved(providerHealth, "fixture-a") != 4 {
+		return proof, fmt.Errorf("personal-100 provider A did not saturate: %#v", providerHealth.Providers)
+	}
+	proof.providerRefusalEventDelta, err = refusal(func() (store.RunMutationResult, error) {
+		return createTaskRun(providerRefusalAssigned, state.providerRefusalAgent, state.projects[0].checkout, "load-capacity-provider-refusal-run")
+	}, "provider_unresolved", "fixture-a", 4, 4)
+	if err != nil {
+		return proof, err
+	}
+
+	for _, projectIndex := range []int{4, 5} {
+		created, err := create(projectIndex)
+		if err != nil {
+			return proof, fmt.Errorf("create personal-100 provider-B run %d while provider A is saturated: %w", projectIndex, err)
+		}
+		proof.providerBProgress = 1
+		if err := activate(projectIndex, created); err != nil {
+			return proof, err
+		}
+	}
+	pendingSix, err := create(6)
+	if err != nil {
+		return proof, fmt.Errorf("create personal-100 provider-B run 6: %w", err)
+	}
+	pendingSeven, err := create(7)
+	if err != nil {
+		return proof, fmt.Errorf("create personal-100 provider-B run 7: %w", err)
+	}
+	saturated, err := observeHealth()
+	if err != nil {
+		return proof, err
+	}
+	proof.saturatedProviderA = executionProviderUnresolved(saturated, "fixture-a")
+	proof.saturatedProviderB = executionProviderUnresolved(saturated, "fixture-b")
+	proof.saturatedStarting = saturated.Node.Starting
+	if saturated.Node.Unresolved != 8 || proof.saturatedProviderA != 4 || proof.saturatedProviderB != 4 || proof.saturatedStarting != 2 {
+		return proof, fmt.Errorf("personal-100 saturated control cut differs: node=%#v providers=%#v", saturated.Node, saturated.Providers)
+	}
+	if err := exerciseSaturatedControl(ctx, storage, root, state, metrics, clock, &proof); err != nil {
+		return proof, err
+	}
+	if err := activate(6, pendingSix); err != nil {
+		return proof, err
+	}
+	if err := activate(7, pendingSeven); err != nil {
+		return proof, err
 	}
 	peak, err := observeHealth()
 	if err != nil {
@@ -802,10 +885,7 @@ func exercisePersonalCapacity(ctx context.Context, storage *store.Store, state *
 	if peak.Node.Unresolved != 8 || peak.Node.Starting != 0 || len(peak.Workspaces) != 1 || peak.Workspaces[0].Unresolved != 8 {
 		return proof, fmt.Errorf("personal-100 peak capacity=%#v", peak.Node)
 	}
-	if err := assign(8); err != nil {
-		return proof, err
-	}
-	proof.unresolvedRefusalEventDelta, err = refusal(8, "workspace_unresolved", 8, 8)
+	proof.unresolvedRefusalEventDelta, err = refusal(func() (store.RunMutationResult, error) { return create(8) }, "workspace_unresolved", state.workspace.ID, 8, 8)
 	if err != nil {
 		return proof, err
 	}
@@ -824,18 +904,22 @@ func exercisePersonalCapacity(ctx context.Context, storage *store.Store, state *
 			return proof, fmt.Errorf("personal-100 capacity run %d did not terminalize", projectIndex)
 		}
 	}
-	cancelled, err := measured(&metrics.mutations, func() (store.TaskMutationResult, error) {
-		return storage.TransitionTask(ctx, store.TransitionTaskCommand{
-			WorkspaceIdentifier: state.workspace.ID,
-			TaskID:              assigned[8].ID,
-			Action:              "cancel",
-			ExpectedRevision:    assigned[8].Revision,
-			IdempotencyKey:      "load-capacity-ninth-cancel",
-			CorrelationID:       "load-capacity-ninth-cancel-request",
+	for _, pending := range []struct {
+		task domain.Task
+		key  string
+	}{
+		{task: assigned[8], key: "load-capacity-ninth-cancel"},
+		{task: providerRefusalAssigned, key: "load-capacity-provider-refusal-cancel"},
+	} {
+		cancelled, cancelErr := measured(&metrics.mutations, func() (store.TaskMutationResult, error) {
+			return storage.TransitionTask(ctx, store.TransitionTaskCommand{
+				WorkspaceIdentifier: state.workspace.ID, TaskID: pending.task.ID, Action: "cancel", ExpectedRevision: pending.task.Revision,
+				IdempotencyKey: pending.key, CorrelationID: pending.key + "-request",
+			})
 		})
-	})
-	if err != nil || cancelled.Detail.Task.Status != domain.TaskCancelled {
-		return proof, fmt.Errorf("cancel refused personal-100 capacity task: %w", err)
+		if cancelErr != nil || cancelled.Detail.Task.Status != domain.TaskCancelled {
+			return proof, fmt.Errorf("cancel refused personal-100 capacity task: %w", cancelErr)
+		}
 	}
 	settled, err := observeHealth()
 	if err != nil {
@@ -900,6 +984,15 @@ func personalAssertions(report Report, unownedEvents, launchProfiles, runs int64
 	totalMicroseconds := durationMicroseconds(time.Duration(report.Timings[0].MaxMicroseconds+report.Timings[1].MaxMicroseconds) * time.Microsecond)
 	projectTiming := findTiming(report.Timings, "project_briefing")
 	workspaceTiming := findTiming(report.Timings, "workspace_briefing")
+	warmStartupTiming := findTiming(report.Timings, "warm_startup")
+	statusTiming := findTiming(report.Timings, "saturated_status")
+	messageTiming := findTiming(report.Timings, "saturated_message")
+	controlTiming := findTiming(report.Timings, "saturated_control")
+	reconciliationTiming := findTiming(report.Timings, "lease_reconciliation")
+	doctorTiming := findTiming(report.Timings, "doctor_full")
+	backupCreateTiming := findTiming(report.Timings, "backup_create")
+	backupVerifyTiming := findTiming(report.Timings, "backup_verify")
+	backupRestoreTiming := findTiming(report.Timings, "backup_restore")
 	return []Assertion{
 		equalityAssertion("workspaces", report.Counts.Workspaces, personalWorkspaceCount, "count"),
 		equalityAssertion("projects", report.Counts.Projects, personalProjectCount, "count"),
@@ -916,9 +1009,27 @@ func personalAssertions(report Report, unownedEvents, launchProfiles, runs int64
 		equalityAssertion("peak_provider_unresolved_runs", capacity.peakProviderUnresolved, 4, "count"),
 		equalityAssertion("peak_project_unresolved_runs", capacity.peakProjectUnresolved, 1, "count"),
 		equalityAssertion("starting_refusal_event_delta", capacity.startingRefusalEventDelta, 0, "events"),
+		equalityAssertion("provider_refusal_event_delta", capacity.providerRefusalEventDelta, 0, "events"),
 		equalityAssertion("unresolved_refusal_event_delta", capacity.unresolvedRefusalEventDelta, 0, "events"),
+		equalityAssertion("provider_b_progress", capacity.providerBProgress, 1, "count"),
+		equalityAssertion("saturated_provider_a_runs", capacity.saturatedProviderA, 4, "count"),
+		equalityAssertion("saturated_provider_b_runs", capacity.saturatedProviderB, 4, "count"),
+		equalityAssertion("saturated_starting_runs", capacity.saturatedStarting, 2, "count"),
+		equalityAssertion("saturated_control_event_delta", capacity.controlEventDelta, personalControlEventDelta, "events"),
+		equalityAssertion("asynchronous_wake_blocked", capacity.asyncWakeBlocked, 1, "count"),
+		equalityAssertion("reconciliation_event_delta", capacity.reconciliationEventDelta, 1, "events"),
+		equalityAssertion("reconciliation_settled", capacity.reconciliationSettled, 1, "count"),
 		equalityAssertion("settled_unresolved_runs", capacity.settledUnresolved, 0, "count"),
 		equalityAssertion("settled_starting_runs", capacity.settledStarting, 0, "count"),
+		equalityAssertion("saturated_status_operations", int64(statusTiming.Repetitions), personalStatusOperations, "count"),
+		equalityAssertion("saturated_message_operations", int64(messageTiming.Repetitions), personalMessageOperations, "count"),
+		equalityAssertion("saturated_control_operations", int64(controlTiming.Repetitions), personalControlOperations, "count"),
+		maximumAssertion("saturated_status_p99", statusTiming.P99Microseconds, personalControlP99.Microseconds(), "microseconds"),
+		maximumAssertion("saturated_status_max", statusTiming.MaxMicroseconds, personalControlMax.Microseconds(), "microseconds"),
+		maximumAssertion("saturated_message_p99", messageTiming.P99Microseconds, personalControlP99.Microseconds(), "microseconds"),
+		maximumAssertion("saturated_message_max", messageTiming.MaxMicroseconds, personalControlMax.Microseconds(), "microseconds"),
+		maximumAssertion("saturated_control_p99", controlTiming.P99Microseconds, personalControlP99.Microseconds(), "microseconds"),
+		maximumAssertion("saturated_control_max", controlTiming.MaxMicroseconds, personalControlMax.Microseconds(), "microseconds"),
 		equalityAssertion("project_briefing_reads", int64(projectTiming.Repetitions), personalBriefingReads, "count"),
 		equalityAssertion("workspace_briefing_reads", int64(workspaceTiming.Repetitions), personalBriefingReads, "count"),
 		maximumAssertion("project_briefing_claims", briefing.projectClaims, personalBriefingClaims, "count"),
@@ -935,6 +1046,13 @@ func personalAssertions(report Report, unownedEvents, launchProfiles, runs int64
 		maximumAssertion("workspace_briefing_p99", workspaceTiming.P99Microseconds, personalWorkspaceBriefingP99.Microseconds(), "microseconds"),
 		maximumAssertion("workspace_briefing_max", workspaceTiming.MaxMicroseconds, personalWorkspaceBriefingMax.Microseconds(), "microseconds"),
 		maximumAssertion("generation_and_verification", totalMicroseconds, personalMaximumDuration.Microseconds(), "microseconds"),
+		maximumObservedAssertion("warm_daemon_startup", warmStartupTiming.MaxMicroseconds, personalWarmStartupMax.Microseconds(), "microseconds"),
+		maximumObservedAssertion("lease_reconciliation", reconciliationTiming.MaxMicroseconds, personalReconciliationMax.Microseconds(), "microseconds"),
+		maximumObservedAssertion("doctor_full", doctorTiming.MaxMicroseconds, personalRecoveryOperationMax.Microseconds(), "microseconds"),
+		maximumObservedAssertion("backup_create", backupCreateTiming.MaxMicroseconds, personalRecoveryOperationMax.Microseconds(), "microseconds"),
+		maximumObservedAssertion("backup_verify", backupVerifyTiming.MaxMicroseconds, personalRecoveryOperationMax.Microseconds(), "microseconds"),
+		maximumObservedAssertion("backup_restore", backupRestoreTiming.MaxMicroseconds, personalRecoveryOperationMax.Microseconds(), "microseconds"),
+		minimumAssertion("peak_rss_observed", int64(report.Resources.PeakRSSBytes), 1, "bytes"),
 		maximumAssertion("peak_rss", int64(report.Resources.PeakRSSBytes), personalMaximumRSS, "bytes"),
 		maximumAssertion("database_and_artifacts", report.Resources.DatabaseBytes+report.Resources.ArtifactBytes, personalMaximumBytes, "bytes"),
 	}
@@ -955,6 +1073,14 @@ func equalityAssertion(name string, actual, expected int64, unit string) Asserti
 
 func maximumAssertion(name string, actual, limit int64, unit string) Assertion {
 	return Assertion{Name: name, Passed: actual <= limit, Actual: actual, Limit: limit, Unit: unit}
+}
+
+func maximumObservedAssertion(name string, actual, limit int64, unit string) Assertion {
+	return Assertion{Name: name, Passed: actual > 0 && actual <= limit, Actual: actual, Limit: limit, Unit: unit}
+}
+
+func minimumAssertion(name string, actual, minimum int64, unit string) Assertion {
+	return Assertion{Name: name, Passed: actual >= minimum, Actual: actual, Limit: minimum, Unit: unit}
 }
 
 func fixtureArtifactBytes(root string) (int64, error) {

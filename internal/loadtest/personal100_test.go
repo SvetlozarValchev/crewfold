@@ -3,6 +3,7 @@ package loadtest
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"crewfold/internal/store"
+	"crewfold/protocol"
 )
 
 func TestPersonal100ProfileIsExactAndDescriptiveLabelsAreNeutral(t *testing.T) {
@@ -72,12 +74,39 @@ func TestPersonal100RemovesOwnedDirectoryAfterOperationalFailure(t *testing.T) {
 	if report.Status != "failed" {
 		t.Fatalf("runPersonal100(cancelled) status = %q", report.Status)
 	}
+	if report.Environment.SQLiteVersion != "unavailable" {
+		t.Fatalf("runPersonal100(cancelled) SQLite version = %q", report.Environment.SQLiteVersion)
+	}
+	raw, marshalErr := json.Marshal(report)
+	if marshalErr != nil {
+		t.Fatalf("marshal cancelled personal-100 report: %v", marshalErr)
+	}
+	if schemaErr := protocol.ValidateJSON("cli/v1/personal-load.response.schema.json", raw); schemaErr != nil {
+		t.Fatalf("cancelled personal-100 report is not schema-valid: %v", schemaErr)
+	}
 	if created == "" {
 		t.Fatal("runPersonal100(cancelled) did not create its owned directory")
 	}
 	if _, statErr := os.Stat(created); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("runPersonal100(cancelled) retained %s: %v", created, statErr)
 	}
+}
+
+func TestPersonalAssertionsRejectMissingRSSObservation(t *testing.T) {
+	report := Report{Timings: []Timing{
+		{Name: "generation", Repetitions: 1, MaxMicroseconds: 1},
+		{Name: "verification", Repetitions: 1, MaxMicroseconds: 1},
+	}}
+	assertions := personalAssertions(report, 0, 0, 0, capacityProof{}, briefingProof{})
+	for _, assertion := range assertions {
+		if assertion.Name == "peak_rss_observed" {
+			if assertion.Passed || assertion.Actual != 0 || assertion.Limit != 1 {
+				t.Fatalf("missing RSS assertion = %#v", assertion)
+			}
+			return
+		}
+	}
+	t.Fatal("personal assertions omit peak_rss_observed")
 }
 
 func TestTimingUsesNearestRankIntegerMicroseconds(t *testing.T) {
@@ -127,13 +156,27 @@ func assertExactPersonalReport(t *testing.T, report Report) {
 	if decoded, err := hex.DecodeString(report.LogicalSHA256); err != nil || len(decoded) != 32 {
 		t.Fatalf("report logical hash = %q, %v", report.LogicalSHA256, err)
 	}
-	if len(report.Timings) != 7 {
+	if len(report.Timings) != 16 {
 		t.Fatalf("report timings = %#v", report.Timings)
+	}
+	wantRepetitions := map[string]int{
+		"generation": 1, "verification": 1,
+		"project_briefing": personalBriefingReads, "workspace_briefing": personalBriefingReads,
+		"warm_startup": 1, "saturated_status": personalStatusOperations, "saturated_message": personalMessageOperations,
+		"saturated_control": personalControlOperations, "lease_reconciliation": 1, "doctor_full": 1,
+		"backup_create": 1, "backup_verify": 1, "backup_restore": 1,
 	}
 	for _, timing := range report.Timings {
 		if timing.Repetitions < 1 || timing.P50Microseconds < 1 || timing.P50Microseconds > timing.P95Microseconds || timing.P95Microseconds > timing.P99Microseconds || timing.P99Microseconds > timing.MaxMicroseconds {
 			t.Fatalf("report timing is not ordered nearest-rank data: %#v", timing)
 		}
+		if repetitions, exact := wantRepetitions[timing.Name]; exact && timing.Repetitions != repetitions {
+			t.Fatalf("report timing %s repetitions = %d, want %d", timing.Name, timing.Repetitions, repetitions)
+		}
+		delete(wantRepetitions, timing.Name)
+	}
+	if len(wantRepetitions) != 0 {
+		t.Fatalf("report omitted exact operational timings: %#v", wantRepetitions)
 	}
 	if report.Resources.PeakRSSBytes == 0 || report.Resources.DatabaseBytes == 0 || report.Resources.ArtifactBytes != 0 || report.Resources.Goroutines < 1 || report.Resources.OpenFDs < 0 {
 		t.Fatalf("report resources = %#v", report.Resources)
@@ -141,7 +184,7 @@ func assertExactPersonalReport(t *testing.T, report Report) {
 	if report.Environment.GOOS == "" || report.Environment.GOARCH == "" || report.Environment.Kernel == "" || report.Environment.GoVersion == "" || report.Environment.SQLiteVersion == "" || report.Environment.CPU == "" || report.Environment.LogicalCPUs < 1 || report.Environment.MemoryBytes == 0 {
 		t.Fatalf("report environment = %#v", report.Environment)
 	}
-	if len(report.Assertions) != 36 {
+	if len(report.Assertions) != 61 {
 		t.Fatalf("report assertions = %#v", report.Assertions)
 	}
 	for _, assertion := range report.Assertions {
@@ -151,5 +194,12 @@ func assertExactPersonalReport(t *testing.T, report Report) {
 	}
 	if filepath.IsAbs(report.Profile) {
 		t.Fatalf("report leaked a filesystem path as profile: %q", report.Profile)
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal successful personal-100 report: %v", err)
+	}
+	if err := protocol.ValidateJSON("cli/v1/personal-load.response.schema.json", raw); err != nil {
+		t.Fatalf("successful personal-100 report is not schema-valid: %v", err)
 	}
 }
