@@ -51,7 +51,7 @@ func (s *Store) QueueCuratorRevisions(ctx context.Context, query CuratorQueueQue
 	if query.WorkspaceIdentifier == "" || query.ProjectIdentifier == "" || query.Limit < 1 || query.Limit > 200 {
 		return domain.CuratorQueue{}, knowledgeInvalid("curator queue requires workspace, project, and limit from 1 to 200")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.CuratorQueue{}, storageFailure("begin curator queue snapshot", err)
 	}
@@ -132,7 +132,7 @@ func (s *Store) ConfigureCuratorRule(ctx context.Context, command ConfigureCurat
 	if err != nil {
 		return CuratorRuleMutationResult{}, storageFailure("hash curator rule configuration", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return CuratorRuleMutationResult{}, storageFailure("begin curator rule configuration", err)
 	}
@@ -208,7 +208,7 @@ func (s *Store) ProcessCurator(ctx context.Context, command ProcessCuratorComman
 	if err != nil {
 		return CuratorProcessMutationResult{}, storageFailure("hash curator process", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return CuratorProcessMutationResult{}, storageFailure("begin curator process", err)
 	}

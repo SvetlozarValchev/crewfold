@@ -5,10 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"io"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -26,110 +22,20 @@ func (s *Store) PrepareCheckArtifact(_ context.Context, kind string, content []b
 	}
 	digest := sha256.Sum256(content)
 	hash := hex.EncodeToString(digest[:])
-	shardFD, err := s.openCheckArtifactShard(hash, true)
-	if err != nil {
-		return PreparedCheckArtifact{}, err
-	}
-	defer unix.Close(shardFD)
-	if existing, err := readCheckArtifactAt(shardFD, hash, maximumCheckArtifactBytes(kind)); err == nil {
-		sum := sha256.Sum256(existing)
-		if len(existing) != len(content) || hex.EncodeToString(sum[:]) != hash {
-			return PreparedCheckArtifact{}, checkError(CodeCheckArtifactUnavailable, "existing check artifact is corrupt")
-		}
-		return PreparedCheckArtifact{Kind: kind, ContentSHA256: hash, CapturedBytes: int64(len(content)), OmittedBytes: omittedBytes, Truncated: omittedBytes > 0}, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return PreparedCheckArtifact{}, storageFailure("inspect check artifact", err)
-	}
-	temporaryName, err := randomID(".check-artifact-")
-	if err != nil {
-		return PreparedCheckArtifact{}, storageFailure("name check artifact staging file", err)
-	}
-	temporaryFD, err := unix.Openat(shardFD, temporaryName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return PreparedCheckArtifact{}, storageFailure("prepare check artifact", err)
-	}
-	defer unix.Unlinkat(shardFD, temporaryName, 0)
-	temporary := os.NewFile(uintptr(temporaryFD), temporaryName)
-	written, writeErr := temporary.Write(content)
-	err = writeErr
-	if err == nil && written != len(content) {
-		err = io.ErrShortWrite
-	}
-	if err == nil {
-		err = temporary.Sync()
-	}
-	closeErr := temporary.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return PreparedCheckArtifact{}, storageFailure("write check artifact", err)
-	}
-	if err := unix.Linkat(shardFD, temporaryName, shardFD, hash, 0); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return PreparedCheckArtifact{}, storageFailure("commit check artifact", err)
-		}
-		existing, readErr := readCheckArtifactAt(shardFD, hash, maximumCheckArtifactBytes(kind))
-		if readErr != nil {
-			return PreparedCheckArtifact{}, checkError(CodeCheckArtifactUnavailable, "raced check artifact is not a bounded regular file")
-		}
-		existingDigest := sha256.Sum256(existing)
-		if len(existing) != len(content) || hex.EncodeToString(existingDigest[:]) != hash {
-			return PreparedCheckArtifact{}, checkError(CodeCheckArtifactUnavailable, "raced check artifact is corrupt")
-		}
-	} else if err := unix.Fsync(shardFD); err != nil {
-		return PreparedCheckArtifact{}, storageFailure("sync check artifact directory", err)
+	if err := s.publishImmutableArtifact(checkArtifactNamespace, ".check-artifact-", hash, content, maximumCheckArtifactBytes(kind)); err != nil {
+		return PreparedCheckArtifact{}, &Error{Code: CodeCheckArtifactUnavailable, Message: "publish check artifact", Cause: err}
 	}
 	return PreparedCheckArtifact{Kind: kind, ContentSHA256: hash, CapturedBytes: int64(len(content)), OmittedBytes: omittedBytes, Truncated: omittedBytes > 0}, nil
 }
 
 func (s *Store) openCheckArtifactShard(hash string, create bool) (int, error) {
-	if !validLowerSHA256(hash) {
-		return -1, checkError(CodeCheckArtifactUnavailable, "check artifact digest is invalid")
-	}
-	dataDirectory := filepath.Dir(s.path)
-	if !filepath.IsAbs(dataDirectory) || filepath.Clean(dataDirectory) != dataDirectory {
-		return -1, checkError(CodeCheckArtifactUnavailable, "check artifact data directory is invalid")
-	}
-	fd, err := unix.Open(string(filepath.Separator), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	fd, err := s.openImmutableArtifactShard(checkArtifactNamespace, hash, create)
 	if err != nil {
-		return -1, storageFailure("open filesystem root for check artifacts", err)
-	}
-	for _, component := range strings.Split(strings.Trim(dataDirectory, string(filepath.Separator)), string(filepath.Separator)) {
-		if component == "" {
-			continue
-		}
-		next, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-		_ = unix.Close(fd)
-		if openErr != nil {
-			return -1, storageFailure("open check artifact data directory without following links", openErr)
-		}
-		fd = next
-	}
-	for _, component := range []string{"check-artifacts", hash[:2]} {
-		if create {
-			if mkdirErr := unix.Mkdirat(fd, component, 0o700); mkdirErr != nil && !errors.Is(mkdirErr, os.ErrExist) {
-				_ = unix.Close(fd)
-				return -1, storageFailure("create private check artifact directory", mkdirErr)
-			}
-		}
-		next, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-		_ = unix.Close(fd)
-		if openErr != nil {
-			return -1, storageFailure("open private check artifact directory without following links", openErr)
-		}
-		var stat unix.Stat_t
-		if statErr := unix.Fstat(next, &stat); statErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Uid != uint32(os.Geteuid()) || stat.Mode&0o077 != 0 {
-			_ = unix.Close(next)
-			if statErr != nil {
-				return -1, storageFailure("inspect private check artifact directory", statErr)
-			}
-			return -1, checkError(CodeCheckArtifactUnavailable, "check artifact directory is not private and owner-controlled")
-		}
-		fd = next
+		return -1, &Error{Code: CodeCheckArtifactUnavailable, Message: "open check artifact shard", Cause: err}
 	}
 	return fd, nil
 }
+
 func validCheckArtifactKind(value string) bool {
 	return value == domain.CheckArtifactStdout || value == domain.CheckArtifactStderr || value == domain.CheckArtifactDiagnostic
 }
@@ -139,30 +45,6 @@ func maximumCheckArtifactBytes(kind string) int64 {
 		return 4096
 	}
 	return 1 << 20
-}
-
-func readCheckArtifactAt(directoryFD int, name string, limit int64) ([]byte, error) {
-	fd, err := unix.Openat(directoryFD, name, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	file := os.NewFile(uintptr(fd), name)
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > limit {
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("check artifact must be a bounded regular file")
-	}
-	content, err := io.ReadAll(io.LimitReader(file, limit+1))
-	if err != nil || int64(len(content)) > limit {
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("check artifact exceeds its bound")
-	}
-	return content, nil
 }
 
 func (s *Store) FinishCheckRun(ctx context.Context, command FinishCheckRunCommand) (domain.CheckRunDetail, error) {
@@ -185,7 +67,7 @@ func (s *Store) FinishCheckRun(ctx context.Context, command FinishCheckRunComman
 			return domain.CheckRunDetail{}, err
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.CheckRunDetail{}, err
 	}
@@ -231,6 +113,9 @@ func (s *Store) FinishCheckRun(ctx context.Context, command FinishCheckRunComman
 	}
 	queries := dbgen.New(tx)
 	err = s.withCheckMutationSeal(func() error {
+		if _, err := queries.DeleteCheckRuntimeBinding(ctx, work.Run.ID); err != nil {
+			return err
+		}
 		if err := queries.FinishTerminalCheckRun(ctx, dbgen.FinishTerminalCheckRunParams{FinishedAt: &now, CheckRunID: work.Run.ID}); err != nil {
 			return err
 		}
@@ -338,7 +223,7 @@ func (s *Store) verifyPreparedCheckArtifact(artifact PreparedCheckArtifact) erro
 		return checkError(CodeCheckArtifactUnavailable, "prepared check artifact directory is unavailable")
 	}
 	defer unix.Close(shardFD)
-	content, err := readCheckArtifactAt(shardFD, artifact.ContentSHA256, maximumCheckArtifactBytes(artifact.Kind))
+	content, err := readImmutableArtifactAt(shardFD, artifact.ContentSHA256, maximumCheckArtifactBytes(artifact.Kind))
 	if err != nil {
 		return checkError(CodeCheckArtifactUnavailable, "prepared check artifact is missing")
 	}
@@ -440,7 +325,7 @@ func (s *Store) CheckRunLogs(ctx context.Context, workspaceIdentifier, runID str
 		if pathErr != nil {
 			return domain.CheckRunLogs{}, checkError(CodeCheckArtifactUnavailable, "committed check artifact directory is unavailable")
 		}
-		content, err := readCheckArtifactAt(shardFD, hash, limit)
+		content, err := readImmutableArtifactAt(shardFD, hash, limit)
 		_ = unix.Close(shardFD)
 		if err != nil {
 			return domain.CheckRunLogs{}, checkError(CodeCheckArtifactUnavailable, "committed check artifact is missing")

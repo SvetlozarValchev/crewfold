@@ -922,6 +922,11 @@ func runFixtureMailbox(ctx context.Context, client fixtureToolClient, plan domai
 			return errors.New("acknowledge fixture message failed")
 		}
 	}
+	if incoming.Delivery.WakeStatus == domain.WakePending || incoming.Delivery.WakeStatus == domain.WakeLeased {
+		if err := waitForFixtureWakeSettlement(ctx, client, incoming, wait); err != nil {
+			return err
+		}
+	}
 	if plan.Reply != nil {
 		reply := *plan.Reply
 		reply.RecipientAgent = incoming.Message.SenderAgentID
@@ -930,6 +935,49 @@ func runFixtureMailbox(ctx context.Context, client fixtureToolClient, plan domai
 		}
 	}
 	return nil
+}
+
+func waitForFixtureWakeSettlement(ctx context.Context, client fixtureToolClient, incoming domain.InboxItem, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
+	for {
+		switch incoming.Delivery.WakeStatus {
+		case domain.WakeNotRequested, domain.WakeSucceeded, domain.WakeFailed, domain.WakeFailedUnknown:
+			return nil
+		case domain.WakePending, domain.WakeLeased:
+		default:
+			return fmt.Errorf("fixture message %s has unknown wake status %q", incoming.Message.ID, incoming.Delivery.WakeStatus)
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out waiting for fixture message %s wake settlement", incoming.Message.ID)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+		result, err := client.CallTool(ctx, "crewfold_list_inbox", map[string]any{"limit": 50})
+		if err != nil {
+			return fmt.Errorf("list fixture inbox while waiting for wake settlement: %w", err)
+		}
+		if result.IsError {
+			return errors.New("list fixture inbox while waiting for wake settlement was denied")
+		}
+		var items []domain.InboxItem
+		if err := json.Unmarshal(result.StructuredContent, &items); err != nil {
+			return fmt.Errorf("decode fixture inbox while waiting for wake settlement: %w", err)
+		}
+		found := false
+		for _, item := range items {
+			if item.Message.ID == incoming.Message.ID {
+				incoming = item
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("fixture message %s disappeared while waiting for wake settlement", incoming.Message.ID)
+		}
+	}
 }
 
 func sendFixtureMessage(ctx context.Context, client fixtureToolClient, message domain.FixtureMailboxMessage, threadID, replyTo, key string) (domain.MessageMutation, error) {

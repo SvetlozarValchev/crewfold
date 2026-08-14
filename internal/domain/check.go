@@ -227,6 +227,9 @@ type CheckRun struct {
 	SourceMaxInFlight         int            `json:"source_max_in_flight,omitempty"`
 	Status                    string         `json:"status"`
 	RuntimeHandle             string         `json:"-"`
+	RuntimeNodeID             string         `json:"-"`
+	RuntimeNodeFingerprint    string         `json:"-"`
+	RuntimeOperationID        string         `json:"-"`
 	Revision                  int64          `json:"revision"`
 	CreatedAt                 string         `json:"created_at"`
 	UpdatedAt                 string         `json:"updated_at"`

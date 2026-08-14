@@ -132,6 +132,27 @@ func TestMessageWakeDeliveryHasDeadlineAndPassCancellationDoesNotSettle(t *testi
 	}
 }
 
+func TestMessageWakeSignalIsNonblockingCoalescedAndInterruptsIdleWait(t *testing.T) {
+	signal := make(chan struct{}, 1)
+	s := &server{messageWakeSignal: signal}
+	s.signalMessageWakeWorker()
+	s.signalMessageWakeWorker()
+	if len(signal) != 1 {
+		t.Fatalf("coalesced signal count = %d, want 1", len(signal))
+	}
+
+	started := time.Now()
+	if !waitForMessageWake(context.Background(), signal, time.Second) {
+		t.Fatal("signaled wait stopped")
+	}
+	if elapsed := time.Since(started); elapsed >= 100*time.Millisecond {
+		t.Fatalf("signaled wait took %s, want prompt wake-up", elapsed)
+	}
+
+	nilServer := &server{}
+	nilServer.signalMessageWakeWorker()
+}
+
 func TestMessageWakeHandlersAndStartupRemainResponsiveDuringExternalEffect(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("Git is unavailable: %v", err)

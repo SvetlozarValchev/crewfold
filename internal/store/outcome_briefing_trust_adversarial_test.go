@@ -252,7 +252,7 @@ func completeOutcomeTrustRun(t *testing.T, storage *Store, runID, key string) do
 	}
 	completed, err := storage.ApplyRunObservation(context.Background(), starting.ID, domain.RunObservation{
 		Kind: domain.ObservationCompletion, Message: key + " completed exact work",
-		Evidence: []string{key + " exact evidence"}, Handoff: key + " exact handoff",
+		Evidence: []string{key + " exact evidence"}, Handoff: key + " exact handoff", LogArchive: prepareTestRunLogArchive(t, storage, starting.ID),
 	}, true, nil, "request-"+key+"-completed")
 	if err != nil {
 		t.Fatalf("ApplyRunObservation(%s) = %v", key, err)

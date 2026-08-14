@@ -32,8 +32,12 @@ func TestExecutionHealthReportsBoundedMechanicalUsageAndQueues(t *testing.T) {
 	if len(health.Providers) != 1 || health.Providers[0].Provider != agent.Provider || health.Providers[0].Unresolved != 1 || health.Providers[0].Starting != 1 {
 		t.Fatalf("provider health = %#v", health.Providers)
 	}
-	if len(health.Queues) != 11 {
-		t.Fatalf("queue health length = %d, want 11: %#v", len(health.Queues), health.Queues)
+	expectedQueueStates := 0
+	for _, definition := range durableQueueRegistry {
+		expectedQueueStates += len(definition.statuses)
+	}
+	if len(health.Queues) != expectedQueueStates {
+		t.Fatalf("queue health length = %d, want registry-exact %d: %#v", len(health.Queues), expectedQueueStates, health.Queues)
 	}
 	foundPendingRun := false
 	for _, queue := range health.Queues {

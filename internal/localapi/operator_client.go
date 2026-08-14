@@ -74,8 +74,11 @@ var operatorResultContracts = map[string]operatorResultContract{
 	MethodRunAttach:            {"local/v1/run-attach.result.schema.json", RunAttachSchema, "run_attach"},
 	MethodRunResume:            {"local/v1/run-mutation.result.schema.json", RunMutationSchema, "run_mutation"},
 	MethodRunStop:              {"local/v1/run-mutation.result.schema.json", RunMutationSchema, "run_mutation"},
+	MethodRunLostResolve:       {"local/v1/run-loss-resolution.result.schema.json", RunLossResolutionSchema, "run_loss_resolution"},
 	MethodApprovalAllow:        {"local/v1/approval-mutation.result.schema.json", ApprovalMutationSchema, "approval_mutation"},
 	MethodApprovalDeny:         {"local/v1/approval-mutation.result.schema.json", ApprovalMutationSchema, "approval_mutation"},
+	MethodSystemDoctorFull:     {"local/v1/full-doctor.result.schema.json", FullDoctorSchema, "full_doctor"},
+	MethodBackupCreate:         {"local/v1/backup-create.result.schema.json", BackupCreateSchema, "backup"},
 }
 
 func validateStrictOperatorResultWire(method string, raw []byte) error {
@@ -267,6 +270,42 @@ func validateOperatorReadResult(method string, paramsValue, result any) error {
 		}
 		if value.Detail.Run.ID != run || value.Detail.Run.Revision != expectedRevision+1 || value.Detail.Run.WorkspaceID != workspace {
 			return fmt.Errorf("decode local API result %s: run mutation does not match the requested target", method)
+		}
+	case *RunLossResolutionResult:
+		params := paramsValue.(RunLostResolveParams)
+		if value.Detail.Run.ID != params.Run || value.Detail.Run.WorkspaceID != params.Workspace ||
+			value.Detail.Run.Revision != params.ExpectedRevision+1 || value.Detail.Run.Status != domain.RunFailed ||
+			value.Detail.Run.FailureCode != "runtime_retired_by_owner" || value.Detail.Task.Status != domain.TaskBlocked ||
+			value.Resolution.RunID != params.Run || value.Resolution.LostRevision != params.ExpectedRevision ||
+			value.Resolution.Resolution != "owner_confirmed_effects_ended" || value.Resolution.Note != params.Note ||
+			value.Resolution.EventSequence != value.EventSequence || value.Resolution.ResolvedBy != "local-owner" {
+			return fmt.Errorf("decode local API result %s: lost-run resolution does not match the exact retired target", method)
+		}
+	case *FullDoctorResult:
+		checkOrder := FullDoctorCheckOrder()
+		if len(value.Checks) != len(checkOrder) {
+			return fmt.Errorf("decode local API result %s: full doctor check registry is incomplete", method)
+		}
+		failed, warning := false, false
+		for index, code := range checkOrder {
+			check := value.Checks[index]
+			if check.Code != code || check.IssueCount > check.CheckedCount {
+				return fmt.Errorf("decode local API result %s: full doctor check %d is inconsistent", method, index)
+			}
+			failed = failed || check.Status == "failed"
+			warning = warning || check.Status == "warning"
+			if check.Status == "ok" && check.IssueCount != 0 {
+				return fmt.Errorf("decode local API result %s: successful full doctor check reports issues", method)
+			}
+		}
+		if (value.Status == "failed") != failed || (value.Status == "degraded") != (!failed && warning) ||
+			(value.Status == "ok") != (!failed && !warning) {
+			return fmt.Errorf("decode local API result %s: full doctor status disagrees with its checks", method)
+		}
+	case *BackupCreateResult:
+		params := paramsValue.(BackupCreateParams)
+		if value.Backup.Path != params.TargetPath || value.Backup.TotalBytes < 1 {
+			return fmt.Errorf("decode local API result %s: backup does not match the requested target", method)
 		}
 	case *ApprovalMutationResult:
 		params := paramsValue.(ApprovalDecisionParams)

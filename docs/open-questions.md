@@ -3,7 +3,7 @@
 These decisions are intentionally unresolved. An implementation should not settle
 them accidentally through an incidental library or schema choice.
 
-## Decisions required before implementation
+## Decisions still required before public release
 
 ### License
 
@@ -14,33 +14,16 @@ adoption, and compatibility with a possible hosted service. The owner must appro
 the choice before a `LICENSE` file is added. Until then, the repository grants no
 open-source license.
 
-### Exact local API framing
+## Decisions already closed
 
-Candidates:
+The local transport, SQLite/query boundary, and TUI library are no longer open:
+the current contracts use newline-delimited JSON over an owner-only Unix socket,
+the vendored CGO-free `github.com/ncruces/go-sqlite3` plus sqlc and one exact
+baseline, and Bubble Tea v2/Bubbles v2/Lip Gloss v2 for the Go-native dashboard.
+M20 backup uses SQLite's online backup API and has no alternate driver or legacy
+schema/bundle path.
 
-- newline-delimited request/response and event messages over a Unix socket;
-- HTTP semantics over a Unix socket;
-- Connect/gRPC with generated clients.
-
-Recommendation for the spike: prototype plain versioned JSON messages and measure
-subscription, cancellation, and SDK ergonomics before committing.
-
-### Go SQLite driver and query generation
-
-Choose after testing:
-
-- pure-Go versus CGO distribution constraints;
-- FTS5 availability;
-- backup API support;
-- cancellation and busy behavior;
-- generated query ergonomics and current-baseline testing.
-
-### Terminal TUI library
-
-Bubble Tea is the leading option. Validate large-list performance, mouse behavior,
-and interaction with direct Herdr attach before treating it as final.
-
-## Decisions required during the first vertical slice
+## Decisions still required for later product shape
 
 ### Daemon lifecycle
 
@@ -59,15 +42,16 @@ supported.
 
 ### Runtime event ingestion
 
-Use Herdr's local socket directly for long-lived subscriptions or begin with its
-structured CLI. Prefer the socket when it offers stable version negotiation, but
-keep CLI fixtures for testing and diagnosis.
+The current Herdr adapter uses its structured CLI, installed-schema probe, stable
+terminal identity, and recorded fixtures. A later long-lived subscription is open
+only if Herdr exposes a stable negotiated local API; M20 recovery does not preserve
+or resume a Herdr session.
 
 ### Provider adapter packaging
 
-Decide whether first-party adapters compile into the binary, run as supervised
-plugins, or use both tiers. Third-party adapters should not receive daemon-level
-authority merely because they are installed.
+Current first-party Codex and Claude adapters compile into the binary behind the
+same runtime/provider contracts. A third-party plugin/conformance boundary remains
+open for M21; installation alone must not confer daemon-level authority.
 
 ### Project-local configuration
 

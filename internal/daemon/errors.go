@@ -12,6 +12,7 @@ const (
 	CodeSocketPathOccupied   = "socket_path_occupied"
 	CodeSocketUnavailable    = "socket_unavailable"
 	CodeDatabaseUnavailable  = "database_unavailable"
+	CodeRestoreNotActivated  = "restore_not_activated"
 )
 
 // StartupError gives the CLI a stable code while retaining the underlying cause.

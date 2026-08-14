@@ -3,17 +3,23 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"crewfold/internal/domain"
 	"crewfold/internal/execution"
+	"crewfold/internal/herdr"
 	"crewfold/internal/localapi"
+	"crewfold/internal/recovery"
 	"crewfold/internal/store"
 )
 
@@ -26,7 +32,362 @@ func TestDirectProcessHelper(t *testing.T) {
 			os.Exit(execution.RunDirectSupervisor(os.Args[index+1:]))
 		case "crewfold-fixture-provider-helper":
 			os.Exit(execution.RunFixtureProvider(os.Stdin, os.Stdout, os.Stderr))
+		case "crewfold-terminal-output-helper":
+			_, _ = os.Stdout.WriteString("API_TOKEN=top-secret\n")
+			_, _ = os.Stdout.WriteString(strings.Repeat("x", 72*1024) + "\n")
+			_, _ = os.Stderr.WriteString("Authorization: Bearer stderr-secret\n")
+			os.Exit(0)
+		case "crewfold-herdr-pane-supervisor-helper":
+			arguments := append([]string(nil), os.Args[index+1:]...)
+			if len(arguments) > 0 && arguments[0] == "__herdr-pane-supervisor" {
+				arguments = arguments[1:]
+			}
+			os.Exit(execution.RunHerdrPaneSupervisor(arguments))
 		}
+	}
+}
+
+type terminalOutputProvider struct {
+	executable string
+}
+
+func (terminalOutputProvider) Name() string { return "terminal-output" }
+
+func (provider terminalOutputProvider) Prepare(_ context.Context, _ domain.Run, scenario domain.FakeScenario) (execution.LaunchSpec, error) {
+	if err := execution.ValidateScenario(scenario); err != nil {
+		return execution.LaunchSpec{}, err
+	}
+	return execution.LaunchSpec{Scenario: scenario, Command: &execution.CommandSpec{
+		Executable: provider.executable,
+		Arguments:  []string{"-test.run=^TestDirectProcessHelper$", "--", "crewfold-terminal-output-helper"},
+		// The runtime may retain more than the archive contract. The Store must
+		// still commit at most its exact 64 KiB immutable terminal bound.
+		OutputByteLimit: 96 * 1024,
+	}}, nil
+}
+
+func (terminalOutputProvider) Bind(_ context.Context, run domain.Run, binding execution.RuntimeBinding) (execution.ProviderBinding, error) {
+	if binding.RuntimeHandle == "" {
+		return execution.ProviderBinding{}, errors.New("terminal output provider requires runtime binding")
+	}
+	return execution.ProviderBinding{ProviderHandle: "terminal-output:" + run.ID}, nil
+}
+
+func (terminalOutputProvider) Next(_ context.Context, run domain.Run, _ domain.FakeScenario, snapshot execution.RuntimeSnapshot) (domain.RunObservation, bool, error) {
+	if !snapshot.CompletionReady || run.StepCursor != 0 {
+		return domain.RunObservation{}, false, nil
+	}
+	return domain.RunObservation{Kind: domain.ObservationCompletion, Message: "terminal output archived", Handoff: "review immutable logs"}, true, nil
+}
+
+type daemonHerdrRunner struct {
+	mu        sync.Mutex
+	stateRoot string
+	label     string
+	surface   bool
+	command   *exec.Cmd
+	stdout    lockedBuffer
+	stderr    lockedBuffer
+}
+
+func newDaemonHerdrRunner(stateRoot string) *daemonHerdrRunner {
+	return &daemonHerdrRunner{stateRoot: stateRoot}
+}
+
+func (runner *daemonHerdrRunner) Run(_ context.Context, _ string, arguments []string, _ map[string]string) (herdr.CommandResult, error) {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	key := strings.Join(arguments, " ")
+	switch key {
+	case "--version":
+		return herdr.CommandResult{Stdout: []byte("herdr 0.8.0\n")}, nil
+	case "api schema --json":
+		data, err := os.ReadFile(filepath.Join("..", "..", "test", "fixtures", "protocol", "herdr", "schema-compatible.json"))
+		return herdr.CommandResult{Stdout: data}, err
+	case "api snapshot":
+		return herdr.CommandResult{Stdout: runner.snapshotLocked()}, nil
+	}
+	if len(arguments) >= 2 && arguments[0] == "workspace" && arguments[1] == "create" {
+		for index := 2; index+1 < len(arguments); index++ {
+			if arguments[index] == "--label" {
+				runner.label = arguments[index+1]
+				break
+			}
+		}
+		runner.surface = true
+		return herdr.CommandResult{Stdout: runner.workspaceCreatedLocked()}, nil
+	}
+	if len(arguments) == 4 && arguments[0] == "pane" && arguments[1] == "run" {
+		command := exec.Command("/bin/sh", "-c", arguments[3])
+		command.Stdout, command.Stderr = &runner.stdout, &runner.stderr
+		if err := command.Start(); err != nil {
+			return herdr.CommandResult{}, err
+		}
+		runner.command = command
+		go func() { _ = command.Wait() }()
+		return herdr.CommandResult{}, nil
+	}
+	if len(arguments) == 4 && arguments[0] == "pane" && arguments[1] == "process-info" && arguments[2] == "--pane" {
+		supervisorPID, childPID := runner.statePIDsLocked()
+		payload, _ := json.Marshal(map[string]any{"id": "cli:request", "result": map[string]any{
+			"type": "pane_process_info", "process_info": map[string]any{"pane_id": "w1:p1", "foreground_processes": []map[string]any{{"pid": supervisorPID, "name": "crewfold"}, {"pid": childPID, "name": "provider"}}},
+		}})
+		return herdr.CommandResult{Stdout: payload}, nil
+	}
+	if len(arguments) >= 4 && arguments[0] == "pane" && arguments[1] == "read" {
+		return herdr.CommandResult{Stdout: []byte(runner.stdout.String() + runner.stderr.String())}, nil
+	}
+	if len(arguments) == 3 && arguments[0] == "pane" && arguments[1] == "close" {
+		runner.surface = false
+		return herdr.CommandResult{}, nil
+	}
+	if len(arguments) >= 4 && arguments[0] == "pane" && (arguments[1] == "send-keys" || arguments[1] == "send-text") {
+		return herdr.CommandResult{}, nil
+	}
+	return herdr.CommandResult{ExitCode: 1, Stderr: []byte(`{"error":{"code":"unexpected_command","message":"` + key + `"}}`)}, nil
+}
+
+func (runner *daemonHerdrRunner) snapshotLocked() []byte {
+	workspaces, tabs, panes := []map[string]any{}, []map[string]any{}, []map[string]any{}
+	if runner.surface {
+		workspaces = append(workspaces, map[string]any{"workspace_id": "w1", "label": runner.label})
+		tabs = append(tabs, map[string]any{"tab_id": "w1:t1", "workspace_id": "w1"})
+		panes = append(panes, map[string]any{"pane_id": "w1:p1", "terminal_id": "term-runtime", "workspace_id": "w1", "tab_id": "w1:t1"})
+	}
+	payload, _ := json.Marshal(map[string]any{"id": "cli:api:snapshot", "result": map[string]any{
+		"type": "session_snapshot", "snapshot": map[string]any{"version": "0.8.0", "protocol": 19, "workspaces": workspaces, "tabs": tabs, "panes": panes, "layouts": []any{}, "agents": []any{}},
+	}})
+	return payload
+}
+
+func (runner *daemonHerdrRunner) workspaceCreatedLocked() []byte {
+	payload, _ := json.Marshal(map[string]any{"id": "cli:request", "result": map[string]any{
+		"type": "workspace_created", "workspace": map[string]any{"workspace_id": "w1", "label": runner.label},
+		"tab":       map[string]any{"tab_id": "w1:t1", "workspace_id": "w1"},
+		"root_pane": map[string]any{"pane_id": "w1:p1", "terminal_id": "term-runtime", "workspace_id": "w1", "tab_id": "w1:t1"},
+	}})
+	return payload
+}
+
+func (runner *daemonHerdrRunner) statePIDsLocked() (int, int) {
+	entries, _ := os.ReadDir(runner.stateRoot)
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(runner.stateRoot, entry.Name(), "state.json"))
+		if err != nil {
+			continue
+		}
+		var state struct {
+			SupervisorPID int `json:"supervisor_pid"`
+			ChildPID      int `json:"child_pid"`
+		}
+		if json.Unmarshal(data, &state) == nil {
+			return state.SupervisorPID, state.ChildPID
+		}
+	}
+	return 1, 1
+}
+
+func (runner *daemonHerdrRunner) shutdown() {
+	runner.mu.Lock()
+	command := runner.command
+	runner.mu.Unlock()
+	if command != nil && command.Process != nil {
+		_ = command.Process.Signal(os.Interrupt)
+	}
+}
+
+func writeDaemonHerdrSupervisorWrapper(t *testing.T, executable string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "crewfold-herdr-test-wrapper")
+	quotedExecutable := "'" + strings.ReplaceAll(executable, "'", "'\\''") + "'"
+	content := "#!/bin/sh\nexec " + quotedExecutable + " -test.run='^TestDirectProcessHelper$' -- crewfold-herdr-pane-supervisor-helper \"$@\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
+		t.Fatalf("write Herdr supervisor wrapper: %v", err)
+	}
+	return path
+}
+
+func TestHerdrTerminalArchiveSurvivesRestartAndBackupActivationWithoutPaneState(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("Git is unavailable: %v", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	fixtureRoot := t.TempDir()
+	createGitFixture(t, fixtureRoot)
+	config := testConfig(t)
+	stateRoot := filepath.Join(config.DataDir, "runtime", "herdr")
+	runner := newDaemonHerdrRunner(stateRoot)
+	wrapper := writeDaemonHerdrSupervisorWrapper(t, executable)
+	newRuntime := func(root string, commandRunner herdr.CommandRunner) *execution.HerdrRuntime {
+		return execution.NewHerdrRuntime(execution.HerdrRuntimeOptions{
+			NodeID: daemonTestNodeID, StateRoot: root, HerdrExecutable: "/fixture/herdr",
+			CrewfoldExecutable: wrapper, CommandRunner: commandRunner,
+			StartupTimeout: 3 * time.Second, PollInterval: 5 * time.Millisecond,
+		})
+	}
+	provider := terminalOutputProvider{executable: executable}
+	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"herdr": newRuntime(stateRoot, runner)}
+	config.ProviderAdapters = map[string]execution.ProviderAdapter{provider.Name(): provider}
+	first := startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+	project, _ := initializeRunWorkerAPI(t, client, fixtureRoot)
+	agent, err := client.AgentCreate(context.Background(), localapi.AgentCreateParams{
+		Workspace: "personal", Name: "herdr-terminal-archive", Role: "implementer", Provider: provider.Name(), Runtime: "herdr",
+		IdempotencyKey: "herdr-terminal-archive-agent",
+	})
+	if err != nil {
+		t.Fatalf("AgentCreate() error = %v", err)
+	}
+	task := createAssignedRunWorkerTask(t, client, project.Project.ID, agent.Agent.ID, "herdr terminal archive")
+	started, err := client.RunStart(context.Background(), localapi.RunStartParams{
+		Workspace: "personal", Task: task.Detail.Task.ID, Runtime: "herdr", Provider: provider.Name(),
+		Scenario:             domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "herdr-terminal-archive", Steps: []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "done", Handoff: "review"}}},
+		ExpectedTaskRevision: task.Detail.Task.Revision, IdempotencyKey: "herdr-terminal-archive-run",
+	})
+	if err != nil {
+		t.Fatalf("RunStart() error = %v", err)
+	}
+	completed := waitForRunStatus(t, client, started.Detail.Run.ID, domain.RunCompleted)
+	if completed.Detail.Handoff == nil {
+		t.Fatalf("completed Herdr run has no handoff: %#v", completed.Detail)
+	}
+	archived, err := client.RunLogs(context.Background(), "personal", started.Detail.Run.ID, 0)
+	if err != nil {
+		t.Fatalf("RunLogs(Herdr terminal) error = %v", err)
+	}
+	if archived.Logs.State != execution.RuntimeStateExited || archived.Logs.Stdout.CapturedBytes > 64*1024 ||
+		archived.Logs.Stdout.CapturedBytes != int64(len(archived.Logs.Stdout.Text)) || !archived.Logs.Stdout.Truncated || archived.Logs.Stdout.OmittedBytes == 0 ||
+		strings.Contains(archived.Logs.Stdout.Text, "top-secret") || strings.Contains(archived.Logs.Stdout.Text, "stderr-secret") || !strings.Contains(archived.Logs.Stdout.Text, "[REDACTED]") {
+		t.Fatalf("bounded/redacted Herdr archive = %#v", archived.Logs)
+	}
+	runner.shutdown()
+	if _, err := client.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(first Herdr daemon) error = %v", err)
+	}
+	if err := first.wait(); err != nil {
+		t.Fatalf("Run(first Herdr daemon) error = %v", err)
+	}
+
+	restartRunner := newDaemonHerdrRunner(stateRoot)
+	restartConfig := config
+	restartConfig.RuntimeDrivers = map[string]execution.RuntimeDriver{"herdr": newRuntime(stateRoot, restartRunner)}
+	second := startTestServer(t, restartConfig)
+	restarted := localapi.NewClient(restartConfig.SocketPath)
+	restartedLogs, err := restarted.RunLogs(context.Background(), "personal", started.Detail.Run.ID, 0)
+	if err != nil || !reflect.DeepEqual(restartedLogs, archived) {
+		t.Fatalf("RunLogs(after Herdr daemon restart) = %#v, %v; want exact %#v", restartedLogs, err, archived)
+	}
+	bundlePath := filepath.Join(t.TempDir(), "herdr-terminal-bundle")
+	if _, err := restarted.BackupCreate(context.Background(), localapi.BackupCreateParams{TargetPath: bundlePath, IdempotencyKey: "herdr-terminal-bundle"}); err != nil {
+		t.Fatalf("BackupCreate(Herdr terminal archive) error = %v", err)
+	}
+	if _, err := restarted.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(second Herdr daemon) error = %v", err)
+	}
+	if err := second.wait(); err != nil {
+		t.Fatalf("Run(second Herdr daemon) error = %v", err)
+	}
+
+	restoredDataDir := filepath.Join(t.TempDir(), "restored-herdr-terminal")
+	if _, err := recovery.RestorePending(context.Background(), bundlePath, restoredDataDir); err != nil {
+		t.Fatalf("RestorePending(Herdr terminal archive) error = %v", err)
+	}
+	if _, err := recovery.Activate(context.Background(), restoredDataDir, true); err != nil {
+		t.Fatalf("Activate(Herdr terminal archive) error = %v", err)
+	}
+	if entries, err := os.ReadDir(filepath.Join(restoredDataDir, "runtime")); err != nil || len(entries) != 0 {
+		t.Fatalf("restored Herdr backup retained source pane/runtime state: entries=%v error=%v", entries, err)
+	}
+	restoredStateRoot := filepath.Join(restoredDataDir, "runtime", "herdr")
+	restoredConfig := config
+	restoredConfig.DataDir = restoredDataDir
+	restoredConfig.SocketPath = filepath.Join(t.TempDir(), "restored-herdr.sock")
+	restoredConfig.RuntimeDrivers = map[string]execution.RuntimeDriver{"herdr": newRuntime(restoredStateRoot, newDaemonHerdrRunner(restoredStateRoot))}
+	restored := startTestServer(t, restoredConfig)
+	restoredClient := localapi.NewClient(restoredConfig.SocketPath)
+	restoredLogs, err := restoredClient.RunLogs(context.Background(), "personal", started.Detail.Run.ID, 0)
+	if err != nil || !reflect.DeepEqual(restoredLogs, archived) {
+		t.Fatalf("RunLogs(after Herdr backup activation) = %#v, %v; want exact %#v", restoredLogs, err, archived)
+	}
+	if _, err := restoredClient.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(restored Herdr daemon) error = %v", err)
+	}
+	if err := restored.wait(); err != nil {
+		t.Fatalf("Run(restored Herdr daemon) error = %v", err)
+	}
+}
+
+func TestDirectTerminalArchiveIsExactBoundedAndRedactedAfterRestart(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("Git is unavailable: %v", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	fixtureRoot := t.TempDir()
+	createGitFixture(t, fixtureRoot)
+	config := testConfig(t)
+	newRuntime := func() *execution.DirectRuntime {
+		return execution.NewDirectRuntime(execution.DirectRuntimeOptions{
+			NodeID: daemonTestNodeID, StateRoot: filepath.Join(config.DataDir, "runtime"), SupervisorExecutable: executable,
+			SupervisorArguments: []string{"-test.run=^TestDirectProcessHelper$", "--", "crewfold-direct-supervisor-helper"},
+		})
+	}
+	provider := terminalOutputProvider{executable: executable}
+	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"direct": newRuntime()}
+	config.ProviderAdapters = map[string]execution.ProviderAdapter{provider.Name(): provider}
+	first := startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+	project, _ := initializeRunWorkerAPI(t, client, fixtureRoot)
+	agent, err := client.AgentCreate(context.Background(), localapi.AgentCreateParams{
+		Workspace: "personal", Name: "direct-terminal-archive", Role: "implementer", Provider: provider.Name(), Runtime: "direct",
+		IdempotencyKey: "direct-terminal-archive-agent",
+	})
+	if err != nil {
+		t.Fatalf("AgentCreate() error = %v", err)
+	}
+	task := createAssignedRunWorkerTask(t, client, project.Project.ID, agent.Agent.ID, "direct terminal redacted archive")
+	started, err := client.RunStart(context.Background(), localapi.RunStartParams{
+		Workspace: "personal", Task: task.Detail.Task.ID, Runtime: "direct", Provider: provider.Name(),
+		Scenario:             domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "direct-terminal-redacted", Steps: []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "done", Handoff: "review"}}},
+		ExpectedTaskRevision: task.Detail.Task.Revision, IdempotencyKey: "direct-terminal-redacted-run",
+	})
+	if err != nil {
+		t.Fatalf("RunStart() error = %v", err)
+	}
+	waitForRunStatus(t, client, started.Detail.Run.ID, domain.RunCompleted)
+	archived, err := client.RunLogs(context.Background(), "personal", started.Detail.Run.ID, 0)
+	if err != nil {
+		t.Fatalf("RunLogs(direct terminal) error = %v", err)
+	}
+	if archived.Logs.State != execution.RuntimeStateExited || archived.Logs.Stdout.CapturedBytes > 64*1024 ||
+		archived.Logs.Stdout.CapturedBytes != int64(len(archived.Logs.Stdout.Text)) || !archived.Logs.Stdout.Truncated || archived.Logs.Stdout.OmittedBytes == 0 ||
+		strings.Contains(archived.Logs.Stdout.Text, "top-secret") || !strings.Contains(archived.Logs.Stdout.Text, "[REDACTED]") ||
+		strings.Contains(archived.Logs.Stderr.Text, "stderr-secret") || !strings.Contains(archived.Logs.Stderr.Text, "[REDACTED]") {
+		t.Fatalf("bounded/redacted direct archive = %#v", archived.Logs)
+	}
+	if _, err := client.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(first direct archive daemon) error = %v", err)
+	}
+	if err := first.wait(); err != nil {
+		t.Fatalf("Run(first direct archive daemon) error = %v", err)
+	}
+	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"direct": newRuntime()}
+	second := startTestServer(t, config)
+	restarted := localapi.NewClient(config.SocketPath)
+	restartedLogs, err := restarted.RunLogs(context.Background(), "personal", started.Detail.Run.ID, 0)
+	if err != nil || !reflect.DeepEqual(restartedLogs, archived) {
+		t.Fatalf("RunLogs(after direct terminal restart) = %#v, %v; want exact %#v", restartedLogs, err, archived)
+	}
+	if _, err := restarted.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(second direct archive daemon) error = %v", err)
+	}
+	if err := second.wait(); err != nil {
+		t.Fatalf("Run(second direct archive daemon) error = %v", err)
 	}
 }
 
@@ -68,6 +429,283 @@ func (uncertainObservationProvider) Next(context.Context, domain.Run, domain.Fak
 	return domain.RunObservation{}, false, errors.New("provider lost the terminal observation")
 }
 
+type stopLogOrderRuntime struct {
+	base           *execution.FakeRuntime
+	stopped        atomic.Bool
+	logsBeforeStop atomic.Bool
+}
+
+type refusingForeignRuntime struct {
+	contacts atomic.Int64
+}
+
+func (*refusingForeignRuntime) Name() string { return "fake" }
+
+func (runtime *refusingForeignRuntime) contacted() error {
+	runtime.contacts.Add(1)
+	return errors.New("foreign runtime must not be contacted")
+}
+
+func (runtime *refusingForeignRuntime) Launch(context.Context, string, domain.RunPlacement, execution.LaunchSpec) (execution.RuntimeBinding, error) {
+	return execution.RuntimeBinding{}, runtime.contacted()
+}
+
+func (runtime *refusingForeignRuntime) Reconcile(context.Context, string, string) (execution.RuntimeBinding, error) {
+	return execution.RuntimeBinding{}, runtime.contacted()
+}
+
+func (runtime *refusingForeignRuntime) Inspect(context.Context, string, string) (execution.RuntimeSnapshot, error) {
+	return execution.RuntimeSnapshot{}, runtime.contacted()
+}
+
+func (runtime *refusingForeignRuntime) Stop(context.Context, string, string, execution.StopSpec) (execution.StopResult, error) {
+	return execution.StopResult{}, runtime.contacted()
+}
+
+func (runtime *refusingForeignRuntime) Logs(context.Context, string, string, int) (domain.RunLogs, error) {
+	return domain.RunLogs{}, runtime.contacted()
+}
+
+func (runtime *refusingForeignRuntime) Prompt(context.Context, string, string, string) error {
+	return runtime.contacted()
+}
+
+func (runtime *refusingForeignRuntime) Interrupt(context.Context, string, string) error {
+	return runtime.contacted()
+}
+
+func (runtime *refusingForeignRuntime) Attach(context.Context, string, string) (execution.AttachSpec, error) {
+	return execution.AttachSpec{}, runtime.contacted()
+}
+
+func TestForeignNodeBindingRejectsEveryControlAndStopBeforeRuntimeContact(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("Git is unavailable: %v", err)
+	}
+	fixtureRoot := t.TempDir()
+	createGitFixture(t, fixtureRoot)
+	config := testConfig(t)
+	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"fake": execution.NewFakeRuntime()}
+	config.ProviderAdapters = map[string]execution.ProviderAdapter{"fake": execution.FakeProvider{}}
+	first := startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+	project, _ := initializeRunWorkerAPI(t, client, fixtureRoot)
+	agent, err := client.AgentCreate(context.Background(), localapi.AgentCreateParams{
+		Workspace: "personal", Name: "foreign-binding", Role: "implementer", Provider: "fake", Runtime: "fake",
+		IdempotencyKey: "foreign-binding-agent",
+	})
+	if err != nil {
+		t.Fatalf("AgentCreate() error = %v", err)
+	}
+	task := createAssignedRunWorkerTask(t, client, project.Project.ID, agent.Agent.ID, "foreign node runtime binding")
+	started, err := client.RunStart(context.Background(), localapi.RunStartParams{
+		Workspace: "personal", Task: task.Detail.Task.ID, Runtime: "fake", Provider: "fake",
+		Scenario:             domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "foreign-binding", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "waiting", WaitForResume: true}}},
+		ExpectedTaskRevision: task.Detail.Task.Revision, IdempotencyKey: "foreign-binding-run",
+	})
+	if err != nil {
+		t.Fatalf("RunStart() error = %v", err)
+	}
+	active := waitForRunStatus(t, client, started.Detail.Run.ID, domain.RunActive)
+	first.cancel()
+	if err := first.wait(); err != nil {
+		t.Fatalf("first daemon shutdown error = %v", err)
+	}
+	for _, name := range []string{"node.id", "node.key"} {
+		if err := os.Remove(filepath.Join(config.DataDir, name)); err != nil {
+			t.Fatalf("remove old %s for foreign-node fixture: %v", name, err)
+		}
+	}
+
+	foreignRuntime := &refusingForeignRuntime{}
+	foreignConfig := config
+	foreignConfig.DisableRunWorker = true
+	foreignConfig.RuntimeDrivers = map[string]execution.RuntimeDriver{"fake": foreignRuntime}
+	foreign := startTestServer(t, foreignConfig)
+	foreignClient := localapi.NewClient(foreignConfig.SocketPath)
+	foreignRun, err := foreignClient.RunShow(context.Background(), "personal", active.Detail.Run.ID)
+	if err != nil || foreignRun.Detail.Run.Status != domain.RunActive {
+		t.Fatalf("RunShow(foreign node) = %#v, %v", foreignRun, err)
+	}
+	for name, call := range map[string]func() error{
+		"logs": func() error {
+			_, err := foreignClient.RunLogs(context.Background(), "personal", active.Detail.Run.ID, 0)
+			return err
+		},
+		"prompt": func() error {
+			_, err := foreignClient.RunPrompt(context.Background(), "personal", active.Detail.Run.ID, "must not deliver")
+			return err
+		},
+		"interrupt": func() error {
+			_, err := foreignClient.RunInterrupt(context.Background(), "personal", active.Detail.Run.ID)
+			return err
+		},
+		"attach": func() error {
+			_, err := foreignClient.RunAttach(context.Background(), "personal", active.Detail.Run.ID)
+			return err
+		},
+	} {
+		if err := call(); localAPIErrorCode(err) != store.CodeRuntimeBindingUnavailable {
+			t.Fatalf("%s(foreign node) error = %v, code = %q", name, err, localAPIErrorCode(err))
+		}
+	}
+	if contacts := foreignRuntime.contacts.Load(); contacts != 0 {
+		t.Fatalf("foreign interactive controls contacted runtime %d times", contacts)
+	}
+	if _, err := foreignClient.RunResume(context.Background(), localapi.RunResumeParams{
+		Workspace: "personal", Run: active.Detail.Run.ID, ExpectedRevision: foreignRun.Detail.Run.Revision,
+		IdempotencyKey: "foreign-binding-resume",
+	}); localAPIErrorCode(err) != store.CodeRuntimeBindingUnavailable {
+		t.Fatalf("RunResume(foreign binding) error = %v, code = %q; want %q", err, localAPIErrorCode(err), store.CodeRuntimeBindingUnavailable)
+	}
+	beforeEvents, err := foreignClient.EventsTimeline(context.Background(), localapi.EventsTimelineParams{
+		Workspace: "personal", EntityType: "run", EntityID: active.Detail.Run.ID, PageParams: localapi.PageParams{Limit: 100},
+	})
+	if err != nil {
+		t.Fatalf("EventsTimeline(before foreign stop) error = %v", err)
+	}
+	beforeTaskTimeline, err := foreignClient.TaskTimeline(context.Background(), "personal", active.Detail.Task.ID)
+	if err != nil {
+		t.Fatalf("TaskTimeline(before foreign stop) error = %v", err)
+	}
+	if _, err := foreignClient.RunStop(context.Background(), localapi.RunStopParams{
+		Workspace: "personal", Run: active.Detail.Run.ID, ExpectedRevision: foreignRun.Detail.Run.Revision,
+		GracePeriodMillis: 100, IdempotencyKey: "foreign-binding-stop",
+	}); localAPIErrorCode(err) != store.CodeRuntimeBindingUnavailable {
+		t.Fatalf("RunStop(foreign binding) error = %v, code = %q; want %q", err, localAPIErrorCode(err), store.CodeRuntimeBindingUnavailable)
+	}
+	afterRun, err := foreignClient.RunShow(context.Background(), "personal", active.Detail.Run.ID)
+	if err != nil {
+		t.Fatalf("RunShow(after foreign stop refusal) error = %v", err)
+	}
+	afterEvents, err := foreignClient.EventsTimeline(context.Background(), localapi.EventsTimelineParams{
+		Workspace: "personal", EntityType: "run", EntityID: active.Detail.Run.ID, PageParams: localapi.PageParams{Limit: 100},
+	})
+	if err != nil {
+		t.Fatalf("EventsTimeline(after foreign stop refusal) error = %v", err)
+	}
+	afterTaskTimeline, err := foreignClient.TaskTimeline(context.Background(), "personal", active.Detail.Task.ID)
+	if err != nil {
+		t.Fatalf("TaskTimeline(after foreign stop refusal) error = %v", err)
+	}
+	if !reflect.DeepEqual(afterRun, foreignRun) || !reflect.DeepEqual(afterEvents.Events, beforeEvents.Events) || !reflect.DeepEqual(afterTaskTimeline, beforeTaskTimeline) {
+		t.Fatalf("foreign stop refusal changed public state/events: run_before=%#v run_after=%#v events_before=%#v events_after=%#v task_before=%#v task_after=%#v",
+			foreignRun, afterRun, beforeEvents.Events, afterEvents.Events, beforeTaskTimeline, afterTaskTimeline)
+	}
+	if _, err := foreignClient.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(foreign daemon) error = %v", err)
+	}
+	if err := foreign.wait(); err != nil {
+		t.Fatalf("foreign daemon shutdown error = %v", err)
+	}
+
+	reconcileConfig := config
+	reconcileConfig.RuntimeDrivers = map[string]execution.RuntimeDriver{"fake": foreignRuntime}
+	reconciler := startTestServer(t, reconcileConfig)
+	reconcileClient := localapi.NewClient(reconcileConfig.SocketPath)
+	lost := waitForRunStatus(t, reconcileClient, active.Detail.Run.ID, domain.RunLost)
+	if lost.Detail.Run.RuntimeHandle != "" {
+		// Public projections never reveal handles; the assertion documents that
+		// loss remains an owner-resolution state rather than an attach surface.
+		t.Fatalf("lost public run leaked runtime handle: %#v", lost.Detail.Run)
+	}
+	if contacts := foreignRuntime.contacts.Load(); contacts != 0 {
+		t.Fatalf("foreign stop/reconciliation contacted runtime %d times", contacts)
+	}
+	if _, err := reconcileClient.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(reconciler) error = %v", err)
+	}
+	if err := reconciler.wait(); err != nil {
+		t.Fatalf("reconciler shutdown error = %v", err)
+	}
+}
+
+func newStopLogOrderRuntime() *stopLogOrderRuntime {
+	return &stopLogOrderRuntime{base: execution.NewFakeRuntime()}
+}
+
+func (*stopLogOrderRuntime) Name() string { return "stop-log-order" }
+
+func (runtime *stopLogOrderRuntime) Launch(ctx context.Context, operationID string, placement domain.RunPlacement, spec execution.LaunchSpec) (execution.RuntimeBinding, error) {
+	return runtime.base.Launch(ctx, operationID, placement, spec)
+}
+
+func (runtime *stopLogOrderRuntime) Reconcile(ctx context.Context, operationID, handle string) (execution.RuntimeBinding, error) {
+	return runtime.base.Reconcile(ctx, operationID, handle)
+}
+
+func (runtime *stopLogOrderRuntime) Inspect(ctx context.Context, operationID, handle string) (execution.RuntimeSnapshot, error) {
+	return runtime.base.Inspect(ctx, operationID, handle)
+}
+
+func (runtime *stopLogOrderRuntime) Stop(ctx context.Context, operationID, handle string, spec execution.StopSpec) (execution.StopResult, error) {
+	result, err := runtime.base.Stop(ctx, operationID, handle, spec)
+	if err == nil {
+		runtime.stopped.Store(true)
+	}
+	return result, err
+}
+
+func (runtime *stopLogOrderRuntime) Logs(context.Context, string, string, int) (domain.RunLogs, error) {
+	if !runtime.stopped.Load() {
+		runtime.logsBeforeStop.Store(true)
+		return domain.RunLogs{}, errors.New("logs requested before definitive stop")
+	}
+	return domain.RunLogs{}, errors.New("terminal log capture unavailable after definitive stop")
+}
+
+func TestRunStopCapturesOnlyAfterDefinitiveStopAndRecordsUnavailable(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("Git is unavailable: %v", err)
+	}
+	fixtureRoot := t.TempDir()
+	createGitFixture(t, fixtureRoot)
+	runtimeDriver := newStopLogOrderRuntime()
+	fakeRuntime := execution.NewFakeRuntime()
+	config := testConfig(t)
+	config.RuntimeDrivers = map[string]execution.RuntimeDriver{runtimeDriver.Name(): runtimeDriver, fakeRuntime.Name(): fakeRuntime}
+	config.ProviderAdapters = map[string]execution.ProviderAdapter{"fake": execution.FakeProvider{}}
+	running := startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+	project, _ := initializeRunWorkerAPI(t, client, fixtureRoot)
+	agent, err := client.AgentCreate(context.Background(), localapi.AgentCreateParams{
+		Workspace: "personal", Name: "stop-order", Role: "arbitrary-display", Provider: "fake", Runtime: runtimeDriver.Name(),
+		IdempotencyKey: "stop-order-agent",
+	})
+	if err != nil {
+		t.Fatalf("AgentCreate() error = %v", err)
+	}
+	task := createAssignedRunWorkerTask(t, client, project.Project.ID, agent.Agent.ID, "stop log ordering")
+	scenario := domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "stop-log-order", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "running"}}}
+	started, err := client.RunStart(context.Background(), localapi.RunStartParams{
+		Workspace: "personal", Task: task.Detail.Task.ID, Runtime: runtimeDriver.Name(), Provider: "fake", Scenario: scenario,
+		ExpectedTaskRevision: task.Detail.Task.Revision, IdempotencyKey: "stop-log-order-start",
+	})
+	if err != nil {
+		t.Fatalf("RunStart() error = %v", err)
+	}
+	active := waitForRunStatus(t, client, started.Detail.Run.ID, domain.RunActive)
+	if _, err := client.RunStop(context.Background(), localapi.RunStopParams{
+		Workspace: "personal", Run: active.Detail.Run.ID, ExpectedRevision: active.Detail.Run.Revision,
+		GracePeriodMillis: 100, IdempotencyKey: "stop-log-order-stop",
+	}); err != nil {
+		t.Fatalf("RunStop() error = %v", err)
+	}
+	stopped := waitForRunStatus(t, client, started.Detail.Run.ID, domain.RunStopped)
+	if runtimeDriver.logsBeforeStop.Load() || stopped.Detail.Run.Status != domain.RunStopped {
+		t.Fatalf("stop/log ordering leaked preterminal capture: before=%t detail=%#v", runtimeDriver.logsBeforeStop.Load(), stopped.Detail)
+	}
+	if _, err := client.RunLogs(context.Background(), "personal", started.Detail.Run.ID, 0); err == nil || !strings.Contains(err.Error(), store.CodeRunLogsUnavailable) || !strings.Contains(err.Error(), "after definitive stop") {
+		t.Fatalf("RunLogs(unavailable after stop) error = %v", err)
+	}
+	if _, err := client.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := running.wait(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 func TestRunLostResolutionReplaysAcrossDistinctRequestsAndRejectsSemanticConflict(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("Git is unavailable: %v", err)
@@ -103,6 +741,19 @@ func TestRunLostResolutionReplaysAcrossDistinctRequestsAndRejectsSemanticConflic
 	lost := waitForRunStatus(t, client, started.Detail.Run.ID, domain.RunLost)
 	if lost.Detail.Task.Status != domain.TaskBlocked || lost.Detail.Task.AssignmentID == "" || lost.Detail.Run.FinishedAt != "" {
 		t.Fatalf("lost run = %#v", lost.Detail)
+	}
+	listed, err := client.RunList(context.Background(), localapi.RunListParams{Workspace: "personal", Task: task.Detail.Task.ID, PageParams: localapi.PageParams{Limit: 20}})
+	if err != nil || len(listed.Runs) != 1 || listed.Runs[0].ID != lost.Detail.Run.ID || listed.Runs[0].CanAttach {
+		t.Fatalf("RunList(lost) = %#v, %v; lost binding must not advertise attach", listed, err)
+	}
+	if _, err := client.RunPrompt(context.Background(), "personal", lost.Detail.Run.ID, "do not deliver"); localAPIErrorCode(err) != store.CodeRunConflict {
+		t.Fatalf("RunPrompt(lost) error = %v, code = %q", err, localAPIErrorCode(err))
+	}
+	if _, err := client.RunInterrupt(context.Background(), "personal", lost.Detail.Run.ID); localAPIErrorCode(err) != store.CodeRunConflict {
+		t.Fatalf("RunInterrupt(lost) error = %v, code = %q", err, localAPIErrorCode(err))
+	}
+	if _, err := client.RunAttach(context.Background(), "personal", lost.Detail.Run.ID); localAPIErrorCode(err) != store.CodeRunConflict {
+		t.Fatalf("RunAttach(lost) error = %v, code = %q", err, localAPIErrorCode(err))
 	}
 
 	params := localapi.RunLostResolveParams{
@@ -508,7 +1159,22 @@ func TestSupervisorOriginRunCommittedBeforeWorkerLaunchesExactlyOnceAfterRestart
 				t.Fatalf("Run(first) = %v", err)
 			}
 
-			storage, err := store.Open(context.Background(), config.DataDir, store.Options{})
+			nodeID, err := execution.LoadOrCreateNodeID(config.DataDir)
+			if err != nil {
+				t.Fatalf("LoadOrCreateNodeID(recovery setup) = %v", err)
+			}
+			nodeKey, err := execution.LoadOrCreateNodeKey(config.DataDir)
+			if err != nil {
+				t.Fatalf("LoadOrCreateNodeKey(recovery setup) = %v", err)
+			}
+			nodeFingerprint, err := execution.NodeFingerprint(nodeID, nodeKey)
+			if err != nil {
+				t.Fatalf("NodeFingerprint(recovery setup) = %v", err)
+			}
+			storage, err := store.Open(context.Background(), config.DataDir, store.Options{
+				RuntimeNodeID:          nodeID,
+				RuntimeNodeFingerprint: nodeFingerprint,
+			})
 			if err != nil {
 				t.Fatalf("store.Open(recovery setup) = %v", err)
 			}
@@ -556,8 +1222,15 @@ func TestSupervisorOriginRunCommittedBeforeWorkerLaunchesExactlyOnceAfterRestart
 				_ = storage.Close()
 				t.Fatalf("MarkRunStarted(manager) = %v", err)
 			}
+			managerLogs, err := storage.PrepareRunLogArchive(context.Background(), invoked.Detail.Run.ID, domain.RunLogs{
+				RunID: invoked.Detail.Run.ID, State: execution.RuntimeStateExited,
+			})
+			if err != nil {
+				_ = storage.Close()
+				t.Fatalf("PrepareRunLogArchive(manager) = %v", err)
+			}
 			if _, err := storage.ApplyRunObservation(context.Background(), invoked.Detail.Run.ID, domain.RunObservation{
-				Kind: domain.ObservationCompletion, Message: "proposal recorded", Handoff: "owner accepted exact proposal",
+				Kind: domain.ObservationCompletion, Message: "proposal recorded", Handoff: "owner accepted exact proposal", LogArchive: &managerLogs,
 			}, true, nil, "request-supervisor-recovery-manager-completed"); err != nil {
 				_ = storage.Close()
 				t.Fatalf("ApplyRunObservation(manager completion) = %v", err)
@@ -958,19 +1631,62 @@ func TestDirectRunReconcilesAcrossDaemonRestartWhileChildContinues(t *testing.T)
 	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"direct": newDirectRuntime()}
 	second := startTestServer(t, config)
 	restarted := localapi.NewClient(config.SocketPath)
-	completed := waitForRunStatus(t, restarted, started.Detail.Run.ID, domain.RunCompleted)
+	completed := waitForRunStatusWithin(t, restarted, started.Detail.Run.ID, domain.RunCompleted, 15*time.Second)
 	if completed.Detail.Run.RuntimeHandle != before.Detail.Run.RuntimeHandle || completed.Detail.Handoff == nil || completed.Detail.Run.StepCursor != 2 {
 		t.Fatalf("completed after direct restart = %#v", completed.Detail)
-	}
-	logs, err := restarted.RunLogs(context.Background(), "personal", started.Detail.Run.ID, 0)
-	if err != nil || logs.Logs.State != execution.RuntimeStateExited {
-		t.Fatalf("RunLogs(after restart) = %#v, %v", logs, err)
 	}
 	if _, err := restarted.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop(second) error = %v", err)
 	}
 	if err := second.wait(); err != nil {
 		t.Fatalf("Run(second) error = %v", err)
+	}
+
+	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"direct": newDirectRuntime()}
+	third := startTestServer(t, config)
+	restartedAfterTerminal := localapi.NewClient(config.SocketPath)
+	logs, err := restartedAfterTerminal.RunLogs(context.Background(), "personal", started.Detail.Run.ID, 0)
+	if err != nil || logs.Logs.State != execution.RuntimeStateExited {
+		t.Fatalf("RunLogs(after terminal restart) = %#v, %v", logs, err)
+	}
+	bundlePath := filepath.Join(t.TempDir(), "direct-terminal-bundle")
+	if _, err := restartedAfterTerminal.BackupCreate(context.Background(), localapi.BackupCreateParams{TargetPath: bundlePath, IdempotencyKey: "direct-terminal-bundle"}); err != nil {
+		t.Fatalf("BackupCreate(direct terminal archive) error = %v", err)
+	}
+	if _, err := restartedAfterTerminal.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(third) error = %v", err)
+	}
+	if err := third.wait(); err != nil {
+		t.Fatalf("Run(third) error = %v", err)
+	}
+	restoredDataDir := filepath.Join(t.TempDir(), "restored-direct-terminal")
+	if _, err := recovery.RestorePending(context.Background(), bundlePath, restoredDataDir); err != nil {
+		t.Fatalf("RestorePending(direct terminal archive) error = %v", err)
+	}
+	if _, err := recovery.Activate(context.Background(), restoredDataDir, true); err != nil {
+		t.Fatalf("Activate(direct terminal archive) error = %v", err)
+	}
+	if entries, err := os.ReadDir(filepath.Join(restoredDataDir, "runtime")); err != nil || len(entries) != 0 {
+		t.Fatalf("restored backup retained source runtime state: entries=%v error=%v", entries, err)
+	}
+	restoredConfig := config
+	restoredConfig.DataDir = restoredDataDir
+	restoredConfig.SocketPath = filepath.Join(t.TempDir(), "restored-direct.sock")
+	restoredConfig.RuntimeDrivers = map[string]execution.RuntimeDriver{"direct": execution.NewDirectRuntime(execution.DirectRuntimeOptions{
+		NodeID: daemonTestNodeID, StateRoot: filepath.Join(restoredDataDir, "runtime"), SupervisorExecutable: executable,
+		SupervisorArguments: []string{"-test.run=^TestDirectProcessHelper$", "--", "crewfold-direct-supervisor-helper"},
+	})}
+	restored := startTestServer(t, restoredConfig)
+	restoredClient := localapi.NewClient(restoredConfig.SocketPath)
+	restoredLogs, err := restoredClient.RunLogs(context.Background(), "personal", started.Detail.Run.ID, 0)
+	if err != nil || !reflect.DeepEqual(restoredLogs, logs) {
+		t.Fatalf("RunLogs(after direct backup activation) = %#v, %v; want exact %#v", restoredLogs, err, logs)
+	}
+	if _, err := restoredClient.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(restored direct daemon) error = %v", err)
+	}
+	if err := restored.wait(); err != nil {
+		t.Fatalf("Run(restored direct daemon) error = %v", err)
 	}
 }
 
@@ -1005,14 +1721,27 @@ func createAssignedRunWorkerTask(t *testing.T, client *localapi.Client, projectI
 
 func waitForRunStatus(t *testing.T, client *localapi.Client, runID, status string) localapi.RunShowResult {
 	t.Helper()
+	return waitForRunStatusWithin(t, client, runID, status, 5*time.Second)
+}
+
+func waitForRunStatusWithin(t *testing.T, client *localapi.Client, runID, status string, timeout time.Duration) localapi.RunShowResult {
+	t.Helper()
 	var result localapi.RunShowResult
-	waitForCondition(t, 5*time.Second, func() bool {
+	var lastErr error
+	deadline := time.Now().Add(timeout)
+	for {
 		current, err := client.RunShow(context.Background(), "personal", runID)
-		if err != nil {
-			return false
+		if err == nil {
+			result = current
+			if current.Detail.Run.Status == status {
+				return result
+			}
+		} else {
+			lastErr = err
 		}
-		result = current
-		return current.Detail.Run.Status == status
-	}, "run "+runID+" status "+status)
-	return result
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for run %s status %s; last detail=%#v last error=%v", runID, status, result.Detail, lastErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

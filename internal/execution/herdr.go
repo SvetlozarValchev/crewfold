@@ -143,7 +143,11 @@ func (runtime *HerdrRuntime) Launch(ctx context.Context, operationID string, pla
 	} else if !errors.Is(stateErr, os.ErrNotExist) {
 		return RuntimeBinding{}, &OutcomeUnknownError{Message: "read Herdr pane supervisor state: " + stateErr.Error()}
 	}
-	if _, err := os.Stat(filepath.Join(runDirectory, "dispatch.json")); err == nil {
+	dispatchPath := filepath.Join(runDirectory, "dispatch.json")
+	if err := reconcileAtomicPrivateFile(dispatchPath); err != nil {
+		return RuntimeBinding{}, &OutcomeUnknownError{Message: "reconcile Herdr dispatch intent: " + err.Error()}
+	}
+	if _, err := os.Stat(dispatchPath); err == nil {
 		return RuntimeBinding{}, &OutcomeUnknownError{Message: "Herdr command dispatch was previously attempted but no supervisor acknowledgement exists"}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return RuntimeBinding{}, &OutcomeUnknownError{Message: "inspect Herdr dispatch intent: " + err.Error()}
@@ -400,14 +404,18 @@ func (runtime *HerdrRuntime) Interrupt(ctx context.Context, operationID, rawHand
 	return nil
 }
 
-func (runtime *HerdrRuntime) Attach(_ context.Context, operationID, rawHandle string) (AttachSpec, error) {
+func (runtime *HerdrRuntime) Attach(ctx context.Context, operationID, rawHandle string) (AttachSpec, error) {
 	handle, err := decodeHerdrHandle(runtime.nodeID, operationID, rawHandle)
 	if err != nil {
 		return AttachSpec{}, err
 	}
 	state, err := readHerdrSupervisorState(filepath.Join(runtime.root, operationID))
-	if err != nil || validateHerdrStateBinding(state, runtime.nodeID, operationID) != nil || (state.Status != RuntimeStateRunning && state.Status != RuntimeStateStarting) {
+	if err != nil || validateHerdrStateBinding(state, runtime.nodeID, operationID) != nil ||
+		(state.Status != RuntimeStateRunning && state.Status != RuntimeStateStarting && state.Status != RuntimeStateExited) {
 		return AttachSpec{}, errors.New("Herdr pane is not live on the current node")
+	}
+	if _, err := runtime.resolvePane(ctx, handle.TerminalID); err != nil {
+		return AttachSpec{}, err
 	}
 	arguments := []string{"terminal", "attach", handle.TerminalID}
 	environment := map[string]string{}
@@ -720,7 +728,7 @@ func decodeHerdrHandle(nodeID, operationID, raw string) (herdrRuntimeHandle, err
 }
 
 func readHerdrHandleFile(path string) (herdrRuntimeHandle, error) {
-	data, err := os.ReadFile(path)
+	data, err := readPrivateAtomicFile(path, 64*1024)
 	if err != nil {
 		return herdrRuntimeHandle{}, err
 	}
@@ -732,7 +740,7 @@ func readHerdrHandleFile(path string) (herdrRuntimeHandle, error) {
 }
 
 func readHerdrSupervisorSpec(path string) (herdrSupervisorSpec, error) {
-	data, err := os.ReadFile(path)
+	data, err := readPrivateAtomicFile(path, 256*1024)
 	if err != nil {
 		return herdrSupervisorSpec{}, err
 	}
@@ -752,7 +760,7 @@ func readHerdrSupervisorSpec(path string) (herdrSupervisorSpec, error) {
 }
 
 func readHerdrSupervisorState(runDirectory string) (herdrSupervisorState, error) {
-	data, err := os.ReadFile(filepath.Join(runDirectory, "state.json"))
+	data, err := readPrivateAtomicFile(filepath.Join(runDirectory, "state.json"), 64*1024)
 	if err != nil {
 		return herdrSupervisorState{}, err
 	}

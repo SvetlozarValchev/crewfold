@@ -98,8 +98,15 @@ task_id=$(extract_id task "$scenario_root/task.json")
 run_id=$(extract_id run "$scenario_root/run.json")
 "$binary" run watch "$run_id" --workspace personal --wait-seconds 15 --socket "$socket_path" --output json >"$scenario_root/final.json"
 grep -Fq '"status":"completed"' "$scenario_root/final.json"
-grep -Fq '"provider_handle":"codex-provider:v1:' "$scenario_root/final.json"
+grep -Fq '"runtime":"direct"' "$scenario_root/final.json"
+grep -Fq '"provider":"codex"' "$scenario_root/final.json"
+grep -Fq '"scenario_name":"codex-canary"' "$scenario_root/final.json"
 grep -Fq 'Recorded Codex endpoint completed the scoped work loop' "$scenario_root/final.json"
+if grep -Eq '"(runtime_handle|provider_handle)"' "$scenario_root/final.json"
+then
+  printf 'Codex public run output exposed an opaque runtime/provider handle field\n' >&2
+  exit 1
+fi
 
 "$binary" run logs "$run_id" --workspace personal --tail 100 --socket "$socket_path" --output json >"$scenario_root/logs.json"
 grep -Fq 'codex-fixture-thread' "$scenario_root/logs.json"

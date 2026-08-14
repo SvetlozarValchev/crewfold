@@ -14,6 +14,15 @@ import (
 	"crewfold/internal/execution"
 )
 
+func prepareTestRunLogArchive(t *testing.T, storage *Store, runID string) *domain.RunLogArchive {
+	t.Helper()
+	archive, err := storage.PrepareRunLogArchive(context.Background(), runID, domain.RunLogs{RunID: runID, State: "exited"})
+	if err != nil {
+		t.Fatalf("PrepareRunLogArchive() error = %v", err)
+	}
+	return &archive
+}
+
 func TestRunLifecyclePersistsPlacementTimelineAcceptanceAndHandoff(t *testing.T) {
 	t.Parallel()
 
@@ -92,10 +101,10 @@ func TestRunLifecyclePersistsPlacementTimelineAcceptanceAndHandoff(t *testing.T)
 	if err != nil || progress.Run.StepCursor != 1 {
 		t.Fatalf("ApplyRunObservation(progress) = %#v, %v", progress, err)
 	}
-	if _, err := storage.ApplyRunObservation(context.Background(), starting.ID, domain.RunObservation{Kind: domain.ObservationCompletion, Message: "done", Evidence: []string{"tests_passed"}}, true, nil, "worker-invalid-complete"); ErrorCode(err) != CodeInvalidRun {
+	if _, err := storage.ApplyRunObservation(context.Background(), starting.ID, domain.RunObservation{Kind: domain.ObservationCompletion, Message: "done", Evidence: []string{"tests_passed"}, LogArchive: prepareTestRunLogArchive(t, storage, starting.ID)}, true, nil, "worker-invalid-complete"); ErrorCode(err) != CodeInvalidRun {
 		t.Fatalf("ApplyRunObservation(completion without handoff) error = %v, code = %q", err, ErrorCode(err))
 	}
-	completed, err := storage.ApplyRunObservation(context.Background(), starting.ID, domain.RunObservation{Kind: domain.ObservationCompletion, Message: "done", Evidence: []string{"tests_passed"}, Handoff: "review the completed work"}, true, nil, "worker-complete")
+	completed, err := storage.ApplyRunObservation(context.Background(), starting.ID, domain.RunObservation{Kind: domain.ObservationCompletion, Message: "done", Evidence: []string{"tests_passed"}, Handoff: "review the completed work", LogArchive: prepareTestRunLogArchive(t, storage, starting.ID)}, true, nil, "worker-complete")
 	if err != nil || completed.Run.Status != domain.RunCompleted || completed.Task.Status != domain.TaskCompleted || completed.Handoff == nil {
 		t.Fatalf("ApplyRunObservation(completion) = %#v, %v", completed, err)
 	}
@@ -298,7 +307,7 @@ func TestRejectedCompletionRequestsChangesAndRetainsAssignment(t *testing.T) {
 	created := createRunTest(t, storage, workspace.ID, assigned, scenario, "start-review-run")
 	_, _ = storage.MarkRunStarting(context.Background(), created.Run.ID, "worker-starting")
 	_, _ = storage.MarkRunStarted(context.Background(), created.Run.ID, "runtime", "provider", "worker-started")
-	detail, err := storage.ApplyRunObservation(context.Background(), created.Run.ID, domain.RunObservation{Kind: domain.ObservationCompletion, Message: "proposed", Evidence: []string{"tests_passed"}, Handoff: "review remains"}, false, []string{"reviewed"}, "worker-review")
+	detail, err := storage.ApplyRunObservation(context.Background(), created.Run.ID, domain.RunObservation{Kind: domain.ObservationCompletion, Message: "proposed", Evidence: []string{"tests_passed"}, Handoff: "review remains", LogArchive: prepareTestRunLogArchive(t, storage, created.Run.ID)}, false, []string{"reviewed"}, "worker-review")
 	if err != nil || detail.Run.Status != domain.RunReview || detail.Task.Status != domain.TaskChangesRequested || detail.Task.AssignmentID == "" || detail.Handoff != nil {
 		t.Fatalf("rejected completion = %#v, %v", detail, err)
 	}
@@ -333,7 +342,7 @@ func TestRunStopRetainsAssignmentAndRecordsForcedFallback(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(requested, replayed) {
 		t.Fatalf("RequestRunStop(replay) = %#v, %v; want %#v", replayed, err, requested)
 	}
-	stopped, err := storage.MarkRunStopped(context.Background(), active.Run.ID, true, "process ignored graceful stop and was force-killed", "worker-stopped")
+	stopped, err := storage.MarkRunStopped(context.Background(), active.Run.ID, true, "process ignored graceful stop and was force-killed", prepareTestRunLogArchive(t, storage, active.Run.ID), "", "worker-stopped")
 	if err != nil {
 		t.Fatalf("MarkRunStopped() error = %v", err)
 	}

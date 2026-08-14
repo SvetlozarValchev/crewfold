@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:cli:backup-verify-response:v1",
+  "title": "Crewfold offline backup verification response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "status", "path", "checks"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:cli:backup-verify-response:v1"},
+    "type": {"const": "backup_verify"},
+    "status": {"enum": ["ok", "failed"]},
+    "path": {"type": "string", "minLength": 2, "maxLength": 4096, "pattern": "^/[^\\x00]*$"},
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "created_at", "baseline_sha256", "event_sequence", "logical_state_sha256", "database_sha256", "manifest_sha256", "artifact_count", "total_bytes"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^backup_[0-9a-f]{32}$"},
+        "path": {"type": "string", "minLength": 2, "maxLength": 4096, "pattern": "^/[^\\x00]*$"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "baseline_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "event_sequence": {"type": "integer", "minimum": 0},
+        "logical_state_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "database_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "artifact_count": {"type": "integer", "minimum": 0, "maximum": 200000},
+        "total_bytes": {"type": "integer", "minimum": 1, "maximum": 17179869184}
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        {"$ref": "#/$defs/manifestCheck"},
+        {"$ref": "#/$defs/fileClosureCheck"},
+        {"$ref": "#/$defs/canonicalIntegrityCheck"},
+        {"$ref": "#/$defs/quiescenceCheck"}
+      ],
+      "items": false
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\x00]*$"}
+      }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "status", "summary"],
+      "properties": {
+        "code": {"type": "string"},
+        "status": {"enum": ["ok", "failed", "not_run"]},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\x00]*$"}
+      }
+    },
+    "manifestCheck": {"allOf": [{"$ref": "#/$defs/check"}, {"properties": {"code": {"const": "manifest"}}}]},
+    "fileClosureCheck": {"allOf": [{"$ref": "#/$defs/check"}, {"properties": {"code": {"const": "file_closure"}}}]},
+    "canonicalIntegrityCheck": {"allOf": [{"$ref": "#/$defs/check"}, {"properties": {"code": {"const": "canonical_integrity"}}}]},
+    "quiescenceCheck": {"allOf": [{"$ref": "#/$defs/check"}, {"properties": {"code": {"const": "quiescence"}}}]}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "ok"}}},
+      "then": {"required": ["backup"], "not": {"required": ["error"]}},
+      "else": {"required": ["error"], "not": {"required": ["backup"]}}
+    }
+  ]
+}

@@ -426,6 +426,70 @@ func TestRunStopAndLogsPassBoundedRuntimeOptions(t *testing.T) {
 	}
 }
 
+func TestRunResolveLostRequiresAndForwardsExactOwnerAttestation(t *testing.T) {
+	t.Parallel()
+
+	runID := "run_00000000000000000000000000000001"
+	client := &fakeDaemonClient{runLossResolution: localapi.RunLossResolutionResult{
+		Schema: localapi.RunLossResolutionSchema,
+		Type:   "run_loss_resolution",
+		Detail: domain.RunDetail{
+			Run:  domain.Run{ID: runID, Status: domain.RunFailed, Revision: 8},
+			Task: domain.Task{Status: domain.TaskBlocked},
+		},
+		Resolution: domain.RunLossResolution{
+			RunID: runID, LostRevision: 7, Resolution: "owner_confirmed_effects_ended",
+			Note: "runtime was retired independently", EventSequence: 91,
+		},
+		EventSequence: 91,
+	}}
+	app, stdout, stderr := newTestApp()
+	app.newClient = func(socketPath string) daemonClient {
+		if socketPath != "/tmp/crewfold.sock" {
+			t.Fatalf("socket path = %q", socketPath)
+		}
+		return client
+	}
+	exit := app.Run([]string{
+		"run", "resolve-lost", runID,
+		"--workspace", "personal",
+		"--expected-revision", "7",
+		"--note", "runtime was retired independently",
+		"--confirm-runtime-retired",
+		"--idempotency-key", "resolve-lost-run",
+		"--socket", "/tmp/crewfold.sock",
+		"--output", "json",
+	})
+	if exit != ExitOK || stderr.Len() != 0 || !strings.Contains(stdout.String(), localapi.RunLossResolutionSchema) {
+		t.Fatalf("Run(resolve-lost) exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+	params := client.runLostResolveParams
+	if params.Workspace != "personal" || params.Run != runID || params.ExpectedRevision != 7 ||
+		params.Note != "runtime was retired independently" || !params.RuntimeRetiredConfirmed || params.IdempotencyKey != "resolve-lost-run" {
+		t.Fatalf("RunLostResolve params = %#v", params)
+	}
+
+	for name, args := range map[string][]string{
+		"missing confirmation": {
+			"run", "resolve-lost", runID, "--workspace", "personal", "--expected-revision", "7",
+			"--note", "runtime was retired independently", "--socket", "/tmp/crewfold.sock",
+		},
+		"duplicate confirmation": {
+			"run", "resolve-lost", runID, "--workspace", "personal", "--expected-revision", "7",
+			"--note", "runtime was retired independently", "--confirm-runtime-retired", "--confirm-runtime-retired",
+			"--socket", "/tmp/crewfold.sock",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			app, _, stderr := newTestApp()
+			if exit := app.Run(args); exit != ExitUsage || !strings.Contains(stderr.String(), "confirm-runtime-retired") {
+				t.Fatalf("Run(%s) exit=%d stderr=%q", name, exit, stderr.String())
+			}
+		})
+	}
+}
+
 func TestRunStopAndLogsRejectUnsafeOptions(t *testing.T) {
 	t.Parallel()
 
@@ -762,14 +826,15 @@ func TestWorkspaceCommandsUseExplicitSocketAndStructuredResults(t *testing.T) {
 			wantSchema: localapi.DatabaseStatusSchema,
 			configure: func(client *fakeDaemonClient) {
 				client.databaseStatus = localapi.DatabaseStatusResult{
-					Schema:              localapi.DatabaseStatusSchema,
-					Type:                "database_status",
-					Status:              "ok",
-					SchemaVersion:       1,
-					LatestSchemaVersion: 1,
-					JournalMode:         "wal",
-					ForeignKeys:         true,
-					IntegrityCheck:      "ok",
+					Schema:         localapi.DatabaseStatusSchema,
+					Type:           "database_status",
+					Status:         "ok",
+					SchemaVersion:  1,
+					BaselineSHA256: strings.Repeat("a", 64),
+					CatalogSHA256:  strings.Repeat("b", 64),
+					JournalMode:    "wal",
+					ForeignKeys:    true,
+					IntegrityCheck: "ok",
 				}
 			},
 		},
@@ -1111,6 +1176,9 @@ type fakeDaemonClient struct {
 	stopErr                   error
 	databaseStatus            localapi.DatabaseStatusResult
 	databaseStatusErr         error
+	fullDoctor                localapi.FullDoctorResult
+	backupCreate              localapi.BackupCreateResult
+	backupCreateParams        localapi.BackupCreateParams
 	knowledgeIndexStatus      localapi.KnowledgeIndexStatusResult
 	knowledgeIndexRebuild     localapi.KnowledgeIndexRebuildResult
 	knowledgeSearch           localapi.KnowledgeSearchResult
@@ -1142,6 +1210,7 @@ type fakeDaemonClient struct {
 	taskList                  localapi.TaskListResult
 	taskTimeline              localapi.TaskTimelineResult
 	runMutation               localapi.RunMutationResult
+	runLossResolution         localapi.RunLossResolutionResult
 	runShow                   localapi.RunShowResult
 	runList                   localapi.RunListResult
 	runLogs                   localapi.RunLogsResult
@@ -1150,6 +1219,7 @@ type fakeDaemonClient struct {
 	runStartParams            localapi.RunStartParams
 	runResumeParams           localapi.RunResumeParams
 	runStopParams             localapi.RunStopParams
+	runLostResolveParams      localapi.RunLostResolveParams
 	runLogsWorkspace          string
 	runLogsRun                string
 	runLogsTail               int
@@ -1244,6 +1314,15 @@ func (client *fakeDaemonClient) Stop(context.Context) (localapi.StopResult, erro
 
 func (client *fakeDaemonClient) DatabaseStatus(context.Context) (localapi.DatabaseStatusResult, error) {
 	return client.databaseStatus, client.databaseStatusErr
+}
+
+func (client *fakeDaemonClient) SystemDoctorFull(context.Context) (localapi.FullDoctorResult, error) {
+	return client.fullDoctor, nil
+}
+
+func (client *fakeDaemonClient) BackupCreate(_ context.Context, params localapi.BackupCreateParams) (localapi.BackupCreateResult, error) {
+	client.backupCreateParams = params
+	return client.backupCreate, nil
 }
 
 func (client *fakeDaemonClient) KnowledgeIndexStatus(_ context.Context, workspace string) (localapi.KnowledgeIndexStatusResult, error) {
@@ -1526,6 +1605,11 @@ func (client *fakeDaemonClient) RunResume(_ context.Context, params localapi.Run
 func (client *fakeDaemonClient) RunStop(_ context.Context, params localapi.RunStopParams) (localapi.RunMutationResult, error) {
 	client.runStopParams = params
 	return client.runMutation, nil
+}
+
+func (client *fakeDaemonClient) RunLostResolve(_ context.Context, params localapi.RunLostResolveParams) (localapi.RunLossResolutionResult, error) {
+	client.runLostResolveParams = params
+	return client.runLossResolution, nil
 }
 
 func (client *fakeDaemonClient) RunLogs(_ context.Context, workspace, run string, tail int) (localapi.RunLogsResult, error) {

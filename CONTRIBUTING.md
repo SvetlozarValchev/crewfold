@@ -38,8 +38,9 @@ model provider or uses credentials. See [docs/testing.md](docs/testing.md) for t
 long-term test strategy and [docs/stack.md](docs/stack.md) for the proposed later
 stack.
 
-SQLite query access is generated with the pinned `sqlc` version. After changing an
-embedded migration or `internal/store/queries/*.sql`, run:
+SQLite query access is generated with the pinned `sqlc` version. After changing
+the one current baseline in `internal/store/baseline/current.sql` or
+`internal/store/queries/*.sql`, run:
 
 ```sh
 ./scripts/generate-db.sh
@@ -48,9 +49,11 @@ embedded migration or `internal/store/queries/*.sql`, run:
 Generated Go is committed. The ordinary offline gate verifies a source hash, so
 contributors and CI need `sqlc` only when database sources actually change.
 
-Every change should include proportionate tests. Protocol and migration changes
-require compatibility fixtures. Runtime adapters require fake or recorded-driver
-tests so normal development does not launch paid agent sessions.
+Every change should include proportionate tests. Protocol and current-baseline
+changes require exact current-contract fixtures; old schemas and protocols are
+refused rather than migrated or retained as compatibility paths. Runtime adapters
+require fake or recorded-driver tests so normal development does not launch paid
+agent sessions.
 
 ## Commits and pull requests
 

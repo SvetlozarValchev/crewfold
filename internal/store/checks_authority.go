@@ -30,7 +30,7 @@ func (s *Store) CreateCheckWatchGrant(ctx context.Context, command CreateCheckWa
 	if err != nil {
 		return MutationResult[domain.CheckWatchGrant]{}, storageFailure("hash check grant", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckWatchGrant]{}, storageFailure("begin check grant", err)
 	}
@@ -127,7 +127,7 @@ func (s *Store) RevokeCheckWatchGrant(ctx context.Context, command RevokeCheckWa
 		return MutationResult[domain.CheckWatchGrant]{}, err
 	}
 	hash, _ := checkSemanticHash("check.grant.revoke", command)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckWatchGrant]{}, err
 	}
@@ -298,7 +298,7 @@ func (s *Store) ConfigureCheckPolicy(ctx context.Context, command ConfigureCheck
 		return MutationResult[domain.CheckPolicy]{}, err
 	}
 	hash, _ := checkSemanticHash("check.policy.configure", command)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckPolicy]{}, err
 	}

@@ -111,7 +111,9 @@ codex_task_id=$(extract_id task "$scenario_root/codex-task.json")
 codex_run_id=$(extract_id run "$scenario_root/codex-run.json")
 "$binary" run watch "$codex_run_id" --workspace personal --wait-seconds 15 --socket "$socket_path" --output json >"$scenario_root/codex-final.json"
 grep -Fq '"status":"completed"' "$scenario_root/codex-final.json"
-grep -Fq '"provider_handle":"codex-provider:v1:' "$scenario_root/codex-final.json"
+grep -Fq '"runtime":"direct"' "$scenario_root/codex-final.json"
+grep -Fq '"provider":"codex"' "$scenario_root/codex-final.json"
+grep -Fq '"scenario_name":"codex-provider-handoff"' "$scenario_root/codex-final.json"
 grep -Fq 'durable mail' "$scenario_root/codex-final.json"
 
 "$binary" task create --workspace personal --project canary --title "Continue from provider-neutral handoff" --description "Continue from the Crewfold-owned handoff in this agent inbox; do not use Codex transcript state." --socket "$socket_path" --idempotency-key provider-handoff-claude-task --output json >"$scenario_root/claude-task.json"
@@ -122,8 +124,15 @@ claude_task_id=$(extract_id task "$scenario_root/claude-task.json")
 claude_run_id=$(extract_id run "$scenario_root/claude-run.json")
 "$binary" run watch "$claude_run_id" --workspace personal --wait-seconds 15 --socket "$socket_path" --output json >"$scenario_root/claude-final.json"
 grep -Fq '"status":"completed"' "$scenario_root/claude-final.json"
-grep -Fq '"provider_handle":"claude-provider:v1:' "$scenario_root/claude-final.json"
+grep -Fq '"runtime":"direct"' "$scenario_root/claude-final.json"
+grep -Fq '"provider":"claude"' "$scenario_root/claude-final.json"
+grep -Fq '"scenario_name":"claude-provider-handoff"' "$scenario_root/claude-final.json"
 grep -Fq 'durable mail without provider-private transcript state' "$scenario_root/claude-final.json"
+if grep -Eq '"(runtime_handle|provider_handle)"' "$scenario_root/codex-final.json" "$scenario_root/claude-final.json"
+then
+  printf 'Provider handoff public run output exposed an opaque runtime/provider handle field\n' >&2
+  exit 1
+fi
 
 "$binary" run logs "$codex_run_id" --workspace personal --tail 100 --socket "$socket_path" --output json >"$scenario_root/codex-logs.json"
 "$binary" run logs "$claude_run_id" --workspace personal --tail 100 --socket "$socket_path" --output json >"$scenario_root/claude-logs.json"

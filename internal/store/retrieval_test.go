@@ -282,8 +282,8 @@ func TestKnowledgeIndexDamageDegradesWithoutAffectingCanonicalReadsAndRebuildRep
 	workspace, project := initializeWorkTestProject(t, storage)
 	task := createWorkTestTask(t, storage, workspace.ID, project.ID, "source", "retrieval-damage-source")
 	proposed := proposeSearchKnowledge(t, storage, workspace.ID, task.Task.ID, "", "damage", "Contact damage", "contact damage", domain.KnowledgeConfidenceHigh, domain.KnowledgeVerificationVerified)
-	var migratedMetadataDDL string
-	if err := storage.db.QueryRow("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'knowledge_search_metadata'").Scan(&migratedMetadataDDL); err != nil {
+	var currentMetadataDDL string
+	if err := storage.db.QueryRow("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'knowledge_search_metadata'").Scan(&currentMetadataDDL); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := storage.db.Exec("DELETE FROM knowledge_search WHERE revision_id = ?", proposed.Revision.ID); err != nil {
@@ -336,8 +336,8 @@ func TestKnowledgeIndexDamageDegradesWithoutAffectingCanonicalReadsAndRebuildRep
 	if err := storage.db.QueryRow("SELECT strict FROM pragma_table_list WHERE name = 'knowledge_search_metadata'").Scan(&strict); err != nil {
 		t.Fatal(err)
 	}
-	if metadataDDL != migratedMetadataDDL || strict != 1 || !strings.Contains(metadataDDL, "source_digest NOT GLOB '*[^0-9a-f]*'") {
-		t.Fatalf("repaired metadata schema differs from migration: strict=%d migrated=%q repaired=%q", strict, migratedMetadataDDL, metadataDDL)
+	if metadataDDL != currentMetadataDDL || strict != 1 || !strings.Contains(metadataDDL, "source_digest NOT GLOB '*[^0-9a-f]*'") {
+		t.Fatalf("repaired metadata schema differs from current baseline: strict=%d current=%q repaired=%q", strict, currentMetadataDDL, metadataDDL)
 	}
 	transaction, err := storage.db.Begin()
 	if err != nil {
@@ -508,6 +508,57 @@ SELECT kr.id,ki.workspace_id,kr.title,kr.body FROM knowledge_revisions kr JOIN k
 			status, err = storage.KnowledgeIndexStatus(context.Background(), workspace.ID)
 			if err != nil || status.Status != domain.KnowledgeIndexOK {
 				t.Fatalf("repaired schema status = %#v, %v", status, err)
+			}
+		})
+	}
+}
+
+func TestKnowledgeIndexShadowSchemaTamperingIsDiagnosedSeparatelyFromCanonicalCatalog(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		table string
+		ddl   string
+	}{
+		{name: "config", table: "knowledge_search_config", ddl: `CREATE TABLE knowledge_search_config(k PRIMARY KEY,v,rogue TEXT UNIQUE) WITHOUT ROWID`},
+		{name: "content", table: "knowledge_search_content", ddl: `CREATE TABLE knowledge_search_content(id INTEGER PRIMARY KEY,c0,c1,c2,c3,rogue TEXT)`},
+		{name: "data", table: "knowledge_search_data", ddl: `CREATE TABLE knowledge_search_data(id INTEGER PRIMARY KEY,block BLOB,rogue TEXT)`},
+		{name: "docsize", table: "knowledge_search_docsize", ddl: `CREATE TABLE knowledge_search_docsize(id INTEGER PRIMARY KEY,sz BLOB,rogue TEXT)`},
+		{name: "idx", table: "knowledge_search_idx", ddl: `CREATE TABLE knowledge_search_idx(segid,term,pgno,rogue TEXT,PRIMARY KEY(segid,term)) WITHOUT ROWID`},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			dataDir := t.TempDir()
+			storage := openTestStore(t, dataDir, Options{})
+			workspace, err := storage.InitWorkspace(context.Background(), InitWorkspaceCommand{
+				Name: "personal", IdempotencyKey: "shadow-workspace-" + test.name, CorrelationID: "shadow-workspace-request-" + test.name,
+			})
+			if err != nil {
+				t.Fatalf("InitWorkspace() error = %v", err)
+			}
+			if _, err := storage.db.Exec("DROP TABLE " + test.table); err != nil {
+				t.Fatalf("drop %s: %v", test.table, err)
+			}
+			if _, err := storage.db.Exec(test.ddl); err != nil {
+				t.Fatalf("replace %s: %v", test.table, err)
+			}
+			if _, err := storage.BaselineIdentity(context.Background()); err != nil {
+				t.Fatalf("derived shadow replacement changed canonical baseline identity: %v", err)
+			}
+			if err := storage.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+
+			reopened, err := Open(context.Background(), dataDir, Options{})
+			if err != nil {
+				t.Fatalf("Open(with corrupt derived shadow) error = %v", err)
+			}
+			defer reopened.Close()
+			status, err := reopened.KnowledgeIndexStatus(context.Background(), workspace.Workspace.ID)
+			if err != nil || status.Status != domain.KnowledgeIndexDegraded || status.Diagnosis != domain.KnowledgeIndexCorrupt {
+				t.Fatalf("KnowledgeIndexStatus(%s) = %#v, %v", test.table, status, err)
 			}
 		})
 	}

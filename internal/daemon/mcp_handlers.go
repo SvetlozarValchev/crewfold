@@ -249,6 +249,9 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 				IdempotencyKey: arguments.IdempotencyKey, CorrelationID: "mcp-" + mcpRequestID(request.ID),
 			})
 			value = result.Value
+			if err == nil {
+				s.signalMessageWakeWorker()
+			}
 		}
 	case toolProgress:
 		var arguments progressArguments

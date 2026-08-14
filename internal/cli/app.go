@@ -18,7 +18,9 @@ import (
 	"crewfold/internal/domain"
 	"crewfold/internal/execution"
 	"crewfold/internal/herdr"
+	"crewfold/internal/loadtest"
 	"crewfold/internal/localapi"
+	"crewfold/internal/recovery"
 	"crewfold/internal/tui"
 )
 
@@ -40,17 +42,22 @@ const (
 
 // App is a testable Crewfold command runner.
 type App struct {
-	stdout         io.Writer
-	stderr         io.Writer
-	info           buildinfo.Info
-	executablePath func() (string, error)
-	runDaemon      func(context.Context, daemon.Config) error
-	newClient      func(string) daemonClient
-	probeHerdr     func(context.Context, string, string) herdr.ProbeReport
-	probeCodex     func(context.Context, string, string) execution.CodexProbeReport
-	probeClaude    func(context.Context, string, string) execution.ClaudeProbeReport
-	runInteractive func(context.Context, localapi.RunAttachResult) error
-	runTUI         func(context.Context, tui.Config) error
+	stdout          io.Writer
+	stderr          io.Writer
+	info            buildinfo.Info
+	executablePath  func() (string, error)
+	runDaemon       func(context.Context, daemon.Config) error
+	newClient       func(string) daemonClient
+	probeHerdr      func(context.Context, string, string) herdr.ProbeReport
+	probeCodex      func(context.Context, string, string) execution.CodexProbeReport
+	probeClaude     func(context.Context, string, string) execution.ClaudeProbeReport
+	runInteractive  func(context.Context, localapi.RunAttachResult) error
+	runTUI          func(context.Context, tui.Config) error
+	runPersonalLoad func(context.Context) (loadtest.Report, error)
+	verifyBackup    func(context.Context, string) (recovery.VerifiedBundle, error)
+	restoreBackup   func(context.Context, string, string) (recovery.PendingRestore, error)
+	activateBackup  func(context.Context, string, bool) (recovery.ActivatedRestore, error)
+	inspectRepair   func(context.Context, string) (recovery.RepairInspection, error)
 }
 
 type daemonClient interface {
@@ -59,6 +66,8 @@ type daemonClient interface {
 	Status(context.Context) (localapi.StatusResult, error)
 	Stop(context.Context) (localapi.StopResult, error)
 	DatabaseStatus(context.Context) (localapi.DatabaseStatusResult, error)
+	SystemDoctorFull(context.Context) (localapi.FullDoctorResult, error)
+	BackupCreate(context.Context, localapi.BackupCreateParams) (localapi.BackupCreateResult, error)
 	KnowledgeIndexStatus(context.Context, string) (localapi.KnowledgeIndexStatusResult, error)
 	WorkspaceInit(context.Context, string, string) (localapi.WorkspaceInitResult, error)
 	WorkspaceShow(context.Context, string) (localapi.WorkspaceShowResult, error)
@@ -119,6 +128,7 @@ type daemonClient interface {
 	RunList(context.Context, localapi.RunListParams) (localapi.RunListResult, error)
 	RunResume(context.Context, localapi.RunResumeParams) (localapi.RunMutationResult, error)
 	RunStop(context.Context, localapi.RunStopParams) (localapi.RunMutationResult, error)
+	RunLostResolve(context.Context, localapi.RunLostResolveParams) (localapi.RunLossResolutionResult, error)
 	RunLogs(context.Context, string, string, int) (localapi.RunLogsResult, error)
 	RunPrompt(context.Context, string, string, string) (localapi.RunControlResult, error)
 	RunInterrupt(context.Context, string, string) (localapi.RunControlResult, error)
@@ -179,8 +189,13 @@ func New(stdout, stderr io.Writer, info buildinfo.Info) *App {
 		probeClaude: func(ctx context.Context, executable, configDir string) execution.ClaudeProbeReport {
 			return execution.NewClaudeProbe(executable, configDir, nil).Run(ctx)
 		},
-		runInteractive: runAttachedProcess,
-		runTUI:         tui.Run,
+		runInteractive:  runAttachedProcess,
+		runTUI:          tui.Run,
+		runPersonalLoad: loadtest.RunPersonal100,
+		verifyBackup:    recovery.VerifyBundle,
+		restoreBackup:   recovery.RestorePending,
+		activateBackup:  recovery.Activate,
+		inspectRepair:   recovery.InspectOffline,
 		newClient: func(socketPath string) daemonClient {
 			return localapi.NewClient(socketPath)
 		},
@@ -214,6 +229,12 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runVersion(mode, args[1:])
 	case "doctor":
 		return a.runDoctor(ctx, mode, args[1:])
+	case "backup":
+		return a.runBackup(ctx, mode, args[1:])
+	case "repair":
+		return a.runRepair(ctx, mode, args[1:])
+	case "test":
+		return a.runTest(ctx, mode, args[1:])
 	case "daemon":
 		return a.runDaemonCommand(ctx, mode, args[1:])
 	case "status":
@@ -909,6 +930,12 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, versionHelp)
 	case "doctor":
 		fmt.Fprint(a.stdout, doctorHelp)
+	case "backup":
+		fmt.Fprint(a.stdout, backupHelp)
+	case "repair":
+		fmt.Fprint(a.stdout, repairHelp)
+	case "test":
+		fmt.Fprint(a.stdout, testHelp)
 	case "daemon":
 		fmt.Fprint(a.stdout, daemonHelp)
 	case "status":
@@ -1036,6 +1063,20 @@ func clientFailureHint(code string) string {
 		return "inspect the current entity revision and retry with that exact expected revision"
 	case "storage_failed":
 		return "run 'crewfold doctor --database --socket <path>' and inspect daemon logs"
+	case "backup_not_quiescent":
+		return "settle or explicitly resolve every reported run, check, wake, scheduling, and approval blocker, then capture a new cut"
+	case "backup_source_unhealthy", "canonical_integrity_failed", "current_baseline_mismatch":
+		return "run 'crewfold doctor --full --socket <path>'; Crewfold will not repair or migrate canonical state"
+	case "backup_target_exists", "restore_target_exists":
+		return "choose a new nonexistent target directory"
+	case "backup_target_invalid", "backup_contract_mismatch", "backup_integrity_failed":
+		return "inspect the exact private path and use a bundle created by this current Crewfold contract"
+	case "execution_capacity_exhausted":
+		return "wait for or stop current execution in the reported capacity dimension, then replay the same request"
+	case "runtime_binding_unavailable":
+		return "inspect the run state; only a live binding on this node can be controlled"
+	case "run_logs_unavailable":
+		return "inspect the run timeline and durable artifacts; no trustworthy live or terminal log capture exists"
 	default:
 		return "run 'crewfold status --socket <path>' to inspect daemon availability"
 	}
@@ -1076,6 +1117,9 @@ func (a *App) runDoctor(ctx context.Context, mode outputMode, args []string) int
 	if len(args) > 0 && args[0] == "--database" {
 		return a.runDatabaseDoctor(ctx, mode, args[1:])
 	}
+	if len(args) > 0 && args[0] == "--full" {
+		return a.runFullDoctor(ctx, mode, args[1:])
+	}
 	if len(args) > 0 && args[0] == "--retrieval" {
 		return a.runRetrievalDoctor(ctx, mode, args[1:])
 	}
@@ -1087,7 +1131,7 @@ func (a *App) runDoctor(ctx context.Context, mode outputMode, args []string) int
 	}
 	if len(args) != 1 || args[0] != "--self" {
 		return a.writeFailure(mode, usageFailure(
-			"doctor requires --self, --database, --retrieval, --runtime herdr, or --provider codex|claude",
+			"doctor requires --self, --full, --database, --retrieval, --runtime herdr, or --provider codex|claude",
 			"run 'crewfold help doctor' for usage",
 		))
 	}
@@ -1265,7 +1309,9 @@ func (a *App) runDatabaseDoctor(ctx context.Context, mode outputMode, args []str
 	} else {
 		fmt.Fprintln(a.stdout, "Crewfold database")
 		fmt.Fprintf(a.stdout, "status: %s\n", result.Status)
-		fmt.Fprintf(a.stdout, "schema: %d/%d\n", result.SchemaVersion, result.LatestSchemaVersion)
+		fmt.Fprintf(a.stdout, "schema: %d\n", result.SchemaVersion)
+		fmt.Fprintf(a.stdout, "baseline_sha256: %s\n", result.BaselineSHA256)
+		fmt.Fprintf(a.stdout, "catalog_sha256: %s\n", result.CatalogSHA256)
 		fmt.Fprintf(a.stdout, "journal: %s\n", result.JournalMode)
 		fmt.Fprintf(a.stdout, "foreign_keys: %t\n", result.ForeignKeys)
 		fmt.Fprintf(a.stdout, "integrity: %s\n", result.IntegrityCheck)
@@ -1612,7 +1658,10 @@ Usage:
 
 Commands:
   version        Print build and platform information
-  doctor --self  Check this binary (use --database or --retrieval for daemon state)
+  doctor --self  Check this binary (use --full for canonical daemon state)
+  backup         Create, verify, restore, or activate a private recovery bundle
+  repair         Inspect one offline data directory without changing it
+  test           Run the isolated provider-free personal-scale profile
   daemon run     Run the local daemon in the foreground
   daemon stop    Ask a running daemon to stop cleanly
   status         Query daemon health through its local socket
@@ -1673,15 +1722,16 @@ does not invoke Git or access the network.
 
 const doctorHelp = `Usage:
   crewfold doctor --self [--output text|json]
+  crewfold doctor --full --socket <path> [--output text|json]
   crewfold doctor --database --socket <path> [--output text|json]
   crewfold doctor --retrieval --workspace <scope> --socket <path> [--output text|json]
   crewfold doctor --runtime herdr [--herdr-binary <path>] [--herdr-session <name>] [--output text|json]
   crewfold doctor --provider codex [--codex-binary <path>] [--codex-home <path>] [--output text|json]
   crewfold doctor --provider claude [--claude-binary <path>] [--claude-config-dir <path>] [--output text|json]
 
-Run checks for the current executable or query the daemon's SQLite database or
-rebuildable knowledge-retrieval index. Retrieval health is distinct from canonical
-database health.
+Run checks for the current executable or query the daemon's full canonical state,
+SQLite database, or rebuildable knowledge-retrieval index. Full doctor checks the
+exact current baseline, authority graph, durable queues, artifacts, and resources.
 `
 
 func runAttachedProcess(ctx context.Context, attachment localapi.RunAttachResult) error {

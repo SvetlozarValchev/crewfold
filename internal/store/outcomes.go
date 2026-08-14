@@ -67,7 +67,7 @@ type resolvedOutcomeEvidence struct {
 func (s *Store) withOutcomeMutation(ctx context.Context, operation string, fn func(*sql.Tx) error) error {
 	s.outcomeMutationMu.Lock()
 	defer s.outcomeMutationMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return storageFailure("begin "+operation, err)
 	}

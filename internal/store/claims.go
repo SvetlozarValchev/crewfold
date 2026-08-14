@@ -104,7 +104,7 @@ func (s *Store) AddClaim(ctx context.Context, command AddClaimCommand) (ClaimMut
 		return ClaimMutationResult{}, err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return ClaimMutationResult{}, storageFailure("begin claim addition", err)
 	}
@@ -251,7 +251,7 @@ func (s *Store) ReleaseClaim(ctx context.Context, command ReleaseClaimCommand) (
 	if _, err := s.ReconcileExpiredClaims(ctx, command.WorkspaceIdentifier, derivedCorrelationID(command.CorrelationID, "lease")); err != nil {
 		return ClaimMutationResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return ClaimMutationResult{}, storageFailure("begin claim release", err)
 	}
@@ -306,12 +306,26 @@ func (s *Store) ReleaseClaim(ctx context.Context, command ReleaseClaimCommand) (
 }
 
 func (s *Store) ReconcileExpiredClaims(ctx context.Context, workspaceIdentifier, correlationID string) (int, error) {
+	return s.reconcileExpiredClaims(ctx, workspaceIdentifier, correlationID, 0)
+}
+
+// ReconcileExpiredClaimsBatch advances at most limit elapsed claims. Repeated
+// calls drain the stable lease-expiry/id order as committed claims cease to be
+// active candidates.
+func (s *Store) ReconcileExpiredClaimsBatch(ctx context.Context, workspaceIdentifier, correlationID string, limit int) (int, error) {
+	if limit < 1 || limit > MaximumLeaseReconciliationBatchLimit {
+		return 0, &Error{Code: CodeInvalidClaim, Message: fmt.Sprintf("claim reconciliation limit must be between 1 and %d", MaximumLeaseReconciliationBatchLimit)}
+	}
+	return s.reconcileExpiredClaims(ctx, workspaceIdentifier, correlationID, limit)
+}
+
+func (s *Store) reconcileExpiredClaims(ctx context.Context, workspaceIdentifier, correlationID string, limit int) (int, error) {
 	workspaceIdentifier = strings.TrimSpace(workspaceIdentifier)
 	correlationID = strings.TrimSpace(correlationID)
 	if workspaceIdentifier == "" || correlationID == "" || len(correlationID) > 128 {
 		return 0, &Error{Code: CodeInvalidClaim, Message: "claim reconciliation requires workspace and correlation id"}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return 0, storageFailure("begin claim lease reconciliation", err)
 	}
@@ -321,7 +335,7 @@ func (s *Store) ReconcileExpiredClaims(ctx context.Context, workspaceIdentifier,
 		return 0, err
 	}
 	now := s.nowText()
-	count, err := expireClaimsInTransaction(ctx, tx, workspace.ID, now, correlationID)
+	count, err := expireClaimsInTransactionLimit(ctx, tx, workspace.ID, now, correlationID, limit)
 	if err != nil {
 		return 0, err
 	}
@@ -332,14 +346,24 @@ func (s *Store) ReconcileExpiredClaims(ctx context.Context, workspaceIdentifier,
 }
 
 func expireClaimsInTransaction(ctx context.Context, tx *sql.Tx, workspaceID, now, correlationID string) (int, error) {
-	rows, err := tx.QueryContext(ctx, claimSelect+` WHERE workspace_id = ? AND status = 'active'
+	return expireClaimsInTransactionLimit(ctx, tx, workspaceID, now, correlationID, 0)
+}
+
+func expireClaimsInTransactionLimit(ctx context.Context, tx *sql.Tx, workspaceID, now, correlationID string, limit int) (int, error) {
+	query := claimSelect + ` WHERE workspace_id = ? AND status = 'active'
 AND crewfold_timestamp_key(lease_expires_at) <= crewfold_timestamp_key(?)
 AND NOT EXISTS (
     SELECT 1 FROM runs run
     WHERE run.task_id = work_claims.task_id
       AND run.status IN ('requested','starting','active','blocked','stopping','lost')
 )
-ORDER BY crewfold_timestamp_key(lease_expires_at), id`, workspaceID, now)
+ORDER BY crewfold_timestamp_key(lease_expires_at), id`
+	arguments := []any{workspaceID, now}
+	if limit > 0 {
+		query += "\nLIMIT ?"
+		arguments = append(arguments, limit)
+	}
+	rows, err := tx.QueryContext(ctx, query, arguments...)
 	if err != nil {
 		return 0, storageFailure("list expired claims", err)
 	}
@@ -461,7 +485,7 @@ func (s *Store) RecordCheckoutClaimScan(ctx context.Context, command RecordCheck
 	if command.CheckoutID == "" || command.WatcherID == "" || len(command.WatcherID) > 128 || command.HeadCommit == "" || command.CorrelationID == "" || len(command.CorrelationID) > 128 || pathErr != nil {
 		return domain.CheckoutClaimScan{}, &Error{Code: CodeInvalidClaimScan, Message: "claim scan requires checkout, watcher, HEAD, correlation id, and valid repository-relative dirty paths"}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.CheckoutClaimScan{}, storageFailure("begin claim scan", err)
 	}

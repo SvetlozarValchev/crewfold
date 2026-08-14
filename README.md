@@ -20,7 +20,8 @@ than forcing the core to understand every terminal UI.
 
 ## Status
 
-Crewfold is in its implementation-bootstrap phase. The current binary provides a
+Crewfold has completed operator alpha and is in M20 personal-beta hardening. The
+current binary provides a
 foreground local daemon, an owner-only Unix socket, and durable workspace,
 project, repository, checkout, agent, objective, task, dependency, assignment,
 lease, budget, run, placement, timeline, handoff, and event records in SQLite. It
@@ -76,11 +77,16 @@ deterministic curator rule now safely copies accepted meeting resolutions under
 explicit owner configuration. Exact-revision contradiction reports remain inert
 until owner confirmation; an open record then quarantines both exact participants
 from search and new explicit context without changing currency or historical
-packets. Model-assisted curation, semantic conflict detection, broader knowledge
-types, and the operator TUI remain to come. A deterministic
-project knowledge bundle now exports and owner-imports complete canonical
+packets. A deterministic project knowledge bundle exports and owner-imports complete canonical
 item/revision/source/applicability and contradiction snapshots without provider
-state, operational ghost tasks, or reliance on FTS.
+state, operational ghost tasks, or reliance on FTS. Owner-granted manager
+proposals, deterministic supervision, local check evidence, reviewed outcomes,
+bounded project/workspace briefings, and the Go-native terminal dashboard are
+implemented. M20 now hardens the one exact current baseline, path-based
+quiescent backup/restore, offline repair diagnosis, node-bound runtime identity,
+and provider-free personal-100 load envelope. Model-assisted curation, semantic
+conflict detection, and broader knowledge types remain outside the current
+contract.
 
 This repository is local only. No upstream GitHub repository or remote is
 configured.
@@ -177,7 +183,6 @@ session formats.
 | `protocol/` | Versioned API, event, and adapter schemas |
 | `integrations/herdr/` | Preferred interactive runtime driver |
 | `integrations/providers/` | Provider adapter contracts and implementations |
-| `web/` | Deferred browser console; not part of the first milestone |
 | `docs/` | Product, architecture, protocol, and operating decisions |
 
 Start with the [documentation map](docs/README.md), then read the
@@ -186,9 +191,9 @@ Start with the [documentation map](docs/README.md), then read the
 [implementation plan](docs/implementation-plan.md) and
 [testing strategy](docs/testing.md).
 
-## Scope of the first implementation
+## Implemented foundation
 
-The first vertical slice will prove this loop:
+The implemented milestone sequence proves this loop:
 
 ```text
 register project -> define agent -> assign task -> launch run
@@ -196,8 +201,10 @@ register project -> define agent -> assign task -> launch run
   -> store handoff -> stop and resume without losing coordination state
 ```
 
-It will not initially provide a hosted service, organization accounts, autonomous
-merging, a general workflow language, or a vector database.
+The personal product does not provide a hosted service, organization accounts,
+autonomous merging, a general workflow language, or a vector database. M20
+recovery is restore-to-new-directory from a quiescent private cut; it does not
+clone live runtime sessions, node keys, or capabilities.
 
 ## Development
 

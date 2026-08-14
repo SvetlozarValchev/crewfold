@@ -104,14 +104,24 @@ SELECT id FROM check_routes WHERE workspace_id=sqlc.arg(workspace_id) AND (CAST(
 UPDATE check_routes SET status='retired',revision=revision+1,updated_at=sqlc.arg(updated_at),updated_by='local-owner' WHERE id=sqlc.arg(id) AND workspace_id=sqlc.arg(workspace_id) AND status='active' AND revision=sqlc.arg(expected_revision);
 
 -- name: InsertCheckRun :exec
-INSERT INTO check_runs(id,workspace_id,project_id,task_id,task_revision,requirement_id,requirement_revision,definition_id,definition_content_revision,definition_sha256,checkout_id,checkout_revision,repository_id,repository_object_format,checkout_path,checkout_write_mode,source_type,source_actor_id,source_agent_id,source_agent_revision,source_run_id,source_grant_id,source_grant_revision,source_max_in_flight,status,runtime_handle,revision,created_at,updated_at,started_at,finished_at,created_by,updated_by)
-VALUES(sqlc.arg(id),sqlc.arg(workspace_id),sqlc.arg(project_id),sqlc.arg(task_id),sqlc.arg(task_revision),sqlc.arg(requirement_id),sqlc.arg(requirement_revision),sqlc.arg(definition_id),sqlc.arg(definition_content_revision),sqlc.arg(definition_sha256),sqlc.arg(checkout_id),sqlc.arg(checkout_revision),sqlc.arg(repository_id),sqlc.arg(repository_object_format),sqlc.arg(checkout_path),sqlc.arg(checkout_write_mode),sqlc.arg(source_type),sqlc.arg(source_actor_id),NULLIF(sqlc.arg(source_agent_id),''),NULLIF(sqlc.arg(source_agent_revision),0),NULLIF(sqlc.arg(source_run_id),''),NULLIF(sqlc.arg(source_grant_id),''),NULLIF(sqlc.arg(source_grant_revision),0),sqlc.arg(source_max_in_flight),'requested',NULL,1,sqlc.arg(created_at),sqlc.arg(created_at),NULL,NULL,sqlc.arg(created_by),sqlc.arg(created_by));
+INSERT INTO check_runs(id,workspace_id,project_id,task_id,task_revision,requirement_id,requirement_revision,definition_id,definition_content_revision,definition_sha256,checkout_id,checkout_revision,repository_id,repository_object_format,checkout_path,checkout_write_mode,source_type,source_actor_id,source_agent_id,source_agent_revision,source_run_id,source_grant_id,source_grant_revision,source_max_in_flight,status,revision,created_at,updated_at,started_at,finished_at,created_by,updated_by)
+VALUES(sqlc.arg(id),sqlc.arg(workspace_id),sqlc.arg(project_id),sqlc.arg(task_id),sqlc.arg(task_revision),sqlc.arg(requirement_id),sqlc.arg(requirement_revision),sqlc.arg(definition_id),sqlc.arg(definition_content_revision),sqlc.arg(definition_sha256),sqlc.arg(checkout_id),sqlc.arg(checkout_revision),sqlc.arg(repository_id),sqlc.arg(repository_object_format),sqlc.arg(checkout_path),sqlc.arg(checkout_write_mode),sqlc.arg(source_type),sqlc.arg(source_actor_id),NULLIF(sqlc.arg(source_agent_id),''),NULLIF(sqlc.arg(source_agent_revision),0),NULLIF(sqlc.arg(source_run_id),''),NULLIF(sqlc.arg(source_grant_id),''),NULLIF(sqlc.arg(source_grant_revision),0),sqlc.arg(source_max_in_flight),'requested',1,sqlc.arg(created_at),sqlc.arg(created_at),NULL,NULL,sqlc.arg(created_by),sqlc.arg(created_by));
 
 -- name: InsertCheckJob :exec
 INSERT INTO check_jobs(id,check_run_id,status,available_at,lease_expires_at,attempts,created_at,updated_at) VALUES(sqlc.arg(id),sqlc.arg(check_run_id),'pending',sqlc.arg(created_at),NULL,0,sqlc.arg(created_at),sqlc.arg(created_at));
 
 -- name: GetCheckRun :one
-SELECT * FROM check_runs WHERE id=sqlc.arg(id);
+SELECT run.id,run.workspace_id,run.project_id,run.task_id,run.task_revision,
+ run.requirement_id,run.requirement_revision,run.definition_id,run.definition_content_revision,run.definition_sha256,
+ run.checkout_id,run.checkout_revision,run.repository_id,run.repository_object_format,run.checkout_path,run.checkout_write_mode,
+ run.source_type,run.source_actor_id,run.source_agent_id,run.source_agent_revision,run.source_run_id,run.source_grant_id,run.source_grant_revision,run.source_max_in_flight,
+ run.status,run.revision,run.created_at,run.updated_at,run.started_at,run.finished_at,run.created_by,run.updated_by,
+ COALESCE(binding.runtime_handle,'') AS runtime_handle,
+ COALESCE(binding.node_id,'') AS runtime_node_id,
+ COALESCE(binding.node_fingerprint,'') AS runtime_node_fingerprint,
+ COALESCE(binding.operation_id,'') AS runtime_operation_id
+FROM check_runs run LEFT JOIN check_runtime_bindings binding ON binding.check_run_id=run.id
+WHERE run.id=sqlc.arg(id);
 
 -- name: GetCheckJobByRun :one
 SELECT * FROM check_jobs WHERE check_run_id=sqlc.arg(check_run_id);
@@ -382,6 +392,9 @@ UPDATE check_runs
 SET status='finished',revision=revision+1,finished_at=sqlc.arg(finished_at),
     updated_at=sqlc.arg(finished_at),updated_by='crewfold-check-worker'
 WHERE id=sqlc.arg(check_run_id) AND status IN ('starting','running');
+
+-- name: DeleteCheckRuntimeBinding :execrows
+DELETE FROM check_runtime_bindings WHERE check_run_id=sqlc.arg(check_run_id);
 
 -- name: CompleteTerminalCheckJob :exec
 UPDATE check_jobs

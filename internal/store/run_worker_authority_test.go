@@ -255,7 +255,7 @@ func committedSupervisorRunForWorkerTest(t *testing.T, key string, retry bool) (
 		t.Fatalf("MarkRunStarted(manager) = %v", err)
 	}
 	if _, err := storage.ApplyRunObservation(ctx, managerRunID, domain.RunObservation{
-		Kind: domain.ObservationCompletion, Message: "proposal committed", Handoff: "owner accepted exact task",
+		Kind: domain.ObservationCompletion, Message: "proposal committed", Handoff: "owner accepted exact task", LogArchive: prepareTestRunLogArchive(t, storage, managerRunID),
 	}, true, nil, "request-manager-completed-"+key); err != nil {
 		t.Fatalf("ApplyRunObservation(manager completion) = %v", err)
 	}

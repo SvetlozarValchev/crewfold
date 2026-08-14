@@ -63,23 +63,27 @@ do not mutate user-owned files.
 
 ## Persistence and recovery
 
-- Durable state exercised: the SQLite current baseline with
-  `workspaces`, append-only `events`, `idempotency_keys`, and
-  `schema_migrations`; SQLite's file header carries application ID `CRFD`.
+- Durable state exercised at the reviewed M1 commit: `workspaces`, append-only
+  `events`, `idempotency_keys`, and the then-current `schema_migrations`
+  metadata; SQLite's file header carries application ID `CRFD`. M20 superseded
+  that historical layout with one exact `baseline/current.sql` and
+  `schema_baseline` identity; the current product has no migration ladder.
 - Restart/crash points tested: graceful daemon restart after a committed command;
   forced process death after projection insertion and after event insertion.
 - Reconciliation outcome: committed workspace/event/idempotency state returns
   byte-identically after restart; uncommitted transactions are wholly absent.
-- Fresh-database initialization applies the embedded current baseline and verifies
-  it at startup.
-- Backup/restore impact: the live database may have WAL/SHM companions. A future
-  backup command must use SQLite's online backup API; copying only the open main
-  file is explicitly unsupported.
+- At this reviewed commit, fresh-database initialization applied the embedded
+  baseline and verified it at startup. The current M20 implementation creates and
+  verifies its single exact baseline atomically.
+- At this reviewed commit, online backup was deferred. M20 now uses SQLite's
+  online backup API and still forbids copying only an open main database file.
 
-SQLite runs in WAL mode with foreign keys enabled, a 5000 ms busy timeout,
-`synchronous=FULL`, immediate write transactions, one bounded connection, startup
-`quick_check`, and exact baseline-metadata validation. Database, lock, event, and
-idempotency writes use one local authority; there is no distributed state.
+At the reviewed M1 commit SQLite used one bounded connection. The current M20
+contract keeps one serialized writer plus a bounded four-connection WAL reader
+pool, foreign keys, a 5000 ms busy timeout, `synchronous=FULL`, immediate write
+transactions, startup quick validation, and exact baseline identity. Database,
+lock, event, and idempotency writes still use one local authority; there is no
+distributed state.
 
 ## Security and autonomy
 

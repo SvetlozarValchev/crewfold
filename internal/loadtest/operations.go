@@ -291,6 +291,11 @@ func exerciseSaturatedControl(ctx context.Context, storage *store.Store, root st
 }
 
 func measurePersonalRecovery(ctx context.Context, root string, clock *personalClock, canonical store.CanonicalIntegrityReport, metrics *measurements) (returnedErr error) {
+	recoveryRoot := root + "-recovery"
+	if err := os.Mkdir(recoveryRoot, 0o700); err != nil {
+		return fmt.Errorf("create personal-100 recovery sibling: %w", err)
+	}
+	defer os.RemoveAll(recoveryRoot)
 	running, startupElapsed, err := startPersonalDaemon(ctx, root, clock, false, nil)
 	metrics.warmStartup = append(metrics.warmStartup, startupElapsed)
 	if err != nil {
@@ -311,7 +316,7 @@ func measurePersonalRecovery(ctx context.Context, root string, clock *personalCl
 	if doctor.Status != "ok" || doctor.EventSequence != personalEventCount || len(doctor.Checks) != len(localapi.FullDoctorCheckOrder()) || doctor.Resources.RSSBytes <= 0 {
 		return fmt.Errorf("personal-100 full doctor result differs: status=%s event=%d checks=%d rss=%d", doctor.Status, doctor.EventSequence, len(doctor.Checks), doctor.Resources.RSSBytes)
 	}
-	bundlePath := filepath.Join(root, "personal-load-backup")
+	bundlePath := filepath.Join(recoveryRoot, "personal-load-backup")
 	created, err := measured(&metrics.backupCreate, func() (localapi.BackupCreateResult, error) {
 		return running.client.BackupCreate(ctx, localapi.BackupCreateParams{TargetPath: bundlePath, IdempotencyKey: "personal-load-backup"})
 	})
@@ -337,7 +342,7 @@ func measurePersonalRecovery(ctx context.Context, root string, clock *personalCl
 		verified.Manifest.EventHighWater != personalEventCount || verified.Manifest.LogicalSHA256 != canonical.LogicalSHA256 {
 		return fmt.Errorf("personal-100 verified bundle differs from its online result")
 	}
-	restorePath := filepath.Join(root, "personal-load-restore")
+	restorePath := filepath.Join(recoveryRoot, "personal-load-restore")
 	restored, err := measured(&metrics.backupRestore, func() (recovery.PendingRestore, error) {
 		return recovery.RestorePending(ctx, bundlePath, restorePath)
 	})

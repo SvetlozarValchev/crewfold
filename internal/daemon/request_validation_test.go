@@ -37,8 +37,11 @@ func TestOperatorRequestParamContractRegistryIsComplete(t *testing.T) {
 		localapi.MethodRunAttach:            "local/v1/run-attach.params.schema.json",
 		localapi.MethodRunResume:            "local/v1/run-resume.params.schema.json",
 		localapi.MethodRunStop:              "local/v1/run-stop.params.schema.json",
+		localapi.MethodRunLostResolve:       "local/v1/run-lost-resolve.params.schema.json",
 		localapi.MethodApprovalAllow:        "local/v1/approval-decision.params.schema.json",
 		localapi.MethodApprovalDeny:         "local/v1/approval-decision.params.schema.json",
+		localapi.MethodSystemDoctorFull:     "local/v1/system-doctor-full.params.schema.json",
+		localapi.MethodBackupCreate:         "local/v1/backup-create.params.schema.json",
 	}
 	if !reflect.DeepEqual(operatorRequestParamContracts, want) {
 		t.Fatalf("operator request contract registry = %#v, want %#v", operatorRequestParamContracts, want)
@@ -73,6 +76,9 @@ func TestOperatorRequestSchemasRejectPresenceSensitiveInvalidValues(t *testing.T
 		"malformed attach run":     `{"id":"attach-run","protocol":1,"method":"run.attach","params":{"workspace":"personal","run":"run_bad"}}`,
 		"malformed resume run":     `{"id":"resume-run","protocol":1,"method":"run.resume","params":{"workspace":"personal","run":"run_bad","expected_revision":1,"idempotency_key":"resume"}}`,
 		"malformed stop run":       `{"id":"stop-run","protocol":1,"method":"run.stop","params":{"workspace":"personal","run":"run_bad","expected_revision":1,"grace_period_millis":100,"idempotency_key":"stop"}}`,
+		"full doctor has params":   `{"id":"doctor-extra","protocol":1,"method":"system.doctor.full","params":{"quick":true}}`,
+		"relative backup target":   `{"id":"backup-relative","protocol":1,"method":"backup.create","params":{"target_path":"relative","idempotency_key":"backup"}}`,
+		"empty backup key":         `{"id":"backup-key","protocol":1,"method":"backup.create","params":{"target_path":"/private/new-backup","idempotency_key":""}}`,
 	} {
 		name, request := name, request
 		t.Run(name, func(t *testing.T) {

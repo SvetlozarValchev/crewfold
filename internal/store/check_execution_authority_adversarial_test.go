@@ -308,6 +308,21 @@ func newGrantedCheckAuthorityFixture(t *testing.T) *grantedCheckAuthorityFixture
 	fixture := &grantedCheckAuthorityFixture{now: time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)}
 	fixture.storage = openTestStore(t, t.TempDir(), Options{Clock: func() time.Time { return fixture.now }})
 	fixture.workspace, fixture.project, fixture.agent, fixture.checkout, fixture.task = initializeRunTest(t, fixture.storage, "check-authority")
+	// The baseline's project-policy seed is produced by SQLite's wall clock.
+	// Align the controlled fixture clock once, before creating any leased or
+	// expiring authority, so a long parallel package run cannot make a later
+	// monotonicity adjustment jump past capabilities created earlier.
+	var policyUpdatedAt string
+	if err := fixture.storage.db.QueryRow(`SELECT updated_at FROM check_policies WHERE workspace_id=? AND project_id=?`, fixture.workspace.ID, fixture.project.ID).Scan(&policyUpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	seededAt, err := time.Parse(time.RFC3339Nano, policyUpdatedAt)
+	if err != nil {
+		t.Fatalf("parse seeded check policy time: %v", err)
+	}
+	if !fixture.now.After(seededAt) {
+		fixture.now = seededAt.Add(time.Second)
+	}
 	objective, err := fixture.storage.CreateObjective(context.Background(), CreateObjectiveCommand{
 		WorkspaceIdentifier: fixture.workspace.ID,
 		ProjectIdentifier:   fixture.project.ID,

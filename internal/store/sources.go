@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -57,7 +59,7 @@ func (s *Store) RegisterProject(ctx context.Context, command RegisterProjectComm
 	if err != nil {
 		return ProjectRegistrationResult{}, storageFailure("hash project registration", err)
 	}
-	transaction, err := s.db.BeginTx(ctx, nil)
+	transaction, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return ProjectRegistrationResult{}, storageFailure("begin project registration", err)
 	}
@@ -166,7 +168,7 @@ func (s *Store) AddCheckout(ctx context.Context, command AddCheckoutCommand) (Ch
 	if err != nil {
 		return CheckoutRegistrationResult{}, storageFailure("hash checkout registration", err)
 	}
-	transaction, err := s.db.BeginTx(ctx, nil)
+	transaction, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return CheckoutRegistrationResult{}, storageFailure("begin checkout registration", err)
 	}
@@ -253,7 +255,7 @@ func (s *Store) InspectProject(ctx context.Context, workspaceIdentifier, project
 // Project resolves an exact project by ID or name without inspecting checkout
 // state or emitting observation events.
 func (s *Store) Project(ctx context.Context, workspaceIdentifier, projectIdentifier string) (domain.Project, error) {
-	transaction, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	transaction, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.Project{}, storageFailure("begin project lookup", err)
 	}
@@ -278,7 +280,7 @@ func (s *Store) ApplyCheckoutObservations(ctx context.Context, workspaceIdentifi
 		repositories[repository.ID] = repository
 	}
 
-	transaction, err := s.db.BeginTx(ctx, nil)
+	transaction, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return ProjectInspection{}, storageFailure("begin checkout observation update", err)
 	}
@@ -616,7 +618,7 @@ func appendEventForActor(ctx context.Context, transaction *sql.Tx, workspaceID, 
 	if err != nil {
 		return 0, storageFailure("generate event id", err)
 	}
-	dataJSON, err := json.Marshal(data)
+	dataJSON, err := canonicalEventDataJSON(data)
 	if err != nil {
 		return 0, storageFailure("encode event data", err)
 	}
@@ -652,6 +654,33 @@ INSERT INTO events(
 		return 0, storageFailure("read event sequence", err)
 	}
 	return sequence, nil
+}
+
+// canonicalEventDataJSON closes the event journal over one exact JSON byte
+// representation. Event producers may pass structs nested inside maps; a
+// direct json.Marshal would preserve struct field declaration order while the
+// canonical verifier orders object keys lexically. Decode with UseNumber and
+// re-encode the complete object so nested objects follow the same rule without
+// changing integer precision.
+func canonicalEventDataJSON(data any) ([]byte, error) {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	var object map[string]any
+	if err := decoder.Decode(&object); err != nil {
+		return nil, err
+	}
+	if object == nil {
+		return nil, errors.New("event data must be a JSON object")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, errors.New("event data must contain exactly one JSON object")
+	}
+	return json.Marshal(object)
 }
 
 func checkoutEventData(checkout domain.Checkout) map[string]any {

@@ -439,6 +439,35 @@ frozen request/idempotency key to one committed result. Arbitrary agent role and
 launch-profile purpose strings are authority-looking in those fixtures and have
 no effect on ordering, urgency, action availability, or permission.
 
+### Personal-scale recovery fixture
+
+`crewfold test load --profile personal-100` owns a new private temporary data
+directory and accepts no caller data directory, checkout, provider home, or
+credential path. It makes no model, paid-provider, network, or external
+repository call. The fixture contains exactly one workspace, ten projects, 100
+arbitrary-role agent definitions, 1,000 tasks, and 100,000 known current-contract
+events. One project owns exactly 80,000 events; every other project has an urgent
+owner decision and mixed outcome/evidence state. A saturated phase reserves eight
+unresolved runs with no more than two starting, then deterministically settles
+them before recovery checks.
+
+The report records OS, architecture, kernel, Go and SQLite versions, CPU, logical
+CPU count, memory, repetitions, p50/p95/p99/max, bytes, peak RSS, goroutines, and
+open file descriptors. It proves the existing urgency-banded, per-project
+round-robin workspace briefing cannot let the noisy project crowd every unrelated
+decision out. Project and workspace briefings remain at most 128 whole claims and
+64 KiB.
+
+The recovery scenario creates a quiescent online SQLite snapshot while later
+source writes continue, binds exactly the check and run-log artifacts referenced
+by that cut, verifies it after deleting the source daemon/database, restores it
+to a nonexistent directory, and proves a pending restore cannot start. After the
+source is retired, explicit activation generates a distinct node key, no
+capabilities, no live bindings, and no coordination event. Store and process
+fixtures kill create/restore at every publish barrier, hold SQLite busy, corrupt
+each manifest/database/artifact class, inject nonterminal restored state, and
+exercise owner-confirmed lost-run retirement.
+
 ### Manager/supervisor authority fixture
 
 The provider-free `manager-supervisor` scenario uses a fixture grantee with an
@@ -532,6 +561,9 @@ The suite grows this matrix milestone by milestone:
 | Manager/supervisor authority | current packet without grant denied, exact grant/revocation, same-role ungranted denial, self-accept denial, inert proposal, stale owner decision, approval replay, raw-SQL detached receipt/hash/source |
 | Local checks | fixed-spec replay mismatch, launch/terminal dirty or changed HEAD, timeout, excessive output, vanished supervisor, unavailable Git observation, wrong recipient, orphan artifact, daemon restart while running |
 | Check-watch authority | current packet without grant denied, exact grant/revocation, management/check-watch grant mutual exclusion, same-role ungranted denial, scope/command/checkout injection, forged evidence class/subsystem message, inert repair proposal |
+| Backup | post-cut writes, nonquiescent run/check/intent/action/wake, missing or changed artifact, disk full, cancellation, daemon kill, lost response, unsafe path/mode/type/extra file |
+| Restore | unavailable source, existing target, partial copy, pending startup, unretired parallel source, changed activation digest, injected nonterminal state/binding, fresh-node-key failure |
+| Personal load | noisy project, saturated provider/starting slots, SQLite writer, unavailable provider, truncated output, repeated kill/restart, resource and latency ceiling |
 
 Fault injection should happen at named seams rather than through arbitrary sleeps.
 Tests wait on observable barriers/events so they remain deterministic.
@@ -597,6 +629,14 @@ prove task state, completion acceptance, Git commit/push/merge, deployment, and
 integration order are unchanged. Direct local checks use a trusted
 owner-authored executable boundary, not a sandbox claim; the suite does not infer
 no-network/no-Git confinement from direct execution.
+
+For M20, bundles and restore targets are owner-private and every diagnostic is
+checked for node keys, capability material, opaque handles, provider-home values,
+log contents, and unrelated paths. The exact database remains sensitive and is
+not redacted: it legitimately contains messages, evidence, and registered
+checkout paths. Manifest and content hashes prove corruption or inconsistent
+copy, not authenticity against a malicious same-UID process that can rewrite
+both.
 
 ## M17 executable acceptance and security matrix
 
@@ -676,6 +716,53 @@ cosmetic edit cannot hide a changed claim, cursor, or action.
 | `M19-PROGRAM-01` | real Bubble Tea program with controlled input/output/window size | keyboard-only smoke reaches records, detail, modal cancellation, and clean quit without an interactive host |
 | `M19-PUBLIC-01` | isolated provider-free daemon and `test/scenarios/operator-tui/run.sh` | built dashboard proves parity, read-only navigation, one replay-safe action, attach, kill/reconnect, and no leaked process/socket |
 
+## M20 executable acceptance and security matrix
+
+The absolute Linux limits are part of the result, not a hardware-relative
+suggestion. Warm startup must complete within two seconds. Under saturated launch
+work, 200 status and message operations have p99 at most one second and maximum
+two seconds; controlled-clock lease reconciliation completes within two seconds.
+Twenty project briefing reads have p99 at most two seconds and maximum five;
+twenty workspace briefing reads have p99 at most five seconds and maximum ten.
+Full doctor, backup create, verify, and restore each complete within 60 seconds;
+load generation and verification complete within five minutes. Peak RSS is at
+most 512 MiB and database plus referenced fixture artifacts at most 1 GiB.
+Nearest-rank percentiles are used. Relative benchmark deltas are recorded only as
+additional diagnosis.
+
+| ID | Adversarial setup | Required observable result |
+| --- | --- | --- |
+| `M20-CUR-01` | fresh database; old or same-marker/divergent canonical/control schema | fresh schema equals the compiled baseline/installed canonical-control digest; every such divergent nonempty DB is refused without DDL, while the exact rebuildable FTS shape is diagnosed separately |
+| `M20-CUR-02` | compare baseline tables/queues with auditor registry; corrupt each family and inject an unknown event | every object is classified exactly once and every corruption/unknown type is detected by a full scan |
+| `M20-CUR-03` | compare fresh, captured, and restored logical state | current schema, canonical/durable logical digest, and event cursor are exact; derived FTS is diagnosed separately |
+| `M20-BKP-01` | concurrent WAL writes before and after the online-backup cut | one exact snapshot high-water is captured; post-cut rows are absent; referenced immutable artifacts match that snapshot |
+| `M20-BKP-02` | each live run/check/binding/job/wake/open intent/action/approval class | create returns retryable `backup_not_quiescent`, bounded counts/samples, no published bundle, and no event |
+| `M20-BKP-03` | kill/cancel/disk-full after DB copy, artifact copy, manifest, publish, and before response | target is absent or fully verifiable; same request/key replays one result and never publishes a partial directory |
+| `M20-BKP-04` | truncate/alter/miss/add an entry; bad mode; symlink, hard-link alias, device, FIFO, traversal, manifest mismatch | offline verify rejects the exact unsafe/corrupt class without following or reading outside the bundle root |
+| `M20-BKP-05` | remove the source daemon, socket, data directory, and DB | path-based offline verify still succeeds; backup ID is metadata only |
+| `M20-RST-01` | source removed; restore into a new target | standalone DB, referenced artifacts, logical digest, and cursor reproduce exactly; target is pending/inert |
+| `M20-RST-02` | existing target, merge/overwrite attempt, symlink escape, partial-copy failure | stable refusal and original target bytes unchanged; no `--force` or in-place path exists |
+| `M20-RST-03` | try to start pending target while original source remains live | `restore_not_activated` before DB recovery, listener, workers, capabilities, or any runtime/provider call |
+| `M20-RST-04` | retire source and activate with confirmation | target gets a distinct node key, empty capabilities/runtime roots, no binding, unchanged domain cursor, and can then start |
+| `M20-RST-05` | alter DB/artifacts or add a nonterminal run/check/binding after restore or activation | activation/first startup returns integrity or `restore_unsafe_nonterminal` before mutation/external call |
+| `M20-RUN-01` | inspect public run/check records, lists, briefings, events, terminal controls | no opaque handle appears; terminal bindings are absent; attach/prompt/interrupt/stop/wake require a live node-owned binding |
+| `M20-RUN-02` | finish direct and bounded Herdr runs, restart, back up, restore, and query logs | redacted 64-KiB-per-stream immutable artifacts preserve captured/omitted/hash facts; untrusted absence is `run_logs_unavailable`, never empty success |
+| `M20-RUN-03` | runtime identity becomes unknown and remains potentially live | `lost` retains capacity and blocks backup until owner confirms native retirement; resolution emits one event and leaves task blocked |
+| `M20-HLT-01` | full doctor over 100,000 events and every registered table/artifact/queue | complete bounded read-only report, stable codes/counts/20-sample cap, no event, and completion within budget |
+| `M20-HLT-02` | baseline/canonical corruption prevents daemon startup | offline repair inspects private copied DB/WAL state, mutates no source byte, and gives stable derived-rebuild or restore-to-new-directory guidance |
+| `M20-LOAD-01` | build profile twice and rename authority-looking role/purpose labels | exact 1/10/100/1,000/100,000/80,000 counts and repeatable logical hash; labels change no authority/admission/order |
+| `M20-LOAD-02` | run the complete measured workload | startup, latency, duration, RSS, and disk absolute limits pass and the full environment/percentile report is emitted |
+| `M20-LOAD-03` | fill one project with 80,000 events and decisions while every quiet project has one urgent decision | each quiet-project decision remains represented according to deterministic round-robin fairness; 128-claim/64-KiB/provenance bounds hold |
+| `M20-BP-01` | race manual and supervisor starts across workspace/project/provider/node limits | transactional counts never exceed 8/2/4/4/20 defaults; refusal is retryable, names the limiting dimension, and appends no event |
+| `M20-BP-02` | exhaust provider A and starting slots while provider B and control work continue | provider B progresses and status/message/reconciliation meet latency limits; no transaction spans an external call |
+| `M20-BP-03` | kill around message wake claim/effect/result | message send never calls wake inline; one durable message remains; wake settles succeeded/failed/failed-unknown without automatic duplicate prompt |
+| `M20-DB-01` | hold an SQLite writer through busy timeout while issuing reads/mutations | reads remain responsive; mutation returns retryable `database_busy`; same idempotent request eventually commits once |
+| `M20-FLT-01` | daemon kill, runtime loss, stale leases, duplicate delivery, truncated output, unavailable provider | each yields its documented bounded durable or explicit-unknown result without a fresh uncertain launch |
+| `M20-END-01` | 20 deterministic fault/restart cycles after warm-up | no child/socket/temp leak, FD growth above baseline +3, or goroutine growth above baseline +5; optional two-hour soak is not normal CI |
+| `M20-SEC-01` | inspect bundle, restore, reports, and failures for authority/secrets/path escape | no node key/token/provider home/live handle/runtime state/unreferenced file is bundled; modes and redaction hold; docs state hashes are not same-UID authenticity |
+| `M20-PKG-01` | build Linux amd64 candidate twice with fixed metadata, extract separately | byte-identical archive/checksum; extracted `version` and `doctor --self` pass; nothing is published/installed and no license is implied |
+| `M20-ALL-01` | clean tree complete gate | `scripts/check.sh`, race suite, every prior scenario, and personal-beta scenario pass without paid provider calls or hidden cleanup |
+
 ## Test suite commands
 
 The complete implemented offline gate is:
@@ -696,7 +783,8 @@ The Herdr variant repeats the same two-agent flow using isolated recorded Herdr
 surfaces, proves a successful prompt wake and native attach, and rejects an
 incompatible installed schema before launch.
 
-Preserve these conceptual future tiers as the suite expands:
+The M20 scale command below is current. The aggregate acceptance/fault/live
+spellings remain conceptual tiers until their public dispatch is implemented:
 
 ```sh
 # Fast, deterministic, offline

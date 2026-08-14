@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -34,48 +33,11 @@ func newRunCapabilityManager(dataDir, socketPath string) (*runCapabilityManager,
 	if info, err := os.Lstat(directory); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
 		return nil, errors.New("capability directory must be a private, non-symlink directory")
 	}
-	secret, err := loadOrCreateNodeSecret(filepath.Join(dataDir, "node.key"))
+	secret, err := execution.LoadOrCreateNodeKey(dataDir)
 	if err != nil {
 		return nil, err
 	}
 	return &runCapabilityManager{secret: secret, socketPath: socketPath, directory: directory}, nil
-}
-
-func loadOrCreateNodeSecret(path string) ([]byte, error) {
-	info, err := os.Lstat(path)
-	if err == nil {
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-			return nil, errors.New("node capability key must be a private 32-byte regular file")
-		}
-		data, readErr := os.ReadFile(path)
-		if readErr != nil || len(data) != 32 {
-			return nil, errors.New("node capability key must be a private 32-byte regular file")
-		}
-		return data, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("read node capability key: %w", err)
-	}
-	data := make([]byte, 32)
-	if _, err := rand.Read(data); err != nil {
-		return nil, fmt.Errorf("generate node capability key: %w", err)
-	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("create node capability key: %w", err)
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("write node capability key: %w", err)
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("sync node capability key: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return nil, fmt.Errorf("close node capability key: %w", err)
-	}
-	return data, nil
 }
 
 func (manager *runCapabilityManager) PrepareRunCapability(_ context.Context, runID string) (execution.RunCapabilityAccess, error) {

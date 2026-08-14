@@ -20,8 +20,11 @@ decisions are also implemented. Owner-created deliverable commitments,
 owner-reviewed outcome assessments, immutable checkpoints, and bounded structured
 management briefings are implemented. The Go-native operator dashboard is
 launched with `crewfold ui`; ordinary commands continue to support text and JSON
-output. Teams and broader/model-assisted knowledge curation remain outside the
-current product contract.
+output. M20 freezes full health, quiescent backup, source-independent
+verify/restore, explicit restore activation, offline repair inspection, and the
+provider-free personal-100 load surface documented below. Teams and
+broader/model-assisted knowledge curation remain outside the current product
+contract.
 
 ## Goals
 
@@ -77,6 +80,7 @@ crewfold doctor --retrieval --workspace personal --socket /path/to/crewfold.sock
 crewfold doctor --runtime herdr
 crewfold doctor --provider codex
 crewfold doctor --provider claude
+crewfold doctor --full --socket /path/to/crewfold.sock
 crewfold workspace init personal --socket /path/to/crewfold.sock \
   --idempotency-key initialize-personal
 crewfold workspace show personal --socket /path/to/crewfold.sock
@@ -118,6 +122,102 @@ The native sandbox is enabled and fails closed by default. Only an independently
 confined process may set `--claude-external-sandbox true`, which disables the
 nested native sandbox; this flag is an assertion about an existing boundary, not
 a way to create one.
+
+`doctor --full` asks the running daemon to scan the exact current baseline,
+SQLite/FK state, every registered canonical/durable row, known events,
+projection/receipt parity, referenced artifacts, derived retrieval, live
+bindings, queues, filesystem/restore state, and resource headroom. It appends no
+event. JSON reports exact checked/issue counts and at most 20 redacted samples per
+fixed check; text and JSON exit nonzero for degraded or failed status.
+
+## Personal-scale recovery and maintenance
+
+```sh
+crewfold backup create --socket /path/to/crewfold.sock \
+  --to /new/private/backup-directory \
+  --idempotency-key nightly-personal-2026-08-14
+crewfold backup verify /new/private/backup-directory
+crewfold backup restore /new/private/backup-directory \
+  --to /new/private/restored-crewfold
+crewfold backup activate /new/private/restored-crewfold \
+  --confirm-source-retired
+crewfold repair inspect /path/to/unstartable-crewfold
+crewfold test load --profile personal-100
+```
+
+`backup create` is the only online maintenance command. It resolves `--to` once,
+sends its canonical absolute nonexistent target and idempotency key to the daemon,
+and captures a quiescent SQLite online-backup cut plus exactly referenced check
+and immutable terminal-log artifacts. If the key is omitted, the client creates
+one; a caller retrying after an unknown response should supply a stable key.
+The target must be outside the source data directory. Restore targets must be
+outside their source bundle. A publication target cannot use the recovery parent
+lock name, and no externally selected source, bundle, repair/activation data
+directory, or publication target may be at or below a recovery-reserved staging
+component. These overlap/name refusals occur before receipts, staging, or
+source/target-parent mutation, while component-sibling prefixes remain valid.
+Every recovery CLI path is valid UTF-8, resolves to a non-root canonical absolute
+path of at most 4,096 bytes, and rejects C0/C1 terminal controls, Unicode line
+separators, and bidirectional formatting controls before filesystem inspection.
+
+`backup verify` and `backup restore` take a bundle directory path, not a backup
+ID. `backup_<32-lower-hex>` is result/manifest metadata only; there is no implicit
+backup root, registry, alias, search, or source-daemon lookup. Verify and restore
+remain usable after the original daemon, socket, data directory, and DB disappear.
+Both reject path traversal, symlinks, non-regular/aliased files, unsafe modes,
+missing/extra content, hashes, unknown manifest/baseline, and canonical mismatch.
+
+Restore accepts only a nonexistent `--to` directory. It never overwrites, merges,
+restores in place, or offers `--force`. The result is deliberately pending: it
+contains the exact database/artifacts but no node key, capability, or runtime
+state and cannot start a daemon. After stopping/retiring the source installation,
+the owner runs `backup activate --confirm-source-retired`. Activation rechecks
+full integrity/quiescence, generates a new node key and empty operational roots,
+and leaves all domain rows and the event cursor unchanged. The confirmation is an
+explicit disaster-recovery assertion and does not require a reachable source.
+
+The bundle excludes keys, tokens, live handles, runtime/check-runtime/Herdr
+state, provider homes/credentials, repositories, WAL/SHM, and orphan files. It is
+still sensitive because its exact DB contains messages, evidence, and checkout
+paths. Manifest and file SHA-256 values detect corruption and inconsistent copy;
+they are not signatures and do not authenticate against a malicious same-UID
+rewriter.
+
+`repair inspect` is offline and read-only. It refuses a data directory held by a
+live daemon, inspects a private copy of its DB/WAL bytes, and emits bounded stable
+findings even when that DB prevents startup. Guidance is limited to retry,
+derived-index rebuild, lost-runtime retirement, freeing space, verified backup
+restore into a new directory, or reporting a defect. It never edits, migrates,
+salvages, vacuums, reindexes, deletes an orphan, or repairs canonical state.
+
+Machine results use these exact schemas:
+
+- `urn:crewfold:schema:local-api:full-doctor-result:v1` for online full doctor;
+- `urn:crewfold:schema:local-api:backup-create-result:v1` for creation;
+- `urn:crewfold:schema:cli:backup-verify-response:v1` for offline verification;
+- `urn:crewfold:schema:cli:backup-restore-response:v1` for restoration;
+- `urn:crewfold:schema:cli:backup-activate-response:v1` for activation;
+- `urn:crewfold:schema:cli:repair-inspect-response:v1` for repair guidance; and
+- `urn:crewfold:schema:cli:personal-load-report:v1` for personal load.
+
+Verify reports `status: ok|failed`, exact backup/baseline/cursor/digest/entry/byte
+counts, and bounded checks. Restore reports the source backup ID/manifest hash,
+canonical target path, exact digest/cursor, and `pending_activation: true`.
+Activation reports the same backup ID/target/cursor plus the new node fingerprint
+and `status: activated`. Repair reports `ok|guidance_required|uninspectable`, an
+available baseline observation, aggregate `artifact_status`, and at most 20 flat
+stable findings. The internal inspection report independently retains at most 20
+artifact issues and 20 orphan warnings; those path diagnostics are not fields in
+the public CLI schema. Each public finding carries one closed remediation value;
+no unbounded row or sample-ID list is emitted. Reports are capped at 1 MiB.
+
+`personal-100` creates only an owned temporary directory and accepts no socket,
+data-directory, checkout, provider-home, or credential argument. It makes no
+network/model/provider call. The exact profile is one workspace, ten projects,
+100 arbitrary-role agents, 1,000 tasks, 100,000 known events, 80,000 in one noisy
+project, and a bounded eight-unresolved/two-starting phase. Its JSON records the
+environment, exact counts, p50/p95/p99/max timings, peak RSS/DB/artifact bytes,
+and pass/fail assertions against the fixed M20 budgets.
 
 ## Projects and checkouts
 
@@ -247,6 +347,9 @@ crewfold run prompt RUN_ID --text "check your Crewfold inbox" \
   --workspace personal --socket /path/to/crewfold.sock
 crewfold run interrupt RUN_ID --workspace personal --socket /path/to/crewfold.sock
 crewfold run attach RUN_ID --workspace personal --socket /path/to/crewfold.sock
+crewfold run resolve-lost RUN_ID --workspace personal \
+  --expected-revision 5 --note 'Native runtime is retired' \
+  --confirm-runtime-retired --socket /path/to/crewfold.sock
 crewfold task timeline TASK_A --workspace personal --socket /path/to/crewfold.sock
 ```
 
@@ -270,7 +373,19 @@ supervisor identity and exit state to reconcile across daemon restart. `run logs
 reports captured and omitted byte counts. `run stop --graceful` requests
 termination and records whether forced kill was required. If Crewfold cannot trust
 the process identity or outcome, the run becomes `lost`, the task is blocked, and
-capacity stays reserved. Arbitrary executable/path selection, direct-runtime
+capacity stays reserved. The owner must first retire that process through its
+native control surface, then use `run resolve-lost` with the exact revision, note,
+and `--confirm-runtime-retired`. Crewfold does not attempt an external stop; it
+records one `run.lost_resolved`, clears the node binding, releases capacity, and
+leaves the task blocked for an explicit retry/reassignment decision.
+
+Opaque runtime/provider handles are internal node-bound live state and do not
+appear in run/check records, briefings, or events. Terminalization clears them.
+Before a normal terminal transition, Crewfold persists redacted immutable stdout
+and stderr capped at 64 KiB per stream. `run logs` reads those artifacts after
+restart/restore; when a lost runtime cannot provide trustworthy bytes, it returns
+`run_logs_unavailable` rather than empty successful output. Full Herdr transcripts
+and session identity are not retained artifacts. Arbitrary executable/path selection, direct-runtime
 attach/interrupt, and dry-run remain deferred; the Codex and Claude adapters below
 are the allowlisted real provider commands.
 

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:cli:backup-activate-response:v1",
+  "title": "Crewfold offline backup activation response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "status", "backup_id", "manifest_sha256", "target_path", "event_sequence", "logical_sha256", "node_fingerprint", "activation_sha256", "activated_at", "source_retired"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:cli:backup-activate-response:v1"},
+    "type": {"const": "backup_activate"},
+    "status": {"const": "activated"},
+    "backup_id": {"type": "string", "pattern": "^backup_[0-9a-f]{32}$"},
+    "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "target_path": {"type": "string", "minLength": 2, "maxLength": 4096, "pattern": "^/[^\\x00]*$"},
+    "event_sequence": {"type": "integer", "minimum": 0},
+    "logical_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "node_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "activation_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "activated_at": {"type": "string", "format": "date-time"},
+    "source_retired": {"const": true}
+  }
+}

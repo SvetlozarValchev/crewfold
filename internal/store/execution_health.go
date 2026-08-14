@@ -22,7 +22,7 @@ func (s *Store) ExecutionHealth(ctx context.Context) (domain.ExecutionHealth, er
 		Workspaces: []domain.WorkspaceExecutionHealth{}, Projects: []domain.ProjectExecutionHealth{},
 		Providers: []domain.ProviderExecutionHealth{}, Queues: []domain.ExecutionQueueState{},
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.ExecutionHealth{}, storageFailure("begin execution health snapshot", err)
 	}
@@ -107,27 +107,19 @@ GROUP BY provider.workspace_id,provider.provider ORDER BY provider.workspace_id,
 		return domain.ExecutionHealth{}, storageFailure("iterate provider execution usage", err)
 	}
 
-	for _, queue := range []struct {
-		name     string
-		table    string
-		statuses []string
-	}{
-		{name: "run", table: "run_jobs", statuses: []string{"pending", "leased", "complete"}},
-		{name: "check", table: "check_jobs", statuses: []string{"pending", "leased", "complete"}},
-		{name: "message_wake", table: "message_wake_jobs", statuses: []string{"pending", "leased", "succeeded", "failed", "failed_unknown"}},
-	} {
+	for _, queue := range durableQueueRegistry {
 		for _, status := range queue.statuses {
-			item := domain.ExecutionQueueState{Queue: queue.name, Status: status}
+			item := domain.ExecutionQueueState{Queue: queue.healthName, Status: status}
 			var oldest sql.NullString
-			query := fmt.Sprintf("SELECT COUNT(*),MIN(updated_at) FROM %s WHERE status=?", queue.table)
+			query := fmt.Sprintf("SELECT COUNT(*),MIN(updated_at) FROM %s WHERE status=?", quoteSQLiteIdentifier(queue.table))
 			if err := tx.QueryRowContext(ctx, query, status).Scan(&item.Count, &oldest); err != nil {
-				return domain.ExecutionHealth{}, storageFailure("read "+queue.name+" queue state", err)
+				return domain.ExecutionHealth{}, storageFailure("read "+queue.healthName+" queue state", err)
 			}
 			if oldest.Valid {
 				item.OldestUpdatedAt = oldest.String
 				when, err := time.Parse(time.RFC3339Nano, oldest.String)
 				if err != nil || when.After(observed) {
-					return domain.ExecutionHealth{}, storageFailure("validate "+queue.name+" queue age", fmt.Errorf("noncanonical queue timestamp %q", oldest.String))
+					return domain.ExecutionHealth{}, storageFailure("validate "+queue.healthName+" queue age", fmt.Errorf("noncanonical queue timestamp %q", oldest.String))
 				}
 				item.OldestAgeMillis = observed.Sub(when).Milliseconds()
 			}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:run-loss-resolution:v1",
+  "title": "Crewfold run loss resolution v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "lost_revision", "resolution", "note", "event_sequence", "resolved_at", "resolved_by"],
+  "properties": {
+    "run_id": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
+    "lost_revision": {"type": "integer", "minimum": 1},
+    "resolution": {"const": "owner_confirmed_effects_ended"},
+    "note": {"type": "string", "minLength": 1, "maxLength": 2048},
+    "event_sequence": {"type": "integer", "minimum": 1},
+    "resolved_at": {"type": "string", "format": "date-time"},
+    "resolved_by": {"const": "local-owner"}
+  }
+}

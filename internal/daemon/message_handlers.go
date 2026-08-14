@@ -23,6 +23,7 @@ func (s *server) handleMessageSend(request localapi.Request) localapi.Response {
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
+	s.signalMessageWakeWorker()
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.MessageSendResult{Schema: localapi.MessageSendSchema, Type: "message_send", Mutation: result.Value, EventSequence: result.EventSequence})
 }
 

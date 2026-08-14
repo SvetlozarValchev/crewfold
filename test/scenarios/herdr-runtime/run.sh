@@ -20,6 +20,7 @@ export CREWFOLD_ACCEPTANCE_HERDR_INCOMPATIBLE_SCHEMA="$repo_root/test/fixtures/p
 export CREWFOLD_ACCEPTANCE_RUNTIME=herdr
 export CREWFOLD_ACCEPTANCE_PROVIDER=fixture-terminal
 export CREWFOLD_ACCEPTANCE_WAKE=succeeded
+export CREWFOLD_ACCEPTANCE_ATTACH=lifecycle
 
 "$repo_root/test/scenarios/agent-messaging/run.sh"
 printf 'Herdr runtime acceptance: PASS\n'

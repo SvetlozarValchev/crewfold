@@ -1,5 +1,15 @@
 -- Crewfold's single greenfield schema. There are no historical upgrade paths.
 
+CREATE TABLE schema_baseline (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    source_sha256 TEXT NOT NULL CHECK (
+        length(source_sha256) = 64 AND source_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    catalog_sha256 TEXT NOT NULL CHECK (
+        length(catalog_sha256) = 64 AND catalog_sha256 NOT GLOB '*[^0-9a-f]*'
+    )
+) STRICT;
+
 CREATE TABLE workspaces (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -181,8 +191,6 @@ CREATE TABLE runs (
     placement_reasons_json TEXT NOT NULL CHECK (json_valid(placement_reasons_json)),
     status TEXT NOT NULL CHECK (status IN ('requested', 'starting', 'active', 'blocked', 'stopping', 'stopped', 'lost', 'review', 'completed', 'start_failed', 'failed')),
     step_cursor INTEGER NOT NULL CHECK (step_cursor >= 0),
-    runtime_handle TEXT,
-    provider_handle TEXT,
     blocked_question TEXT,
     result_summary TEXT,
     failure_code TEXT,
@@ -197,6 +205,75 @@ CREATE TABLE runs (
     created_by TEXT NOT NULL,
     updated_by TEXT NOT NULL
 , assignment_id TEXT REFERENCES task_assignments(id)) STRICT;
+
+CREATE TABLE run_runtime_bindings (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id),
+    node_id TEXT NOT NULL CHECK (
+        length(node_id) = 32 AND node_id NOT GLOB '*[^0-9a-f]*'
+    ),
+    node_fingerprint TEXT NOT NULL CHECK (
+        length(node_fingerprint) = 64
+        AND node_fingerprint NOT GLOB '*[^0-9a-f]*'
+    ),
+    operation_id TEXT NOT NULL UNIQUE CHECK (operation_id = run_id),
+    runtime_handle TEXT NOT NULL CHECK (
+        length(CAST(runtime_handle AS BLOB)) BETWEEN 1 AND 8192
+        AND instr(runtime_handle, char(0)) = 0
+    ),
+    provider_handle TEXT CHECK (
+        provider_handle IS NULL OR (
+            length(CAST(provider_handle AS BLOB)) BETWEEN 1 AND 8192
+            AND instr(provider_handle, char(0)) = 0
+        )
+    ),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE immutable_artifacts (
+    content_sha256 TEXT PRIMARY KEY CHECK (
+        length(content_sha256) = 64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    byte_size INTEGER NOT NULL CHECK (byte_size BETWEEN 0 AND 1048576),
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL CHECK (
+        created_by IN ('crewfold-check-worker', 'subsystem:run-worker')
+    )
+) STRICT;
+
+CREATE TABLE run_log_artifacts (
+    id TEXT PRIMARY KEY CHECK (
+        length(id) = 44 AND substr(id, 1, 12) = 'runartifact_'
+        AND substr(id, 13) NOT GLOB '*[^0-9a-f]*'
+    ),
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    kind TEXT NOT NULL CHECK (kind IN ('stdout', 'stderr')),
+    content_sha256 TEXT NOT NULL REFERENCES immutable_artifacts(content_sha256),
+    captured_bytes INTEGER NOT NULL CHECK (captured_bytes BETWEEN 0 AND 65536),
+    omitted_bytes INTEGER NOT NULL CHECK (omitted_bytes >= 0),
+    truncated INTEGER NOT NULL CHECK (
+        truncated IN (0, 1) AND truncated = (omitted_bytes > 0)
+    ),
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL CHECK (created_by = 'subsystem:run-worker'),
+    UNIQUE (run_id, kind)
+) STRICT;
+
+CREATE TABLE run_loss_resolutions (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id),
+    lost_revision INTEGER NOT NULL CHECK (lost_revision > 0),
+    resolution TEXT NOT NULL CHECK (
+        resolution = 'owner_confirmed_effects_ended'
+    ),
+    note TEXT NOT NULL CHECK (
+        length(CAST(note AS BLOB)) BETWEEN 1 AND 4096
+        AND instr(note, char(0)) = 0
+    ),
+    event_sequence INTEGER NOT NULL UNIQUE REFERENCES events(sequence),
+    resolved_at TEXT NOT NULL,
+    resolved_by TEXT NOT NULL CHECK (resolved_by = 'local-owner')
+) STRICT;
 
 CREATE TABLE run_jobs (
     run_id TEXT PRIMARY KEY REFERENCES runs(id),
@@ -1365,7 +1442,7 @@ CREATE TABLE "message_wake_jobs" (
     message_id TEXT NOT NULL REFERENCES "messages"(id),
     recipient_agent_id TEXT NOT NULL REFERENCES agents(id),
     target_run_id TEXT NOT NULL REFERENCES runs(id),
-    status TEXT NOT NULL CHECK(status IN ('pending','leased','succeeded','failed')),
+    status TEXT NOT NULL CHECK(status IN ('pending','leased','succeeded','failed','failed_unknown')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0),
     available_at TEXT NOT NULL,
     lease_expires_at TEXT,
@@ -1474,9 +1551,18 @@ CREATE TABLE check_runs (
  definition_id TEXT NOT NULL REFERENCES check_definitions(id), definition_content_revision INTEGER NOT NULL CHECK(definition_content_revision>0), definition_sha256 TEXT NOT NULL CHECK(length(definition_sha256)=64 AND definition_sha256 NOT GLOB '*[^0-9a-f]*'),
  checkout_id TEXT NOT NULL REFERENCES checkouts(id), checkout_revision INTEGER NOT NULL CHECK(checkout_revision>0), repository_id TEXT NOT NULL REFERENCES repositories(id), repository_object_format TEXT NOT NULL CHECK(repository_object_format IN ('sha1','sha256')), checkout_path TEXT NOT NULL, checkout_write_mode TEXT NOT NULL CHECK(checkout_write_mode IN ('exclusive','claimed','shared','read_only')),
  source_type TEXT NOT NULL CHECK(source_type IN ('owner','agent_run')), source_actor_id TEXT NOT NULL, source_agent_id TEXT REFERENCES agents(id), source_agent_revision INTEGER CHECK(source_agent_revision IS NULL OR source_agent_revision>0), source_run_id TEXT REFERENCES runs(id), source_grant_id TEXT REFERENCES check_watch_grants(id), source_grant_revision INTEGER CHECK(source_grant_revision IS NULL OR source_grant_revision>0), source_max_in_flight INTEGER NOT NULL CHECK(source_max_in_flight BETWEEN 0 AND 100),
- status TEXT NOT NULL CHECK(status IN ('requested','starting','running','finished')), runtime_handle TEXT, revision INTEGER NOT NULL CHECK(revision>0),
+ status TEXT NOT NULL CHECK(status IN ('requested','starting','running','finished')), revision INTEGER NOT NULL CHECK(revision>0),
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, created_by TEXT NOT NULL, updated_by TEXT NOT NULL,
  CHECK((source_type='owner' AND source_actor_id='local-owner' AND source_agent_id IS NULL AND source_agent_revision IS NULL AND source_run_id IS NULL AND source_grant_id IS NULL AND source_grant_revision IS NULL AND source_max_in_flight=0) OR (source_type='agent_run' AND source_agent_id IS NOT NULL AND source_agent_revision IS NOT NULL AND source_run_id IS NOT NULL AND source_grant_id IS NOT NULL AND source_grant_revision IS NOT NULL AND source_max_in_flight>0))
+) STRICT;
+
+CREATE TABLE check_runtime_bindings (
+ check_run_id TEXT PRIMARY KEY REFERENCES check_runs(id),
+ node_id TEXT NOT NULL CHECK(length(node_id)=32 AND node_id NOT GLOB '*[^0-9a-f]*'),
+ node_fingerprint TEXT NOT NULL CHECK(length(node_fingerprint)=64 AND node_fingerprint NOT GLOB '*[^0-9a-f]*'),
+ operation_id TEXT NOT NULL UNIQUE CHECK(operation_id=check_run_id),
+ runtime_handle TEXT NOT NULL CHECK(length(CAST(runtime_handle AS BLOB)) BETWEEN 1 AND 8192 AND instr(runtime_handle,char(0))=0),
+ revision INTEGER NOT NULL CHECK(revision>0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 ) STRICT;
 
 CREATE TABLE check_jobs (
@@ -1504,7 +1590,7 @@ CREATE TABLE check_results (
 
 CREATE TABLE check_artifacts (
  id TEXT PRIMARY KEY CHECK(length(id)=46 AND substr(id,1,14)='checkartifact_' AND substr(id,15) NOT GLOB '*[^0-9a-f]*'), check_result_id TEXT NOT NULL REFERENCES check_results(id), kind TEXT NOT NULL CHECK(kind IN ('stdout','stderr','diagnostic')),
- content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'), captured_bytes INTEGER NOT NULL CHECK(captured_bytes>=0 AND captured_bytes<=CASE kind WHEN 'diagnostic' THEN 4096 ELSE 1048576 END), omitted_bytes INTEGER NOT NULL CHECK(omitted_bytes>=0), truncated INTEGER NOT NULL CHECK(truncated IN (0,1) AND truncated=(omitted_bytes>0)), created_at TEXT NOT NULL,
+ content_sha256 TEXT NOT NULL REFERENCES immutable_artifacts(content_sha256), captured_bytes INTEGER NOT NULL CHECK(captured_bytes>=0 AND captured_bytes<=CASE kind WHEN 'diagnostic' THEN 4096 ELSE 1048576 END), omitted_bytes INTEGER NOT NULL CHECK(omitted_bytes>=0), truncated INTEGER NOT NULL CHECK(truncated IN (0,1) AND truncated=(omitted_bytes>0)), created_at TEXT NOT NULL,
  UNIQUE(check_result_id,kind)
 ) STRICT;
 
@@ -1835,6 +1921,18 @@ CREATE TRIGGER events_reject_delete
 BEFORE DELETE ON events
 BEGIN
     SELECT RAISE(ABORT, 'events are immutable');
+END;
+
+CREATE TRIGGER schema_baseline_reject_update
+BEFORE UPDATE ON schema_baseline
+BEGIN
+    SELECT RAISE(ABORT, 'baseline identity is immutable');
+END;
+
+CREATE TRIGGER schema_baseline_reject_delete
+BEFORE DELETE ON schema_baseline
+BEGIN
+    SELECT RAISE(ABORT, 'baseline identity is immutable');
 END;
 
 CREATE TRIGGER context_packet_reject_update
@@ -3933,8 +4031,43 @@ BEGIN
         OR (OLD.status='active' AND NEW.status IN ('blocked','review','completed','stopping','lost','failed'))
         OR (OLD.status='blocked' AND NEW.status IN ('active','stopping'))
         OR (OLD.status='stopping' AND NEW.status IN ('stopped','lost'))
+        OR (OLD.status='lost' AND NEW.status='failed'
+            AND crewfold_run_loss_resolution_active() IS 1
+            AND NEW.revision=OLD.revision+1
+            AND NEW.updated_by='local-owner'
+            AND NEW.failure_code='runtime_retired_by_owner'
+            AND NOT EXISTS(SELECT 1 FROM run_runtime_bindings binding WHERE binding.run_id=OLD.id)
+            AND NEW.finished_at=NEW.updated_at)
       )
+      OR (NEW.status IN ('stopped','review','completed','start_failed','failed')
+          AND EXISTS(SELECT 1 FROM run_runtime_bindings binding WHERE binding.run_id=OLD.id))
       THEN RAISE(ABORT, 'invalid run lifecycle transition') END;
+END;
+
+CREATE TRIGGER run_runtime_binding_validate_insert
+BEFORE INSERT ON run_runtime_bindings
+BEGIN
+    SELECT CASE WHEN NEW.operation_id<>NEW.run_id OR NEW.revision<>1
+      OR NEW.created_at<>NEW.updated_at
+      OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1
+      OR crewfold_utf8_valid(NEW.runtime_handle) IS NOT 1
+      OR (NEW.provider_handle IS NOT NULL AND crewfold_utf8_valid(NEW.provider_handle) IS NOT 1)
+      OR NOT EXISTS(SELECT 1 FROM runs run WHERE run.id=NEW.run_id AND run.status='starting')
+      THEN RAISE(ABORT, 'invalid run runtime binding') END;
+END;
+
+CREATE TRIGGER run_runtime_binding_validate_update
+BEFORE UPDATE ON run_runtime_bindings
+BEGIN
+    SELECT CASE WHEN NEW.run_id<>OLD.run_id OR NEW.node_id<>OLD.node_id
+      OR NEW.node_fingerprint<>OLD.node_fingerprint OR NEW.operation_id<>OLD.operation_id
+      OR NEW.runtime_handle<>OLD.runtime_handle OR NEW.created_at<>OLD.created_at
+      OR OLD.provider_handle IS NOT NULL OR NEW.provider_handle IS NULL
+      OR NEW.revision<>OLD.revision+1
+      OR crewfold_timestamp_canonical(NEW.updated_at) IS NOT 1
+      OR crewfold_utf8_valid(NEW.provider_handle) IS NOT 1
+      OR NOT EXISTS(SELECT 1 FROM runs run WHERE run.id=NEW.run_id AND run.status='starting')
+      THEN RAISE(ABORT, 'invalid run runtime binding update') END;
 END;
 
 CREATE TRIGGER task_assignment_reserved_run_reject_release
@@ -4075,6 +4208,87 @@ CREATE TRIGGER message_wake_binding_reject_update
 BEFORE UPDATE OF message_id,recipient_agent_id,target_run_id ON message_wake_jobs
 WHEN NEW.message_id<>OLD.message_id OR NEW.recipient_agent_id<>OLD.recipient_agent_id OR NEW.target_run_id<>OLD.target_run_id
 BEGIN SELECT RAISE(ABORT,'message wake binding is immutable'); END;
+
+CREATE TRIGGER immutable_artifact_validate_insert
+BEFORE INSERT ON immutable_artifacts
+BEGIN
+    SELECT CASE WHEN crewfold_timestamp_canonical(NEW.created_at) IS NOT 1
+      THEN RAISE(ABORT, 'invalid immutable artifact metadata') END;
+END;
+
+CREATE TRIGGER immutable_artifact_reject_update
+BEFORE UPDATE ON immutable_artifacts
+BEGIN SELECT RAISE(ABORT, 'immutable artifact catalog cannot be updated'); END;
+
+CREATE TRIGGER immutable_artifact_reject_delete
+BEFORE DELETE ON immutable_artifacts
+BEGIN SELECT RAISE(ABORT, 'immutable artifact catalog cannot be deleted'); END;
+
+CREATE TRIGGER run_log_artifact_validate_insert
+BEFORE INSERT ON run_log_artifacts
+BEGIN
+    SELECT CASE WHEN crewfold_timestamp_canonical(NEW.created_at) IS NOT 1
+      OR NOT EXISTS (
+        SELECT 1 FROM immutable_artifacts artifact
+        WHERE artifact.content_sha256 = NEW.content_sha256
+          AND artifact.byte_size = NEW.captured_bytes
+      )
+      OR NOT EXISTS (
+        SELECT 1 FROM runs run
+        WHERE run.id = NEW.run_id
+          AND run.status IN ('stopped','review','completed','start_failed','failed')
+      )
+      THEN RAISE(ABORT, 'invalid immutable run log artifact') END;
+END;
+
+CREATE TRIGGER run_log_artifact_reject_update
+BEFORE UPDATE ON run_log_artifacts
+BEGIN SELECT RAISE(ABORT, 'run log artifacts cannot be updated'); END;
+
+CREATE TRIGGER run_log_artifact_reject_delete
+BEFORE DELETE ON run_log_artifacts
+BEGIN SELECT RAISE(ABORT, 'run log artifacts cannot be deleted'); END;
+
+CREATE TRIGGER run_loss_resolution_validate_insert
+BEFORE INSERT ON run_loss_resolutions
+BEGIN
+    SELECT CASE WHEN crewfold_run_loss_resolution_active() IS NOT 1
+      OR crewfold_timestamp_canonical(NEW.resolved_at) IS NOT 1
+      OR crewfold_utf8_valid(NEW.note) IS NOT 1
+      OR NOT EXISTS (
+        SELECT 1 FROM runs run
+        WHERE run.id = NEW.run_id AND run.status = 'failed'
+          AND run.revision = NEW.lost_revision + 1
+          AND run.failure_code = 'runtime_retired_by_owner'
+          AND run.updated_at = NEW.resolved_at
+          AND run.finished_at = NEW.resolved_at
+          AND run.updated_by = 'local-owner'
+      )
+      OR NOT EXISTS (
+        SELECT 1 FROM events event
+        WHERE event.sequence = NEW.event_sequence
+          AND event.type = 'run.lost_resolved'
+          AND event.entity_type = 'run' AND event.entity_id = NEW.run_id
+          AND event.entity_revision = NEW.lost_revision + 1
+          AND event.actor_id = 'local-owner' AND event.actor_type = 'human'
+          AND event.occurred_at = NEW.resolved_at
+          AND json_extract(event.data_json, '$.prior_status') = 'lost'
+          AND json_extract(event.data_json, '$.status') = 'failed'
+          AND json_extract(event.data_json, '$.resolution') = NEW.resolution
+          AND json_extract(event.data_json, '$.lost_revision') = NEW.lost_revision
+          AND json_extract(event.data_json, '$.note') = NEW.note
+          AND json_extract(event.data_json, '$.capacity_released') = 1
+      )
+      THEN RAISE(ABORT, 'invalid owner run-loss resolution') END;
+END;
+
+CREATE TRIGGER run_loss_resolution_reject_update
+BEFORE UPDATE ON run_loss_resolutions
+BEGIN SELECT RAISE(ABORT, 'run-loss resolutions cannot be updated'); END;
+
+CREATE TRIGGER run_loss_resolution_reject_delete
+BEFORE DELETE ON run_loss_resolutions
+BEGIN SELECT RAISE(ABORT, 'run-loss resolutions cannot be deleted'); END;
 
 CREATE TRIGGER check_definition_argument_validate_insert
 BEFORE INSERT ON check_definition_arguments BEGIN
@@ -4862,7 +5076,7 @@ END;
 CREATE TRIGGER scheduling_intent_reject_delete BEFORE DELETE ON scheduling_intents BEGIN SELECT RAISE(ABORT,'scheduling intents are durable acceptance receipts'); END;
 
 CREATE TRIGGER check_run_validate_insert BEFORE INSERT ON check_runs BEGIN
- SELECT CASE WHEN NEW.status<>'requested' OR NEW.revision<>1 OR NEW.runtime_handle IS NOT NULL OR NEW.started_at IS NOT NULL OR NEW.finished_at IS NOT NULL OR NEW.created_at IS NOT NEW.updated_at OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1
+ SELECT CASE WHEN NEW.status<>'requested' OR NEW.revision<>1 OR NEW.started_at IS NOT NULL OR NEW.finished_at IS NOT NULL OR NEW.created_at IS NOT NEW.updated_at OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1
   OR (NEW.source_type='agent_run' AND NOT EXISTS(SELECT 1 FROM check_watch_grants grant_row WHERE grant_row.id=NEW.source_grant_id AND grant_row.workspace_id=NEW.workspace_id AND grant_row.project_id=NEW.project_id AND grant_row.agent_id=NEW.source_agent_id AND grant_row.agent_revision=NEW.source_agent_revision AND grant_row.revision=NEW.source_grant_revision AND grant_row.max_in_flight=NEW.source_max_in_flight))
   OR NOT EXISTS(SELECT 1 FROM task_check_requirements requirement JOIN check_definitions definition ON definition.id=requirement.definition_id JOIN tasks task ON task.id=requirement.task_id JOIN checkouts checkout ON checkout.id=NEW.checkout_id JOIN repositories repository ON repository.id=checkout.repository_id
     WHERE requirement.id=NEW.requirement_id AND requirement.workspace_id=NEW.workspace_id AND requirement.project_id=NEW.project_id AND requirement.task_id=NEW.task_id AND requirement.revision=NEW.requirement_revision AND requirement.status='active'
@@ -4876,11 +5090,19 @@ END;
 CREATE TRIGGER check_run_validate_update BEFORE UPDATE ON check_runs BEGIN
  SELECT CASE WHEN NEW.id IS NOT OLD.id OR NEW.workspace_id IS NOT OLD.workspace_id OR NEW.project_id IS NOT OLD.project_id OR NEW.task_id IS NOT OLD.task_id OR NEW.task_revision IS NOT OLD.task_revision OR NEW.requirement_id IS NOT OLD.requirement_id OR NEW.requirement_revision IS NOT OLD.requirement_revision OR NEW.definition_id IS NOT OLD.definition_id OR NEW.definition_content_revision IS NOT OLD.definition_content_revision OR NEW.definition_sha256 IS NOT OLD.definition_sha256 OR NEW.checkout_id IS NOT OLD.checkout_id OR NEW.checkout_revision IS NOT OLD.checkout_revision OR NEW.repository_id IS NOT OLD.repository_id OR NEW.repository_object_format IS NOT OLD.repository_object_format OR NEW.checkout_path IS NOT OLD.checkout_path OR NEW.checkout_write_mode IS NOT OLD.checkout_write_mode OR NEW.source_type IS NOT OLD.source_type OR NEW.source_actor_id IS NOT OLD.source_actor_id OR NEW.source_agent_id IS NOT OLD.source_agent_id OR NEW.source_agent_revision IS NOT OLD.source_agent_revision OR NEW.source_run_id IS NOT OLD.source_run_id OR NEW.source_grant_id IS NOT OLD.source_grant_id OR NEW.source_grant_revision IS NOT OLD.source_grant_revision OR NEW.created_at IS NOT OLD.created_at OR NEW.created_by IS NOT OLD.created_by OR NEW.revision<>OLD.revision+1 OR crewfold_timestamp_canonical(NEW.updated_at) IS NOT 1 OR crewfold_timestamp_key(NEW.updated_at)<=crewfold_timestamp_key(OLD.updated_at)
   OR NEW.source_max_in_flight IS NOT OLD.source_max_in_flight
-  OR NOT ((OLD.status='requested' AND NEW.status='starting' AND NEW.started_at IS NULL AND NEW.finished_at IS NULL) OR (OLD.status='starting' AND NEW.status='starting' AND OLD.runtime_handle IS NULL AND NEW.runtime_handle IS NOT NULL) OR (OLD.status='starting' AND NEW.status='running' AND NEW.runtime_handle IS NOT NULL AND NEW.started_at IS NOT NULL AND NEW.finished_at IS NULL) OR (OLD.status IN ('starting','running') AND NEW.status='finished' AND NEW.finished_at IS NOT NULL))
+  OR NOT ((OLD.status='requested' AND NEW.status='starting' AND NEW.started_at IS NULL AND NEW.finished_at IS NULL) OR (OLD.status='starting' AND NEW.status='starting' AND EXISTS(SELECT 1 FROM check_runtime_bindings binding WHERE binding.check_run_id=OLD.id)) OR (OLD.status='starting' AND NEW.status='running' AND EXISTS(SELECT 1 FROM check_runtime_bindings binding WHERE binding.check_run_id=OLD.id) AND NEW.started_at IS NOT NULL AND NEW.finished_at IS NULL) OR (OLD.status IN ('starting','running') AND NEW.status='finished' AND NOT EXISTS(SELECT 1 FROM check_runtime_bindings binding WHERE binding.check_run_id=OLD.id) AND NEW.finished_at IS NOT NULL))
   THEN RAISE(ABORT,'illegal or unsealed check run transition') END;
 END;
 
 CREATE TRIGGER check_run_reject_delete BEFORE DELETE ON check_runs BEGIN SELECT RAISE(ABORT,'check runs are immutable'); END;
+
+CREATE TRIGGER check_runtime_binding_validate_insert BEFORE INSERT ON check_runtime_bindings BEGIN
+ SELECT CASE WHEN NEW.operation_id<>NEW.check_run_id OR NEW.revision<>1 OR NEW.created_at<>NEW.updated_at OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1 OR crewfold_utf8_valid(NEW.runtime_handle) IS NOT 1
+  OR NOT EXISTS(SELECT 1 FROM check_runs run WHERE run.id=NEW.check_run_id AND run.status='starting')
+  THEN RAISE(ABORT,'invalid check runtime binding') END;
+END;
+
+CREATE TRIGGER check_runtime_binding_reject_update BEFORE UPDATE ON check_runtime_bindings BEGIN SELECT RAISE(ABORT,'check runtime bindings are immutable'); END;
 
 CREATE TRIGGER check_job_validate_insert BEFORE INSERT ON check_jobs BEGIN SELECT CASE WHEN NEW.status<>'pending' OR NEW.attempts<>0 OR NEW.lease_expires_at IS NOT NULL OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1 OR NEW.created_at IS NOT NEW.updated_at OR NOT EXISTS(SELECT 1 FROM check_runs WHERE id=NEW.check_run_id AND status='requested') THEN RAISE(ABORT,'invalid check job') END; END;
 
@@ -4919,7 +5141,7 @@ CREATE TRIGGER check_artifact_reject_update BEFORE UPDATE ON check_artifacts BEG
 CREATE TRIGGER check_artifact_reject_delete BEFORE DELETE ON check_artifacts BEGIN SELECT RAISE(ABORT,'check artifacts are immutable'); END;
 
 CREATE TRIGGER check_artifact_validate_insert BEFORE INSERT ON check_artifacts BEGIN
- SELECT CASE WHEN crewfold_timestamp_canonical(NEW.created_at) IS NOT 1 OR NOT EXISTS(SELECT 1 FROM check_results result JOIN check_runs run ON run.id=result.check_run_id JOIN check_definitions definition ON definition.id=run.definition_id WHERE result.id=NEW.check_result_id AND (NEW.kind='diagnostic' OR NEW.captured_bytes<=definition.output_byte_limit)) THEN RAISE(ABORT,'invalid bounded check artifact') END;
+ SELECT CASE WHEN crewfold_timestamp_canonical(NEW.created_at) IS NOT 1 OR NOT EXISTS(SELECT 1 FROM check_results result JOIN check_runs run ON run.id=result.check_run_id JOIN check_definitions definition ON definition.id=run.definition_id WHERE result.id=NEW.check_result_id AND (NEW.kind='diagnostic' OR NEW.captured_bytes<=definition.output_byte_limit)) OR NOT EXISTS(SELECT 1 FROM immutable_artifacts artifact WHERE artifact.content_sha256=NEW.content_sha256 AND artifact.byte_size=NEW.captured_bytes) THEN RAISE(ABORT,'invalid bounded check artifact') END;
 END;
 
 CREATE TRIGGER check_freshness_validate_insert BEFORE INSERT ON check_result_freshness BEGIN
@@ -5847,7 +6069,7 @@ CREATE TRIGGER management_briefing_require_store_insert BEFORE INSERT ON managem
   OR NEW.scope_id<>CASE NEW.scope_type WHEN 'workspace' THEN json_extract(NEW.content_json,'$.scope.workspace_id') WHEN 'project' THEN json_extract(NEW.content_json,'$.scope.project_id') WHEN 'objective' THEN json_extract(NEW.content_json,'$.scope.objective_id') ELSE json_extract(NEW.content_json,'$.scope.task_id') END
   OR json_extract(NEW.content_json,'$.event_cursor')<>NEW.event_cursor OR json_extract(NEW.content_json,'$.cutoff_event_sequence')<>NEW.cutoff_event_sequence
   OR COALESCE(json_extract(NEW.content_json,'$.checkpoint_id'),'')<>NEW.checkpoint_id OR json_extract(NEW.content_json,'$.since_event_sequence')<>NEW.since_event_sequence
-  OR json_extract(NEW.content_json,'$.evaluated_at')<>NEW.evaluated_at OR json_extract(NEW.content_json,'$.caught_up')<>NEW.caught_up
+  OR json_extract(NEW.content_json,'$.caught_up')<>NEW.caught_up
   OR COALESCE(json_extract(NEW.content_json,'$.unknown_event_type'),'')<>COALESCE(NEW.unknown_event_type,'')
   OR COALESCE(json_extract(NEW.content_json,'$.unknown_event_sequence'),0)<>COALESCE(NEW.unknown_event_sequence,0)
   OR NEW.revision<>COALESCE((SELECT MAX(revision)+1 FROM management_briefings WHERE workspace_id=NEW.workspace_id AND scope_type=NEW.scope_type AND scope_id=NEW.scope_id),1)
@@ -5972,6 +6194,6 @@ ORDER BY revision.id;
 INSERT INTO knowledge_search_metadata(
     singleton,generation,built_at,source_event_sequence,source_count,source_digest
 ) VALUES(
-    1,1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),0,0,
+    1,1,rtrim(rtrim(strftime('%Y-%m-%dT%H:%M:%f','now'),'0'),'.') || 'Z',0,0,
     lower(hex(sha256(CAST('' AS BLOB))))
 );

@@ -118,7 +118,7 @@ func (s *Store) ListWorkspaces(ctx context.Context, query ListWorkspacesQuery) (
 	if err != nil {
 		return WorkspacePage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return WorkspacePage{}, storageFailure("begin workspace page snapshot", err)
 	}
@@ -157,7 +157,7 @@ func (s *Store) ListProjects(ctx context.Context, query ListProjectsQuery) (Proj
 	if err != nil {
 		return ProjectPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return ProjectPage{}, storageFailure("begin project page snapshot", err)
 	}
@@ -205,7 +205,7 @@ func (s *Store) ListAgents(ctx context.Context, query ListAgentsQuery) (AgentPag
 	if err != nil {
 		return AgentPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return AgentPage{}, storageFailure("begin agent page snapshot", err)
 	}
@@ -255,7 +255,7 @@ func (s *Store) ListObjectives(ctx context.Context, query ListObjectivesQuery) (
 	if err != nil {
 		return ObjectivePage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return ObjectivePage{}, storageFailure("begin objective page snapshot", err)
 	}
@@ -310,7 +310,7 @@ func (s *Store) ListTasks(ctx context.Context, query ListTasksQuery) (TaskPage, 
 	if err != nil {
 		return TaskPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return TaskPage{}, storageFailure("begin task page snapshot", err)
 	}
@@ -380,7 +380,7 @@ func (s *Store) ListRuns(ctx context.Context, query ListRunsQuery) (RunPage, err
 	if status != "" && !validRunStatus(status) {
 		return RunPage{}, &Error{Code: CodeInvalidRun, Message: fmt.Sprintf("unsupported run status %q", status)}
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return RunPage{}, storageFailure("begin run page snapshot", err)
 	}
@@ -406,6 +406,7 @@ func (s *Store) ListRuns(ctx context.Context, query ListRunsQuery) (RunPage, err
 		return RunPage{}, storageFailure("count runs", err)
 	}
 	rows, err := queries.ListOperatorRuns(ctx, dbgen.ListOperatorRunsParams{
+		RuntimeNodeID: s.runtimeNodeID, RuntimeNodeFingerprint: s.runtimeNodeFingerprint,
 		WorkspaceID: workspace.ID, ProjectID: projectID, TaskID: taskID, Status: status, CursorKey: cursor.Key,
 		CursorID: cursor.ID, ResultLimit: int64(limit + 1),
 	})
@@ -426,7 +427,7 @@ func (s *Store) ListRuns(ctx context.Context, query ListRunsQuery) (RunPage, err
 			Revision: row.Revision, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 			StartedAt: row.StartedAt, FinishedAt: row.FinishedAt,
 		}
-		runtimeHandleBoundIDs[row.ID] = row.RuntimeHandle != ""
+		runtimeHandleBoundIDs[row.ID] = row.RuntimeBindingCurrent == 1
 	}
 	next, err := nextRecordCursor(fingerprint, hasMore, values, func(value domain.RunSummary) (string, string) { return value.CreatedAt, value.ID })
 	if err != nil {
@@ -440,7 +441,7 @@ func (s *Store) ListClaims(ctx context.Context, query ListClaimsQuery) (ClaimPag
 	if err != nil {
 		return ClaimPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return ClaimPage{}, storageFailure("begin claim page snapshot", err)
 	}
@@ -498,7 +499,7 @@ func (s *Store) ListOverlaps(ctx context.Context, query ListOverlapsQuery) (Over
 	if err != nil {
 		return OverlapPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return OverlapPage{}, storageFailure("begin overlap page snapshot", err)
 	}
@@ -556,7 +557,7 @@ func (s *Store) ListClaimDrifts(ctx context.Context, query ListClaimDriftsQuery)
 	if err != nil {
 		return DriftPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return DriftPage{}, storageFailure("begin claim drift page snapshot", err)
 	}
@@ -614,7 +615,7 @@ func (s *Store) ListMeetings(ctx context.Context, query ListMeetingsQuery) (Meet
 	if err != nil {
 		return MeetingPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return MeetingPage{}, storageFailure("begin meeting page snapshot", err)
 	}
@@ -691,7 +692,7 @@ func (s *Store) ListEvents(ctx context.Context, query ListEventsQuery) (EventPag
 	if query.After < 0 {
 		return EventPage{}, invalidCursor("event after cursor must be zero or greater")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return EventPage{}, storageFailure("begin event page snapshot", err)
 	}
@@ -774,7 +775,7 @@ func (s *Store) EventTimeline(ctx context.Context, query EventTimelineQuery) (Ev
 	if entityType == "" || len(entityType) > 64 || entityID == "" || len(entityID) > 128 {
 		return EventPage{}, invalidCursor("entity timeline requires a bounded entity type and id")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return EventPage{}, storageFailure("begin entity timeline snapshot", err)
 	}

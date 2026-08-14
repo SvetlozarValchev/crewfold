@@ -226,42 +226,6 @@ type CheckRoute struct {
 	UpdatedBy                 string  `json:"updated_by"`
 }
 
-type CheckRun struct {
-	ID                        string  `json:"id"`
-	WorkspaceID               string  `json:"workspace_id"`
-	ProjectID                 string  `json:"project_id"`
-	TaskID                    string  `json:"task_id"`
-	TaskRevision              int64   `json:"task_revision"`
-	RequirementID             string  `json:"requirement_id"`
-	RequirementRevision       int64   `json:"requirement_revision"`
-	DefinitionID              string  `json:"definition_id"`
-	DefinitionContentRevision int64   `json:"definition_content_revision"`
-	DefinitionSha256          string  `json:"definition_sha256"`
-	CheckoutID                string  `json:"checkout_id"`
-	CheckoutRevision          int64   `json:"checkout_revision"`
-	RepositoryID              string  `json:"repository_id"`
-	RepositoryObjectFormat    string  `json:"repository_object_format"`
-	CheckoutPath              string  `json:"checkout_path"`
-	CheckoutWriteMode         string  `json:"checkout_write_mode"`
-	SourceType                string  `json:"source_type"`
-	SourceActorID             string  `json:"source_actor_id"`
-	SourceAgentID             *string `json:"source_agent_id"`
-	SourceAgentRevision       *int64  `json:"source_agent_revision"`
-	SourceRunID               *string `json:"source_run_id"`
-	SourceGrantID             *string `json:"source_grant_id"`
-	SourceGrantRevision       *int64  `json:"source_grant_revision"`
-	SourceMaxInFlight         int64   `json:"source_max_in_flight"`
-	Status                    string  `json:"status"`
-	RuntimeHandle             *string `json:"runtime_handle"`
-	Revision                  int64   `json:"revision"`
-	CreatedAt                 string  `json:"created_at"`
-	UpdatedAt                 string  `json:"updated_at"`
-	StartedAt                 *string `json:"started_at"`
-	FinishedAt                *string `json:"finished_at"`
-	CreatedBy                 string  `json:"created_by"`
-	UpdatedBy                 string  `json:"updated_by"`
-}
-
 type ContextDelta struct {
 	ID                   string  `json:"id"`
 	RunID                string  `json:"run_id"`
@@ -786,6 +750,28 @@ type RunContextDeltaState struct {
 	RebaseEventSequence     *int64  `json:"rebase_event_sequence"`
 	CreatedAt               string  `json:"created_at"`
 	UpdatedAt               string  `json:"updated_at"`
+}
+
+type RunLogArtifact struct {
+	ID            string `json:"id"`
+	RunID         string `json:"run_id"`
+	Kind          string `json:"kind"`
+	ContentSha256 string `json:"content_sha256"`
+	CapturedBytes int64  `json:"captured_bytes"`
+	OmittedBytes  int64  `json:"omitted_bytes"`
+	Truncated     int64  `json:"truncated"`
+	CreatedAt     string `json:"created_at"`
+	CreatedBy     string `json:"created_by"`
+}
+
+type RunLossResolution struct {
+	RunID         string `json:"run_id"`
+	LostRevision  int64  `json:"lost_revision"`
+	Resolution    string `json:"resolution"`
+	Note          string `json:"note"`
+	EventSequence int64  `json:"event_sequence"`
+	ResolvedAt    string `json:"resolved_at"`
+	ResolvedBy    string `json:"resolved_by"`
 }
 
 type TaskCheckRequirement struct {

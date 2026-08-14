@@ -15,7 +15,10 @@ owner approval queue. M17 retains protocol v1 and adds owner check-definition,
 criterion, exact grant/route/policy, execution/inspection/watch, and repair-
 decision methods. M18 retains the same protocol version and adds only the
 owner-local commitment, outcome-assessment, checkpoint, and structured briefing
-methods documented below.
+methods documented below. M19 replaces unbounded operator reads with their one
+current bounded shape. M20 adds only online full health, online quiescent backup
+creation, and owner resolution of a lost runtime; verify, restore, activation,
+repair inspection, and load remain offline CLI operations.
 
 ## Transport
 
@@ -26,9 +29,19 @@ request.
 The socket is created with mode `0600`. The daemon holds an advisory exclusive lock
 with mode `0600` on `<data-dir>/daemon.lock` so another daemon cannot use the same
 data directory, even with a different socket. A newly created data directory uses
-mode `0700`; Crewfold does not silently change the mode of an existing directory.
+mode `0700`; Crewfold does not silently change the mode of an existing directory
+or lock. Every path component and the lock are opened without following links,
+and an existing lock must be owner-held, single-linked, regular, and exact `0600`
+before Crewfold writes its PID.
 
 There is no network listener or remote transport.
+
+The bundled client bounds Unix-socket connection establishment at two seconds
+and ordinary complete request/response round trips at ten seconds. A shorter
+caller context or explicit client timeout wins. The separate longer windows for
+portable knowledge and M20 maintenance are documented with those methods; the
+ordinary window is long enough to receive SQLite's typed five-second
+`database_busy` result rather than replacing it with a transport timeout.
 
 ## Negotiation
 
@@ -131,7 +144,8 @@ An idle or partially written client cannot hold shutdown open indefinitely.
 
 Takes no parameters. It reports:
 
-- current and latest embedded schema versions;
+- the compiled current-baseline SHA-256 and actual installed `sqlite_schema`
+  SHA-256;
 - SQLite journal mode (`wal` is required);
 - whether foreign-key enforcement is active;
 - global physical/canonical SQLite integrity from `PRAGMA quick_check(1)` on a
@@ -141,6 +155,8 @@ Takes no parameters. It reports:
   through `knowledge.index.status` and `doctor --retrieval`.
 
 The CLI exposes this as `crewfold doctor --database --socket <path>`.
+There is no latest-version, migration, upgrade, or old-baseline negotiation
+field. A nonempty mismatch is refused before this method can be served.
 
 ### `workspace.init`
 
@@ -333,7 +349,11 @@ packet ID, runtime, provider, one validated deterministic scenario,
 `idempotency_key`. It
 requires the task to be `assigned` with a current lease. The assigned agent must
 be enabled, below `max_concurrency`, and configured for the exact opaque
-runtime/provider pair.
+runtime/provider pair. Admission applies the current workspace limits to manual
+and supervised starts in the same transaction as run creation. A saturated
+workspace/project/provider/node returns retryable
+`execution_capacity_exhausted`, names the exact limiting dimension and counts,
+and appends no event.
 
 Placement is project-scoped and source-layout neutral. An eligible checkout is
 available, writable, and has write-policy capacity. `shared` allows concurrent
@@ -380,14 +400,19 @@ settle; non-zero exit, timeout, and an untrustworthy process outcome stay distin
 
 `run.show` requires `workspace` and an exact run ID. `run.list` accepts optional
 task and status filters. Both return run, current task/agent/checkout projections,
-the run timeline, and an accepted handoff when present. `run.resume` requires the
+the run timeline, and an accepted handoff when present. Public records and event
+payloads never contain runtime/provider handles; list rows expose only derived
+`can_attach`. `run.resume` requires the
 observed run revision and resumes a blocked run or an explicitly paused active run
 from its persisted cursor. `task.timeline` returns the task, all its runs, and
 ordered normalized run/timeline facts.
 
 `run.logs` takes `workspace`, run ID, and a line-tail bound. It returns runtime
 state plus independently capped stdout/stderr, captured/omitted byte counts, and
-truncation flags. Secret-like values are redacted from the API result.
+truncation flags. Secret-like values are redacted before persistence. A live run
+uses its node-bound binding; a terminal run uses immutable content-addressed
+artifacts capped at 64 KiB per stream. A terminal/lost run without trustworthy
+retained output returns `run_logs_unavailable`, never an empty successful capture.
 
 `run.stop` takes `workspace`, run ID, `expected_revision`, a grace period from 1
 to 30,000 milliseconds, and `idempotency_key`. It moves an active/blocked run to
@@ -396,6 +421,15 @@ forced fallback. The terminal `stopped` record preserves whether force was used,
 returns the task to `assigned`, and retains its lease. If process identity cannot
 be trusted, the run becomes `lost`, the task remains blocked, and capacity is not
 released automatically.
+
+`run.lost.resolve` is the owner-only resolution for that uncertainty. It takes
+`workspace`, exact `run`, `expected_revision`, a 1–2,048-byte `note`, literal
+`runtime_retired_confirmed: true`, and `idempotency_key`. The owner must first
+retire the external runtime through its native control surface. Crewfold performs
+no external stop. One successful mutation changes the run to failed with
+`runtime_retired_by_owner`, records captured/unavailable log state, clears the
+node binding, releases capacity, leaves the task blocked for an explicit retry or
+reassignment, and appends `run.lost_resolved` exactly once.
 
 The runtime driver's `Launch` operation is idempotent by stable run ID. A restart
 after committed intent or after runtime launch reclaims the durable job and
@@ -1196,6 +1230,148 @@ The local client rejects a response larger than 16 MiB before JSON decoding.
 Malformed, nonmonotonic, wrong-scope, oversized, and rewound event pagination
 fails closed. The operator TUI polls at 500 milliseconds with one request in
 flight and consumes at most ten 1,000-event pages before yielding.
+
+## M20 health and backup creation
+
+M20 retains one current protocol and adds no old-record or backup-version
+negotiation. Only online work is exposed through the daemon. Offline bundle
+verification/restoration/activation, repair inspection, and personal load never
+receive a socket method. The bundled client gives both online maintenance calls
+the frozen 60-second maintenance window; a shorter caller context or explicit
+client timeout still cancels an in-flight request.
+
+### `system.doctor.full`
+
+Takes exactly `{}` and is read-only. Its result schema is
+`urn:crewfold:schema:local-api:full-doctor-result:v1`, type `full_doctor`, with:
+
+```json
+{
+  "schema": "urn:crewfold:schema:local-api:full-doctor-result:v1",
+  "type": "full_doctor",
+  "status": "ok|degraded|failed",
+  "event_sequence": 0,
+  "baseline": {
+    "sha256": "<64-lower-hex>",
+    "installed_schema_sha256": "<64-lower-hex>"
+  },
+  "resources": {
+    "database_bytes": 0,
+    "referenced_artifact_bytes": 0,
+    "rss_bytes": 0,
+    "goroutines": 0,
+    "open_fds": 0,
+    "filesystem_free_bytes": 0
+  },
+  "limits": {
+    "briefing_claims": 128,
+    "briefing_bytes": 65536,
+    "node_unresolved_runs": 20
+  },
+  "checks": [{
+    "code": "<stable-code>",
+    "status": "ok|warning|failed",
+    "checked_count": 0,
+    "issue_count": 0,
+    "summary": "<bounded-text>",
+    "samples": [{
+      "entity_type": "<type>",
+      "entity_id": "<id>",
+      "code": "<stable-code>",
+      "detail": "<bounded-redacted-text>"
+    }],
+    "remediation": {"kind": "<stable-kind>", "command": ["crewfold", "..."]}
+  }]
+}
+```
+
+Checks are emitted in this fixed order: `current_baseline`,
+`sqlite_integrity_check`, `foreign_keys`, `canonical_integrity`, `event_contract`,
+`projection_receipt_parity`, `artifact_integrity`,
+`derived_knowledge_index`, `runtime_bindings`, `durable_queues`,
+`filesystem_permissions`, `resource_budget`, and `restore_activation`. Every
+registered row is checked; only output samples are capped, at 20 per check. The
+complete result is capped at 1 MiB and appends no event.
+
+### `backup.create`
+
+Params are exactly:
+
+```json
+{
+  "target_path": "/canonical/absolute/nonexistent-bundle",
+  "idempotency_key": "<1..128 bytes>"
+}
+```
+
+The result schema is
+`urn:crewfold:schema:local-api:backup-create-result:v1`, type `backup`:
+
+```json
+{
+  "schema": "urn:crewfold:schema:local-api:backup-create-result:v1",
+  "type": "backup",
+  "backup": {
+    "id": "backup_<32-lower-hex>",
+    "path": "/canonical/absolute/bundle",
+    "created_at": "<canonical-timestamp>",
+    "baseline_sha256": "<64-lower-hex>",
+    "event_sequence": 0,
+    "logical_state_sha256": "<64-lower-hex>",
+    "database_sha256": "<64-lower-hex>",
+    "manifest_sha256": "<64-lower-hex>",
+    "artifact_count": 0,
+    "total_bytes": 1048576
+  }
+}
+```
+
+The daemon snapshots first, then evaluates full integrity and quiescence against
+that snapshot and copies exactly its referenced immutable artifacts. It publishes
+through an absent-or-complete rename. The same normalized target/request/key
+replays one result after a lost response; reusing the key for another request is
+`idempotency_conflict`. The target must be outside the source data directory and
+must not use Crewfold's reserved recovery parent-lock name. Neither the selected
+source nor target may be at or below a component matching the reserved recovery
+staging grammar: an invalid source fails as `backup_source_unhealthy`, while an
+invalid target fails as `backup_target_invalid`, both before receipt, staging, or
+source/parent mutation. Component siblings with a shared string prefix remain
+valid. Create appends no event.
+
+### M20 admission and stable errors
+
+The current supervisor limits govern every start even when automatic supervision
+is disabled. Defaults are eight unresolved workspace runs, two
+requested/starting, and four unresolved per project/provider. A fixed node limit
+is 20. `requested|starting|active|blocked|stopping|lost` consume unresolved
+capacity; `requested|starting` consume starting capacity. Check execution remains
+one process at a time. Agent role and launch-profile purpose never affect these
+counts or authority.
+
+M20 adds these stable failures; no deprecated aliases are accepted:
+
+| Code | Retryable | Meaning |
+| --- | --- | --- |
+| `current_baseline_mismatch` | no | nonempty database is not the one compiled current baseline |
+| `canonical_integrity_failed` | no | current-baseline canonical/durable state failed a full invariant |
+| `database_busy` | yes | bounded SQLite write contention; no generic storage remap |
+| `backup_source_unhealthy` | no | captured source failed a required health gate |
+| `backup_not_quiescent` | yes | captured cut contains actionable work/binding/queue state |
+| `backup_target_invalid` | no | target path or parent is unsafe/invalid |
+| `backup_target_exists` | no | create target already exists |
+| `backup_contract_mismatch` | no | manifest/baseline is not the one current contract |
+| `backup_integrity_failed` | no | manifest, bytes, SQLite, logical state, or artifacts disagree |
+| `restore_target_exists` | no | restore never overwrites or merges |
+| `restore_not_activated` | no | restored data directory is still pending/inert |
+| `restore_unsafe_nonterminal` | no | activation/first-start state contains live work or binding |
+| `restore_source_retirement_unconfirmed` | no | activation lacks the explicit disaster-recovery assertion |
+| `repair_source_in_use` | yes | a live daemon owns the inspected data directory |
+| `repair_target_invalid` | no | selected offline data directory is unsafe/invalid |
+| `execution_capacity_exhausted` | yes | exact workspace/project/provider/node admission limit reached |
+| `runtime_binding_unavailable` | no | control requires a live binding on this node |
+| `run_logs_unavailable` | no | no trustworthy live or immutable terminal capture exists |
+| `resource_limit_exceeded` | no | a documented manifest/report/load safety bound was exceeded |
+| `operation_cancelled` | yes | cancellation occurred before publication/commit |
 
 ## Socket startup safety
 

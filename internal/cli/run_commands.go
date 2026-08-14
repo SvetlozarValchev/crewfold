@@ -31,6 +31,8 @@ func (a *App) runRun(ctx context.Context, mode outputMode, args []string) int {
 		return a.runResume(ctx, mode, args[1:])
 	case "stop":
 		return a.runStop(ctx, mode, args[1:])
+	case "resolve-lost":
+		return a.runResolveLost(ctx, mode, args[1:])
 	case "logs":
 		return a.runLogs(ctx, mode, args[1:])
 	case "prompt":
@@ -166,6 +168,59 @@ func (a *App) runStop(ctx context.Context, mode outputMode, args []string) int {
 		return a.writeClientFailure(mode, "stop run", err)
 	}
 	return a.writeRunMutation(mode, result)
+}
+
+func (a *App) runResolveLost(ctx context.Context, mode outputMode, args []string) int {
+	runID, optionArgs, failure := requiredLeadingArgument(args, "run ID")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	normalized := make([]string, 0, len(optionArgs))
+	confirmed := false
+	for _, argument := range optionArgs {
+		if argument == "--confirm-runtime-retired" {
+			if confirmed {
+				return a.writeFailure(mode, usageFailure("--confirm-runtime-retired may be specified only once", "remove the duplicate confirmation"))
+			}
+			confirmed = true
+			continue
+		}
+		normalized = append(normalized, argument)
+	}
+	if !confirmed {
+		return a.writeFailure(mode, usageFailure("run resolve-lost requires --confirm-runtime-retired", "retire the native runtime, then provide the explicit confirmation"))
+	}
+	options, failure := parseOptions(normalized, "workspace", "expected-revision", "note", "socket", "idempotency-key")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, socket, failure := requiredWorkspaceSocket(options)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	revision, failure := requiredInt64Option(options, "expected-revision", 1, 1<<62)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	note, failure := requiredOption(options, "note")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).RunLostResolve(ctx, localapi.RunLostResolveParams{
+		Workspace: workspace, Run: runID, ExpectedRevision: revision, Note: note,
+		RuntimeRetiredConfirmed: true, IdempotencyKey: options["idempotency-key"],
+	})
+	if err != nil {
+		return a.writeClientFailure(mode, "resolve lost run", err)
+	}
+	if mode == outputJSON {
+		if err := writeJSON(a.stdout, result); err != nil {
+			return a.writeFailure(outputText, internalFailure("write lost-run resolution", err))
+		}
+	} else {
+		fmt.Fprintf(a.stdout, "run: %s\nstatus: %s\nrevision: %d\nresolution: %s\nevent_sequence: %d\n", result.Detail.Run.ID, result.Detail.Run.Status, result.Detail.Run.Revision, result.Resolution.Resolution, result.EventSequence)
+	}
+	return ExitOK
 }
 
 func (a *App) runLogs(ctx context.Context, mode outputMode, args []string) int {
@@ -427,6 +482,7 @@ const runHelp = `Usage:
   crewfold run watch <id> --workspace <scope> --socket <path> [--wait-seconds <n>]
   crewfold run resume <id> --workspace <scope> --expected-revision <n> --socket <path>
   crewfold run stop <id> --graceful --workspace <scope> --expected-revision <n> --socket <path> [--grace-millis <n>]
+  crewfold run resolve-lost <id> --workspace <scope> --expected-revision <n> --note <text> --confirm-runtime-retired --socket <path>
   crewfold run logs <id> --workspace <scope> --socket <path> [--tail <lines>]
   crewfold run prompt <id> --text <prompt> --workspace <scope> --socket <path>
   crewfold run interrupt <id> --workspace <scope> --socket <path>

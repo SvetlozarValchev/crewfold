@@ -7,8 +7,10 @@ import (
 )
 
 const (
-	LatestSchemaVersion = 1
-
+	MutationAfterBaselineCatalog                = "after_baseline_catalog"
+	MutationAfterBaselineIdentity               = "after_baseline_identity"
+	MutationBeforeBaselinePublish               = "before_baseline_publish"
+	MutationAfterBaselinePublish                = "after_baseline_publish"
 	MutationAfterProjection                     = "after_projection"
 	MutationAfterEvent                          = "after_event"
 	MutationAfterProposalActions                = "after_proposal_actions"
@@ -267,12 +269,130 @@ type WorkspaceInitResult struct {
 }
 
 type DatabaseHealth struct {
-	Status              string `json:"status"`
-	SchemaVersion       int    `json:"schema_version"`
-	LatestSchemaVersion int    `json:"latest_schema_version"`
-	JournalMode         string `json:"journal_mode"`
-	ForeignKeys         bool   `json:"foreign_keys"`
-	IntegrityCheck      string `json:"integrity_check"`
+	Status         string `json:"status"`
+	SQLiteVersion  string `json:"sqlite_version"`
+	SchemaVersion  int    `json:"schema_version"`
+	SourceSHA256   string `json:"source_sha256"`
+	CatalogSHA256  string `json:"catalog_sha256"`
+	JournalMode    string `json:"journal_mode"`
+	ForeignKeys    bool   `json:"foreign_keys"`
+	IntegrityCheck string `json:"integrity_check"`
+}
+
+type BaselineIdentity struct {
+	SchemaVersion int    `json:"schema_version"`
+	SourceSHA256  string `json:"source_sha256"`
+	CatalogSHA256 string `json:"catalog_sha256"`
+}
+
+type CanonicalVerifyOptions struct {
+	Full bool
+}
+
+type CanonicalIntegrityReport struct {
+	Status                   string                       `json:"status"`
+	Complete                 bool                         `json:"complete"`
+	Baseline                 BaselineIdentity             `json:"baseline"`
+	PhysicalIntegrity        string                       `json:"physical_integrity"`
+	ForeignKeyViolationCount int64                        `json:"foreign_key_violation_count"`
+	ForeignKeyViolations     []ForeignKeyViolation        `json:"foreign_key_violations"`
+	ApplicationTableCount    int                          `json:"application_table_count"`
+	EventHighWater           int64                        `json:"event_high_water"`
+	LogicalSHA256            string                       `json:"logical_sha256"`
+	Quiescence               QuiescentCut                 `json:"quiescence"`
+	QuiescenceBlockers       []QuiescenceBlocker          `json:"quiescence_blockers"`
+	SemanticFamilies         []SemanticIntegrityFamily    `json:"semantic_families"`
+	DurableQueues            []DurableQueueIntegrity      `json:"durable_queues"`
+	DerivedProjections       []DerivedProjectionIntegrity `json:"derived_projections"`
+	ArtifactReferences       []ImmutableArtifactReference `json:"artifact_references"`
+	Failures                 []CanonicalIntegrityIssue    `json:"failures"`
+}
+
+// DurableQueueIntegrity is the bounded, registry-derived partition proof for
+// one durable external-work queue. Every row must be in exactly one of the
+// declared open or terminal state sets.
+type DurableQueueIntegrity struct {
+	Name           string   `json:"name"`
+	Table          string   `json:"table"`
+	RowCount       int64    `json:"row_count"`
+	OpenCount      int64    `json:"open_count"`
+	TerminalCount  int64    `json:"terminal_count"`
+	Status         string   `json:"status"`
+	ViolationCount int64    `json:"violation_count"`
+	Samples        []string `json:"samples"`
+}
+
+type DerivedProjectionIntegrity struct {
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	Diagnosis string `json:"diagnosis,omitempty"`
+}
+
+type ImmutableArtifactReference struct {
+	ContentSHA256 string `json:"content_sha256"`
+	ByteSize      int64  `json:"byte_size"`
+	Kind          string `json:"kind"`
+}
+
+type CanonicalIntegrityIssue struct {
+	Check  string `json:"check"`
+	Detail string `json:"detail"`
+}
+
+type ForeignKeyViolation struct {
+	Table       string `json:"table"`
+	RowID       *int64 `json:"row_id,omitempty"`
+	ParentTable string `json:"parent_table"`
+	ForeignKey  int64  `json:"foreign_key"`
+}
+
+type SemanticIntegrityFamily struct {
+	Name           string                       `json:"name"`
+	Tables         []string                     `json:"tables"`
+	RowsStreamed   int64                        `json:"rows_streamed"`
+	LogicalSHA256  string                       `json:"logical_sha256"`
+	Status         string                       `json:"status"`
+	ViolationCount int64                        `json:"violation_count"`
+	Violations     []SemanticIntegrityViolation `json:"violations"`
+	Detail         string                       `json:"detail,omitempty"`
+}
+
+type SemanticIntegrityViolation struct {
+	Check   string   `json:"check"`
+	Count   int64    `json:"count"`
+	Samples []string `json:"samples"`
+}
+
+type QuiescentCut struct {
+	Quiescent      bool             `json:"quiescent"`
+	EventHighWater int64            `json:"event_high_water"`
+	Counts         QuiescenceCounts `json:"counts"`
+	ProofSHA256    string           `json:"proof_sha256"`
+}
+
+type QuiescenceCounts struct {
+	NonterminalRuns       int64 `json:"nonterminal_runs"`
+	UnsettledRunJobs      int64 `json:"unsettled_run_jobs"`
+	RuntimeBindings       int64 `json:"runtime_bindings"`
+	UnfinishedCheckRuns   int64 `json:"unfinished_check_runs"`
+	UnsettledCheckJobs    int64 `json:"unsettled_check_jobs"`
+	OpenWakeJobs          int64 `json:"open_wake_jobs"`
+	OpenSchedulingIntents int64 `json:"open_scheduling_intents"`
+	OpenSupervisorActions int64 `json:"open_supervisor_actions"`
+	OpenApprovals         int64 `json:"open_approvals"`
+}
+
+type QuiescenceBlocker struct {
+	Kind     string `json:"kind"`
+	EntityID string `json:"entity_id"`
+}
+
+type SnapshotMetadata struct {
+	Path           string           `json:"path"`
+	ByteSize       int64            `json:"byte_size"`
+	SHA256         string           `json:"sha256"`
+	Baseline       BaselineIdentity `json:"baseline"`
+	EventHighWater int64            `json:"event_high_water"`
 }
 
 type CreateDeliverableCommitmentCommand struct {
@@ -1470,4 +1590,9 @@ type Options struct {
 	// Clock controls lease/timestamp observation in deterministic tests. Production
 	// defaults to time.Now.
 	Clock func() time.Time
+	// RuntimeNodeID and RuntimeNodeFingerprint bind opaque live handles to the
+	// exact daemon installation that owns their operational state. They are
+	// optional for offline/read-only use and required by binding mutations.
+	RuntimeNodeID          string
+	RuntimeNodeFingerprint string
 }

@@ -65,7 +65,7 @@ func (s *Store) SearchKnowledge(ctx context.Context, query SearchKnowledgeQuery)
 	if err != nil {
 		return domain.KnowledgeSearchResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.KnowledgeSearchResult{}, storageFailure("begin knowledge search", err)
 	}
@@ -278,7 +278,7 @@ func (s *Store) KnowledgeIndexStatus(ctx context.Context, workspaceIdentifier st
 	if _, err := s.Workspace(ctx, strings.TrimSpace(workspaceIdentifier)); err != nil {
 		return domain.KnowledgeIndexStatus{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.KnowledgeIndexStatus{}, storageFailure("begin knowledge index inspection", err)
 	}
@@ -297,7 +297,7 @@ func (s *Store) RebuildKnowledgeIndex(ctx context.Context, command RebuildKnowle
 	if err := validateMutationMetadata(command.IdempotencyKey, command.CorrelationID, CodeInvalidKnowledge); err != nil {
 		return KnowledgeIndexRebuildResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return KnowledgeIndexRebuildResult{}, storageFailure("begin knowledge index rebuild", err)
 	}
@@ -391,7 +391,7 @@ SELECT kr.id,ki.workspace_id,kr.title,kr.body FROM knowledge_revisions kr JOIN k
 // fail after that mutation committed. A later status call exposes degradation
 // and an explicit rebuild repairs the projection atomically.
 func (s *Store) refreshKnowledgeIndexAfterCanonicalMutation(ctx context.Context) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return
 	}
@@ -488,6 +488,11 @@ func knowledgeIndexSchemaDiagnosis(ctx context.Context, tx *sql.Tx) string {
 		ddl  string
 	}{
 		{name: "knowledge_search", ddl: knowledgeSearchTableDDL},
+		{name: "knowledge_search_config", ddl: `CREATE TABLE 'knowledge_search_config'(k PRIMARY KEY, v) WITHOUT ROWID`},
+		{name: "knowledge_search_content", ddl: `CREATE TABLE 'knowledge_search_content'(id INTEGER PRIMARY KEY, c0, c1, c2, c3)`},
+		{name: "knowledge_search_data", ddl: `CREATE TABLE 'knowledge_search_data'(id INTEGER PRIMARY KEY, block BLOB)`},
+		{name: "knowledge_search_docsize", ddl: `CREATE TABLE 'knowledge_search_docsize'(id INTEGER PRIMARY KEY, sz BLOB)`},
+		{name: "knowledge_search_idx", ddl: `CREATE TABLE 'knowledge_search_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID`},
 		{name: "knowledge_search_metadata", ddl: knowledgeSearchMetadataTableDDL},
 	}
 	for _, table := range expected {

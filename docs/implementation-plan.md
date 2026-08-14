@@ -1125,52 +1125,104 @@ equally available through the CLI/API.
 ### M20 — Personal-scale hardening and recovery
 
 **Question answered:** Can Crewfold remain controllable, recoverable, restorable,
-and canonically intact
-at the target local scale?
+and canonically intact at the target local scale without cloning live runtime
+authority?
 
 **Visible result**
 
 ```sh
-crewfold doctor --full
-crewfold backup create
-crewfold backup verify BACKUP_ID
-crewfold repair inspect
+crewfold doctor --full --socket /path/to/crewfold.sock
+crewfold backup create --socket /path/to/crewfold.sock \
+  --to /new/private/backup-directory
+crewfold backup verify /new/private/backup-directory
+crewfold backup restore /new/private/backup-directory \
+  --to /new/private/crewfold-data
+crewfold backup activate /new/private/crewfold-data \
+  --confirm-source-retired
+crewfold repair inspect /path/to/crewfold-data
 crewfold test load --profile personal-100
 ```
 
 **Deliverables**
 
-- Load tests for 100 agent definitions, 1,000 tasks, and 100,000 events with a
-  bounded active set.
-- Management-workload tests over project and workspace briefings with bounded size
-  and query latency.
-- Queue backpressure, retry/cooldown policy, and resource-budget reporting.
-- Online backup, restore-to-new-directory, integrity checks, and repair guidance.
-- Current-baseline creation, integrity verification, and restore-to-new-directory tests.
-- Security/redaction review, endurance suite, and Linux packaging candidate.
+- Replace the migration ladder with one exact `baseline/current.sql`, compiled
+  baseline hash, installed `sqlite_schema` hash, and full table/queue auditor.
+  Empty storage is created; any other baseline is refused without DDL or an
+  import/upgrade path.
+- An online `backup.create` daemon method and path-based CLI. It snapshots with
+  SQLite's online backup API, validates the captured cut as fully quiescent, and
+  publishes an absent-or-complete owner-private bundle.
+- Offline, source-independent verify and restore-to-new-directory commands. A
+  restored directory remains inert until the owner explicitly confirms source
+  retirement and activation generates a new node key and empty capability/runtime
+  roots.
+- Bundles contain only the standalone database and snapshot-referenced immutable
+  check and bounded redacted run-log artifacts. They exclude node keys,
+  capabilities, live runtime/check-runtime state, provider homes, repositories,
+  WAL/SHM files, and orphan files.
+- Opaque runtime/provider handles become node-bound internal live bindings, leave
+  public records and event payloads, and are cleared on terminal transitions.
+  `run resolve-lost --confirm-runtime-retired` is the only owner path that frees
+  capacity held by an uncertain external runtime.
+- Full online doctor and offline read-only repair inspection with exact current-
+  baseline, canonical, event, receipt, queue, artifact, derived-index, filesystem,
+  restore, and resource diagnoses.
+- Workspace admission limits apply equally to manual and supervised starts:
+  defaults eight unresolved, two starting, four per project/provider, plus a
+  node-wide hard ceiling of 20. Message wake and every other external effect move
+  off request transactions into bounded workers.
+- A deterministic provider-free profile with one workspace, ten projects, 100
+  arbitrary-role agent definitions, 1,000 tasks, exactly 100,000 current events,
+  80,000 in one noisy project, and a bounded active phase.
+- Management-workload, queue saturation, database-busy, crash/restart, runtime-
+  loss, duplicate-delivery, unavailable-provider, security/redaction, short
+  endurance, and local reproducible Linux-package candidate tests.
 
 **Automated acceptance**
 
-- Load target stays within documented latency/memory budgets established by the
-  benchmark baseline.
-- Briefing latency and output size remain bounded at the personal-100 target; one
-  noisy project cannot crowd unrelated owner decisions out of workspace scope.
-- Saturated launch work does not starve status, messages, or lease renewal.
-- Backup/restore reproduces domain state and event cursor independently.
-- Fault suite covers daemon kill, runtime loss, stale leases, duplicate delivery,
-  database busy, truncated output, and unavailable provider.
-- Fresh initialization and restore both reproduce the exact current schema and
-  pass canonical integrity checks.
+- `CUR-*` proves exact fresh/restored baseline and full canonical auditor
+  coverage; there is no same-version divergent-schema adoption.
+- `BKP-*` proves a WAL-safe snapshot cut, quiescence refusal, DB/artifact binding,
+  source-independent verification, path/mode/hash safety, idempotent replay, and
+  absent-or-complete crash behavior.
+- `RST-*` proves source-independent new-directory restoration, pending-state
+  startup refusal, explicit source-retired activation, a fresh node key/no
+  capabilities, exact domain cursor, and pre-worker rejection of injected live
+  state.
+- `RUN-*` proves public/event handle removal, immutable terminal logs, and
+  explicit owner resolution of lost capacity.
+- `HLT-*`, `LOAD-*`, `BP-*`, `DB-*`, `FLT-*`, `END-*`, `SEC-*`, and `PKG-*`
+  prove diagnostics, exact load counts, noisy-project fairness, bounded
+  responsiveness/resources, queue isolation, busy/restart behavior, no leaks,
+  recovery redaction, and a reproducible unpublished Linux candidate. Exact rows
+  and thresholds are frozen in [testing.md](testing.md#m20-executable-acceptance-and-security-matrix).
+
+The absolute Linux gate is warm startup within two seconds; saturated status and
+message p99 at most one second and maximum two seconds over 200 operations;
+project briefing p99 at most two seconds/maximum five; workspace briefing p99 at
+most five seconds/maximum ten over 20 reads; doctor/create/verify/restore at most
+60 seconds each; load generation and verification at most five minutes; peak RSS
+at most 512 MiB; and database plus referenced fixture artifacts at most 1 GiB.
+Relative benchmark changes are reported but are not the sole gate.
 
 **Failure injection**
 
-- Saturate the launch queue and exhaust one provider budget; Crewfold stops new
-  launches before losing control-plane responsiveness and continues other classes.
+- Saturate one provider and all starting slots while status, message send, lease
+  reconciliation, and another provider continue. Kill create/restore at every
+  publication barrier and kill runtime/wake workers before and after their
+  external-effect boundary. Hold an SQLite writer, remove/truncate artifacts,
+  inject a lost runtime, and attempt first startup of tampered restored state.
 
 **Exit gate**
 
-The personal acceptance suite and fault matrix pass repeatedly with no manual
-database edits, leaked processes, or hidden cleanup.
+The complete M20 matrix and every prior scenario pass repeatedly with no manual
+database edit, old-schema/bundle compatibility path, cloned runtime authority,
+leaked process/socket/file descriptor/temp directory, hidden cleanup, paid
+provider call, or role/purpose authority. ADR-0019's non-goals remain explicit:
+no active-run hot backup, in-place/PITR/incremental recovery, automatic canonical
+repair, old-baseline conversion, cloud/encrypted/signed backup, general GC,
+multi-node failover, replacement UI, public package publication, or license
+decision.
 
 ### M21 — Public open-source release readiness
 

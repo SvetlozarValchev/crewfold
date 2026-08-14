@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:system-doctor-full-params:v1",
+  "title": "Crewfold full doctor parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "maxProperties": 0
+}

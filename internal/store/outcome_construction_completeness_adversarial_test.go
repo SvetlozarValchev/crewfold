@@ -444,14 +444,14 @@ func TestManagementBriefingAuthenticatedConstructionRejectsOmittedDeclaredClaim(
 			EntityType: "deliverable_commitment", EntityID: second.Commitment.ID, Revision: 1,
 			ContentSHA256: second.Commitment.ContentSHA256, EventSequence: second.EventSequence,
 		}})
-	content, contentJSON, contentSHA := adversarialCanonicalBriefingContent(t, storage, fixture.workspace.ID, scope,
+	content, contentJSON, contentSHA, evaluatedAt := adversarialCanonicalBriefingContent(t, storage, fixture.workspace.ID, scope,
 		[]briefingCandidate{firstCandidate, secondCandidate})
 
 	wantRollback := errors.New("rollback rejected incomplete briefing graph")
 	acceptedIncomplete := errors.New("incomplete briefing graph was sealed")
 	err := storage.withOutcomeMutation(context.Background(), "incomplete management briefing construction", func(tx *sql.Tx) error {
 		briefingID := "briefing_" + strings.Repeat("d", 32)
-		if insertErr := adversarialInsertBriefingParent(context.Background(), tx, briefingID, content, contentJSON, contentSHA); insertErr != nil {
+		if insertErr := adversarialInsertBriefingParent(context.Background(), tx, briefingID, content, contentJSON, contentSHA, evaluatedAt); insertErr != nil {
 			return fmt.Errorf("insert incomplete briefing parent: %w", insertErr)
 		}
 		if insertErr := adversarialInsertBriefingClaim(context.Background(), tx, briefingID, 0, firstCandidate); insertErr != nil {
@@ -463,7 +463,7 @@ func TestManagementBriefingAuthenticatedConstructionRejectsOmittedDeclaredClaim(
 		// The canonical parent declares two claims, but only the first complete
 		// claim graph exists. Lowering the receipt counts to the actual rows must
 		// not turn that omitted suffix into an authenticated briefing.
-		if _, insertErr := tx.ExecContext(context.Background(), `INSERT INTO management_briefing_receipts(briefing_id,claim_count,source_count,sealed_at) VALUES(?,1,1,?)`, briefingID, content.EvaluatedAt); insertErr == nil {
+		if _, insertErr := tx.ExecContext(context.Background(), `INSERT INTO management_briefing_receipts(briefing_id,claim_count,source_count,sealed_at) VALUES(?,1,1,?)`, briefingID, evaluatedAt); insertErr == nil {
 			return acceptedIncomplete
 		}
 		return wantRollback
@@ -497,12 +497,12 @@ func TestManagementBriefingAuthenticatedConstructionRejectsForgedProvenanceEvent
 			EntityType: "deliverable_commitment", EntityID: commitment.Commitment.ID, Revision: 1,
 			ContentSHA256: commitment.Commitment.ContentSHA256, EventSequence: unrelatedSequence,
 		}})
-	content, contentJSON, contentSHA := adversarialCanonicalBriefingContent(t, storage, fixture.workspace.ID, scope, []briefingCandidate{forgedCandidate})
+	content, contentJSON, contentSHA, evaluatedAt := adversarialCanonicalBriefingContent(t, storage, fixture.workspace.ID, scope, []briefingCandidate{forgedCandidate})
 	wantRollback := errors.New("rollback rejected forged briefing provenance")
 	acceptedForgery := errors.New("forged briefing provenance was sealed")
 	err := storage.withOutcomeMutation(context.Background(), "forged management briefing provenance", func(tx *sql.Tx) error {
 		briefingID := "briefing_" + strings.Repeat("e", 32)
-		if insertErr := adversarialInsertBriefingParent(context.Background(), tx, briefingID, content, contentJSON, contentSHA); insertErr != nil {
+		if insertErr := adversarialInsertBriefingParent(context.Background(), tx, briefingID, content, contentJSON, contentSHA, evaluatedAt); insertErr != nil {
 			return fmt.Errorf("insert forged-provenance briefing parent: %w", insertErr)
 		}
 		if insertErr := adversarialInsertBriefingClaim(context.Background(), tx, briefingID, 0, forgedCandidate); insertErr != nil {
@@ -531,7 +531,7 @@ func adversarialTaskBriefingScope(fixture outcomeAdversarialFixture) domain.Brie
 	}
 }
 
-func adversarialCanonicalBriefingContent(t *testing.T, storage *Store, workspaceID string, scope domain.BriefingScope, candidates []briefingCandidate) (managementBriefingContent, []byte, string) {
+func adversarialCanonicalBriefingContent(t *testing.T, storage *Store, workspaceID string, scope domain.BriefingScope, candidates []briefingCandidate) (managementBriefingContent, []byte, string, string) {
 	t.Helper()
 	var cutoff int64
 	if err := storage.db.QueryRowContext(context.Background(), `SELECT COALESCE(MAX(sequence),0) FROM events WHERE workspace_id=?`, workspaceID).Scan(&cutoff); err != nil {
@@ -543,22 +543,22 @@ func adversarialCanonicalBriefingContent(t *testing.T, storage *Store, workspace
 	}
 	content := managementBriefingContent{
 		Scope: scope, EventCursor: projection.Cursor, CutoffEventSequence: cutoff, SinceEventSequence: 0,
-		EvaluatedAt: storage.nowText(), CaughtUp: true, Claims: claimsFromCandidates(candidates), Omitted: []domain.BriefingOmission{},
+		CaughtUp: true, Claims: claimsFromCandidates(candidates), Omitted: []domain.BriefingOmission{},
 	}
 	contentJSON, contentSHA, err := canonicalContent(content)
 	if err != nil {
 		t.Fatalf("canonicalContent(adversarial briefing) = %v", err)
 	}
-	return content, contentJSON, contentSHA
+	return content, contentJSON, contentSHA, storage.nowText()
 }
 
-func adversarialInsertBriefingParent(ctx context.Context, tx *sql.Tx, briefingID string, content managementBriefingContent, contentJSON []byte, contentSHA string) error {
+func adversarialInsertBriefingParent(ctx context.Context, tx *sql.Tx, briefingID string, content managementBriefingContent, contentJSON []byte, contentSHA, evaluatedAt string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO management_briefings(
 id,revision,workspace_id,scope_type,scope_id,event_cursor,cutoff_event_sequence,checkpoint_id,since_event_sequence,
 evaluated_at,caught_up,unknown_event_type,unknown_event_sequence,content_json,content_sha256,byte_size,created_at
 ) VALUES(?,1,?,?,?,?,?, '',0,?,1,NULL,NULL,?,?,?,?)`,
 		briefingID, content.Scope.WorkspaceID, content.Scope.Type, scopeID(content.Scope), content.EventCursor,
-		content.CutoffEventSequence, content.EvaluatedAt, string(contentJSON), contentSHA, len(contentJSON), content.EvaluatedAt)
+		content.CutoffEventSequence, evaluatedAt, string(contentJSON), contentSHA, len(contentJSON), evaluatedAt)
 	return err
 }
 

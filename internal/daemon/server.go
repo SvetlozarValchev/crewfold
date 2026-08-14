@@ -102,31 +102,60 @@ type server struct {
 	leaseReconcileCursor      string
 	leaseReconcileCtx         context.Context
 	leaseReconcileCancel      context.CancelFunc
+	messageWakeSignal         chan struct{}
 }
 
 // Run owns the daemon lifecycle until the context is cancelled or system.stop is
 // accepted. It performs no backgrounding and returns only after handlers stop.
 func Run(ctx context.Context, config Config) error {
-	resolved, err := resolveConfig(config)
+	dataDir, err := resolveDaemonDataDir(config.DataDir)
 	if err != nil {
 		return err
 	}
+	config.DataDir = dataDir
 
-	dataLock, err := acquireDataDirLock(resolved.DataDir)
+	dataLock, err := acquireDataDirLock(dataDir)
 	if err != nil {
 		return err
 	}
 	defer dataLock.release()
+	if err := prepareStartupRecovery(ctx, dataDir); err != nil {
+		return err
+	}
+	if err := dataLock.recordOwnerPID(); err != nil {
+		return err
+	}
+	nodeID, err := execution.LoadOrCreateNodeID(dataDir)
+	if err != nil {
+		return &StartupError{Code: CodeInvalidConfiguration, Message: "initialize runtime node identity", Cause: err}
+	}
+	nodeKey, err := execution.LoadOrCreateNodeKey(dataDir)
+	if err != nil {
+		return &StartupError{Code: CodeInvalidConfiguration, Message: "initialize runtime node key", Cause: err}
+	}
+	nodeFingerprint, err := execution.NodeFingerprint(nodeID, nodeKey)
+	if err != nil {
+		return &StartupError{Code: CodeInvalidConfiguration, Message: "derive runtime node fingerprint", Cause: err}
+	}
+	resolved, err := resolveConfigWithNodeID(config, nodeID)
+	if err != nil {
+		return err
+	}
 
+	resolved.StoreOptions.RuntimeNodeID = nodeID
+	resolved.StoreOptions.RuntimeNodeFingerprint = nodeFingerprint
 	storage, err := store.Open(ctx, resolved.DataDir, resolved.StoreOptions)
 	if err != nil {
 		return &StartupError{Code: CodeDatabaseUnavailable, Message: "initialize Crewfold database", Cause: err}
 	}
 	defer storage.Close()
-	// The data-directory lock proves that no prior daemon can still own a
-	// check-job lease. Requeue those durable jobs before any worker starts so a
-	// crash after the pre-effect receipt resumes the same operation immediately
-	// instead of waiting for a wall-clock lease to expire.
+	// The data-directory lock proves that no prior daemon can still own an
+	// execution-job lease. Requeue those durable jobs before any worker starts so
+	// a live bound operation is reconciled immediately instead of waiting for a
+	// wall-clock lease to expire.
+	if err := storage.RecoverRunJobLeases(ctx); err != nil {
+		return &StartupError{Code: CodeDatabaseUnavailable, Message: "recover durable run jobs", Cause: err}
+	}
 	if err := storage.RecoverCheckJobLeases(ctx); err != nil {
 		return &StartupError{Code: CodeDatabaseUnavailable, Message: "recover durable check jobs", Cause: err}
 	}
@@ -212,13 +241,14 @@ func Run(ctx context.Context, config Config) error {
 		claimWatcherID:       fmt.Sprintf("watcher-%d-%d", os.Getpid(), time.Now().UTC().UnixNano()),
 		leaseReconcileCtx:    leaseReconcileCtx,
 		leaseReconcileCancel: leaseReconcileCancel,
+		messageWakeSignal:    make(chan struct{}, 1),
 	}
 	defer leaseReconcileCancel()
 	defer instance.cleanupSocket()
 	instance.startRunWorker()
 	instance.startCheckWorker()
 	instance.startCheckWatcher()
-	instance.processMessageWakeJobs()
+	instance.startMessageWakeWorker()
 	instance.startClaimWatcher()
 	instance.startSupervisor()
 	instance.startLeaseReconciler()
@@ -242,6 +272,10 @@ func Run(ctx context.Context, config Config) error {
 }
 
 func resolveConfig(config Config) (Config, error) {
+	return resolveConfigWithNodeID(config, "00000000000000000000000000000000")
+}
+
+func resolveConfigWithNodeID(config Config, nodeID string) (Config, error) {
 	if strings.TrimSpace(config.DataDir) == "" {
 		return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "--data-dir is required"}
 	}
@@ -300,7 +334,7 @@ func resolveConfig(config Config) (Config, error) {
 			return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "resolve daemon executable for direct runtime", Cause: executableErr}
 		}
 		directRuntime := execution.NewDirectRuntime(execution.DirectRuntimeOptions{
-			StateRoot: filepath.Join(dataDir, "runtime"), SupervisorExecutable: executable,
+			NodeID: nodeID, StateRoot: filepath.Join(dataDir, "runtime"), SupervisorExecutable: executable,
 		})
 		herdrExecutable := strings.TrimSpace(config.HerdrExecutable)
 		if herdrExecutable == "" {
@@ -317,7 +351,7 @@ func resolveConfig(config Config) (Config, error) {
 			herdrSession = strings.TrimSpace(os.Getenv("HERDR_SESSION"))
 		}
 		herdrRuntime := execution.NewHerdrRuntime(execution.HerdrRuntimeOptions{
-			StateRoot: filepath.Join(dataDir, "runtime", "herdr"), HerdrExecutable: herdrExecutable,
+			NodeID: nodeID, StateRoot: filepath.Join(dataDir, "runtime", "herdr"), HerdrExecutable: herdrExecutable,
 			CrewfoldExecutable: executable, Session: herdrSession,
 		})
 		config.RuntimeDrivers = map[string]execution.RuntimeDriver{
@@ -332,7 +366,7 @@ func resolveConfig(config Config) (Config, error) {
 			return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "resolve daemon executable for check runtime", Cause: executableErr}
 		}
 		config.CheckRuntimeDriver = execution.NewDirectRuntime(execution.DirectRuntimeOptions{
-			StateRoot: filepath.Join(dataDir, "check-runtime"), SupervisorExecutable: executable,
+			NodeID: nodeID, StateRoot: filepath.Join(dataDir, "check-runtime"), SupervisorExecutable: executable,
 			InheritedEnvironment:           checkRuntimeEnvironment(os.Environ()),
 			OperationIDEnvironmentVariable: execution.DirectCheckRunIDEnvironmentVariable,
 			OutputByteLimit:                1024 * 1024,
@@ -600,6 +634,10 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		}), true
 	case localapi.MethodDatabaseStatus:
 		return s.handleDatabaseStatus(request), false
+	case localapi.MethodSystemDoctorFull:
+		return s.handleSystemDoctorFull(request), false
+	case localapi.MethodBackupCreate:
+		return s.handleBackupCreate(request), false
 	case localapi.MethodWorkspaceInit:
 		return s.handleWorkspaceInit(request), false
 	case localapi.MethodWorkspaceShow:
@@ -726,6 +764,8 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleRunResume(request), false
 	case localapi.MethodRunStop:
 		return s.handleRunStop(request), false
+	case localapi.MethodRunLostResolve:
+		return s.handleRunLostResolve(request), false
 	case localapi.MethodRunLogs:
 		return s.handleRunLogs(request), false
 	case localapi.MethodRunPrompt:
@@ -903,14 +943,15 @@ func (s *server) handleDatabaseStatus(request localapi.Request) localapi.Respons
 		return storeErrorResponse(request, err)
 	}
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.DatabaseStatusResult{
-		Schema:              localapi.DatabaseStatusSchema,
-		Type:                "database_status",
-		Status:              health.Status,
-		SchemaVersion:       health.SchemaVersion,
-		LatestSchemaVersion: health.LatestSchemaVersion,
-		JournalMode:         health.JournalMode,
-		ForeignKeys:         health.ForeignKeys,
-		IntegrityCheck:      health.IntegrityCheck,
+		Schema:         localapi.DatabaseStatusSchema,
+		Type:           "database_status",
+		Status:         health.Status,
+		SchemaVersion:  health.SchemaVersion,
+		BaselineSHA256: health.SourceSHA256,
+		CatalogSHA256:  health.CatalogSHA256,
+		JournalMode:    health.JournalMode,
+		ForeignKeys:    health.ForeignKeys,
+		IntegrityCheck: health.IntegrityCheck,
 	})
 }
 
@@ -1159,10 +1200,20 @@ func invalidParamsResponse(request localapi.Request, message string) localapi.Re
 
 func storeErrorResponse(request localapi.Request, err error) localapi.Response {
 	code := store.ErrorCode(err)
+	details := map[string]any(nil)
+	if capacity, ok := store.ExecutionCapacityErrorDetails(err); ok {
+		details = map[string]any{
+			"dimension": capacity.Dimension,
+			"scope":     capacity.Scope,
+			"actual":    capacity.Actual,
+			"limit":     capacity.Limit,
+		}
+	}
 	return localapi.ErrorResponse(request.ID, request.Protocol, &localapi.APIError{
 		Code:      code,
 		Message:   err.Error(),
-		Retryable: code == store.CodeStorageFailed || code == store.CodeRetrievalDegraded,
+		Retryable: code == store.CodeStorageFailed || code == store.CodeDatabaseBusy || code == store.CodeRetrievalDegraded || code == store.CodeExecutionCapacityExhausted,
+		Details:   details,
 	})
 }
 

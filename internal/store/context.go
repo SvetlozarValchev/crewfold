@@ -106,7 +106,7 @@ func (s *Store) BuildContextPacket(ctx context.Context, command BuildContextComm
 	if err != nil {
 		return MutationResult[domain.ContextPacket]{}, storageFailure("hash context build", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.ContextPacket]{}, storageFailure("begin context build", err)
 	}
@@ -1573,7 +1573,7 @@ func (s *Store) SubmitRunReport(ctx context.Context, command CreateRunReportComm
 	if err != nil {
 		return domain.RunReport{}, storageFailure("hash run report", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.RunReport{}, storageFailure("begin run report", err)
 	}
@@ -1680,7 +1680,7 @@ func (s *Store) PublishRunArtifact(ctx context.Context, command PublishRunArtifa
 	if err != nil {
 		return domain.RunArtifact{}, storageFailure("hash run artifact", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.RunArtifact{}, storageFailure("begin run artifact", err)
 	}
@@ -1741,7 +1741,7 @@ func (s *Store) RecordRunToolCall(ctx context.Context, runID, requestID, method,
 	if runID == "" || requestID == "" || len(requestID) > 128 || method == "" || len(method) > 128 || (outcome != "allowed" && outcome != "denied" && outcome != "error") {
 		return domain.RunToolCall{}, &Error{Code: CodeInvalidReport, Message: "tool audit fields are invalid"}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.RunToolCall{}, storageFailure("begin tool audit", err)
 	}

@@ -79,13 +79,14 @@ func (s *Store) preflightSchedulingPlacement(ctx context.Context, tx *sql.Tx, po
 	}
 
 	reserved := "('requested','starting','active','blocked','stopping','lost')"
-	var workspaceActive, workspaceStarting, projectActive, providerActive, agentActive int
+	var nodeActive, workspaceActive, workspaceStarting, projectActive, providerActive, agentActive int
 	counts := []struct {
 		statement string
 		dest      *int
 		args      []any
 		name      string
 	}{
+		{`SELECT COUNT(*) FROM runs WHERE status IN ` + reserved, &nodeActive, nil, "node active"},
 		{`SELECT COUNT(*) FROM runs WHERE workspace_id=? AND status IN ` + reserved, &workspaceActive, []any{intent.WorkspaceID}, "workspace active"},
 		{`SELECT COUNT(*) FROM runs WHERE workspace_id=? AND status IN ('requested','starting')`, &workspaceStarting, []any{intent.WorkspaceID}, "workspace starting"},
 		{`SELECT COUNT(*) FROM runs WHERE project_id=? AND status IN ` + reserved, &projectActive, []any{intent.ProjectID}, "project active"},
@@ -109,10 +110,11 @@ func (s *Store) preflightSchedulingPlacement(ctx context.Context, tx *sql.Tx, po
 		dimension, scope string
 		actual, limit    int
 	}{
-		{"workspace_active_runs", intent.WorkspaceID, workspaceActive, policy.Limits.MaxActiveRuns},
-		{"workspace_starting_runs", intent.WorkspaceID, workspaceStarting, policy.Limits.MaxStartingRuns},
-		{"project_active_runs", intent.ProjectID, projectActive, projectLimit},
-		{"provider_active_runs", profile.Provider, providerActive, providerLimit},
+		{"node_unresolved", "node", nodeActive, NodeExecutionCapacityLimit},
+		{"workspace_starting", intent.WorkspaceID, workspaceStarting, policy.Limits.MaxStartingRuns},
+		{"workspace_unresolved", intent.WorkspaceID, workspaceActive, policy.Limits.MaxActiveRuns},
+		{"project_unresolved", intent.ProjectID, projectActive, projectLimit},
+		{"provider_unresolved", profile.Provider, providerActive, providerLimit},
 		{"agent_active_runs", agent.ID, agentActive, agent.MaxConcurrency},
 	}
 	for _, capacity := range capacities {
@@ -121,7 +123,11 @@ func (s *Store) preflightSchedulingPlacement(ctx context.Context, tx *sql.Tx, po
 			"available": capacity.actual < capacity.limit,
 		}
 		if capacity.actual >= capacity.limit {
-			deferFor(CodePlacementUnavailable, capacity.dimension,
+			code := CodeExecutionCapacityExhausted
+			if capacity.dimension == "agent_active_runs" {
+				code = CodePlacementUnavailable
+			}
+			deferFor(code, capacity.dimension,
 				fmt.Sprintf("%s capacity exhausted: actual=%d limit=%d", capacity.dimension, capacity.actual, capacity.limit))
 		}
 	}

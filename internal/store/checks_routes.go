@@ -19,7 +19,7 @@ func (s *Store) CreateCheckRoute(ctx context.Context, command CreateCheckRouteCo
 		return MutationResult[domain.CheckRoute]{}, err
 	}
 	hash, _ := checkSemanticHash("check.route.create", command)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckRoute]{}, err
 	}
@@ -91,7 +91,7 @@ func (s *Store) RetireCheckRoute(ctx context.Context, command RetireCheckRouteCo
 		return MutationResult[domain.CheckRoute]{}, err
 	}
 	hash, _ := checkSemanticHash("check.route.retire", command)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckRoute]{}, err
 	}

@@ -184,7 +184,7 @@ func TestSupervisorRejectsRawTerminalRunRollbackAndRelaunch(t *testing.T) {
 	}
 
 	_, resetErr := storage.db.Exec(`UPDATE runs SET
-status='requested', step_cursor=0, runtime_handle=NULL, provider_handle=NULL,
+status='requested', step_cursor=0,
 blocked_question=NULL, result_summary=NULL, failure_code=NULL, failure_message=NULL,
 stop_grace_millis=0, stop_forced=0, revision=1, updated_at=created_at,
 started_at=NULL, finished_at=NULL, updated_by=created_by

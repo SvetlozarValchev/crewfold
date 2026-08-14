@@ -34,6 +34,9 @@ const (
 	CodePlacementUnavailable          = "placement_unavailable"
 	CodeAdapterUnavailable            = "adapter_unavailable"
 	CodeRuntimeFailed                 = "runtime_failed"
+	CodeRuntimeBindingUnavailable     = "runtime_binding_unavailable"
+	CodeRunLogsUnavailable            = "run_logs_unavailable"
+	CodeExecutionCapacityExhausted    = "execution_capacity_exhausted"
 	CodeInvalidContext                = "invalid_context"
 	CodeContextNotFound               = "context_not_found"
 	CodeInvalidContextDelta           = "invalid_context_delta"
@@ -118,6 +121,8 @@ const (
 	CodeInvalidCursor                 = "invalid_cursor"
 	CodeRetrievalDegraded             = "retrieval_degraded"
 	CodeIdempotencyConflict           = "idempotency_conflict"
+	CodeCurrentBaselineMismatch       = "current_baseline_mismatch"
+	CodeDatabaseBusy                  = "database_busy"
 	CodeStorageFailed                 = "storage_failed"
 )
 
@@ -140,6 +145,10 @@ func (e *Error) Unwrap() error {
 }
 
 func ErrorCode(err error) string {
+	var capacity *ExecutionCapacityError
+	if errors.As(err, &capacity) {
+		return CodeExecutionCapacityExhausted
+	}
 	var storeError *Error
 	if errors.As(err, &storeError) {
 		return storeError.Code

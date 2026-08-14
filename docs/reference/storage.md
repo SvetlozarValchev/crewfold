@@ -6,8 +6,11 @@ Status: implemented as one current greenfield schema baseline.
 
 The foreground daemon opens `<data-dir>/crewfold.db` only after it holds the
 exclusive `<data-dir>/daemon.lock`. A newly created data directory uses mode
-`0700`; the database and lock use `0600`. Crewfold refuses a database path that is
-a symbolic link or a non-regular file.
+`0700`; the database and lock use `0600`. Data-directory components and the lock
+are opened without following symbolic links. An existing lock must already be an
+owner-held, single-link, exact-`0600` regular file; Crewfold never chmods or
+truncates an unsafe lock. Crewfold likewise refuses a database path that is a
+symbolic link, aliased hard link, wrong-owner/mode file, or non-regular file.
 
 Crewfold writes the ASCII application ID `CRFD` into SQLite's file header. An
 unidentified database with a nonzero schema marker or user tables is preserved
@@ -19,10 +22,12 @@ vendored so `GOPROXY=off` builds and tests do not depend on a warm module cache.
 
 ## Connection policy
 
-Crewfold currently uses one open/idle database connection. This serializes a very
-small mutation volume, makes per-connection SQLite settings unambiguous, and keeps
-crash behavior easy to verify. Later load tests may justify a bounded pool without
-changing command or event semantics.
+Crewfold uses one serialized writer connection and at most four bounded WAL
+reader connections. Every mutation transaction is admitted through the writer;
+read-only status, health, and projection snapshots use the reader pool, so an
+external writer held through SQLite's busy timeout cannot consume all
+control-plane connections. The fixed bounds keep per-connection SQLite settings
+and authenticated construction seals unambiguous; there is no unbounded pool.
 
 Every connection requires:
 
@@ -32,27 +37,44 @@ Every connection requires:
 | `foreign_keys` | `ON` | Enforce projection/event relationships |
 | `busy_timeout` | 5000 ms | Bound transient lock contention |
 | `synchronous` | `FULL` | Favor local durability over mutation throughput |
-| transaction lock | `IMMEDIATE` | Acquire the write reservation before invariant checks |
+| transaction lock | writer `IMMEDIATE` | Acquire the write reservation before mutation invariant checks |
 
 Startup fails before the API socket is bound if baseline initialization or canonical database
 health checks fail. Crewfold opens a short-lived base SQLite connection without
 registering the FTS5 module and runs one global `PRAGMA quick_check(1)`. This checks
 database-wide page allocation, the freelist, and every ordinary B-tree—including
 the FTS shadow tables—without invoking the disposable virtual table's semantic
-`xIntegrity` hook. Any failure remains `storage_failed`; there is no error-string
-classification or table-filter fallback. `database.status` reports this global
-physical/canonical result alongside schema version, journal mode, and the
-foreign-key setting. Retrieval projection semantics are checked and reported
-separately.
+`xIntegrity` hook. Physical failure is distinct from retryable `database_busy`;
+there is no error-string table-filter fallback. `database.status` reports the
+compiled baseline SHA-256, installed `sqlite_schema` SHA-256, journal mode,
+foreign-key setting, and global physical result. Retrieval projection semantics
+are checked and reported separately.
 
 ## Embedded current baseline
 
-The current SQL baseline under `internal/store/migrations/` is embedded into the
-binary. A fresh data directory is initialized transactionally, and SQLite
-`user_version` plus `schema_migrations` identify the one schema understood by the
-binary. Tests construct that baseline from empty storage and exercise canonical
-integrity against representative current records; no historical upgrade path is
-part of the greenfield contract.
+The one SQL source `internal/store/baseline/current.sql` is embedded into the
+binary. A fresh data directory is initialized transactionally and then verified
+against a compiled baseline SHA-256, the fixed `CRFD` application ID, and a
+deterministic digest of sorted canonical/control `sqlite_schema`
+type/name/table/SQL tuples. The exact rebuildable `knowledge_search` virtual
+table, its SQLite-owned shadows/indexes, and `knowledge_search_metadata` are
+excluded from that catalog digest and verified by the separate derived-index
+check, so SQLite's equivalent FTS DDL rewrite and an explicitly rebuildable
+missing index do not masquerade as authority-schema drift. A singleton
+`schema_baseline` row stores the compiled hash.
+
+On open, an empty database receives exactly that baseline. Any nonempty database
+whose application ID, baseline row, or actual installed-schema digest differs is
+preserved and refused with `current_baseline_mismatch` before workers or the
+listener start. There is no migration directory, `schema_migrations`,
+latest-version comparison, DDL upgrade, same-version adoption, historical import,
+or compatibility branch.
+
+A static integrity registry classifies every application table exactly once as
+canonical domain state, durable control/receipt/queue state, or rebuildable
+derived state. It also declares terminal quiescence states for every durable
+external-effect queue. Full health and backup verification scan every registered
+row; a baseline object missing from the registry is itself an integrity failure.
 
 ## Workspaces, events, and idempotency
 
@@ -67,8 +89,6 @@ validated JSON data.
 `idempotency_keys` stores the command name, canonical request hash, and exact
 successful domain result. Keys are globally unique within this local database in
 M2. Retention/compaction is deferred until command volume makes it necessary.
-
-`schema_migrations` records the embedded baseline applied to the database.
 
 ## Projects, repositories, and checkouts
 
@@ -118,7 +138,7 @@ The task state constraint includes `review`, `changes_requested`, and `failed`
 for evidence-driven run outcomes.
 
 `runs` stores committed execution intent, task/agent/checkout placement, opaque
-runtime/provider names and handles, the validated fake scenario, normalized
+runtime/provider names, the validated fake scenario, normalized
 cursor, result/failure state, revisions, and explainable placement reasons.
 `run_jobs` is the durable pending/leased/complete worker queue. `run_timeline`
 stores bounded normalized facts rather than raw provider transcripts.
@@ -138,11 +158,46 @@ forced-stop facts.
 
 The live-run uniqueness and checkout-capacity indexes include `stopping` and
 `lost`. A lost process may still be writing, so uncertainty cannot silently free
-its assignment or checkout. Direct supervisor files live under owner-only daemon
-state rather than SQLite; the database stores only the opaque runtime handle and
-coordination meaning. Each supervisor state file is atomically replaced and
-contains process identity, exit/timeout/stop result, output byte counts, and an
-explicit unknown state when identity cannot be verified.
+its assignment, checkout, or capacity and prevents a quiescent backup.
+
+Opaque runtime/provider identities live only in internal
+`run_runtime_bindings`/`check_runtime_bindings`, bound to the current node-key
+fingerprint and exact launch operation. Public run/check projections and event
+payloads contain no handle. A binding is legal only while its operation is live
+and is cleared by terminalization; a normal terminal row retaining one fails
+canonical integrity. Direct supervisor files remain owner-private operational
+state. They are atomically replaced, excluded from backup, and removed after the
+terminal projection and retained-log metadata commit.
+
+The current table boundary is exact:
+
+| Table | Current fields and invariant |
+| --- | --- |
+| `runs` | canonical run lifecycle and placement only; no runtime/provider handle column |
+| `check_runs` | canonical check lifecycle only; no runtime handle column |
+| `run_runtime_bindings` | one live `run_id`, node fingerprint, launch operation ID, runtime handle, optional provider handle, and timestamps; delete on terminal transition |
+| `check_runtime_bindings` | one live `check_run_id`, node fingerprint, launch operation ID, runtime handle, and timestamps; delete on finished transition |
+| `run_log_artifacts` | one `stdout|stderr` row per terminal run with `captured|unavailable` state, captured/omitted bytes, truncation, nullable content SHA-256, and bounded diagnostic code |
+
+The binding tables are internal durable crash-reconciliation state, not domain or
+event projections. The current node fingerprint must match on every control or
+reconciliation operation. No terminal row can regain a binding.
+
+Before normal terminalization clears a run binding, Crewfold reads, redacts, and prepares
+at most 64 KiB each of stdout and stderr as immutable content-addressed files at
+`run-artifacts/<first-two-hex>/<sha256>`. Database metadata preserves captured and
+omitted byte counts, truncation, content hash, and captured/unavailable state.
+Live `run.logs` reads the node binding; terminal `run.logs` reads only those
+artifacts. An untrusted lost outcome records explicit unavailability rather than
+an empty successful log. Full Herdr buffers/transcripts and process identity are
+never historical log artifacts.
+
+There is deliberately no separate run-log archive queue. Log capture is a
+read-only adapter step before terminalization; the terminal transaction commits
+the final run projection, settled run job, binding deletion, and immutable-log
+references together. A crash before that transaction leaves the live binding
+and job retryable, while a committed terminal row already has its exact captured
+or unavailable log receipt.
 
 ## Context packets and run-scoped MCP
 
@@ -153,7 +208,9 @@ its own exact entity revisions and selection/exclusion explanation. Each
 
 `run_capabilities` stores only expiry—not the credential. A private node key under
 daemon state derives per-run HMAC tokens, and private token files give direct
-children capability access without putting secrets in SQLite or launch specs.
+children capability access without putting secrets in SQLite or public launch
+records. The key and tokens are node-bound operational authority and are excluded
+from quiescent backups.
 
 `run_reports` durably sequences idempotent progress, blocked, and completion
 proposals in submission order. Applying a report and advancing run/task state is
@@ -175,9 +232,13 @@ recipient row; the table keeps recipient state explicit for later evolution.
 `message_wake_jobs` is a separate durable queue for best-effort delivery to an
 already-live recipient run. Sending to an offline agent commits mail without a
 wake job. Sending to a live agent commits a pending wake intent atomically with
-the message; daemon startup reclaims pending or expired leased jobs. Wake success
-may advance a still-queued delivery to delivered. Wake failure stores a bounded
-diagnostic and leaves delivery queued so later inbox polling remains authoritative.
+the message and signals a dedicated worker; the request handler never calls a
+runtime. The worker handles one external wake at a time, at most 16 per pass, with
+a five-second call deadline and no open database transaction. Wake is at-most-
+once: startup turns a previously executing, outcome-unknown call into
+`failed_unknown` rather than sending a duplicate prompt. Success may advance a
+still-queued delivery to delivered. Failure/unknown stores a bounded diagnostic
+and leaves delivery queued so inbox polling remains authoritative.
 
 Message sends are idempotent within their sender identity, and read/acknowledge
 mutations are idempotent within the authenticated run. Artifact references are
@@ -734,28 +795,166 @@ all three tables unchanged, and permits the same idempotency key to succeed.
 Normal restart reopens and validates the same database before serving requests.
 SQLite owns WAL recovery; Crewfold does not interpret or delete WAL/SHM files.
 
-Crewfold does not yet expose backup/restore commands. A later capability must use
-SQLite's online backup API for a running database rather than copy the main file
-without its WAL. The current database contains agent/task/run/claim coordination,
-meetings, canonical knowledge, immutable context packets, scoped
-report/artifact/audit records, durable message/thread/delivery/wake state,
-overlap/drift/watcher state, bounded curator policy/derivation/acceptance evidence,
-exact contradiction history and bounded derived dispute evidence,
-opaque fake/direct bindings, direct supervisor references, and a rebuildable FTS
-projection, plus portable task-scope anchors, exact owner import receipts, and
-per-entity import attestation rows. It contains no provider-private session
-transcript. It additionally contains immutable context-delta chains, exact-run
-acknowledgement receipts, and durable scan/rebase state. Backup of a live
-installation must include a
-coordinated snapshot of the database, direct-runtime state, node key, and
-capability files; restored capabilities still obey their stored expiry and run
-state. It also includes manager grants/proposals, immutable launch profiles,
-accepted-action effects and scheduling intents, append-only supervisor policy,
-actions/approvals/state, and exact supervisor scheduling receipts. Restoring only
-part of that authority graph is unsupported and must fail canonical health or the
-first dependent operation closed. It further includes check definitions and
-criteria, current-packet check-watch grants, check execution receipts/results/freshness/evidence,
-subsystem delivery receipts, and inert repair proposals. A coordinated backup
-must include the private content-addressed check-artifact directory and dedicated
-direct-check runtime state; missing or hash-mismatched output fails closed rather
-than being summarized as verification.
+### Captured quiescence
+
+`backup.create` uses SQLite's online backup API to create a standalone database
+snapshot while the daemon remains responsive. Quiescence and integrity are
+evaluated against that captured database, never a later live read. Rows committed
+after the cut are not part of the backup.
+
+The snapshot is quiescent only when:
+
+- no run is `requested`, `starting`, `active`, `blocked`, `stopping`, or `lost`;
+- every run job is settled and no run binding exists;
+- every check run is finished, every check job complete, and no check binding
+  exists;
+- no message-wake job is pending, leased, or executing;
+- no scheduling intent is `pending`, `deferred`, `awaiting_approval`, or
+  `run_requested`;
+- no supervisor action is proposed, awaiting approval, or deferred;
+- no approval is pending or granted but unconsumed; and
+- every other integrity-registry external-effect queue is in one of its declared
+  terminal states.
+
+Enabled supervisor policies, active grants without a live run/capability, inert
+owner proposals, and task assignments do not themselves block a cut. They are
+durable configuration or coordination state, not an in-flight effect. A `lost`
+run does block because the external process may still write; only the owner's
+explicit native-runtime retirement and `run resolve-lost` mutation can clear it.
+
+### Exact bundle
+
+The bundle directory contains only:
+
+```text
+manifest.json
+manifest.sha256
+crewfold.db
+check-artifacts/<first-two-hex>/<sha256>
+run-artifacts/<first-two-hex>/<sha256>
+```
+
+`crewfold.db` is the standalone online-backup result, never a copy of the live
+main file. Artifact enumeration comes from the snapshot; only exactly referenced
+immutable check and terminal-run-log content is copied. Artifact hash or absence
+fails creation.
+
+The bundle excludes `crewfold.db-wal`, `crewfold.db-shm`, lock/socket/PID files,
+maintenance receipts and staging, `node.key`, capability tokens, active
+`runtime/` and `check-runtime/` state, Herdr sessions/transcripts, provider homes
+and credentials, source repositories/checkouts, daemon logs, and unreferenced or
+orphan artifacts. The database itself remains sensitive because canonical rows
+include messages, evidence, and registered checkout paths; backup is not a
+redacted export.
+
+Canonical `manifest.json` has schema
+`urn:crewfold:schema:backup-manifest:v1` and records:
+
+- `backup_<32-lower-hex>` ID and canonical creation time;
+- exact compiled-baseline, installed-schema, and canonical-plus-durable logical-
+  state SHA-256 values;
+- captured event high-water and quiescence proof counts;
+- a top-level `database` object with relative path, size, and SHA-256;
+- a bytewise relative-path-sorted entry list whose records contain path, closed
+  kind (`check_artifact|run_log_artifact`), integer mode, size, and SHA-256; and
+- total entry count and bytes, counting the database plus artifacts. The manifest
+  envelope files are not entries.
+
+`manifest.sha256` hashes the canonical manifest bytes. Bundle directories use
+integer mode `448` (`0700`) and files use integer mode `384` (`0600`).
+Verification rejects absent or extra entries,
+non-normal relative paths, traversal, symlinks, hard-link aliasing, devices,
+FIFOs, sockets, non-regular files, unsafe modes, size/hash mismatch, unknown
+manifest/baseline, logical-state mismatch, and full-integrity failure. Safety
+bounds are a 32-MiB manifest, 200,000 entries, 4,096-byte relative path, 8-GiB
+database, and 16-GiB complete bundle. Verification streams entry content.
+
+These private hashes detect corruption and inconsistent copy. They do not prove
+authenticity against a malicious same-UID process that can rewrite both manifest
+and contents. M20 adds no encryption or signature claim.
+
+Creation uses a private sibling staging directory and publishes through one
+rename after every check succeeds. Cancellation, daemon kill, disk exhaustion,
+or a changed source artifact before that rename leaves the requested target
+absent. Failure or process loss after the rename but before the receipt or
+response may leave the fully verifiable target in place; it never exposes a
+partial directory. A private source maintenance receipt, excluded from the
+bundle and journal, binds target/request hash to the idempotency key; replay after
+a lost response reconciles and returns that same complete result. Maintenance
+emits no coordination event.
+
+Creation rejects a target equal to or nested below the source data directory
+before creating a receipt, lock, or staging entry. Restore similarly rejects a
+target equal to or nested below its source bundle before mutating the bundle or
+target parent. A publication target cannot use Crewfold's reserved recovery
+parent-lock name. Every externally selected recovery source, bundle, repair or
+activation data directory, and publication target is rejected if any path
+component matches the reserved recovery staging grammar. Internal unpublished
+bundle verification bypasses only that public-path check after the durable intent
+has established Crewfold's ownership. Component-aware checks still permit sibling
+paths that merely share a string prefix. Thus selected source, bundle, restored,
+activated, and repair data cannot be reclaimed as abandoned recovery staging.
+
+The private parent lock contains one canonical, fsynced staging intent naming the
+exact operation kind, target, and deterministic stage. Recovery never enumerates
+or deletes siblings merely because their names resemble the reserved grammar. It
+recursively removes a leftover stage only when that valid parent intent proves
+Crewfold created it; a stale marker-owned prior operation may be cleaned under the
+same parent lock, while an unmarked, malformed, unsafe, or mismatched collision is
+preserved and the new operation fails closed.
+
+### Offline verification, restore, and activation
+
+`backup verify <bundle-dir>` needs only the bundle and current binary. It checks
+every manifest, file, SQLite, baseline, event, projection/receipt, queue,
+quiescence, artifact, and logical-state invariant without contacting or mutating a
+source installation.
+
+`backup restore <bundle-dir> --to <new-data-dir>` repeats verification, builds a
+private sibling staging directory, copies the standalone database and referenced
+artifacts, creates `daemon.lock` plus a sealed `.restore-pending.json`, and
+publishes by rename. The target must not exist. Restore creates no node key,
+capability, runtime/check-runtime state, or coordination event and does not change
+the captured event cursor.
+
+A daemon presented with a pending target returns `restore_not_activated` before
+database recovery, capability initialization, workers, runtime drivers, socket,
+or listener. Activation requires:
+
+```text
+crewfold backup activate <new-data-dir> --confirm-source-retired
+```
+
+Under the target lock, activation rechecks the exact baseline, full integrity,
+manifest-derived logical state, referenced artifacts, and complete quiescence
+predicate. It records the explicit disaster-recovery assertion, generates a new
+`node.key`, creates empty capability/runtime/check-runtime roots, and seals the
+new node fingerprint and activation digest without changing domain rows or the
+event cursor.
+
+The first daemon startup validates that seal and quiescence before any mutation
+or external call. Added nonterminal work or a binding returns
+`restore_unsafe_nonterminal`. The source need not remain available; source
+retirement is an explicit owner assertion. Excluding secrets and bindings ensures
+the target cannot control a source runtime, while the retirement assertion
+prevents two installations from launching fresh work against the same checkout.
+
+### Offline repair inspection
+
+`repair inspect <data-dir>` opens the existing `daemon.lock` without following a
+symlink and takes a nonblocking exclusive flock. A live owner returns
+`repair_source_in_use`. Inspection copies database/WAL/SHM bytes to an owned
+temporary directory before SQLite recovery or checks, so it mutates no selected
+source byte. It can therefore diagnose a baseline or canonical failure that
+prevents daemon startup.
+
+Stale repair scratch cleanup likewise requires an exact private root, canonical
+fixed ownership-marker bytes in its nofollow single-link file, and a successful
+nonblocking lifetime flock. Unmarked root/stage grammar matches, fake markers,
+unsafe modes, and live roots are never deleted; a crash before marker publication
+may leave an inert temporary directory rather than risking unrelated owner data.
+
+Repair only reports bounded stable findings and one of: retry, rebuild the
+derived knowledge index, retire a lost runtime, free space, restore a verified
+backup into a new directory, or report a defect. It performs no canonical edit,
+salvage, migration, vacuum, reindex, orphan deletion, or automatic repair.

@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -103,6 +105,87 @@ func TestManagerEscalationAcceptanceAndApprovalMatrix(t *testing.T) {
 	}
 }
 
+func TestApprovedRunControlsRejectUnavailableBindingsWithoutConsumingApproval(t *testing.T) {
+	for _, response := range []string{domain.ProposalResponseResumeRun, domain.ProposalResponseStopRun} {
+		response := response
+		for _, binding := range []string{"foreign", "missing"} {
+			binding := binding
+			t.Run(response+" "+binding, func(t *testing.T) {
+				key := strings.ReplaceAll(response+"-"+binding, "_", "-")
+				fixture := newEscalationAcceptanceFixture(t, "binding-refusal-"+key)
+				target := fixture.createTarget(t, response, "binding-refusal-"+key)
+				_, action, approval := fixture.acceptEscalation(t, target.request, "binding-refusal-"+key)
+
+				controlStore := fixture.storage
+				if binding == "foreign" {
+					foreign, err := Open(context.Background(), filepath.Dir(fixture.storage.path), Options{
+						RuntimeNodeID: foreignRuntimeNodeID, RuntimeNodeFingerprint: foreignRuntimeNodeFingerprint,
+					})
+					if err != nil {
+						t.Fatalf("Open(foreign approval store) error = %v", err)
+					}
+					defer foreign.Close()
+					controlStore = foreign
+				} else if _, err := fixture.storage.writeDB.ExecContext(context.Background(), `DELETE FROM run_runtime_bindings WHERE run_id=?`, target.runID); err != nil {
+					t.Fatalf("delete approved-control runtime binding: %v", err)
+				}
+
+				command := DecideApprovalCommand{
+					WorkspaceIdentifier: fixture.base.workspace.ID,
+					ApprovalRequestID:   approval.ID,
+					ExpectedRevision:    approval.Revision,
+					DecisionNote:        "Apply only with the exact live runtime authority.",
+					IdempotencyKey:      "binding-refusal-decision-" + key,
+					CorrelationID:       "request-binding-refusal-decision-" + key,
+				}
+				before := approvedRunControlSnapshotForTest(t, controlStore, fixture.base.workspace.ID, target.runID, approval.ID, action.ID, command.IdempotencyKey)
+				if _, err := controlStore.AllowApproval(context.Background(), command); ErrorCode(err) != CodeRuntimeBindingUnavailable {
+					t.Fatalf("AllowApproval(%s %s binding) error = %v, code = %q; want %q", response, binding, err, ErrorCode(err), CodeRuntimeBindingUnavailable)
+				}
+				after := approvedRunControlSnapshotForTest(t, controlStore, fixture.base.workspace.ID, target.runID, approval.ID, action.ID, command.IdempotencyKey)
+				if !reflect.DeepEqual(after, before) {
+					t.Fatalf("approved %s with %s binding changed state: before=%#v after=%#v", response, binding, before, after)
+				}
+				if after.Approval.Status != domain.ApprovalPending || after.Action.Status != domain.SupervisorActionAwaitingApproval || after.Control.IdempotencyCount != 0 {
+					t.Fatalf("approved %s refusal consumed authority or receipt: %#v", response, after)
+				}
+
+				// A foreign-node refusal leaves the exact owner free to retry the
+				// same semantic approval and idempotency key successfully.
+				if binding == "foreign" {
+					decided, err := fixture.storage.AllowApproval(context.Background(), command)
+					if err != nil || decided.Approval.Status != domain.ApprovalConsumed || decided.Action.Status != domain.SupervisorActionApplied {
+						t.Fatalf("AllowApproval(%s owner retry) = %#v, %v", response, decided, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+type approvedRunControlSnapshot struct {
+	Control  runtimeBindingControlSnapshot
+	Approval domain.ApprovalRequest
+	Action   domain.SupervisorAction
+}
+
+func approvedRunControlSnapshotForTest(t *testing.T, storage *Store, workspaceID, runID, approvalID, actionID, idempotencyKey string) approvedRunControlSnapshot {
+	t.Helper()
+	approval, err := storage.ApprovalRequest(context.Background(), workspaceID, approvalID)
+	if err != nil {
+		t.Fatalf("ApprovalRequest(control snapshot) error = %v", err)
+	}
+	action, err := storage.SupervisorAction(context.Background(), workspaceID, actionID)
+	if err != nil {
+		t.Fatalf("SupervisorAction(control snapshot) error = %v", err)
+	}
+	return approvedRunControlSnapshot{
+		Control:  runtimeBindingControlSnapshotForTest(t, storage, runID, idempotencyKey),
+		Approval: approval,
+		Action:   action,
+	}
+}
+
 func TestSupervisorRequestOwnerApprovalAllowDenyAndReplay(t *testing.T) {
 	for _, allow := range []bool{true, false} {
 		allow := allow
@@ -115,7 +198,7 @@ func TestSupervisorRequestOwnerApprovalAllowDenyAndReplay(t *testing.T) {
 			storage := openTestStore(t, t.TempDir(), Options{})
 			workspace, _, _, _, assigned := initializeRunTest(t, storage, "request owner "+name)
 			active := startAdversarialRun(t, storage, workspace.ID, assigned, "request-owner-"+name)
-			failed, err := storage.FailRun(context.Background(), active.Run.ID, "provider_failed", "definite owner-visible failure", "request-request-owner-"+name+"-failure")
+			failed, err := storage.FailRun(context.Background(), active.Run.ID, "provider_failed", "definite owner-visible failure", prepareTestRunLogArchive(t, storage, active.Run.ID), "", "request-request-owner-"+name+"-failure")
 			if err != nil {
 				t.Fatalf("FailRun(request_owner %s) = %v", name, err)
 			}
@@ -228,13 +311,13 @@ func TestAcceptedSchedulingIntentTerminalizesWithDefinitiveRunOutcome(t *testing
 			case domain.RunCompleted:
 				wantIntentStatus, wantEvent = domain.SchedulingIntentSatisfied, schedulingIntentSatisfiedEvent
 				if _, err := storage.ApplyRunObservation(context.Background(), runID, domain.RunObservation{
-					Kind: domain.ObservationCompletion, Message: "accepted scheduled work is complete", Handoff: "inspect the exact completed work",
+					Kind: domain.ObservationCompletion, Message: "accepted scheduled work is complete", Handoff: "inspect the exact completed work", LogArchive: prepareTestRunLogArchive(t, storage, runID),
 				}, true, nil, "request-"+key+"-completed"); err != nil {
 					t.Fatalf("ApplyRunObservation(completed) = %v", err)
 				}
 			case domain.RunFailed:
 				wantIntentStatus, wantEvent = domain.SchedulingIntentFailed, schedulingIntentFailedEvent
-				if _, err := storage.FailRun(context.Background(), runID, "provider_failed", "definite scheduled runtime failure", "request-"+key+"-failed"); err != nil {
+				if _, err := storage.FailRun(context.Background(), runID, "provider_failed", "definite scheduled runtime failure", prepareTestRunLogArchive(t, storage, runID), "", "request-"+key+"-failed"); err != nil {
 					t.Fatalf("FailRun(scheduled) = %v", err)
 				}
 			case domain.RunStopped:
@@ -250,7 +333,7 @@ func TestAcceptedSchedulingIntentTerminalizesWithDefinitiveRunOutcome(t *testing
 				if err != nil {
 					t.Fatalf("RequestRunStop(scheduled) = %v", err)
 				}
-				if _, err := storage.MarkRunStopped(context.Background(), stopping.Detail.Run.ID, false, "scheduled run stopped", "request-"+key+"-stopped"); err != nil {
+				if _, err := storage.MarkRunStopped(context.Background(), stopping.Detail.Run.ID, false, "scheduled run stopped", prepareTestRunLogArchive(t, storage, stopping.Detail.Run.ID), "", "request-"+key+"-stopped"); err != nil {
 					t.Fatalf("MarkRunStopped(scheduled) = %v", err)
 				}
 			}
@@ -273,7 +356,7 @@ func TestAcceptedSchedulingIntentClosesOnRejectedCompletionAndDisabledStartFailu
 			t.Fatalf("MarkRunStarted(rejected completion) = %v", err)
 		}
 		rejected, err := storage.ApplyRunObservation(context.Background(), runID, domain.RunObservation{
-			Kind: domain.ObservationCompletion, Message: "completion lacks required owner evidence", Evidence: []string{"partial-check"},
+			Kind: domain.ObservationCompletion, Message: "completion lacks required owner evidence", Evidence: []string{"partial-check"}, LogArchive: prepareTestRunLogArchive(t, storage, runID),
 		}, false, []string{"required-check"}, "request-"+key+"-rejected")
 		if err != nil {
 			t.Fatalf("ApplyRunObservation(rejected completion) = %v", err)

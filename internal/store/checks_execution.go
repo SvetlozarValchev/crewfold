@@ -31,7 +31,7 @@ func (s *Store) RequestCheckRun(ctx context.Context, command RequestCheckRunComm
 		return MutationResult[domain.CheckRun]{}, err
 	}
 	hash, _ := checkSemanticHash("check.run.request", command)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckRun]{}, err
 	}
@@ -85,7 +85,7 @@ func (s *Store) RunGrantedCheck(ctx context.Context, command RequestGrantedCheck
 		return MutationResult[domain.CheckRun]{}, err
 	}
 	hash, _ := checkSemanticHash("check.run.granted", command)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckRun]{}, err
 	}
@@ -269,7 +269,7 @@ func (s *Store) ClaimCheckJob(ctx context.Context, lease time.Duration) (CheckWo
 	if lease <= 0 {
 		lease = 30 * time.Second
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return CheckWork{}, false, err
 	}
@@ -324,7 +324,7 @@ func (s *Store) ClaimCheckJob(ctx context.Context, lease time.Duration) (CheckWo
 // ID; requested operations simply become claimable again.
 func (s *Store) RecoverCheckJobLeases(ctx context.Context) error {
 	now := s.nowText()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return storageFailure("begin check-job lease recovery", err)
 	}
@@ -384,8 +384,8 @@ func checkWorkInTransaction(ctx context.Context, tx *sql.Tx, runID string) (Chec
 	return CheckWork{Run: run, Definition: definition, Requirement: requirement, Job: job, Checkout: checkout, Repository: repository, LaunchReceipt: receipt}, nil
 }
 
-func checkRunFromRow(row dbgen.CheckRun) domain.CheckRun {
-	return domain.CheckRun{ID: row.ID, WorkspaceID: row.WorkspaceID, ProjectID: row.ProjectID, TaskID: row.TaskID, TaskRevision: row.TaskRevision, RequirementID: row.RequirementID, RequirementRevision: row.RequirementRevision, DefinitionID: row.DefinitionID, DefinitionContentRevision: row.DefinitionContentRevision, DefinitionSHA256: row.DefinitionSha256, CheckoutID: row.CheckoutID, CheckoutRevision: row.CheckoutRevision, RepositoryID: row.RepositoryID, RepositoryObjectFormat: row.RepositoryObjectFormat, CheckoutPath: row.CheckoutPath, CheckoutWriteMode: row.CheckoutWriteMode, Source: domain.CheckRunSource{Type: row.SourceType, ActorID: row.SourceActorID, AgentID: stringValue(row.SourceAgentID), AgentRevision: int64Value(row.SourceAgentRevision), AgentRunID: stringValue(row.SourceRunID), GrantID: stringValue(row.SourceGrantID), GrantRevision: int64Value(row.SourceGrantRevision)}, SourceMaxInFlight: int(row.SourceMaxInFlight), Status: row.Status, RuntimeHandle: stringValue(row.RuntimeHandle), Revision: row.Revision, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: stringValue(row.StartedAt), FinishedAt: stringValue(row.FinishedAt), CreatedBy: row.CreatedBy, UpdatedBy: row.UpdatedBy}
+func checkRunFromRow(row dbgen.GetCheckRunRow) domain.CheckRun {
+	return domain.CheckRun{ID: row.ID, WorkspaceID: row.WorkspaceID, ProjectID: row.ProjectID, TaskID: row.TaskID, TaskRevision: row.TaskRevision, RequirementID: row.RequirementID, RequirementRevision: row.RequirementRevision, DefinitionID: row.DefinitionID, DefinitionContentRevision: row.DefinitionContentRevision, DefinitionSHA256: row.DefinitionSha256, CheckoutID: row.CheckoutID, CheckoutRevision: row.CheckoutRevision, RepositoryID: row.RepositoryID, RepositoryObjectFormat: row.RepositoryObjectFormat, CheckoutPath: row.CheckoutPath, CheckoutWriteMode: row.CheckoutWriteMode, Source: domain.CheckRunSource{Type: row.SourceType, ActorID: row.SourceActorID, AgentID: stringValue(row.SourceAgentID), AgentRevision: int64Value(row.SourceAgentRevision), AgentRunID: stringValue(row.SourceRunID), GrantID: stringValue(row.SourceGrantID), GrantRevision: int64Value(row.SourceGrantRevision)}, SourceMaxInFlight: int(row.SourceMaxInFlight), Status: row.Status, RuntimeHandle: row.RuntimeHandle, RuntimeNodeID: row.RuntimeNodeID, RuntimeNodeFingerprint: row.RuntimeNodeFingerprint, RuntimeOperationID: row.RuntimeOperationID, Revision: row.Revision, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: stringValue(row.StartedAt), FinishedAt: stringValue(row.FinishedAt), CreatedBy: row.CreatedBy, UpdatedBy: row.UpdatedBy}
 }
 func checkJobFromRow(row dbgen.CheckJob) domain.CheckJob {
 	return domain.CheckJob{ID: row.ID, CheckRunID: row.CheckRunID, Status: row.Status, AvailableAt: row.AvailableAt, LeaseExpiresAt: stringValue(row.LeaseExpiresAt), Attempts: int(row.Attempts), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
@@ -407,7 +407,7 @@ func (s *Store) MarkCheckStarting(ctx context.Context, command MarkCheckStarting
 	if command.CheckRunID == "" || command.OperationID != command.CheckRunID || !validLowerSHA256(command.EffectiveSpecSHA256) || !filepath.IsAbs(command.EffectiveWorkingDirectory) || !validCheckObservation(command.Observation) || (command.Launchable && (command.PreflightFailureCode != "" || command.PreflightFailureDiagnostic != "")) || (!command.Launchable && (command.PreflightFailureCode != domain.CheckPreflightWorkingDirectoryInvalid || !validCheckText(command.PreflightFailureDiagnostic, 4096))) {
 		return domain.CheckRunDetail{}, checkError(CodeInvalidRun, "check start receipt is invalid")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.CheckRunDetail{}, err
 	}
@@ -540,7 +540,7 @@ func (s *Store) RecordCheckRuntimeBinding(ctx context.Context, runID, runtimeHan
 	if !validCheckText(runtimeHandle, 8*1024) {
 		return domain.CheckRun{}, checkError(CodeInvalidRun, "runtime binding requires handle")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.CheckRun{}, err
 	}
@@ -559,7 +559,7 @@ func (s *Store) RecordCheckRuntimeBinding(ctx context.Context, runID, runtimeHan
 		return domain.CheckRun{}, checkError(CodeCheckRunConflict, "runtime binding requires starting check")
 	}
 	if run.RuntimeHandle != "" {
-		if run.RuntimeHandle == runtimeHandle {
+		if run.RuntimeHandle == runtimeHandle && s.CheckBindingIsCurrent(run) {
 			return run, nil
 		}
 		return domain.CheckRun{}, checkError(CodeCheckRunConflict, "runtime binding cannot change")
@@ -569,14 +569,36 @@ func (s *Store) RecordCheckRuntimeBinding(ctx context.Context, runID, runtimeHan
 		return domain.CheckRun{}, checkError(CodeCheckRunConflict, "runtime binding requires launchable receipt")
 	}
 	now := s.nowText()
+	if err := s.validateRuntimeNodeIdentity(); err != nil {
+		return domain.CheckRun{}, err
+	}
 	err = s.withCheckMutationSeal(func() error {
-		_, err := queries.BindCheckRuntime(ctx, dbgen.BindCheckRuntimeParams{RuntimeHandle: optionalStringPointer(runtimeHandle), UpdatedAt: now, CheckRunID: run.ID})
-		return err
+		inserted, err := queries.InsertCheckRuntimeBinding(ctx, dbgen.InsertCheckRuntimeBindingParams{
+			CheckRunID: run.ID, NodeID: s.runtimeNodeID, NodeFingerprint: s.runtimeNodeFingerprint,
+			OperationID: run.ID, RuntimeHandle: runtimeHandle, CreatedAt: now,
+		})
+		if err != nil {
+			return checkConstraint("insert check runtime binding", CodeCheckRunConflict, err)
+		}
+		if inserted != 1 {
+			return checkError(CodeCheckRunConflict, "insert check runtime binding changed no row")
+		}
+		updated, err := queries.MarkCheckRuntimeObserved(ctx, dbgen.MarkCheckRuntimeObservedParams{UpdatedAt: now, CheckRunID: run.ID})
+		if err != nil {
+			return checkConstraint("mark check runtime observed", CodeCheckRunConflict, err)
+		}
+		if updated != 1 {
+			return checkError(CodeCheckRunConflict, "mark check runtime observed changed no row")
+		}
+		return nil
 	})
 	if err != nil {
 		return domain.CheckRun{}, err
 	}
 	run.RuntimeHandle = runtimeHandle
+	run.RuntimeNodeID = s.runtimeNodeID
+	run.RuntimeNodeFingerprint = s.runtimeNodeFingerprint
+	run.RuntimeOperationID = run.ID
 	run.Revision++
 	run.UpdatedAt = now
 	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "check_run", run.ID, run.Revision, "check.run_runtime_observed", correlationID, now, "crewfold-check-worker", "subsystem", map[string]any{"runtime_bound": true}); err != nil {
@@ -592,7 +614,7 @@ func (s *Store) RecordCheckRuntimeBinding(ctx context.Context, runID, runtimeHan
 }
 
 func (s *Store) MarkCheckRunning(ctx context.Context, runID, correlationID string) (domain.CheckRunDetail, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.CheckRunDetail{}, err
 	}
@@ -612,7 +634,7 @@ func (s *Store) MarkCheckRunning(ctx context.Context, runID, correlationID strin
 		_ = tx.Commit()
 		return detail, err
 	}
-	if run.Status != domain.CheckRunStarting || run.RuntimeHandle == "" {
+	if run.Status != domain.CheckRunStarting || !s.CheckBindingIsCurrent(run) {
 		return domain.CheckRunDetail{}, checkError(CodeCheckRunConflict, "running requires starting check with runtime binding")
 	}
 	now := s.nowText()
@@ -645,7 +667,7 @@ func (s *Store) DeferCheckJob(ctx context.Context, runID string, delay time.Dura
 		delay = 0
 	}
 	now := s.clock().UTC()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -819,7 +841,7 @@ func (s *Store) CheckRunDetail(ctx context.Context, workspaceIdentifier, runID s
 	if err != nil {
 		return domain.CheckRunDetail{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.CheckRunDetail{}, err
 	}
@@ -988,7 +1010,7 @@ func (s *Store) CheckRuns(ctx context.Context, query ListCheckRunsQuery) (CheckR
 	if err != nil {
 		return CheckRunPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return CheckRunPage{}, storageFailure("begin check run page snapshot", err)
 	}
@@ -1053,7 +1075,7 @@ func (s *Store) CheckRuns(ctx context.Context, query ListCheckRunsQuery) (CheckR
 }
 
 func (s *Store) InspectGrantedCheckResult(ctx context.Context, sourceRunID, checkRunID string) (domain.CheckRunDetail, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.CheckRunDetail{}, err
 	}
@@ -1082,7 +1104,7 @@ func (s *Store) InspectGrantedCheckResult(ctx context.Context, sourceRunID, chec
 }
 
 func (s *Store) ListGrantedCheckResults(ctx context.Context, query ListGrantedCheckResultsQuery) (GrantedCheckResultPage, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return GrantedCheckResultPage{}, err
 	}

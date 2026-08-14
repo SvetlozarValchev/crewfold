@@ -4,13 +4,14 @@
   "title": "Crewfold local API database status result v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "type", "status", "schema_version", "latest_schema_version", "journal_mode", "foreign_keys", "integrity_check"],
+  "required": ["schema", "type", "status", "schema_version", "baseline_sha256", "catalog_sha256", "journal_mode", "foreign_keys", "integrity_check"],
   "properties": {
     "schema": {"const": "urn:crewfold:schema:local-api:database-status-result:v1"},
     "type": {"const": "database_status"},
     "status": {"enum": ["ok", "failed"]},
-    "schema_version": {"type": "integer", "minimum": 0},
-    "latest_schema_version": {"type": "integer", "minimum": 1},
+    "schema_version": {"const": 1},
+    "baseline_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "catalog_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "journal_mode": {"type": "string", "minLength": 1},
     "foreign_keys": {"type": "boolean"},
     "integrity_check": {"type": "string", "minLength": 1}

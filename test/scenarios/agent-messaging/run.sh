@@ -172,6 +172,11 @@ stop_daemon
 start_daemon
 "$binary" inbox --workspace personal --agent reviewer --limit 20 --socket "$socket_path" --output json >"$scenario_root/inbox-after.json"
 cmp "$scenario_root/inbox-before.json" "$scenario_root/inbox-after.json"
+if [ "$acceptance_runtime" = "herdr" ] && { [ "$acceptance_attach" = "true" ] || [ "$acceptance_attach" = "lifecycle" ]; }
+then
+  "$binary" run attach "$requester_run" --workspace personal --socket "$socket_path" >"$scenario_root/attach-live.txt"
+  grep -Fq 'fixture attached to term-' "$scenario_root/attach-live.txt"
+fi
 
 "$binary" run start "$reviewer_task" --workspace personal --checkout "$(extract_id co "$scenario_root/checkout.json")" --runtime "$acceptance_runtime" --provider "$acceptance_provider" --scenario "$repo_root/test/fixtures/agent-messaging/reviewer.json" --expected-task-revision 2 --socket "$socket_path" --idempotency-key mailbox-reviewer-run --output json >"$scenario_root/reviewer-run.json"
 reviewer_run=$(extract_id run "$scenario_root/reviewer-run.json")
@@ -214,10 +219,14 @@ else
 fi
 grep -Fq '"type":"message.acknowledged"' "$scenario_root/events.json"
 
-if [ "$acceptance_runtime" = "herdr" ] && [ "$acceptance_attach" = "true" ]
+if [ "$acceptance_runtime" = "herdr" ] && { [ "$acceptance_attach" = "refused" ] || [ "$acceptance_attach" = "lifecycle" ]; }
 then
-  "$binary" run attach "$requester_run" --workspace personal --socket "$socket_path" >"$scenario_root/attach.txt"
-  grep -Fq 'fixture attached to term-' "$scenario_root/attach.txt"
+  if "$binary" run attach "$requester_run" --workspace personal --socket "$socket_path" >"$scenario_root/attach.txt" 2>"$scenario_root/attach-error.txt"
+  then
+    printf 'terminal Herdr run unexpectedly remained attachable\n' >&2
+    exit 1
+  fi
+  grep -Fq 'run status does not permit interactive runtime control' "$scenario_root/attach-error.txt"
 fi
 
 stop_daemon

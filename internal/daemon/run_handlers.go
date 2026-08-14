@@ -67,7 +67,8 @@ func (s *server) handleRunList(request localapi.Request) localapi.Response {
 	for index := range page.Runs {
 		driver, exists := s.runtimes[page.Runs[index].Runtime]
 		_, supportsAttach := driver.(execution.RuntimeAttacher)
-		page.Runs[index].CanAttach = page.RuntimeHandleBoundIDs[page.Runs[index].ID] && exists && supportsAttach
+		page.Runs[index].CanAttach = runAcceptsInteractiveControl(page.Runs[index].Status) &&
+			page.RuntimeHandleBoundIDs[page.Runs[index].ID] && exists && supportsAttach
 	}
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunListResult{Schema: localapi.RunListSchema, Type: "run_list", Runs: page.Runs, PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total}})
 }
@@ -135,12 +136,25 @@ func (s *server) handleRunLogs(request localapi.Request) localapi.Response {
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
+	if detail.Run.Status == domain.RunLost {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeRunLogsUnavailable, Message: "lost run has no trustworthy live or immutable terminal capture"})
+	}
+	if detail.Run.Status == domain.RunStopped || detail.Run.Status == domain.RunReview || detail.Run.Status == domain.RunCompleted || detail.Run.Status == domain.RunStartFailed || detail.Run.Status == domain.RunFailed {
+		logs, archiveErr := s.store.RunTerminalLogs(context.Background(), params.Workspace, params.Run, params.Tail)
+		if archiveErr != nil {
+			return storeErrorResponse(request, archiveErr)
+		}
+		return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunLogsResult{Schema: localapi.RunLogsSchema, Type: "run_logs", Logs: logs})
+	}
 	driver, exists := s.runtimes[detail.Run.Runtime]
 	if !exists {
 		return storeErrorResponse(request, &store.Error{Code: store.CodeAdapterUnavailable, Message: "run runtime driver is unavailable"})
 	}
 	if detail.Run.RuntimeHandle == "" {
-		return storeErrorResponse(request, &store.Error{Code: store.CodeRunConflict, Message: "run has no runtime handle yet"})
+		return storeErrorResponse(request, &store.Error{Code: store.CodeRuntimeBindingUnavailable, Message: "run control requires a live runtime binding on the current node and operation"})
+	}
+	if !s.store.RunBindingIsCurrent(detail.Run) {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeRuntimeBindingUnavailable, Message: "run control requires a live runtime binding on the current node and operation"})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -225,14 +239,24 @@ func (s *server) interactiveRun(workspace, runID string) (domain.RunDetail, exec
 	if err != nil {
 		return domain.RunDetail{}, nil, err
 	}
+	if !runAcceptsInteractiveControl(detail.Run.Status) {
+		return domain.RunDetail{}, nil, &store.Error{Code: store.CodeRunConflict, Message: "run status does not permit interactive runtime control"}
+	}
 	if detail.Run.RuntimeHandle == "" {
-		return domain.RunDetail{}, nil, &store.Error{Code: store.CodeRunConflict, Message: "run has no runtime handle yet"}
+		return domain.RunDetail{}, nil, &store.Error{Code: store.CodeRuntimeBindingUnavailable, Message: "run control requires a live runtime binding on the current node and operation"}
+	}
+	if !s.store.RunBindingIsCurrent(detail.Run) {
+		return domain.RunDetail{}, nil, &store.Error{Code: store.CodeRuntimeBindingUnavailable, Message: "run control requires a live runtime binding on the current node and operation"}
 	}
 	driver, exists := s.runtimes[detail.Run.Runtime]
 	if !exists {
 		return domain.RunDetail{}, nil, &store.Error{Code: store.CodeAdapterUnavailable, Message: "run runtime driver is unavailable"}
 	}
 	return detail, driver, nil
+}
+
+func runAcceptsInteractiveControl(status string) bool {
+	return status == domain.RunActive || status == domain.RunBlocked
 }
 
 func (s *server) handleTaskTimeline(request localapi.Request) localapi.Response {

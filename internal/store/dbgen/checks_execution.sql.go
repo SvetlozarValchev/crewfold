@@ -9,26 +9,6 @@ import (
 	"context"
 )
 
-const bindCheckRuntime = `-- name: BindCheckRuntime :execrows
-UPDATE check_runs
-SET runtime_handle=?1,revision=revision+1,updated_at=?2,updated_by='crewfold-check-worker'
-WHERE id=?3 AND status='starting' AND runtime_handle IS NULL
-`
-
-type BindCheckRuntimeParams struct {
-	RuntimeHandle *string `json:"runtime_handle"`
-	UpdatedAt     string  `json:"updated_at"`
-	CheckRunID    string  `json:"check_run_id"`
-}
-
-func (q *Queries) BindCheckRuntime(ctx context.Context, arg BindCheckRuntimeParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, bindCheckRuntime, arg.RuntimeHandle, arg.UpdatedAt, arg.CheckRunID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const checkLaunchReceiptAuthorityMatches = `-- name: CheckLaunchReceiptAuthorityMatches :one
 SELECT CAST(EXISTS(
  SELECT 1
@@ -459,6 +439,37 @@ func (q *Queries) InsertCheckLaunchReceipt(ctx context.Context, arg InsertCheckL
 	return err
 }
 
+const insertCheckRuntimeBinding = `-- name: InsertCheckRuntimeBinding :execrows
+INSERT INTO check_runtime_bindings(
+ check_run_id,node_id,node_fingerprint,operation_id,runtime_handle,revision,created_at,updated_at
+) SELECT ?1,?2,?3,?4,?5,1,?6,?6
+WHERE EXISTS(SELECT 1 FROM check_runs run WHERE run.id=?1 AND run.status='starting')
+`
+
+type InsertCheckRuntimeBindingParams struct {
+	CheckRunID      string `json:"check_run_id"`
+	NodeID          string `json:"node_id"`
+	NodeFingerprint string `json:"node_fingerprint"`
+	OperationID     string `json:"operation_id"`
+	RuntimeHandle   string `json:"runtime_handle"`
+	CreatedAt       string `json:"created_at"`
+}
+
+func (q *Queries) InsertCheckRuntimeBinding(ctx context.Context, arg InsertCheckRuntimeBindingParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertCheckRuntimeBinding,
+		arg.CheckRunID,
+		arg.NodeID,
+		arg.NodeFingerprint,
+		arg.OperationID,
+		arg.RuntimeHandle,
+		arg.CreatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const leaseCheckJob = `-- name: LeaseCheckJob :execrows
 UPDATE check_jobs
 SET status='leased',lease_expires_at=?1,attempts=attempts+1,updated_at=?2
@@ -665,7 +676,8 @@ func (q *Queries) ListGrantedCheckRunIDs(ctx context.Context, arg ListGrantedChe
 const markCheckRunRunning = `-- name: MarkCheckRunRunning :execrows
 UPDATE check_runs
 SET status='running',revision=revision+1,started_at=?1,updated_at=?1,updated_by='crewfold-check-worker'
-WHERE id=?2 AND status='starting' AND runtime_handle IS NOT NULL
+WHERE id=?2 AND status='starting'
+ AND EXISTS(SELECT 1 FROM check_runtime_bindings binding WHERE binding.check_run_id=check_runs.id)
 `
 
 type MarkCheckRunRunningParams struct {
@@ -694,6 +706,26 @@ type MarkCheckRunStartingParams struct {
 
 func (q *Queries) MarkCheckRunStarting(ctx context.Context, arg MarkCheckRunStartingParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, markCheckRunStarting, arg.UpdatedAt, arg.CheckRunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const markCheckRuntimeObserved = `-- name: MarkCheckRuntimeObserved :execrows
+UPDATE check_runs
+SET revision=revision+1,updated_at=?1,updated_by='crewfold-check-worker'
+WHERE id=?2 AND status='starting'
+ AND EXISTS(SELECT 1 FROM check_runtime_bindings binding WHERE binding.check_run_id=check_runs.id)
+`
+
+type MarkCheckRuntimeObservedParams struct {
+	UpdatedAt  string `json:"updated_at"`
+	CheckRunID string `json:"check_run_id"`
+}
+
+func (q *Queries) MarkCheckRuntimeObserved(ctx context.Context, arg MarkCheckRuntimeObservedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markCheckRuntimeObserved, arg.UpdatedAt, arg.CheckRunID)
 	if err != nil {
 		return 0, err
 	}

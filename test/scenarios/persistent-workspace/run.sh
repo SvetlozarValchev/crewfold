@@ -66,12 +66,13 @@ start_daemon
 grep -Fq '"schema":"urn:crewfold:schema:local-api:database-status-result:v1"' "$temp_dir/database.json"
 grep -Fq '"status":"ok"' "$temp_dir/database.json"
 schema_version=$(sed -n 's/.*"schema_version":\([0-9][0-9]*\).*/\1/p' "$temp_dir/database.json")
-latest_schema_version=$(sed -n 's/.*"latest_schema_version":\([0-9][0-9]*\).*/\1/p' "$temp_dir/database.json")
-if [ -z "$schema_version" ] || [ "$schema_version" != "$latest_schema_version" ]
+if [ "$schema_version" != "1" ]
 then
-  printf 'schema version %s does not match latest %s\n' "$schema_version" "$latest_schema_version" >&2
+  printf 'schema version = %s, want the sole current baseline 1\n' "$schema_version" >&2
   exit 1
 fi
+grep -Eq '"baseline_sha256":"[0-9a-f]{64}"' "$temp_dir/database.json"
+grep -Eq '"catalog_sha256":"[0-9a-f]{64}"' "$temp_dir/database.json"
 grep -Fq '"journal_mode":"wal"' "$temp_dir/database.json"
 grep -Fq '"foreign_keys":true' "$temp_dir/database.json"
 grep -Fq '"integrity_check":"ok"' "$temp_dir/database.json"

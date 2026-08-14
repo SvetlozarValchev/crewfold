@@ -43,9 +43,21 @@ func (s *server) runMessageWakeWorker(ctx context.Context) {
 			}
 			s.config.Logger.Error("message wake worker pass failed", "component", "message_wake", "error", err)
 		}
-		if !waitForMessageWake(ctx, messageWakeWaitDuration(processed)) {
+		if !waitForMessageWake(ctx, s.messageWakeSignal, messageWakeWaitDuration(processed)) {
 			return
 		}
+	}
+}
+
+// signalMessageWakeWorker coalesces durable queue notifications without making
+// request handlers wait for, or execute, the external runtime effect.
+func (s *server) signalMessageWakeWorker() {
+	if s.messageWakeSignal == nil {
+		return
+	}
+	select {
+	case s.messageWakeSignal <- struct{}{}:
+	default:
 	}
 }
 
@@ -106,12 +118,14 @@ func (s *server) deliverMessageWake(ctx context.Context, job domain.MessageWakeJ
 	return s.wakeMessage(wakeContext, job)
 }
 
-func waitForMessageWake(ctx context.Context, duration time.Duration) bool {
+func waitForMessageWake(ctx context.Context, signal <-chan struct{}, duration time.Duration) bool {
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return false
+	case <-signal:
+		return true
 	case <-timer.C:
 		return true
 	}
@@ -122,8 +136,14 @@ func (s *server) wakeMessage(ctx context.Context, job domain.MessageWakeJob) err
 	if err != nil {
 		return err
 	}
+	if !runAcceptsInteractiveControl(run.Status) {
+		return errors.New("runtime wake-up is unavailable because the target run is not active or blocked")
+	}
 	if run.RuntimeHandle == "" {
 		return errors.New("runtime wake-up is unavailable before the target run has a runtime handle")
+	}
+	if !s.store.RunBindingIsCurrent(run) {
+		return errors.New("runtime wake-up is unavailable because its binding does not belong to the current node and operation")
 	}
 	driver, exists := s.runtimes[run.Runtime]
 	if !exists {

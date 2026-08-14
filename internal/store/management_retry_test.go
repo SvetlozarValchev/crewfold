@@ -75,7 +75,7 @@ func TestSupervisorRetriesDefiniteStartFailureWithExactProfileAndBound(t *testin
 	}
 	tick()
 	if _, err := storage.ApplyRunObservation(ctx, invoked.Detail.Run.ID, domain.RunObservation{
-		Kind: domain.ObservationCompletion, Message: "proposal submitted", Handoff: "owner accepted exact retry target",
+		Kind: domain.ObservationCompletion, Message: "proposal submitted", Handoff: "owner accepted exact retry target", LogArchive: prepareTestRunLogArchive(t, storage, invoked.Detail.Run.ID),
 	}, true, nil, "request-retry-manager-complete"); err != nil {
 		t.Fatalf("ApplyRunObservation(manager completion) = %v", err)
 	}

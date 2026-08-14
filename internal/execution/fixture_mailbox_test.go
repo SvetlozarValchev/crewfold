@@ -3,7 +3,10 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"crewfold/internal/domain"
 	"crewfold/internal/mcp"
@@ -12,6 +15,35 @@ import (
 type recordingFixtureToolClient struct {
 	name      string
 	arguments map[string]any
+}
+
+type wakeSettlementFixtureClient struct {
+	inboxCalls int
+	terminal   string
+}
+
+func (client *wakeSettlementFixtureClient) CallTool(_ context.Context, name string, _ any) (mcp.ToolCallResult, error) {
+	switch name {
+	case "crewfold_list_inbox":
+		client.inboxCalls++
+		status := domain.WakePending
+		if client.inboxCalls > 1 {
+			status = client.terminal
+		}
+		encoded, _ := json.Marshal([]domain.InboxItem{{
+			Message:  domain.Message{ID: "msg_0123456789abcdef", Kind: domain.MessageInform},
+			Delivery: domain.MessageDelivery{MessageID: "msg_0123456789abcdef", WakeStatus: status},
+		}})
+		return mcp.ToolCallResult{StructuredContent: encoded}, nil
+	case "crewfold_read_message", "crewfold_acknowledge_message":
+		return mcp.ToolCallResult{StructuredContent: json.RawMessage(`{}`)}, nil
+	default:
+		return mcp.ToolCallResult{}, fmt.Errorf("unexpected tool %s", name)
+	}
+}
+
+func (*wakeSettlementFixtureClient) ReadResource(context.Context, string) ([]mcp.ResourceContents, error) {
+	return nil, nil
 }
 
 func (client *recordingFixtureToolClient) CallTool(_ context.Context, name string, arguments any) (mcp.ToolCallResult, error) {
@@ -48,5 +80,39 @@ func TestFixtureMailboxCanSendIntoOwnerCreatedThread(t *testing.T) {
 	}
 	if client.arguments["recipient_agent"] != "plug-agent" {
 		t.Fatalf("recipient_agent = %#v, want plug-agent", client.arguments["recipient_agent"])
+	}
+}
+
+func TestFixtureMailboxWaitsForTerminalWakeSettlement(t *testing.T) {
+	t.Parallel()
+	for _, terminal := range []string{domain.WakeSucceeded, domain.WakeFailed} {
+		t.Run(terminal, func(t *testing.T) {
+			t.Parallel()
+			client := &wakeSettlementFixtureClient{terminal: terminal}
+			plan := domain.FixtureMailbox{
+				WaitForKind:         domain.MessageInform,
+				AcknowledgeReceived: true,
+				WaitTimeoutMillis:   1000,
+			}
+			if err := runFixtureMailbox(context.Background(), client, plan); err != nil {
+				t.Fatalf("runFixtureMailbox() error = %v", err)
+			}
+			if client.inboxCalls != 2 {
+				t.Fatalf("inbox calls = %d, want initial read plus one settlement poll", client.inboxCalls)
+			}
+		})
+	}
+}
+
+func TestFixtureMailboxWakeSettlementWaitHonorsCancellation(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := waitForFixtureWakeSettlement(ctx, &wakeSettlementFixtureClient{terminal: domain.WakePending}, domain.InboxItem{
+		Message:  domain.Message{ID: "msg_0123456789abcdef"},
+		Delivery: domain.MessageDelivery{WakeStatus: domain.WakePending},
+	}, time.Second)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("waitForFixtureWakeSettlement() error = %v, want context canceled", err)
 	}
 }

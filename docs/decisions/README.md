@@ -23,6 +23,7 @@ deployment shape, or difficult-to-reverse dependencies.
 
 Current decisions:
 
+- [ADR-0019: Personal-scale hardening and quiescent recovery](0019-personal-scale-hardening-and-recovery.md)
 - [ADR-0018: Go-native operator TUI over the canonical local API](0018-go-native-operator-tui.md)
 - [ADR-0017: Owner-reviewed outcomes and bounded management briefings](0017-owner-reviewed-outcomes-and-bounded-briefings.md)
 - [ADR-0016: Owner-granted local checks as fresh mechanical evidence](0016-owner-granted-local-check-evidence.md)

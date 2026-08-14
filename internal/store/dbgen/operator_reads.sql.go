@@ -1153,53 +1153,60 @@ SELECT id, workspace_id, project_id, task_id, agent_id, runtime, provider,
        COALESCE(failure_code, '') AS failure_code, revision, created_at,
        updated_at, COALESCE(started_at, '') AS started_at,
        COALESCE(finished_at, '') AS finished_at,
-       COALESCE(runtime_handle, '') AS runtime_handle
+       CAST(EXISTS(SELECT 1 FROM run_runtime_bindings binding
+         WHERE binding.run_id=runs.id AND binding.node_id=?1
+           AND binding.node_fingerprint=?2
+           AND binding.operation_id=runs.id) AS INTEGER) AS runtime_binding_current
 FROM runs
-WHERE workspace_id = ?1
-  AND (CAST(?2 AS TEXT) = '' OR project_id = ?2)
-  AND (CAST(?3 AS TEXT) = '' OR task_id = ?3)
-  AND (CAST(?4 AS TEXT) = '' OR status = ?4)
+WHERE workspace_id = ?3
+  AND (CAST(?4 AS TEXT) = '' OR project_id = ?4)
+  AND (CAST(?5 AS TEXT) = '' OR task_id = ?5)
+  AND (CAST(?6 AS TEXT) = '' OR status = ?6)
   AND (
-    CAST(?5 AS TEXT) = ''
-    OR created_at < ?5
-    OR (created_at = ?5 AND id < ?6)
+    CAST(?7 AS TEXT) = ''
+    OR created_at < ?7
+    OR (created_at = ?7 AND id < ?8)
   )
 ORDER BY created_at DESC, id DESC
-LIMIT ?7
+LIMIT ?9
 `
 
 type ListOperatorRunsParams struct {
-	WorkspaceID string `json:"workspace_id"`
-	ProjectID   string `json:"project_id"`
-	TaskID      string `json:"task_id"`
-	Status      string `json:"status"`
-	CursorKey   string `json:"cursor_key"`
-	CursorID    string `json:"cursor_id"`
-	ResultLimit int64  `json:"result_limit"`
+	RuntimeNodeID          string `json:"runtime_node_id"`
+	RuntimeNodeFingerprint string `json:"runtime_node_fingerprint"`
+	WorkspaceID            string `json:"workspace_id"`
+	ProjectID              string `json:"project_id"`
+	TaskID                 string `json:"task_id"`
+	Status                 string `json:"status"`
+	CursorKey              string `json:"cursor_key"`
+	CursorID               string `json:"cursor_id"`
+	ResultLimit            int64  `json:"result_limit"`
 }
 
 type ListOperatorRunsRow struct {
-	ID              string `json:"id"`
-	WorkspaceID     string `json:"workspace_id"`
-	ProjectID       string `json:"project_id"`
-	TaskID          string `json:"task_id"`
-	AgentID         string `json:"agent_id"`
-	Runtime         string `json:"runtime"`
-	Provider        string `json:"provider"`
-	Status          string `json:"status"`
-	BlockedQuestion string `json:"blocked_question"`
-	ResultSummary   string `json:"result_summary"`
-	FailureCode     string `json:"failure_code"`
-	Revision        int64  `json:"revision"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
-	StartedAt       string `json:"started_at"`
-	FinishedAt      string `json:"finished_at"`
-	RuntimeHandle   string `json:"runtime_handle"`
+	ID                    string `json:"id"`
+	WorkspaceID           string `json:"workspace_id"`
+	ProjectID             string `json:"project_id"`
+	TaskID                string `json:"task_id"`
+	AgentID               string `json:"agent_id"`
+	Runtime               string `json:"runtime"`
+	Provider              string `json:"provider"`
+	Status                string `json:"status"`
+	BlockedQuestion       string `json:"blocked_question"`
+	ResultSummary         string `json:"result_summary"`
+	FailureCode           string `json:"failure_code"`
+	Revision              int64  `json:"revision"`
+	CreatedAt             string `json:"created_at"`
+	UpdatedAt             string `json:"updated_at"`
+	StartedAt             string `json:"started_at"`
+	FinishedAt            string `json:"finished_at"`
+	RuntimeBindingCurrent int64  `json:"runtime_binding_current"`
 }
 
 func (q *Queries) ListOperatorRuns(ctx context.Context, arg ListOperatorRunsParams) ([]ListOperatorRunsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listOperatorRuns,
+		arg.RuntimeNodeID,
+		arg.RuntimeNodeFingerprint,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.TaskID,
@@ -1232,7 +1239,7 @@ func (q *Queries) ListOperatorRuns(ctx context.Context, arg ListOperatorRunsPara
 			&i.UpdatedAt,
 			&i.StartedAt,
 			&i.FinishedAt,
-			&i.RuntimeHandle,
+			&i.RuntimeBindingCurrent,
 		); err != nil {
 			return nil, err
 		}

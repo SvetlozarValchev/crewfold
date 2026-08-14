@@ -4,12 +4,59 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"crewfold/internal/domain"
 )
+
+func TestManagementBriefingUnchangedSemanticStateDoesNotGrowWithClock(t *testing.T) {
+	storage, fixture := newOutcomeAdversarialFixture(t, false)
+	now := time.Date(2037, 1, 2, 3, 4, 5, 0, time.UTC)
+	storage.clock = func() time.Time { return now }
+	fixture.createCommitment(t, "briefing-semantic-reuse")
+	query := ShowManagementBriefingQuery{
+		WorkspaceIdentifier: fixture.workspace.ID,
+		ScopeType:           domain.OwnerCheckpointTask,
+		ScopeIdentifier:     fixture.task.Task.ID,
+	}
+	first, err := storage.ShowManagementBriefing(context.Background(), query)
+	if err != nil {
+		t.Fatalf("ShowManagementBriefing(first semantic snapshot) = %v", err)
+	}
+	if first.EvaluatedAt != now.Format(time.RFC3339Nano) {
+		t.Fatalf("first evaluated_at = %q, want %q", first.EvaluatedAt, now.Format(time.RFC3339Nano))
+	}
+	var contentJSON string
+	if err := storage.db.QueryRow(`SELECT content_json FROM management_briefings WHERE id=?`, first.ID).Scan(&contentJSON); err != nil {
+		t.Fatalf("read first briefing content = %v", err)
+	}
+	if strings.Contains(contentJSON, `"evaluated_at"`) {
+		t.Fatalf("semantic briefing content contains observation time: %s", contentJSON)
+	}
+	settled := map[string]int{}
+	for _, table := range []string{"management_briefings", "management_briefing_claims", "management_briefing_claim_sources", "management_briefing_receipts", "events"} {
+		settled[table] = countOutcomeFaultRows(t, storage, table)
+	}
+	for iteration := 1; iteration <= 100; iteration++ {
+		now = now.Add(24 * time.Hour)
+		replayed, replayErr := storage.ShowManagementBriefing(context.Background(), query)
+		if replayErr != nil {
+			t.Fatalf("ShowManagementBriefing(clock-only replay %d) = %v", iteration, replayErr)
+		}
+		if !reflect.DeepEqual(replayed, first) {
+			t.Fatalf("clock-only replay %d changed immutable briefing\nfirst=%#v\nreplayed=%#v", iteration, first, replayed)
+		}
+	}
+	for table, want := range settled {
+		if got := countOutcomeFaultRows(t, storage, table); got != want {
+			t.Fatalf("clock-only briefing reads grew %s: got %d, want %d", table, got, want)
+		}
+	}
+}
 
 func TestManagementBriefingByteLimitPersistsExactlyTheBoundedWholeClaims(t *testing.T) {
 	storage, fixture := newOutcomeAdversarialFixture(t, false)
@@ -171,7 +218,7 @@ func TestManagementBriefingSuccessorHasOneChangeWithPriorAndSuccessorProvenance(
 }
 
 func TestWorkspaceBriefingRoundRobinStaysInsideUrgencyBand(t *testing.T) {
-	values := []briefingCandidate{
+	values := []briefingCandidateSeed{
 		briefingOrderingCandidate("a-later-1", "prj_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", domain.OutcomeAttentionLater, 10),
 		briefingOrderingCandidate("a-later-2", "prj_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", domain.OutcomeAttentionLater, 9),
 		briefingOrderingCandidate("b-now-1", "prj_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", domain.OutcomeAttentionNow, 8),
@@ -179,14 +226,14 @@ func TestWorkspaceBriefingRoundRobinStaysInsideUrgencyBand(t *testing.T) {
 		briefingOrderingCandidate("c-now-1", "prj_cccccccccccccccccccccccccccccccc", domain.OutcomeAttentionNow, 6),
 		briefingOrderingCandidate("c-now-2", "prj_cccccccccccccccccccccccccccccccc", domain.OutcomeAttentionNow, 5),
 	}
-	ordered := fairBriefingSection(values, true)
+	ordered := fairBriefingSeedSection(values, true)
 	wantIDs := []string{"b-now-1", "c-now-1", "b-now-2", "c-now-2", "a-later-1", "a-later-2"}
 	if len(ordered) != len(wantIDs) {
 		t.Fatalf("fair section length = %d, want %d", len(ordered), len(wantIDs))
 	}
 	for index, want := range wantIDs {
-		if ordered[index].Claim.ID != want {
-			t.Fatalf("fair section order[%d] = %s, want %s; full=%#v", index, ordered[index].Claim.ID, want, ordered)
+		if ordered[index].SourceID != want {
+			t.Fatalf("fair section order[%d] = %s, want %s; full=%#v", index, ordered[index].SourceID, want, ordered)
 		}
 	}
 }
@@ -301,9 +348,10 @@ func briefingHasSource(briefing domain.ManagementBriefing, entityType, entityID 
 	return false
 }
 
-func briefingOrderingCandidate(id, projectID, urgency string, eventSequence int64) briefingCandidate {
-	return briefingCandidate{Section: domain.BriefingSectionRisksUnknowns, Claim: domain.BriefingClaim{
-		ID: id, Kind: domain.BriefingClaimRisk, Urgency: urgency, Summary: id,
-		Status: domain.OutcomeRiskHigh, ProjectID: projectID, SourceEventSequence: eventSequence,
-	}}
+func briefingOrderingCandidate(id, projectID, urgency string, eventSequence int64) briefingCandidateSeed {
+	return briefingCandidateSeed{
+		Section: domain.BriefingSectionRisksUnknowns, Urgency: urgency, ProjectID: projectID,
+		SourceEventSequence: eventSequence, SourceKind: briefingSourceAcceptedAssessment,
+		SourceID: id, Variant: "risk", Ordinal: 0,
+	}
 }

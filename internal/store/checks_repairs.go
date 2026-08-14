@@ -57,7 +57,7 @@ func (s *Store) ProposeGrantedCheckRepair(ctx context.Context, command ProposeGr
 	if err != nil {
 		return MutationResult[domain.CheckRepairProposal]{}, storageFailure("hash check repair proposal", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckRepairProposal]{}, storageFailure("begin check repair proposal", err)
 	}
@@ -223,7 +223,7 @@ func (s *Store) CheckRepairProposals(ctx context.Context, query ListCheckRepairP
 	if query.Status != "" && !validCheckRepairStatus(query.Status) {
 		return nil, checkError(CodeCheckRepairNotFound, "check repair status is unsupported")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, storageFailure("begin check repair list", err)
 	}
@@ -260,7 +260,7 @@ func (s *Store) CheckRepairProposals(ctx context.Context, query ListCheckRepairP
 }
 
 func (s *Store) CheckRepairProposal(ctx context.Context, workspaceIdentifier, proposalID string) (domain.CheckRepairDetail, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.CheckRepairDetail{}, storageFailure("begin check repair read", err)
 	}
@@ -304,7 +304,7 @@ func (s *Store) decideCheckRepair(ctx context.Context, command DecideCheckRepair
 	if err != nil {
 		return MutationResult[domain.CheckRepairDetail]{}, storageFailure("hash check repair decision", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckRepairDetail]{}, storageFailure("begin check repair decision", err)
 	}

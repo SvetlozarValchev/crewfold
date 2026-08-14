@@ -34,7 +34,12 @@ cleanup() {
       if [ -f "$diagnostic" ]
       then
         printf '%s\n' "$diagnostic" >&2
-        sed -n '1,240p' "$diagnostic" >&2
+        if [ "$diagnostic" = "$daemon_log" ]
+        then
+          tail -30 "$diagnostic" >&2
+        else
+          sed -n '1,240p' "$diagnostic" >&2
+        fi
       fi
     done
   fi
@@ -43,7 +48,10 @@ cleanup() {
     kill "$daemon_pid" 2>/dev/null || true
     wait "$daemon_pid" 2>/dev/null || true
   fi
-  if [ -d "$scenario_root" ]
+  if [ "${CREWFOLD_KEEP_SCENARIO:-}" = 1 ]
+  then
+    printf 'Preserved diagnostics: %s\n' "$scenario_root" >&2
+  elif [ -d "$scenario_root" ]
   then
     find "$scenario_root" -depth -delete
   fi

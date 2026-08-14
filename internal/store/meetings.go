@@ -76,7 +76,7 @@ func (s *Store) CreateMeeting(ctx context.Context, command CreateMeetingCommand)
 	if _, err := s.ReconcileExpiredClaims(ctx, command.WorkspaceIdentifier, derivedCorrelationID(command.CorrelationID, "claims")); err != nil {
 		return MeetingMutationResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MeetingMutationResult{}, storageFailure("begin meeting creation", err)
 	}
@@ -275,7 +275,7 @@ func (s *Store) RunMeeting(ctx context.Context, command RunMeetingCommand) (Meet
 	if _, err := s.ReconcileExpiredClaims(ctx, command.WorkspaceIdentifier, derivedCorrelationID(command.CorrelationID, "claims")); err != nil {
 		return MeetingMutationResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MeetingMutationResult{}, storageFailure("begin meeting run", err)
 	}
@@ -427,7 +427,7 @@ func (s *Store) AcceptMeeting(ctx context.Context, command AcceptMeetingCommand)
 	if _, err := s.ReconcileExpiredClaims(ctx, command.WorkspaceIdentifier, derivedCorrelationID(command.CorrelationID, "claims")); err != nil {
 		return MeetingMutationResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MeetingMutationResult{}, storageFailure("begin meeting acceptance", err)
 	}
@@ -484,7 +484,7 @@ func (s *Store) TakeoverMeeting(ctx context.Context, command TakeoverMeetingComm
 	if _, err := s.ReconcileExpiredClaims(ctx, command.WorkspaceIdentifier, derivedCorrelationID(command.CorrelationID, "claims")); err != nil {
 		return MeetingMutationResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MeetingMutationResult{}, storageFailure("begin meeting takeover", err)
 	}

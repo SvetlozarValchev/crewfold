@@ -47,7 +47,6 @@ type managementBriefingContent struct {
 	CutoffEventSequence  int64                     `json:"cutoff_event_sequence"`
 	CheckpointID         string                    `json:"checkpoint_id,omitempty"`
 	SinceEventSequence   int64                     `json:"since_event_sequence"`
-	EvaluatedAt          string                    `json:"evaluated_at"`
 	CaughtUp             bool                      `json:"caught_up"`
 	UnknownEventType     string                    `json:"unknown_event_type,omitempty"`
 	UnknownEventSequence int64                     `json:"unknown_event_sequence,omitempty"`
@@ -59,7 +58,57 @@ type briefingCandidate struct {
 	Section     string
 	SemanticKey string
 	Claim       domain.BriefingClaim
+	SourceKind  string
+	SourceID    string
+	Variant     string
+	Ordinal     int64
 }
+
+type briefingCandidateSeed struct {
+	Section             string
+	Urgency             string
+	ProjectID           string
+	SourceEventSequence int64
+	SourceKind          string
+	SourceID            string
+	Variant             string
+	Ordinal             int64
+	SourceRevision      int64
+	ContentSHA256       string
+	Summary             string
+}
+
+type briefingCandidateSeedRow struct {
+	Seed         briefingCandidateSeed
+	SectionTotal int64
+}
+
+type acceptedBriefingSource struct {
+	AssessmentID            string
+	StateRevision           int64
+	ReviewState             string
+	Conclusion              string
+	ContentSHA256           string
+	ProjectID               string
+	ObjectiveID             string
+	TaskID                  string
+	CommitmentID            string
+	CommitmentTitle         string
+	CommitmentSHA256        string
+	CommitmentEventSequence int64
+	EventSequence           int64
+	AcceptanceBasisSHA256   string
+	SupersededAssessmentID  *string
+	SupersededEventSequence *int64
+	SupersededContentSHA256 *string
+	SupersededStateRevision *int64
+}
+
+const (
+	briefingSourceAcceptedAssessment   = "accepted_assessment"
+	briefingSourceUnassessedCommitment = "unassessed_commitment"
+	briefingSourceOpenContradiction    = "open_contradiction"
+)
 
 type outcomeProjection struct {
 	Cursor               int64
@@ -171,14 +220,13 @@ func (s *Store) materializeManagementBriefing(ctx context.Context, workspaceID s
 	var result domain.ManagementBriefing
 	err := s.withOutcomeMutation(ctx, "management briefing", func(tx *sql.Tx) error {
 		queries := dbgen.New(tx)
-		candidates, candidateErr := buildBriefingCandidates(ctx, queries, workspaceID, scope, sinceSequence, projection.Cursor, evaluatedAt)
+		selected, omissions, candidateErr := buildBriefingCandidates(ctx, queries, workspaceID, scope, sinceSequence, projection.Cursor, evaluatedAt)
 		if candidateErr != nil {
 			return candidateErr
 		}
-		selected, omissions := boundBriefingCandidates(scope, candidates)
 		content := managementBriefingContent{
 			Scope: scope, EventCursor: projection.Cursor, CutoffEventSequence: cutoff, CheckpointID: checkpointID,
-			SinceEventSequence: sinceSequence, EvaluatedAt: evaluatedAt, CaughtUp: projection.Cursor == cutoff && projection.UnknownEventType == "",
+			SinceEventSequence: sinceSequence, CaughtUp: projection.Cursor == cutoff && projection.UnknownEventType == "",
 			UnknownEventType: projection.UnknownEventType, UnknownEventSequence: projection.UnknownEventSequence,
 			Claims: claimsFromCandidates(selected), Omitted: omissions,
 		}
@@ -269,142 +317,512 @@ func (s *Store) materializeManagementBriefing(ctx context.Context, workspaceID s
 	return result, err
 }
 
-func buildBriefingCandidates(ctx context.Context, queries *dbgen.Queries, workspaceID string, scope domain.BriefingScope, sinceSequence, cursor int64, evaluatedAt string) ([]briefingCandidate, error) {
-	accepted, err := queries.ListAcceptedOutcomeAssessmentClaims(ctx, dbgen.ListAcceptedOutcomeAssessmentClaimsParams{
+func buildBriefingCandidates(ctx context.Context, queries *dbgen.Queries, workspaceID string, scope domain.BriefingScope, sinceSequence, cursor int64, evaluatedAt string) ([]briefingCandidate, []domain.BriefingOmission, error) {
+	rows := make([]briefingCandidateSeedRow, 0, maximumBriefingClaims)
+	staticRows, err := queries.ListStaticManagementBriefingCandidateSeeds(ctx, dbgen.ListStaticManagementBriefingCandidateSeedsParams{
+		SinceSequence: sinceSequence, WorkspaceID: workspaceID, EventCursor: cursor,
+		ProjectID: scope.ProjectID, ObjectiveID: scope.ObjectiveID, TaskID: scope.TaskID,
+	})
+	if err != nil {
+		return nil, nil, storageFailure("list static management briefing seeds", err)
+	}
+	for _, row := range staticRows {
+		rows = append(rows, briefingCandidateSeedRow{Seed: briefingCandidateSeed{
+			Section: row.Section, Urgency: row.Urgency, ProjectID: row.ProjectID,
+			SourceEventSequence: row.SourceEventSequence, SourceKind: row.SourceKind, SourceID: row.SourceID,
+			Variant: row.Variant, Ordinal: row.ChildOrdinal, SourceRevision: row.SourceRevision,
+			ContentSHA256: row.ContentSha256, Summary: row.Summary,
+		}, SectionTotal: row.SectionTotal})
+	}
+	decisionRows, err := queries.ListDecisionManagementBriefingCandidateSeeds(ctx, dbgen.ListDecisionManagementBriefingCandidateSeedsParams{
+		SinceSequence: sinceSequence, WorkspaceID: workspaceID, EventCursor: cursor,
+		ProjectID: scope.ProjectID, ObjectiveID: scope.ObjectiveID, TaskID: scope.TaskID, EvaluatedAt: evaluatedAt,
+	})
+	if err != nil {
+		return nil, nil, storageFailure("list decision management briefing seeds", err)
+	}
+	decisionBatch := make([]briefingCandidateSeedRow, 0, len(decisionRows))
+	for _, row := range decisionRows {
+		decisionBatch = append(decisionBatch, briefingCandidateSeedRow{Seed: briefingCandidateSeed{
+			Section: row.Section, Urgency: row.Urgency, ProjectID: row.ProjectID,
+			SourceEventSequence: row.SourceEventSequence, SourceKind: row.SourceKind, SourceID: row.SourceID,
+			Variant: row.Variant, Ordinal: row.ChildOrdinal, SourceRevision: row.SourceRevision,
+			ContentSHA256: row.ContentSha256, Summary: row.Summary,
+		}, SectionTotal: row.SectionTotal})
+	}
+	evidenceRows, err := queries.ListEvidenceManagementBriefingCandidateSeeds(ctx, dbgen.ListEvidenceManagementBriefingCandidateSeedsParams{
 		WorkspaceID: workspaceID, EventCursor: cursor,
 		ProjectID: scope.ProjectID, ObjectiveID: scope.ObjectiveID, TaskID: scope.TaskID,
 	})
 	if err != nil {
-		return nil, storageFailure("list accepted outcome briefing sources", err)
+		return nil, nil, storageFailure("list evidence management briefing seeds", err)
+	}
+	evidenceBatch := make([]briefingCandidateSeedRow, 0, len(evidenceRows))
+	for _, row := range evidenceRows {
+		evidenceBatch = append(evidenceBatch, briefingCandidateSeedRow{Seed: briefingCandidateSeed{
+			Section: row.Section, Urgency: row.Urgency, ProjectID: row.ProjectID,
+			SourceEventSequence: row.SourceEventSequence, SourceKind: row.SourceKind, SourceID: row.SourceID,
+			Variant: row.Variant, Ordinal: row.ChildOrdinal, SourceRevision: row.SourceRevision,
+			ContentSHA256: row.ContentSha256, Summary: row.Summary,
+		}, SectionTotal: row.SectionTotal})
+	}
+	unassessedRows, err := queries.ListUnassessedManagementBriefingCandidateSeeds(ctx, dbgen.ListUnassessedManagementBriefingCandidateSeedsParams{
+		WorkspaceID: workspaceID, EventCursor: cursor,
+		ProjectID: scope.ProjectID, ObjectiveID: scope.ObjectiveID, TaskID: scope.TaskID,
+	})
+	if err != nil {
+		return nil, nil, storageFailure("list unassessed management briefing seeds", err)
+	}
+	unassessedBatch := make([]briefingCandidateSeedRow, 0, len(unassessedRows))
+	for _, row := range unassessedRows {
+		unassessedBatch = append(unassessedBatch, briefingCandidateSeedRow{Seed: briefingCandidateSeed{
+			Section: row.Section, Urgency: row.Urgency, ProjectID: row.ProjectID,
+			SourceEventSequence: row.SourceEventSequence, SourceKind: row.SourceKind, SourceID: row.SourceID,
+			Variant: row.Variant, Ordinal: row.ChildOrdinal, SourceRevision: row.SourceRevision,
+			ContentSHA256: row.ContentSha256, Summary: row.Summary,
+		}, SectionTotal: row.SectionTotal})
+	}
+	contradictionRows, err := queries.ListContradictionManagementBriefingCandidateSeeds(ctx, dbgen.ListContradictionManagementBriefingCandidateSeedsParams{
+		WorkspaceID: workspaceID, EventCursor: cursor, ProjectID: scope.ProjectID,
+		ScopeType: scope.Type, TaskID: scope.TaskID, ObjectiveID: scope.ObjectiveID,
+	})
+	if err != nil {
+		return nil, nil, storageFailure("list contradiction management briefing seeds", err)
+	}
+	contradictionBatch := make([]briefingCandidateSeedRow, 0, len(contradictionRows))
+	for _, row := range contradictionRows {
+		contradictionBatch = append(contradictionBatch, briefingCandidateSeedRow{Seed: briefingCandidateSeed{
+			Section: row.Section, Urgency: row.Urgency, ProjectID: row.ProjectID,
+			SourceEventSequence: row.SourceEventSequence, SourceKind: row.SourceKind, SourceID: row.SourceID,
+			Variant: row.Variant, Ordinal: row.ChildOrdinal, SourceRevision: row.SourceRevision,
+			ContentSHA256: row.ContentSha256, Summary: row.Summary,
+		}, SectionTotal: row.SectionTotal})
+	}
+
+	all := make([]briefingCandidateSeed, 0, len(rows)+len(decisionBatch)+len(evidenceBatch)+len(unassessedBatch)+len(contradictionBatch))
+	totals := make(map[string]int64)
+	for name, batch := range map[string][]briefingCandidateSeedRow{
+		"static": rows, "decision": decisionBatch, "evidence": evidenceBatch,
+		"unassessed": unassessedBatch, "contradiction": contradictionBatch,
+	} {
+		if err := mergeBriefingSeedBatch(name, len(batch), batch, totals); err != nil {
+			return nil, nil, err
+		}
+		for _, row := range batch {
+			all = append(all, row.Seed)
+		}
+	}
+	selectedSeeds, omissions, err := boundBriefingCandidateSeeds(scope, all, totals)
+	if err != nil {
+		return nil, nil, err
+	}
+	selected := make([]briefingCandidate, 0, len(selectedSeeds))
+	acceptedCache := make(map[string]map[string]briefingCandidate)
+	for _, seed := range selectedSeeds {
+		candidate, expandErr := expandBriefingCandidateSeed(ctx, queries, workspaceID, scope, cursor, evaluatedAt, seed, acceptedCache)
+		if expandErr != nil {
+			return nil, nil, expandErr
+		}
+		if candidate.Section != seed.Section || candidate.Claim.Urgency != seed.Urgency ||
+			candidate.Claim.ProjectID != seed.ProjectID || candidate.Claim.SourceEventSequence != seed.SourceEventSequence ||
+			candidate.SourceKind != seed.SourceKind || candidate.SourceID != seed.SourceID ||
+			candidate.Variant != seed.Variant || candidate.Ordinal != seed.Ordinal {
+			return nil, nil, storageFailure("validate management briefing seed expansion", errors.New("selected source seed did not expand one-to-one"))
+		}
+		selected = append(selected, candidate)
+	}
+	return selected, omissions, nil
+}
+
+func mergeBriefingSeedBatch(name string, rowCount int, rows []briefingCandidateSeedRow, totals map[string]int64) error {
+	if rowCount != len(rows) || len(rows) > maximumBriefingClaims*len(briefingSectionOrder) {
+		return storageFailure("validate bounded management briefing seeds", fmt.Errorf("%s seed query returned %d rows", name, len(rows)))
+	}
+	sectionTotals := make(map[string]int64)
+	sectionRows := make(map[string]int64)
+	for _, row := range rows {
+		if err := validateBriefingCandidateSeed(row.Seed); err != nil {
+			return err
+		}
+		if row.SectionTotal <= 0 {
+			return storageFailure("validate management briefing seed counts", errors.New("seed query returned a non-positive section total"))
+		}
+		if prior, exists := sectionTotals[row.Seed.Section]; exists && prior != row.SectionTotal {
+			return storageFailure("validate management briefing seed counts", errors.New("seed query returned inconsistent section totals"))
+		}
+		sectionTotals[row.Seed.Section] = row.SectionTotal
+		sectionRows[row.Seed.Section]++
+	}
+	if totals == nil {
+		return nil
+	}
+	for section, count := range sectionTotals {
+		if count < sectionRows[section] {
+			return storageFailure("validate management briefing seed counts", errors.New("seed query returned more rows than its exact section total"))
+		}
+		totals[section] += count
+	}
+	return nil
+}
+
+func validateBriefingCandidateSeed(seed briefingCandidateSeed) error {
+	validUrgency := seed.Urgency == domain.OutcomeAttentionNow || seed.Urgency == domain.OutcomeAttentionNext || seed.Urgency == domain.OutcomeAttentionLater
+	if _, ok := briefingSectionQuota[seed.Section]; !ok || !validUrgency ||
+		seed.ProjectID == "" || seed.SourceEventSequence <= 0 || seed.SourceID == "" ||
+		seed.SourceRevision <= 0 || seed.Ordinal < -1 || seed.Ordinal > 31 {
+		return storageFailure("validate management briefing seed", errors.New("seed fields are outside the closed bounded contract"))
+	}
+	valid := false
+	switch seed.SourceKind {
+	case briefingSourceAcceptedAssessment:
+		valid = seed.ContentSHA256 != "" && map[string]string{
+			"attention":        domain.BriefingSectionRequiredDecisions,
+			"follow_up":        domain.BriefingSectionRequiredDecisions,
+			"risk":             domain.BriefingSectionRisksUnknowns,
+			"unknown":          domain.BriefingSectionRisksUnknowns,
+			"evidence_gap":     domain.BriefingSectionVerificationGaps,
+			"decision_gap":     domain.BriefingSectionVerificationGaps,
+			"deviation":        domain.BriefingSectionDeviationsUnmet,
+			"unmet":            domain.BriefingSectionDeviationsUnmet,
+			"delivery":         domain.BriefingSectionAcceptedDelivery,
+			"delivery_revised": domain.BriefingSectionRationaleChange,
+			"effect":           domain.BriefingSectionRationaleChange,
+			"decision":         domain.BriefingSectionRationaleChange,
+		}[seed.Variant] == seed.Section
+	case briefingSourceUnassessedCommitment:
+		valid = seed.Variant == "unassessed" && seed.Ordinal == -1 && seed.SourceRevision == 1 &&
+			seed.ContentSHA256 != "" && seed.Section == domain.BriefingSectionDeviationsUnmet
+	case briefingSourceOpenContradiction:
+		valid = seed.Variant == "contradiction" && seed.Ordinal == -1 && seed.ContentSHA256 == "" &&
+			seed.Section == domain.BriefingSectionContradictions
+	}
+	if !valid {
+		return storageFailure("validate management briefing seed", errors.New("seed source kind and variant are outside the closed union"))
+	}
+	return nil
+}
+
+func boundBriefingCandidateSeeds(scope domain.BriefingScope, seeds []briefingCandidateSeed, totals map[string]int64) ([]briefingCandidateSeed, []domain.BriefingOmission, error) {
+	seen := make(map[string]struct{}, len(seeds))
+	bySection := make(map[string][]briefingCandidateSeed)
+	for _, seed := range seeds {
+		key := briefingSeedKey(seed)
+		if _, duplicate := seen[key]; duplicate {
+			return nil, nil, storageFailure("validate management briefing seeds", errors.New("duplicate semantic seed"))
+		}
+		seen[key] = struct{}{}
+		bySection[seed.Section] = append(bySection[seed.Section], seed)
+	}
+	for _, section := range briefingSectionOrder {
+		bySection[section] = fairBriefingSeedSection(bySection[section], scope.Type == domain.OwnerCheckpointWorkspace)
+	}
+	selected := make([]briefingCandidateSeed, 0, maximumBriefingClaims)
+	remainders := make([]briefingCandidateSeed, 0)
+	for _, section := range briefingSectionOrder {
+		values := bySection[section]
+		count := briefingSectionQuota[section]
+		if count > len(values) {
+			count = len(values)
+		}
+		selected = append(selected, values[:count]...)
+		remainders = append(remainders, values[count:]...)
+	}
+	space := maximumBriefingClaims - len(selected)
+	if space > len(remainders) {
+		space = len(remainders)
+	}
+	selected = append(selected, remainders[:space]...)
+	selectedBySection := make(map[string]int64)
+	for _, seed := range selected {
+		selectedBySection[seed.Section]++
+	}
+	omitted := make(map[string]int)
+	for _, section := range briefingSectionOrder {
+		if totals[section] < selectedBySection[section] {
+			return nil, nil, storageFailure("validate management briefing omissions", errors.New("selected seeds exceed the exact candidate total"))
+		}
+		if count := totals[section] - selectedBySection[section]; count != 0 {
+			omitted[section+"\x00"+domain.BriefingOmittedClaimLimit] = int(count)
+		}
+	}
+	return selected, briefingOmissions(omitted), nil
+}
+
+func fairBriefingSeedSection(values []briefingCandidateSeed, roundRobin bool) []briefingCandidateSeed {
+	less := func(left, right briefingCandidateSeed) bool {
+		if urgencyRank(left.Urgency) != urgencyRank(right.Urgency) {
+			return urgencyRank(left.Urgency) < urgencyRank(right.Urgency)
+		}
+		if left.SourceEventSequence != right.SourceEventSequence {
+			return left.SourceEventSequence > right.SourceEventSequence
+		}
+		return briefingSeedKey(left) < briefingSeedKey(right)
+	}
+	if !roundRobin {
+		sort.Slice(values, func(i, j int) bool { return less(values[i], values[j]) })
+		return values
+	}
+	byUrgency := map[string][]briefingCandidateSeed{}
+	for _, value := range values {
+		byUrgency[value.Urgency] = append(byUrgency[value.Urgency], value)
+	}
+	result := make([]briefingCandidateSeed, 0, len(values))
+	for _, urgency := range []string{domain.OutcomeAttentionNow, domain.OutcomeAttentionNext, domain.OutcomeAttentionLater} {
+		groups := make(map[string][]briefingCandidateSeed)
+		projects := make([]string, 0)
+		for _, value := range byUrgency[urgency] {
+			if _, exists := groups[value.ProjectID]; !exists {
+				projects = append(projects, value.ProjectID)
+			}
+			groups[value.ProjectID] = append(groups[value.ProjectID], value)
+		}
+		sort.Strings(projects)
+		for _, project := range projects {
+			sort.Slice(groups[project], func(i, j int) bool { return less(groups[project][i], groups[project][j]) })
+		}
+		for index := 0; len(result) < len(values); index++ {
+			added := false
+			for _, project := range projects {
+				if index < len(groups[project]) {
+					result = append(result, groups[project][index])
+					added = true
+				}
+			}
+			if !added {
+				break
+			}
+		}
+	}
+	return result
+}
+
+func briefingSeedKey(seed briefingCandidateSeed) string {
+	return seed.SourceKind + "\x00" + seed.SourceID + "\x00" + seed.Variant + fmt.Sprintf("\x00%02d", seed.Ordinal)
+}
+
+func expandBriefingCandidateSeed(ctx context.Context, queries *dbgen.Queries, workspaceID string, scope domain.BriefingScope, cursor int64, evaluatedAt string, seed briefingCandidateSeed, acceptedCache map[string]map[string]briefingCandidate) (briefingCandidate, error) {
+	switch seed.SourceKind {
+	case briefingSourceAcceptedAssessment:
+		candidates, exists := acceptedCache[seed.SourceID]
+		if !exists {
+			row, err := queries.GetAcceptedOutcomeAssessmentClaimSource(ctx, dbgen.GetAcceptedOutcomeAssessmentClaimSourceParams{
+				WorkspaceID: workspaceID, AssessmentID: seed.SourceID, EventCursor: cursor,
+			})
+			if err != nil {
+				return briefingCandidate{}, storageFailure("read selected accepted outcome briefing source", err)
+			}
+			source := acceptedBriefingSource{
+				AssessmentID: row.AssessmentID, StateRevision: row.StateRevision, ReviewState: row.ReviewState,
+				Conclusion: row.Conclusion, ContentSHA256: row.ContentSha256, ProjectID: row.ProjectID,
+				ObjectiveID: row.ObjectiveID, TaskID: row.TaskID, CommitmentID: row.CommitmentID,
+				CommitmentTitle: row.CommitmentTitle, CommitmentSHA256: row.CommitmentSha256,
+				CommitmentEventSequence: row.CommitmentEventSequence, EventSequence: row.EventSequence,
+				AcceptanceBasisSHA256:  row.AcceptanceBasisSha256,
+				SupersededAssessmentID: row.SupersededAssessmentID, SupersededEventSequence: row.SupersededEventSequence,
+				SupersededContentSHA256: row.SupersededContentSha256, SupersededStateRevision: row.SupersededStateRevision,
+			}
+			detail, detailErr := outcomeAssessmentDetail(ctx, queries, workspaceID, seed.SourceID, evaluatedAt)
+			if detailErr != nil {
+				return briefingCandidate{}, detailErr
+			}
+			if detail.Assessment.ID != source.AssessmentID || detail.Assessment.StateRevision != source.StateRevision ||
+				detail.Assessment.ReviewState != source.ReviewState || detail.Assessment.Conclusion != source.Conclusion ||
+				detail.Assessment.ContentSHA256 != source.ContentSHA256 || detail.Assessment.ProjectID != source.ProjectID ||
+				detail.Assessment.ObjectiveID != source.ObjectiveID || detail.Assessment.TaskID != source.TaskID ||
+				detail.Commitment.ID != source.CommitmentID || detail.Commitment.Title != source.CommitmentTitle ||
+				detail.Commitment.ContentSHA256 != source.CommitmentSHA256 {
+				return briefingCandidate{}, storageFailure("validate selected accepted outcome briefing source", errors.New("source head differs from authenticated assessment detail"))
+			}
+			generated, generateErr := acceptedAssessmentBriefingCandidates(ctx, queries, scope, source, detail)
+			if generateErr != nil {
+				return briefingCandidate{}, generateErr
+			}
+			candidates = make(map[string]briefingCandidate, len(generated))
+			for _, candidate := range generated {
+				key := candidate.Variant + fmt.Sprintf("/%d", candidate.Ordinal)
+				if _, duplicate := candidates[key]; duplicate {
+					return briefingCandidate{}, storageFailure("validate accepted outcome briefing expansion", errors.New("duplicate candidate variant"))
+				}
+				candidates[key] = candidate
+			}
+			acceptedCache[seed.SourceID] = candidates
+		}
+		if seed.SourceRevision <= 0 || seed.ContentSHA256 == "" {
+			return briefingCandidate{}, storageFailure("validate selected accepted outcome briefing seed", errors.New("accepted source seal is incomplete"))
+		}
+		candidate, exists := candidates[seed.Variant+fmt.Sprintf("/%d", seed.Ordinal)]
+		if !exists {
+			return briefingCandidate{}, storageFailure("validate selected accepted outcome briefing seed", errors.New("selected seed has no exact authenticated claim"))
+		}
+		sealed := false
+		for _, source := range candidate.Claim.Sources {
+			if source.EntityType == "outcome_assessment" && source.EntityID == seed.SourceID &&
+				source.Revision == seed.SourceRevision && source.ContentSHA256 == seed.ContentSHA256 {
+				sealed = true
+				break
+			}
+		}
+		if !sealed {
+			return briefingCandidate{}, storageFailure("validate selected accepted outcome briefing seed", errors.New("seed seal differs from authenticated assessment source"))
+		}
+		return candidate, nil
+	case briefingSourceUnassessedCommitment:
+		commitment, err := deliverableCommitment(ctx, queries, workspaceID, seed.SourceID)
+		if err != nil {
+			return briefingCandidate{}, err
+		}
+		if commitment.ProjectID != seed.ProjectID || commitment.ContentSHA256 != seed.ContentSHA256 ||
+			commitment.Title != seed.Summary || seed.SourceRevision != 1 {
+			return briefingCandidate{}, storageFailure("validate selected unassessed commitment seed", errors.New("seed differs from authenticated commitment"))
+		}
+		source := domain.BriefingClaimSource{
+			EntityType: "deliverable_commitment", EntityID: commitment.ID, Revision: 1,
+			ContentSHA256: commitment.ContentSHA256, EventSequence: seed.SourceEventSequence,
+		}
+		candidate := newBriefingCandidate(scope, domain.BriefingSectionDeviationsUnmet,
+			domain.BriefingClaimUnmetCommitment, "unassessed", domain.OutcomeAttentionNow,
+			commitment.Title+": no owner-accepted outcome assessment", domain.BriefingClaimStatusUnmet,
+			commitment.ProjectID, []domain.BriefingClaimSource{source})
+		return tagBriefingCandidate(candidate, seed.SourceKind, seed.SourceID, seed.Variant, seed.Ordinal), nil
+	case briefingSourceOpenContradiction:
+		source := domain.BriefingClaimSource{
+			EntityType: "knowledge_contradiction", EntityID: seed.SourceID,
+			Revision: seed.SourceRevision, EventSequence: seed.SourceEventSequence,
+		}
+		candidate := newBriefingCandidate(scope, domain.BriefingSectionContradictions,
+			domain.BriefingClaimContradiction, "contradiction", domain.OutcomeAttentionNow,
+			seed.Summary, domain.BriefingClaimStatusOpen, seed.ProjectID, []domain.BriefingClaimSource{source})
+		return tagBriefingCandidate(candidate, seed.SourceKind, seed.SourceID, seed.Variant, seed.Ordinal), nil
+	default:
+		return briefingCandidate{}, storageFailure("expand management briefing seed", errors.New("unknown source kind"))
+	}
+}
+
+func acceptedAssessmentBriefingCandidates(ctx context.Context, queries *dbgen.Queries, scope domain.BriefingScope, row acceptedBriefingSource, detail domain.OutcomeAssessmentDetail) ([]briefingCandidate, error) {
+	base := []domain.BriefingClaimSource{
+		{EntityType: "outcome_assessment", EntityID: row.AssessmentID, Revision: row.StateRevision, ContentSHA256: row.ContentSHA256, EventSequence: row.EventSequence},
+		{EntityType: "deliverable_commitment", EntityID: row.CommitmentID, Revision: 1, ContentSHA256: row.CommitmentSHA256, EventSequence: row.CommitmentEventSequence},
+		{EntityType: "outcome_assessment_acceptance_basis", EntityID: row.AssessmentID, Revision: 1, ContentSHA256: row.AcceptanceBasisSHA256, EventSequence: row.EventSequence},
 	}
 	result := make([]briefingCandidate, 0)
-	for _, row := range accepted {
-		detail, detailErr := outcomeAssessmentDetail(ctx, queries, workspaceID, row.AssessmentID, evaluatedAt)
-		if detailErr != nil {
-			return nil, detailErr
-		}
-		base := []domain.BriefingClaimSource{
-			{EntityType: "outcome_assessment", EntityID: row.AssessmentID, Revision: 2, ContentSHA256: row.ContentSha256, EventSequence: row.EventSequence},
-			{EntityType: "deliverable_commitment", EntityID: row.CommitmentID, Revision: 1, ContentSHA256: row.CommitmentSha256, EventSequence: row.CommitmentEventSequence},
-			{EntityType: "outcome_assessment_acceptance_basis", EntityID: row.AssessmentID, Revision: 1, ContentSHA256: row.AcceptanceBasisSha256, EventSequence: row.EventSequence},
-		}
-		deliverySources := append([]domain.BriefingClaimSource(nil), base...)
-		for _, evidence := range detail.Evidence {
-			deliverySources = append(deliverySources, briefingEvidenceSource(evidence))
-		}
-		for index, attention := range detail.OwnerAttention {
-			result = append(result, newBriefingCandidate(scope, domain.BriefingSectionRequiredDecisions, domain.BriefingClaimRequiredDecision, fmt.Sprintf("attention/%d", index), attention.Urgency, attention.Action+": "+attention.Reason, domain.BriefingClaimStatusRequired, row.ProjectID, base))
-		}
-		for index, followup := range detail.FollowUpTasks {
-			taskSource := domain.BriefingClaimSource{EntityType: "task", EntityID: followup.TaskID, Revision: followup.TaskRevision, EventSequence: followup.EventSequence}
-			result = append(result, newBriefingCandidate(scope, domain.BriefingSectionRequiredDecisions, domain.BriefingClaimRequiredDecision, fmt.Sprintf("follow-up/%d", index), domain.OutcomeAttentionNext, "Follow-up task requires owner tracking: "+followup.TaskID, domain.BriefingClaimStatusRequired, row.ProjectID, appendSources(base, taskSource)))
-		}
-		for index, risk := range detail.Risks {
-			result = append(result, newBriefingCandidate(scope, domain.BriefingSectionRisksUnknowns, domain.BriefingClaimRisk, fmt.Sprintf("risk/%d", index), urgencyForRisk(risk.Severity), risk.Summary, risk.Severity, row.ProjectID, base))
-		}
-		for index, unknown := range detail.Unknowns {
-			result = append(result, newBriefingCandidate(scope, domain.BriefingSectionRisksUnknowns, domain.BriefingClaimUnknown, fmt.Sprintf("unknown/%d", index), domain.OutcomeAttentionNow, unknown.Summary, domain.BriefingClaimStatusOpen, row.ProjectID, base))
-		}
-		for index, evidence := range detail.Evidence {
-			if evidence.Current && !evidence.Disputed && !evidence.Contradictory {
-				continue
-			}
-			status := domain.BriefingClaimStatusStale
-			switch {
-			case evidence.Contradictory:
-				status = domain.BriefingClaimStatusContradictory
-			case evidence.Disputed:
-				status = domain.BriefingClaimStatusDisputed
-			case strings.Contains(evidence.Diagnosis, "missing"):
-				status = domain.BriefingClaimStatusMissing
-			}
-			sources := appendSources(base, briefingEvidenceSource(evidence))
-			summary := evidence.Diagnosis
-			if summary == "" {
-				summary = "Pinned outcome evidence requires owner verification"
-			}
-			result = append(result, newBriefingCandidate(scope, domain.BriefingSectionVerificationGaps, domain.BriefingClaimVerificationGap, fmt.Sprintf("evidence/%d", index), domain.OutcomeAttentionNow, summary, status, row.ProjectID, sources))
-		}
-		for index, decision := range detail.Decisions {
-			decisionEvent, decisionEventErr := queries.GetOutcomeJournalEvent(ctx, decision.EventSequence)
-			if decisionEventErr != nil || decisionEvent.EntityType != "knowledge_revision" || decisionEvent.EntityID != decision.RevisionID {
-				return nil, storageFailure("validate briefing decision provenance", errors.New("decision acceptance event differs from pinned revision"))
-			}
-			decisionSource := domain.BriefingClaimSource{EntityType: "knowledge_revision", EntityID: decision.RevisionID, Revision: decisionEvent.EntityRevision, ContentSHA256: decision.ContentSHA256, EventSequence: decision.EventSequence}
-			if !decision.Current || decision.Disputed {
-				status := domain.BriefingClaimStatusStale
-				if decision.Disputed {
-					status = domain.BriefingClaimStatusDisputed
-				}
-				result = append(result, newBriefingCandidate(scope, domain.BriefingSectionVerificationGaps, domain.BriefingClaimVerificationGap, fmt.Sprintf("decision-gap/%d", index), domain.OutcomeAttentionNow, "Accepted outcome decision knowledge requires current verification", status, row.ProjectID, appendSources(base, decisionSource)))
-			}
-			if row.EventSequence > sinceSequence {
-				result = append(result, newBriefingCandidate(scope, domain.BriefingSectionRationaleChange, domain.BriefingClaimRationale, fmt.Sprintf("decision/%d", index), domain.OutcomeAttentionLater, "Accepted decision informs the outcome: "+decision.RevisionID, domain.BriefingClaimStatusAccepted, row.ProjectID, appendSources(base, decisionSource)))
-			}
-		}
-		for index, deviation := range detail.Deviations {
-			result = append(result, newBriefingCandidate(scope, domain.BriefingSectionDeviationsUnmet, domain.BriefingClaimDeviation, fmt.Sprintf("deviation/%d", index), domain.OutcomeAttentionNext, deviation.Summary, domain.BriefingClaimStatusRecorded, row.ProjectID, base))
-		}
-		if len(detail.UnmetScope) != 0 {
-			result = append(result, newBriefingCandidate(scope, domain.BriefingSectionDeviationsUnmet, domain.BriefingClaimUnmetCommitment, "unmet", domain.OutcomeAttentionNow, row.CommitmentTitle+": "+strings.Join(detail.UnmetScope, "; "), domain.BriefingClaimStatusUnmet, row.ProjectID, base))
-		}
-		if row.ReviewState == domain.OutcomeAssessmentAccepted {
-			result = append(result, newBriefingCandidate(scope, domain.BriefingSectionAcceptedDelivery, domain.BriefingClaimAcceptedDelivery, "delivery", domain.OutcomeAttentionLater, row.CommitmentTitle+": owner accepted outcome as "+row.Conclusion, row.Conclusion, row.ProjectID, deliverySources))
-			if row.EventSequence > sinceSequence && row.SupersededAssessmentID != nil && row.SupersededEventSequence != nil && row.SupersededContentSha256 != nil && row.SupersededStateRevision != nil {
-				priorSource := domain.BriefingClaimSource{EntityType: "outcome_assessment", EntityID: *row.SupersededAssessmentID, Revision: *row.SupersededStateRevision, ContentSHA256: *row.SupersededContentSha256, EventSequence: *row.SupersededEventSequence}
-				result = append(result, newBriefingCandidate(scope, domain.BriefingSectionRationaleChange, domain.BriefingClaimChange, "delivery-revised", domain.OutcomeAttentionNext, row.CommitmentTitle+": owner revised the accepted delivery judgment", domain.BriefingClaimStatusRecorded, row.ProjectID, appendSources(base, priorSource)))
-			}
-			if row.EventSequence > sinceSequence {
-				for index, effect := range detail.Effects {
-					result = append(result, newBriefingCandidate(scope, domain.BriefingSectionRationaleChange, domain.BriefingClaimChange, fmt.Sprintf("effect/%d", index), domain.OutcomeAttentionLater, effect.Summary, domain.BriefingClaimStatusRecorded, row.ProjectID, base))
-				}
-			}
-		}
+	add := func(candidate briefingCandidate, variant string, ordinal int64) {
+		result = append(result, tagBriefingCandidate(candidate, briefingSourceAcceptedAssessment, row.AssessmentID, variant, ordinal))
 	}
-
-	unassessed, err := queries.ListUnassessedOutcomeCommitments(ctx, dbgen.ListUnassessedOutcomeCommitmentsParams{
-		WorkspaceID: workspaceID, EventCursor: cursor,
-		ProjectID: scope.ProjectID, ObjectiveID: scope.ObjectiveID, TaskID: scope.TaskID,
-	})
-	if err != nil {
-		return nil, storageFailure("list unassessed outcome commitments", err)
+	deliverySources := append([]domain.BriefingClaimSource(nil), base...)
+	for _, evidence := range detail.Evidence {
+		deliverySources = append(deliverySources, briefingEvidenceSource(evidence))
 	}
-	for _, row := range unassessed {
-		if _, readErr := deliverableCommitment(ctx, queries, workspaceID, row.ID); readErr != nil {
-			return nil, readErr
-		}
-		source := domain.BriefingClaimSource{EntityType: "deliverable_commitment", EntityID: row.ID, Revision: 1, ContentSHA256: row.ContentSha256, EventSequence: row.EventSequence}
-		result = append(result, newBriefingCandidate(scope, domain.BriefingSectionDeviationsUnmet, domain.BriefingClaimUnmetCommitment, "unassessed", domain.OutcomeAttentionNow, row.Title+": no owner-accepted outcome assessment", domain.BriefingClaimStatusUnmet, row.ProjectID, []domain.BriefingClaimSource{source}))
+	for index, attention := range detail.OwnerAttention {
+		add(newBriefingCandidate(scope, domain.BriefingSectionRequiredDecisions, domain.BriefingClaimRequiredDecision,
+			fmt.Sprintf("attention/%d", index), attention.Urgency, attention.Action+": "+attention.Reason,
+			domain.BriefingClaimStatusRequired, row.ProjectID, base), "attention", int64(index))
 	}
-
-	contradictions, err := queries.ListOpenOutcomeContradictions(ctx, dbgen.ListOpenOutcomeContradictionsParams{WorkspaceID: workspaceID, EventCursor: &cursor, ProjectID: scope.ProjectID})
-	if err != nil {
-		return nil, storageFailure("list open briefing contradictions", err)
+	for index, followup := range detail.FollowUpTasks {
+		taskSource := domain.BriefingClaimSource{EntityType: "task", EntityID: followup.TaskID, Revision: followup.TaskRevision, EventSequence: followup.EventSequence}
+		add(newBriefingCandidate(scope, domain.BriefingSectionRequiredDecisions, domain.BriefingClaimRequiredDecision,
+			fmt.Sprintf("follow-up/%d", index), domain.OutcomeAttentionNext,
+			"Follow-up task requires owner tracking: "+followup.TaskID, domain.BriefingClaimStatusRequired,
+			row.ProjectID, appendSources(base, taskSource)), "follow_up", int64(index))
 	}
-	for _, row := range contradictions {
-		if row.EventSequence == nil {
-			return nil, storageFailure("validate briefing contradiction", errors.New("open contradiction has no confirmation event"))
+	for index, risk := range detail.Risks {
+		add(newBriefingCandidate(scope, domain.BriefingSectionRisksUnknowns, domain.BriefingClaimRisk,
+			fmt.Sprintf("risk/%d", index), urgencyForRisk(risk.Severity), risk.Summary, risk.Severity,
+			row.ProjectID, base), "risk", int64(index))
+	}
+	for index, unknown := range detail.Unknowns {
+		add(newBriefingCandidate(scope, domain.BriefingSectionRisksUnknowns, domain.BriefingClaimUnknown,
+			fmt.Sprintf("unknown/%d", index), domain.OutcomeAttentionNow, unknown.Summary,
+			domain.BriefingClaimStatusOpen, row.ProjectID, base), "unknown", int64(index))
+	}
+	for index, evidence := range detail.Evidence {
+		if evidence.Current && !evidence.Disputed && !evidence.Contradictory {
+			continue
 		}
-		if scope.Type == domain.OwnerCheckpointTask || scope.Type == domain.OwnerCheckpointObjective {
-			relevant, relevanceErr := queries.OutcomeContradictionTouchesScopeDecision(ctx, dbgen.OutcomeContradictionTouchesScopeDecisionParams{
-				WorkspaceID: workspaceID, ObjectiveID: scope.ObjectiveID, TaskID: scope.TaskID,
-				LeftRevisionID: row.LeftRevisionID, RightRevisionID: row.RightRevisionID,
-			})
-			if relevanceErr != nil {
-				return nil, storageFailure("derive scoped briefing contradiction", relevanceErr)
-			}
-			if !relevant {
-				continue
-			}
+		status := domain.BriefingClaimStatusStale
+		switch {
+		case evidence.Contradictory:
+			status = domain.BriefingClaimStatusContradictory
+		case evidence.Disputed:
+			status = domain.BriefingClaimStatusDisputed
+		case strings.Contains(evidence.Diagnosis, "missing"):
+			status = domain.BriefingClaimStatusMissing
 		}
-		summary := strings.TrimSpace(row.ReportNote)
+		summary := evidence.Diagnosis
 		if summary == "" {
-			summary = "Accepted knowledge revisions contradict: " + row.LeftRevisionID + " and " + row.RightRevisionID
+			summary = "Pinned outcome evidence requires owner verification"
 		}
-		source := domain.BriefingClaimSource{EntityType: "knowledge_contradiction", EntityID: row.ID, Revision: row.StateRevision, EventSequence: *row.EventSequence}
-		result = append(result, newBriefingCandidate(scope, domain.BriefingSectionContradictions, domain.BriefingClaimContradiction, "contradiction", domain.OutcomeAttentionNow, summary, domain.BriefingClaimStatusOpen, row.ProjectID, []domain.BriefingClaimSource{source}))
+		add(newBriefingCandidate(scope, domain.BriefingSectionVerificationGaps,
+			domain.BriefingClaimVerificationGap, fmt.Sprintf("evidence/%d", index),
+			domain.OutcomeAttentionNow, summary, status, row.ProjectID,
+			appendSources(base, briefingEvidenceSource(evidence))), "evidence_gap", int64(index))
+	}
+	for index, decision := range detail.Decisions {
+		decisionEvent, err := queries.GetOutcomeJournalEvent(ctx, decision.EventSequence)
+		if err != nil || decisionEvent.EntityType != "knowledge_revision" || decisionEvent.EntityID != decision.RevisionID {
+			return nil, storageFailure("validate briefing decision provenance", errors.New("decision acceptance event differs from pinned revision"))
+		}
+		decisionSource := domain.BriefingClaimSource{
+			EntityType: "knowledge_revision", EntityID: decision.RevisionID, Revision: decisionEvent.EntityRevision,
+			ContentSHA256: decision.ContentSHA256, EventSequence: decision.EventSequence,
+		}
+		if !decision.Current || decision.Disputed {
+			status := domain.BriefingClaimStatusStale
+			if decision.Disputed {
+				status = domain.BriefingClaimStatusDisputed
+			}
+			add(newBriefingCandidate(scope, domain.BriefingSectionVerificationGaps,
+				domain.BriefingClaimVerificationGap, fmt.Sprintf("decision-gap/%d", index),
+				domain.OutcomeAttentionNow, "Accepted outcome decision knowledge requires current verification",
+				status, row.ProjectID, appendSources(base, decisionSource)), "decision_gap", int64(index))
+		}
+		add(newBriefingCandidate(scope, domain.BriefingSectionRationaleChange,
+			domain.BriefingClaimRationale, fmt.Sprintf("decision/%d", index),
+			domain.OutcomeAttentionLater, "Accepted decision informs the outcome: "+decision.RevisionID,
+			domain.BriefingClaimStatusAccepted, row.ProjectID, appendSources(base, decisionSource)), "decision", int64(index))
+	}
+	for index, deviation := range detail.Deviations {
+		add(newBriefingCandidate(scope, domain.BriefingSectionDeviationsUnmet,
+			domain.BriefingClaimDeviation, fmt.Sprintf("deviation/%d", index),
+			domain.OutcomeAttentionNext, deviation.Summary, domain.BriefingClaimStatusRecorded,
+			row.ProjectID, base), "deviation", int64(index))
+	}
+	if len(detail.UnmetScope) != 0 {
+		add(newBriefingCandidate(scope, domain.BriefingSectionDeviationsUnmet,
+			domain.BriefingClaimUnmetCommitment, "unmet", domain.OutcomeAttentionNow,
+			row.CommitmentTitle+": "+strings.Join(detail.UnmetScope, "; "),
+			domain.BriefingClaimStatusUnmet, row.ProjectID, base), "unmet", -1)
+	}
+	add(newBriefingCandidate(scope, domain.BriefingSectionAcceptedDelivery,
+		domain.BriefingClaimAcceptedDelivery, "delivery", domain.OutcomeAttentionLater,
+		row.CommitmentTitle+": owner accepted outcome as "+row.Conclusion, row.Conclusion,
+		row.ProjectID, deliverySources), "delivery", -1)
+	if row.SupersededAssessmentID != nil && row.SupersededEventSequence != nil &&
+		row.SupersededContentSHA256 != nil && row.SupersededStateRevision != nil {
+		priorSource := domain.BriefingClaimSource{
+			EntityType: "outcome_assessment", EntityID: *row.SupersededAssessmentID,
+			Revision: *row.SupersededStateRevision, ContentSHA256: *row.SupersededContentSHA256,
+			EventSequence: *row.SupersededEventSequence,
+		}
+		add(newBriefingCandidate(scope, domain.BriefingSectionRationaleChange,
+			domain.BriefingClaimChange, "delivery-revised", domain.OutcomeAttentionNext,
+			row.CommitmentTitle+": owner revised the accepted delivery judgment",
+			domain.BriefingClaimStatusRecorded, row.ProjectID, appendSources(base, priorSource)),
+			"delivery_revised", -1)
+	}
+	for index, effect := range detail.Effects {
+		add(newBriefingCandidate(scope, domain.BriefingSectionRationaleChange,
+			domain.BriefingClaimChange, fmt.Sprintf("effect/%d", index), domain.OutcomeAttentionLater,
+			effect.Summary, domain.BriefingClaimStatusRecorded, row.ProjectID, base), "effect", int64(index))
 	}
 	return result, nil
+}
+
+func tagBriefingCandidate(candidate briefingCandidate, sourceKind, sourceID, variant string, ordinal int64) briefingCandidate {
+	candidate.SourceKind = sourceKind
+	candidate.SourceID = sourceID
+	candidate.Variant = variant
+	candidate.Ordinal = ordinal
+	return candidate
 }
 
 func newBriefingCandidate(scope domain.BriefingScope, section, kind, semantic, urgency, summary, status, projectID string, sources []domain.BriefingClaimSource) briefingCandidate {
@@ -486,93 +904,6 @@ func briefingEvidenceSource(value domain.OutcomeEvidenceReference) domain.Briefi
 		EvidenceClass: value.Class, EvidenceEffect: value.Effect,
 		PinnedFreshness: value.PinnedFreshness, CurrentFreshness: value.CurrentFreshness,
 	}
-}
-
-func boundBriefingCandidates(scope domain.BriefingScope, values []briefingCandidate) ([]briefingCandidate, []domain.BriefingOmission) {
-	bySection := make(map[string][]briefingCandidate)
-	for _, value := range values {
-		bySection[value.Section] = append(bySection[value.Section], value)
-	}
-	for _, section := range briefingSectionOrder {
-		bySection[section] = fairBriefingSection(bySection[section], scope.Type == domain.OwnerCheckpointWorkspace)
-	}
-	selected := make([]briefingCandidate, 0, maximumBriefingClaims)
-	remainders := make([]briefingCandidate, 0)
-	for _, section := range briefingSectionOrder {
-		values := bySection[section]
-		count := briefingSectionQuota[section]
-		if count > len(values) {
-			count = len(values)
-		}
-		selected = append(selected, values[:count]...)
-		remainders = append(remainders, values[count:]...)
-	}
-	space := maximumBriefingClaims - len(selected)
-	if space > len(remainders) {
-		space = len(remainders)
-	}
-	selected = append(selected, remainders[:space]...)
-	omitted := make(map[string]int)
-	selectedIDs := make(map[string]struct{}, len(selected))
-	for _, value := range selected {
-		selectedIDs[value.Claim.ID] = struct{}{}
-	}
-	for _, value := range values {
-		if _, ok := selectedIDs[value.Claim.ID]; !ok {
-			omitted[value.Section+"\x00"+domain.BriefingOmittedClaimLimit]++
-		}
-	}
-	return selected, briefingOmissions(omitted)
-}
-
-func fairBriefingSection(values []briefingCandidate, roundRobin bool) []briefingCandidate {
-	less := func(left, right briefingCandidate) bool {
-		if urgencyRank(left.Claim.Urgency) != urgencyRank(right.Claim.Urgency) {
-			return urgencyRank(left.Claim.Urgency) < urgencyRank(right.Claim.Urgency)
-		}
-		if left.Claim.SourceEventSequence != right.Claim.SourceEventSequence {
-			return left.Claim.SourceEventSequence > right.Claim.SourceEventSequence
-		}
-		return left.Claim.ID < right.Claim.ID
-	}
-	if !roundRobin {
-		sort.Slice(values, func(i, j int) bool { return less(values[i], values[j]) })
-		return values
-	}
-	byUrgency := map[string][]briefingCandidate{}
-	for _, value := range values {
-		byUrgency[value.Claim.Urgency] = append(byUrgency[value.Claim.Urgency], value)
-	}
-	result := make([]briefingCandidate, 0, len(values))
-	for _, urgency := range []string{domain.OutcomeAttentionNow, domain.OutcomeAttentionNext, domain.OutcomeAttentionLater} {
-		result = append(result, roundRobinBriefingProjects(byUrgency[urgency], less)...)
-	}
-	return result
-}
-
-func roundRobinBriefingProjects(values []briefingCandidate, less func(briefingCandidate, briefingCandidate) bool) []briefingCandidate {
-	groups := make(map[string][]briefingCandidate)
-	projects := make([]string, 0)
-	for _, value := range values {
-		key := value.Claim.ProjectID
-		if _, exists := groups[key]; !exists {
-			projects = append(projects, key)
-		}
-		groups[key] = append(groups[key], value)
-	}
-	sort.Strings(projects)
-	for _, project := range projects {
-		sort.Slice(groups[project], func(i, j int) bool { return less(groups[project][i], groups[project][j]) })
-	}
-	result := make([]briefingCandidate, 0, len(values))
-	for index := 0; len(result) < len(values); index++ {
-		for _, project := range projects {
-			if index < len(groups[project]) {
-				result = append(result, groups[project][index])
-			}
-		}
-	}
-	return result
 }
 
 func boundedBriefingContent(scope domain.BriefingScope, content *managementBriefingContent, selected []briefingCandidate) ([]byte, string, []briefingCandidate, error) {
@@ -661,7 +992,7 @@ func managementBriefingFromRow(ctx context.Context, queries *dbgen.Queries, row 
 		return domain.ManagementBriefing{}, storageFailure("decode management briefing", err)
 	}
 	encoded, hash, err := canonicalContent(content)
-	if err != nil || string(encoded) != row.ContentJson || hash != row.ContentSha256 || int64(len(encoded)) != row.ByteSize || row.ScopeType != content.Scope.Type || row.ScopeID != scopeID(content.Scope) || row.WorkspaceID != content.Scope.WorkspaceID || row.EventCursor != content.EventCursor || row.CutoffEventSequence != content.CutoffEventSequence || row.CheckpointID != content.CheckpointID || row.SinceEventSequence != content.SinceEventSequence || row.EvaluatedAt != content.EvaluatedAt || (row.CaughtUp != 0) != content.CaughtUp || stringValue(row.UnknownEventType) != content.UnknownEventType || int64Value(row.UnknownEventSequence) != content.UnknownEventSequence {
+	if err != nil || string(encoded) != row.ContentJson || hash != row.ContentSha256 || int64(len(encoded)) != row.ByteSize || row.ScopeType != content.Scope.Type || row.ScopeID != scopeID(content.Scope) || row.WorkspaceID != content.Scope.WorkspaceID || row.EventCursor != content.EventCursor || row.CutoffEventSequence != content.CutoffEventSequence || row.CheckpointID != content.CheckpointID || row.SinceEventSequence != content.SinceEventSequence || (row.CaughtUp != 0) != content.CaughtUp || stringValue(row.UnknownEventType) != content.UnknownEventType || int64Value(row.UnknownEventSequence) != content.UnknownEventSequence {
 		return domain.ManagementBriefing{}, storageFailure("validate management briefing content", errors.New("briefing columns differ from canonical bounded content"))
 	}
 	receipt, receiptErr := queries.GetManagementBriefingReceipt(ctx, row.ID)
@@ -672,6 +1003,14 @@ func managementBriefingFromRow(ctx context.Context, queries *dbgen.Queries, row 
 	if err != nil || len(claimRows) != len(content.Claims) {
 		return domain.ManagementBriefing{}, storageFailure("validate management briefing claims", errors.New("briefing normalized claim count differs from content"))
 	}
+	allSourceRows, err := queries.ListManagementBriefingClaimSourcesForBriefing(ctx, row.ID)
+	if err != nil {
+		return domain.ManagementBriefing{}, storageFailure("read management briefing provenance", err)
+	}
+	sourcesByClaim := make(map[string][]dbgen.ManagementBriefingClaimSource)
+	for _, sourceRow := range allSourceRows {
+		sourcesByClaim[sourceRow.ClaimID] = append(sourcesByClaim[sourceRow.ClaimID], sourceRow)
+	}
 	actualSourceCount := int64(0)
 	for index, stored := range claimRows {
 		claim := content.Claims[index]
@@ -679,8 +1018,9 @@ func managementBriefingFromRow(ctx context.Context, queries *dbgen.Queries, row 
 		if stored.Ordinal != int64(index) || stored.ClaimID != claim.ID || stored.ClaimID != briefingClaimID(content.Scope, stored.SemanticKey, claim.Status, claim.Sources) || stored.Kind != claim.Kind || stored.Urgency != claim.Urgency || stored.Summary != claim.Summary || stored.Status != claim.Status || stringValue(stored.ProjectID) != claim.ProjectID || stored.SourceEventSequence != claim.SourceEventSequence || stored.ClaimJson != string(claimJSON) {
 			return domain.ManagementBriefing{}, storageFailure("validate management briefing claim", errors.New("normalized claim differs from canonical briefing content"))
 		}
-		sourceRows, sourceErr := queries.ListManagementBriefingClaimSources(ctx, dbgen.ListManagementBriefingClaimSourcesParams{BriefingID: row.ID, ClaimID: claim.ID})
-		if sourceErr != nil || len(sourceRows) != len(claim.Sources) {
+		sourceRows := sourcesByClaim[claim.ID]
+		delete(sourcesByClaim, claim.ID)
+		if len(sourceRows) != len(claim.Sources) {
 			return domain.ManagementBriefing{}, storageFailure("validate management briefing provenance", errors.New("claim provenance count differs from canonical claim"))
 		}
 		actualSourceCount += int64(len(sourceRows))
@@ -694,12 +1034,12 @@ func managementBriefingFromRow(ctx context.Context, queries *dbgen.Queries, row 
 			}
 		}
 	}
-	if receipt.SourceCount != actualSourceCount {
+	if len(sourcesByClaim) != 0 || receipt.SourceCount != actualSourceCount || actualSourceCount != int64(len(allSourceRows)) {
 		return domain.ManagementBriefing{}, storageFailure("validate complete management briefing receipt", errors.New("briefing provenance count differs from completeness receipt"))
 	}
 	return domain.ManagementBriefing{
 		ID: row.ID, Revision: row.Revision, Scope: content.Scope, EventCursor: content.EventCursor, CutoffEventSequence: content.CutoffEventSequence,
-		CheckpointID: content.CheckpointID, SinceEventSequence: content.SinceEventSequence, EvaluatedAt: content.EvaluatedAt,
+		CheckpointID: content.CheckpointID, SinceEventSequence: content.SinceEventSequence, EvaluatedAt: row.EvaluatedAt,
 		CaughtUp: content.CaughtUp, UnknownEventType: content.UnknownEventType, UnknownEventSequence: content.UnknownEventSequence,
 		Claims: content.Claims, Omitted: content.Omitted, ContentSHA256: row.ContentSha256, ByteSize: int(row.ByteSize),
 	}, nil

@@ -803,28 +803,7 @@ func writeDirectSpec(runDirectory string, spec directSupervisorSpec) error {
 	if err != nil {
 		return fmt.Errorf("encode direct runtime launch specification: %w", err)
 	}
-	file, err := os.CreateTemp(runDirectory, ".crewfold-launch-*")
-	if err != nil {
-		return fmt.Errorf("create temporary direct runtime launch specification: %w", err)
-	}
-	temporaryPath := file.Name()
-	defer os.Remove(temporaryPath)
-	if err := file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("protect direct runtime launch specification: %w", err)
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("write direct runtime launch specification: %w", err)
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("sync direct runtime launch specification: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close direct runtime launch specification: %w", err)
-	}
-	if err := os.Link(temporaryPath, directSpecPath(runDirectory)); errors.Is(err, os.ErrExist) {
+	if err := publishPrivateFileNoReplace(runDirectory, filepath.Base(directSpecPath(runDirectory)), data, nil); errors.Is(err, errAtomicPrivateFileExists) {
 		return errDirectSpecExists
 	} else if err != nil {
 		return fmt.Errorf("publish direct runtime launch specification: %w", err)
@@ -1055,19 +1034,7 @@ func validateDirectState(state directSupervisorState) error {
 }
 
 func readBoundedRegularFile(path string, byteLimit int64) ([]byte, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.New("direct runtime durable record must be a regular file")
-	}
-	return io.ReadAll(io.LimitReader(file, byteLimit+1))
+	return readPrivateAtomicFile(path, byteLimit)
 }
 
 func writeDirectState(runDirectory string, state directSupervisorState) error {
@@ -1094,29 +1061,7 @@ func writeJSONAtomic(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".crewfold-state-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(data); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporaryPath, path)
+	return replacePrivateFileAtomic(path, data, nil)
 }
 
 func rejectSymlink(path string) error {

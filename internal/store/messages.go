@@ -52,7 +52,7 @@ func (s *Store) CreateParticipantThread(ctx context.Context, command CreateParti
 	if err := validateMutationMetadata(key, correlationID, CodeInvalidMessage); err != nil {
 		return ParticipantThreadMutationResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return ParticipantThreadMutationResult{}, storageFailure("begin participant thread creation", err)
 	}
@@ -143,7 +143,7 @@ func (s *Store) InviteThreadParticipant(ctx context.Context, command InviteThrea
 	if err := validateMutationMetadata(key, correlationID, CodeInvalidMessage); err != nil {
 		return ParticipantThreadMutationResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return ParticipantThreadMutationResult{}, storageFailure("begin participant invitation", err)
 	}
@@ -357,7 +357,7 @@ func (s *Store) SendMessage(ctx context.Context, command SendMessageCommand) (Mu
 		return MutationResult[domain.MessageMutation]{}, err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.MessageMutation]{}, storageFailure("begin message send", err)
 	}
@@ -589,7 +589,7 @@ func (s *Store) RunInbox(ctx context.Context, runID string, limit int) ([]domain
 	if limit < 1 || limit > maximumInboxItems {
 		return nil, &Error{Code: CodeInvalidMessage, Message: "inbox limit must be from 1 to 50"}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return nil, storageFailure("begin run inbox", err)
 	}
@@ -651,7 +651,7 @@ func (s *Store) transitionRunMessage(ctx context.Context, runID, messageID, key,
 	if runID == "" || messageID == "" || key == "" || len(key) > 128 || (target != domain.DeliveryRead && target != domain.DeliveryAcknowledged) {
 		return MutationResult[domain.InboxItem]{}, &Error{Code: CodeInvalidMessage, Message: "message transition requires run, message, and bounded idempotency key"}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.InboxItem]{}, storageFailure("begin message transition", err)
 	}
@@ -809,7 +809,7 @@ func (s *Store) ClaimMessageWakeJob(ctx context.Context, lease time.Duration) (d
 	if lease <= 0 {
 		lease = time.Second
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.MessageWakeJob{}, false, storageFailure("begin message wake claim", err)
 	}
@@ -855,7 +855,7 @@ func (s *Store) SettleMessageWakeJob(ctx context.Context, jobID, outcome, diagno
 		}
 		diagnostic = diagnostic[:maximum]
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return storageFailure("begin message wake completion", err)
 	}

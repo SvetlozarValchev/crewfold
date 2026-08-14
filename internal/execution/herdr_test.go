@@ -136,9 +136,16 @@ func TestHerdrRuntimeLaunchReconcileMovePromptAndClosedPane(t *testing.T) {
 	if err := writeJSONAtomic(filepath.Join(runDirectory, "state.json"), herdrSupervisorState{Schema: herdrSupervisorStateSchema, NodeID: herdrTestNodeID, OperationID: "run_fixture", Status: RuntimeStateExited, ExitKnown: true}); err != nil {
 		t.Fatal(err)
 	}
+	attachment, err = restarted.Attach(context.Background(), "run_fixture", binding.RuntimeHandle)
+	if err != nil || strings.Join(attachment.Arguments, " ") != "terminal attach term-runtime" {
+		t.Fatalf("Attach(held exited pane) = %#v, %v", attachment, err)
+	}
 	runner.mu.Lock()
 	runner.closed, runner.surface = true, false
 	runner.mu.Unlock()
+	if _, err := restarted.Attach(context.Background(), "run_fixture", binding.RuntimeHandle); err == nil {
+		t.Fatal("Attach(closed exited pane) error = nil, want missing terminal refusal")
+	}
 	closedSnapshot, closedErr := restarted.Inspect(context.Background(), "run_fixture", binding.RuntimeHandle)
 	if closedErr == nil || closedSnapshot.CompletionReady {
 		t.Fatalf("Inspect(closed pane) = %#v, %v; closed pane must not complete", closedSnapshot, closedErr)

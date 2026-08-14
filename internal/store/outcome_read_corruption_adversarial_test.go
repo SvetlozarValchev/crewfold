@@ -275,7 +275,7 @@ func (fixture outcomeAdversarialFixture) completeRun(t *testing.T) string {
 	}
 	completed, err := fixture.storage.ApplyRunObservation(context.Background(), starting.ID, domain.RunObservation{
 		Kind: domain.ObservationCompletion, Message: "completed exact work",
-		Evidence: []string{"self reported evidence"}, Handoff: "inspect the exact completed work",
+		Evidence: []string{"self reported evidence"}, Handoff: "inspect the exact completed work", LogArchive: prepareTestRunLogArchive(t, fixture.storage, starting.ID),
 	}, true, nil, "outcome-adversarial-completed")
 	if err != nil || completed.Handoff == nil {
 		t.Fatalf("ApplyRunObservation() = %#v, %v", completed, err)

@@ -193,6 +193,68 @@ func TestDataDirectoryLockSymlinkIsRefusedAndTargetPreserved(t *testing.T) {
 	}
 }
 
+func TestDataDirectoryLockHardlinkOrUnsafeModeIsRefusedWithoutNormalization(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name     string
+		prepare  func(t *testing.T, lockPath, witnessPath string)
+		wantMode os.FileMode
+	}{
+		{
+			name: "hard link",
+			prepare: func(t *testing.T, lockPath, witnessPath string) {
+				t.Helper()
+				if err := os.Link(witnessPath, lockPath); err != nil {
+					t.Fatalf("os.Link(lock witness) error = %v", err)
+				}
+			},
+			wantMode: 0o600,
+		},
+		{
+			name: "unsafe mode",
+			prepare: func(t *testing.T, lockPath, _ string) {
+				t.Helper()
+				if err := os.WriteFile(lockPath, []byte("unsafe lock must remain unchanged\n"), 0o644); err != nil {
+					t.Fatalf("os.WriteFile(unsafe lock) error = %v", err)
+				}
+			},
+			wantMode: 0o644,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			config := testConfig(t)
+			if err := os.MkdirAll(config.DataDir, 0o700); err != nil {
+				t.Fatalf("os.MkdirAll(data dir) error = %v", err)
+			}
+			witnessPath := filepath.Join(t.TempDir(), "user-file")
+			const contents = "unsafe lock must remain unchanged\n"
+			if err := os.WriteFile(witnessPath, []byte(contents), 0o600); err != nil {
+				t.Fatalf("os.WriteFile(witness) error = %v", err)
+			}
+			lockPath := filepath.Join(config.DataDir, "daemon.lock")
+			testCase.prepare(t, lockPath, witnessPath)
+
+			err := Run(context.Background(), config)
+			if ErrorCode(err) != CodeInvalidConfiguration {
+				t.Fatalf("Run() error = %v, code = %q, want %q", err, ErrorCode(err), CodeInvalidConfiguration)
+			}
+			lockBytes, readErr := os.ReadFile(lockPath)
+			if readErr != nil || string(lockBytes) != contents {
+				t.Fatalf("lock contents = %q, %v, want preserved %q", lockBytes, readErr, contents)
+			}
+			info, statErr := os.Stat(lockPath)
+			if statErr != nil || info.Mode().Perm() != testCase.wantMode {
+				t.Fatalf("lock mode = %#o, %v, want %#o", info.Mode().Perm(), statErr, testCase.wantMode)
+			}
+			witnessBytes, readErr := os.ReadFile(witnessPath)
+			if readErr != nil || string(witnessBytes) != contents {
+				t.Fatalf("witness contents = %q, %v, want preserved %q", witnessBytes, readErr, contents)
+			}
+		})
+	}
+}
+
 func TestShutdownClosesInflightPartialRequest(t *testing.T) {
 	t.Parallel()
 
@@ -303,7 +365,7 @@ func TestWorkspaceAndEventsPersistAcrossDaemonRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DatabaseStatus() error = %v", err)
 	}
-	if databaseStatus.Status != "ok" || databaseStatus.SchemaVersion != store.LatestSchemaVersion || databaseStatus.JournalMode != "wal" || !databaseStatus.ForeignKeys {
+	if databaseStatus.Status != "ok" || databaseStatus.SchemaVersion != store.CurrentSchemaVersion || len(databaseStatus.BaselineSHA256) != 64 || len(databaseStatus.CatalogSHA256) != 64 || databaseStatus.JournalMode != "wal" || !databaseStatus.ForeignKeys {
 		t.Fatalf("DatabaseStatus() = %#v, want healthy current WAL database", databaseStatus)
 	}
 

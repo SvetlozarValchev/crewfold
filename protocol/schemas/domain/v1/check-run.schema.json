@@ -30,7 +30,6 @@
     "source":{"$ref":"check-run-source.schema.json"},
     "source_max_in_flight":{"type":"integer","minimum":1,"maximum":100},
     "status":{"enum":["requested","starting","running","finished"]},
-    "runtime_handle":{"type":"string","maxLength":4096},
     "revision":{"type":"integer","minimum":1},
     "created_at":{"type":"string","format":"date-time"},
     "updated_at":{"type":"string","format":"date-time"},

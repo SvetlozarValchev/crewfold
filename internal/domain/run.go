@@ -180,35 +180,38 @@ type FixtureCheckWatch struct {
 }
 
 type Run struct {
-	ID              string       `json:"id"`
-	WorkspaceID     string       `json:"workspace_id"`
-	ProjectID       string       `json:"project_id"`
-	TaskID          string       `json:"task_id"`
-	AssignmentID    string       `json:"assignment_id"`
-	AgentID         string       `json:"agent_id"`
-	CheckoutID      string       `json:"checkout_id"`
-	ContextPacketID string       `json:"context_packet_id,omitempty"`
-	Runtime         string       `json:"runtime"`
-	Provider        string       `json:"provider"`
-	ScenarioName    string       `json:"scenario_name"`
-	Status          string       `json:"status"`
-	StepCursor      int          `json:"step_cursor"`
-	RuntimeHandle   string       `json:"-"`
-	ProviderHandle  string       `json:"-"`
-	BlockedQuestion string       `json:"blocked_question,omitempty"`
-	ResultSummary   string       `json:"result_summary,omitempty"`
-	FailureCode     string       `json:"failure_code,omitempty"`
-	FailureMessage  string       `json:"failure_message,omitempty"`
-	StopGraceMillis int64        `json:"stop_grace_millis,omitempty"`
-	StopForced      bool         `json:"stop_forced,omitempty"`
-	Revision        int64        `json:"revision"`
-	CreatedAt       string       `json:"created_at"`
-	UpdatedAt       string       `json:"updated_at"`
-	StartedAt       string       `json:"started_at,omitempty"`
-	FinishedAt      string       `json:"finished_at,omitempty"`
-	CreatedBy       string       `json:"created_by"`
-	UpdatedBy       string       `json:"updated_by"`
-	Placement       RunPlacement `json:"placement"`
+	ID                     string       `json:"id"`
+	WorkspaceID            string       `json:"workspace_id"`
+	ProjectID              string       `json:"project_id"`
+	TaskID                 string       `json:"task_id"`
+	AssignmentID           string       `json:"assignment_id"`
+	AgentID                string       `json:"agent_id"`
+	CheckoutID             string       `json:"checkout_id"`
+	ContextPacketID        string       `json:"context_packet_id,omitempty"`
+	Runtime                string       `json:"runtime"`
+	Provider               string       `json:"provider"`
+	ScenarioName           string       `json:"scenario_name"`
+	Status                 string       `json:"status"`
+	StepCursor             int          `json:"step_cursor"`
+	RuntimeHandle          string       `json:"-"`
+	ProviderHandle         string       `json:"-"`
+	RuntimeNodeID          string       `json:"-"`
+	RuntimeNodeFingerprint string       `json:"-"`
+	RuntimeOperationID     string       `json:"-"`
+	BlockedQuestion        string       `json:"blocked_question,omitempty"`
+	ResultSummary          string       `json:"result_summary,omitempty"`
+	FailureCode            string       `json:"failure_code,omitempty"`
+	FailureMessage         string       `json:"failure_message,omitempty"`
+	StopGraceMillis        int64        `json:"stop_grace_millis,omitempty"`
+	StopForced             bool         `json:"stop_forced,omitempty"`
+	Revision               int64        `json:"revision"`
+	CreatedAt              string       `json:"created_at"`
+	UpdatedAt              string       `json:"updated_at"`
+	StartedAt              string       `json:"started_at,omitempty"`
+	FinishedAt             string       `json:"finished_at,omitempty"`
+	CreatedBy              string       `json:"created_by"`
+	UpdatedBy              string       `json:"updated_by"`
+	Placement              RunPlacement `json:"placement"`
 }
 
 // RunSummary is the bounded collection representation used by operator views.
@@ -279,11 +282,13 @@ type TaskTimeline struct {
 }
 
 type RunObservation struct {
-	Kind     string
-	Message  string
-	Evidence []string
-	Handoff  string
-	Pause    bool
+	Kind                 string
+	Message              string
+	Evidence             []string
+	Handoff              string
+	Pause                bool
+	LogArchive           *RunLogArchive
+	LogUnavailableReason string
 }
 
 type CapturedLog struct {
@@ -298,4 +303,23 @@ type RunLogs struct {
 	State  string      `json:"state"`
 	Stdout CapturedLog `json:"stdout"`
 	Stderr CapturedLog `json:"stderr"`
+}
+
+// ArchivedRunLog identifies one immutable terminal stream after its content
+// has been published to the node-local content-addressed artifact store.
+type ArchivedRunLog struct {
+	Kind          string
+	ContentSHA256 string
+	CapturedBytes int64
+	OmittedBytes  int64
+	Truncated     bool
+}
+
+// RunLogArchive is the exact stdout/stderr pair committed atomically with a
+// trusted terminal run transition.
+type RunLogArchive struct {
+	RunID  string
+	State  string
+	Stdout ArchivedRunLog
+	Stderr ArchivedRunLog
 }

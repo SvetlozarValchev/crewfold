@@ -103,15 +103,23 @@ SELECT status FROM check_jobs WHERE check_run_id=sqlc.arg(check_run_id);
 -- name: GetCheckLaunchReceiptLaunchable :one
 SELECT launchable FROM check_launch_receipts WHERE check_run_id=sqlc.arg(check_run_id);
 
--- name: BindCheckRuntime :execrows
+-- name: InsertCheckRuntimeBinding :execrows
+INSERT INTO check_runtime_bindings(
+ check_run_id,node_id,node_fingerprint,operation_id,runtime_handle,revision,created_at,updated_at
+) SELECT sqlc.arg(check_run_id),sqlc.arg(node_id),sqlc.arg(node_fingerprint),sqlc.arg(operation_id),sqlc.arg(runtime_handle),1,sqlc.arg(created_at),sqlc.arg(created_at)
+WHERE EXISTS(SELECT 1 FROM check_runs run WHERE run.id=sqlc.arg(check_run_id) AND run.status='starting');
+
+-- name: MarkCheckRuntimeObserved :execrows
 UPDATE check_runs
-SET runtime_handle=sqlc.arg(runtime_handle),revision=revision+1,updated_at=sqlc.arg(updated_at),updated_by='crewfold-check-worker'
-WHERE id=sqlc.arg(check_run_id) AND status='starting' AND runtime_handle IS NULL;
+SET revision=revision+1,updated_at=sqlc.arg(updated_at),updated_by='crewfold-check-worker'
+WHERE id=sqlc.arg(check_run_id) AND status='starting'
+ AND EXISTS(SELECT 1 FROM check_runtime_bindings binding WHERE binding.check_run_id=check_runs.id);
 
 -- name: MarkCheckRunRunning :execrows
 UPDATE check_runs
 SET status='running',revision=revision+1,started_at=sqlc.arg(started_at),updated_at=sqlc.arg(started_at),updated_by='crewfold-check-worker'
-WHERE id=sqlc.arg(check_run_id) AND status='starting' AND runtime_handle IS NOT NULL;
+WHERE id=sqlc.arg(check_run_id) AND status='starting'
+ AND EXISTS(SELECT 1 FROM check_runtime_bindings binding WHERE binding.check_run_id=check_runs.id);
 
 -- name: ReleaseCheckJobLease :execrows
 UPDATE check_jobs

@@ -146,7 +146,7 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 		return RunMutationResult{}, err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return RunMutationResult{}, storageFailure("begin run start", err)
 	}
@@ -202,6 +202,9 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	}
 	if activeForAgent >= agent.MaxConcurrency {
 		return RunMutationResult{}, &Error{Code: CodePlacementUnavailable, Message: fmt.Sprintf("agent %s has reached concurrency %d", agent.ID, agent.MaxConcurrency)}
+	}
+	if err := s.enforceExecutionCapacity(ctx, tx, workspace.ID, task.ProjectID, providerName); err != nil {
+		return RunMutationResult{}, err
 	}
 	var packet domain.ContextPacket
 	if contextPacketID != "" {
@@ -330,8 +333,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?)`,
 	if err != nil {
 		return RunMutationResult{}, err
 	}
-	detail.Run.RuntimeHandle = ""
-	detail.Run.ProviderHandle = ""
+	clearRunRuntimeProjection(&detail.Run)
 	result := RunMutationResult{Detail: detail, EventSequence: sequence}
 	if err := s.runMutationHook(MutationAfterEvent); err != nil {
 		return RunMutationResult{}, err
@@ -398,6 +400,30 @@ const (
 	runJobControl runJobClass = "control"
 )
 
+// RecoverRunJobLeases releases every run-job lease owned by a previous daemon
+// session. Callers must hold the daemon's exclusive data-directory lock. A
+// bound starting/active/stopping operation retains its exact runtime binding;
+// only the abandoned queue lease is made immediately claimable so the new
+// daemon reconciles rather than waiting for the wall-clock lease to expire.
+func (s *Store) RecoverRunJobLeases(ctx context.Context) error {
+	now := s.nowText()
+	tx, err := s.beginTx(ctx, nil)
+	if err != nil {
+		return storageFailure("begin run-job lease recovery", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+UPDATE run_jobs
+SET status='pending',lease_expires_at=NULL,updated_at=?
+WHERE status='leased'`, now); err != nil {
+		return storageFailure("recover run-job leases", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return storageFailure("commit run-job lease recovery", err)
+	}
+	return nil
+}
+
 func (s *Store) ClaimRunLaunchJob(ctx context.Context, lease time.Duration) (RunWork, bool, error) {
 	return s.claimRunJob(ctx, lease, runJobLaunch)
 }
@@ -410,11 +436,11 @@ func (s *Store) claimRunJob(ctx context.Context, lease time.Duration, class runJ
 	if lease <= 0 {
 		lease = 30 * time.Second
 	}
-	statusPredicate := "(run.status = 'requested' OR (run.status = 'starting' AND run.runtime_handle IS NULL))"
+	statusPredicate := "(run.status = 'requested' OR (run.status = 'starting' AND NOT EXISTS(SELECT 1 FROM run_runtime_bindings binding WHERE binding.run_id=run.id)))"
 	if class == runJobControl {
-		statusPredicate = "((run.status = 'starting' AND run.runtime_handle IS NOT NULL) OR run.status IN ('active','stopping'))"
+		statusPredicate = "((run.status = 'starting' AND EXISTS(SELECT 1 FROM run_runtime_bindings binding WHERE binding.run_id=run.id)) OR run.status IN ('active','stopping'))"
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return RunWork{}, false, storageFailure("begin run job claim", err)
 	}
@@ -478,8 +504,8 @@ SELECT EXISTS (
 	  AND EXISTS (SELECT 1 FROM events event WHERE event.workspace_id=run.workspace_id
 	    AND event.entity_type='run' AND event.entity_id=run.id AND event.entity_revision=run.revision
 	    AND ((run.status='requested' AND event.type='run.requested')
-	      OR (run.status='starting' AND run.runtime_handle IS NULL AND event.type='run.starting')
-	      OR (run.status='starting' AND run.runtime_handle IS NOT NULL AND event.type='run.runtime_observed'
+	      OR (run.status='starting' AND NOT EXISTS(SELECT 1 FROM run_runtime_bindings runtime_binding WHERE runtime_binding.run_id=run.id) AND event.type='run.starting')
+	      OR (run.status='starting' AND EXISTS(SELECT 1 FROM run_runtime_bindings runtime_binding WHERE runtime_binding.run_id=run.id) AND event.type='run.runtime_observed'
 	        AND json_extract(event.data_json,'$.runtime_bound')=1)
 	      OR (run.status='active' AND event.type IN ('run.started','run.progress_reported','run.resumed'))
 	      OR (run.status='stopping' AND event.type='run.stop_requested')))
@@ -521,8 +547,8 @@ OR EXISTS (
 	  AND EXISTS (SELECT 1 FROM events event WHERE event.workspace_id=run.workspace_id
 	    AND event.entity_type='run' AND event.entity_id=run.id AND event.entity_revision=run.revision
 	    AND ((run.status='requested' AND event.type='run.requested')
-	      OR (run.status='starting' AND run.runtime_handle IS NULL AND event.type='run.starting')
-	      OR (run.status='starting' AND run.runtime_handle IS NOT NULL AND event.type='run.runtime_observed'
+	      OR (run.status='starting' AND NOT EXISTS(SELECT 1 FROM run_runtime_bindings runtime_binding WHERE runtime_binding.run_id=run.id) AND event.type='run.starting')
+	      OR (run.status='starting' AND EXISTS(SELECT 1 FROM run_runtime_bindings runtime_binding WHERE runtime_binding.run_id=run.id) AND event.type='run.runtime_observed'
 	        AND json_extract(event.data_json,'$.runtime_bound')=1)
 	      OR (run.status='active' AND event.type IN ('run.started','run.progress_reported','run.resumed'))
 	      OR (run.status='stopping' AND event.type='run.stop_requested')))
@@ -604,7 +630,7 @@ func (s *Store) MarkRunStarted(ctx context.Context, runID, runtimeHandle, provid
 	if runtimeHandle == "" || providerHandle == "" {
 		return domain.RunDetail{}, &Error{Code: CodeInvalidRun, Message: "run start requires runtime and provider handles"}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.RunDetail{}, storageFailure("begin run started transition", err)
 	}
@@ -613,7 +639,7 @@ func (s *Store) MarkRunStarted(ctx context.Context, runID, runtimeHandle, provid
 	if err != nil {
 		return domain.RunDetail{}, err
 	}
-	if run.Status == domain.RunActive && run.RuntimeHandle == runtimeHandle && run.ProviderHandle == providerHandle {
+	if run.Status == domain.RunActive && run.RuntimeHandle == runtimeHandle && run.ProviderHandle == providerHandle && s.runBindingIsCurrent(run) {
 		detail, detailErr := runDetailInTransaction(ctx, tx, run)
 		if detailErr != nil {
 			return domain.RunDetail{}, detailErr
@@ -627,7 +653,23 @@ func (s *Store) MarkRunStarted(ctx context.Context, runID, runtimeHandle, provid
 		return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "only a starting run can become active"}
 	}
 	now := s.nowText()
-	run.Status, run.RuntimeHandle, run.ProviderHandle = domain.RunActive, runtimeHandle, providerHandle
+	if run.RuntimeHandle == "" {
+		if err := s.insertRunRuntimeBinding(ctx, tx, &run, runtimeHandle, providerHandle, now); err != nil {
+			return domain.RunDetail{}, err
+		}
+	} else {
+		if run.RuntimeHandle != runtimeHandle || !s.runBindingIsCurrent(run) {
+			return domain.RunDetail{}, runtimeBindingConflict("run", run.ID)
+		}
+		if run.ProviderHandle == "" {
+			if err := s.bindRunProvider(ctx, tx, &run, providerHandle, now); err != nil {
+				return domain.RunDetail{}, err
+			}
+		} else if run.ProviderHandle != providerHandle {
+			return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "provider binding cannot change"}
+		}
+	}
+	run.Status = domain.RunActive
 	run.StartedAt = now
 	run.Revision++
 	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
@@ -675,13 +717,15 @@ func (s *Store) RecordRunRuntimeBinding(ctx context.Context, runID, runtimeHandl
 		if run.Status != domain.RunStarting {
 			return 0, &Error{Code: CodeRunConflict, Message: "runtime binding requires a starting run"}
 		}
-		if run.RuntimeHandle == runtimeHandle {
+		if run.RuntimeHandle == runtimeHandle && s.runBindingIsCurrent(*run) {
 			return 0, nil
 		}
 		if run.RuntimeHandle != "" {
 			return 0, &Error{Code: CodeRunConflict, Message: "runtime binding cannot replace an existing handle"}
 		}
-		run.RuntimeHandle = runtimeHandle
+		if err := s.insertRunRuntimeBinding(ctx, tx, run, runtimeHandle, "", now); err != nil {
+			return 0, err
+		}
 		run.Revision++
 		if err := updateRunProjectionForActor(ctx, tx, *run, now, runWorkerActorID); err != nil {
 			return 0, err
@@ -698,7 +742,7 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 	if message == "" {
 		message = "runtime failed to start"
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.RunDetail{}, storageFailure("begin run start failure", err)
 	}
@@ -715,7 +759,10 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 	}
 	now := s.nowText()
 	run.Status, run.FailureCode, run.FailureMessage, run.FinishedAt = domain.RunStartFailed, "runtime_start_failed", message, now
-	run.RuntimeHandle, run.ProviderHandle = "", ""
+	if err := deleteRunRuntimeBinding(ctx, tx, run.ID); err != nil {
+		return domain.RunDetail{}, err
+	}
+	clearRunRuntimeProjection(&run)
 	run.Revision++
 	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
@@ -726,7 +773,7 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 	if err := appendRunTimeline(ctx, tx, run.ID, runStartFailedEvent, message, nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message, "logs_available": false, "logs_unavailable_reason": "runtime did not produce a trustworthy terminal capture"}); err != nil {
 		return domain.RunDetail{}, err
 	}
 	// A start failure may keep its accepted intent open only while the current
@@ -760,7 +807,14 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 }
 
 func (s *Store) ApplyRunObservation(ctx context.Context, runID string, observation domain.RunObservation, accepted bool, missing []string, correlationID string) (domain.RunDetail, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	if observation.Kind == domain.ObservationCompletion {
+		if err := s.validateTerminalLogOutcome(strings.TrimSpace(runID), observation.LogArchive, observation.LogUnavailableReason); err != nil {
+			return domain.RunDetail{}, err
+		}
+	} else if observation.LogArchive != nil || strings.TrimSpace(observation.LogUnavailableReason) != "" {
+		return domain.RunDetail{}, &Error{Code: CodeInvalidRun, Message: "only a completion observation can carry terminal logs"}
+	}
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.RunDetail{}, storageFailure("begin run observation", err)
 	}
@@ -781,8 +835,8 @@ func (s *Store) ApplyRunObservation(ctx context.Context, runID string, observati
 
 // ApplyQueuedRunReport applies a capability-submitted report and marks that exact
 // report consumed in the same transaction as the run/task state transition.
-func (s *Store) ApplyQueuedRunReport(ctx context.Context, runID, reportID string, accepted bool, missing []string, correlationID string) (domain.RunDetail, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (s *Store) ApplyQueuedRunReport(ctx context.Context, runID, reportID string, accepted bool, missing []string, archive *domain.RunLogArchive, logsUnavailableReason, correlationID string) (domain.RunDetail, error) {
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.RunDetail{}, storageFailure("begin queued run report", err)
 	}
@@ -801,7 +855,14 @@ func (s *Store) ApplyQueuedRunReport(ctx context.Context, runID, reportID string
 	if err != nil {
 		return domain.RunDetail{}, err
 	}
-	observation := domain.RunObservation{Kind: report.Kind, Message: report.Message, Evidence: append([]string(nil), report.Evidence...), Handoff: report.Handoff}
+	observation := domain.RunObservation{Kind: report.Kind, Message: report.Message, Evidence: append([]string(nil), report.Evidence...), Handoff: report.Handoff, LogArchive: archive, LogUnavailableReason: strings.TrimSpace(logsUnavailableReason)}
+	if observation.Kind == domain.ObservationCompletion {
+		if err := s.validateTerminalLogOutcome(report.RunID, observation.LogArchive, observation.LogUnavailableReason); err != nil {
+			return domain.RunDetail{}, err
+		}
+	} else if observation.LogArchive != nil || observation.LogUnavailableReason != "" {
+		return domain.RunDetail{}, &Error{Code: CodeInvalidRun, Message: "only a completion report can carry terminal logs"}
+	}
 	now := s.nowText()
 	detail, err := s.applyRunObservationInTransaction(ctx, tx, &run, observation, accepted, missing, correlationID, now)
 	if err != nil {
@@ -868,12 +929,23 @@ func (s *Store) applyRunObservationInTransaction(ctx context.Context, tx *sql.Tx
 		if err := applyCompletionObservation(ctx, tx, run, observation, accepted, missing, correlationID, now); err != nil {
 			return domain.RunDetail{}, err
 		}
+		if err := deleteRunRuntimeBinding(ctx, tx, run.ID); err != nil {
+			return domain.RunDetail{}, err
+		}
+		clearRunRuntimeProjection(run)
 		jobStatus = "complete"
 	default:
 		return domain.RunDetail{}, &Error{Code: CodeInvalidRun, Message: fmt.Sprintf("unsupported observation kind %q", observation.Kind)}
 	}
 	if err := updateRunProjectionForActor(ctx, tx, *run, now, run.ID); err != nil {
 		return domain.RunDetail{}, err
+	}
+	if run.Status == domain.RunReview || run.Status == domain.RunCompleted {
+		if observation.LogArchive != nil {
+			if err := s.insertRunLogArchive(ctx, tx, run.ID, now, observation.LogArchive); err != nil {
+				return domain.RunDetail{}, err
+			}
+		}
 	}
 	if run.Status == domain.RunCompleted {
 		// The raw reservation guard must observe the run's definite terminal
@@ -907,13 +979,13 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 	if err != nil {
 		return err
 	}
-	run.Status, run.ResultSummary = domain.RunReview, summary
-	run.RuntimeHandle, run.ProviderHandle = "", ""
+	run.Status, run.ResultSummary, run.FinishedAt = domain.RunReview, summary, now
+	clearRunRuntimeProjection(run)
 	task.Status, task.BlockedReason, task.Revision = domain.TaskReview, "", task.Revision+1
 	if err := appendRunTimeline(ctx, tx, run.ID, runCompletionProposedEvent, summary, observation.Evidence, now); err != nil {
 		return err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runCompletionProposedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"summary": summary, "evidence": observation.Evidence}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runCompletionProposedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, mergeEventData(map[string]any{"summary": summary, "evidence": observation.Evidence}, terminalLogEventData(observation.LogArchive, observation.LogUnavailableReason))); err != nil {
 		return err
 	}
 	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskCompletionProposed, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"run_id": run.ID, "summary": summary, "evidence": observation.Evidence}); err != nil {
@@ -947,7 +1019,7 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskCompletedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
 			return err
 		}
-		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runCompletedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"task_id": task.ID, "handoff_id": handoffID}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runCompletedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, mergeEventData(map[string]any{"task_id": task.ID, "handoff_id": handoffID}, terminalLogEventData(observation.LogArchive, observation.LogUnavailableReason))); err != nil {
 			return err
 		}
 	} else {
@@ -986,10 +1058,7 @@ func (s *Store) ResumeRun(ctx context.Context, command ResumeRunCommand) (RunMut
 	} else if found {
 		return replay, nil
 	}
-	if _, err := s.ReconcileExpiredAssignments(ctx, workspaceIdentifier, correlationID+"-lease"); err != nil {
-		return RunMutationResult{}, err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return RunMutationResult{}, storageFailure("begin run resume", err)
 	}
@@ -1012,6 +1081,15 @@ func (s *Store) ResumeRun(ctx context.Context, command ResumeRunCommand) (RunMut
 	}
 	if run.Status != domain.RunBlocked && run.Status != domain.RunActive {
 		return RunMutationResult{}, &Error{Code: CodeRunConflict, Message: "only a blocked or explicitly paused active run can resume"}
+	}
+	if !s.runBindingIsCurrent(run) {
+		return RunMutationResult{}, runtimeBindingUnavailable("run", run.ID)
+	}
+	// Reconcile elapsed assignments only after the target control authority has
+	// been proved, and in this same transaction. A rejected foreign control must
+	// not mutate unrelated assignment or event state as a side effect.
+	if _, err := expireAssignmentsInTransaction(ctx, tx, workspace.ID, s.clock().UTC(), correlationID+"-lease"); err != nil {
+		return RunMutationResult{}, err
 	}
 	var jobStatus string
 	if err := tx.QueryRowContext(ctx, "SELECT status FROM run_jobs WHERE run_id = ?", run.ID).Scan(&jobStatus); err != nil {
@@ -1053,8 +1131,7 @@ func (s *Store) ResumeRun(ctx context.Context, command ResumeRunCommand) (RunMut
 	if err != nil {
 		return RunMutationResult{}, err
 	}
-	detail.Run.RuntimeHandle = ""
-	detail.Run.ProviderHandle = ""
+	clearRunRuntimeProjection(&detail.Run)
 	result := RunMutationResult{Detail: detail, EventSequence: sequence}
 	if err := recordIdempotency(ctx, tx, key, "run.resume", requestHash, result, now); err != nil {
 		return RunMutationResult{}, err
@@ -1078,7 +1155,7 @@ func (s *Store) RequestRunStop(ctx context.Context, command StopRunCommand) (Run
 	if err != nil {
 		return RunMutationResult{}, storageFailure("hash run stop", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return RunMutationResult{}, storageFailure("begin run stop", err)
 	}
@@ -1103,6 +1180,9 @@ func (s *Store) RequestRunStop(ctx context.Context, command StopRunCommand) (Run
 	if run.Status != domain.RunActive && run.Status != domain.RunBlocked {
 		return RunMutationResult{}, &Error{Code: CodeRunConflict, Message: "only an active or blocked run can be stopped"}
 	}
+	if !s.runBindingIsCurrent(run) {
+		return RunMutationResult{}, runtimeBindingUnavailable("run", run.ID)
+	}
 	now := s.nowText()
 	run.Status, run.StopGraceMillis, run.Revision = domain.RunStopping, command.GracePeriodMillis, run.Revision+1
 	if err := updateRunProjection(ctx, tx, run, now); err != nil {
@@ -1123,8 +1203,7 @@ func (s *Store) RequestRunStop(ctx context.Context, command StopRunCommand) (Run
 	if err != nil {
 		return RunMutationResult{}, err
 	}
-	detail.Run.RuntimeHandle = ""
-	detail.Run.ProviderHandle = ""
+	clearRunRuntimeProjection(&detail.Run)
 	result := RunMutationResult{Detail: detail, EventSequence: sequence}
 	if err := recordIdempotency(ctx, tx, key, "run.stop", requestHash, result, now); err != nil {
 		return RunMutationResult{}, err
@@ -1135,8 +1214,11 @@ func (s *Store) RequestRunStop(ctx context.Context, command StopRunCommand) (Run
 	return result, nil
 }
 
-func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, diagnostic, correlationID string) (domain.RunDetail, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, diagnostic string, archive *domain.RunLogArchive, logsUnavailableReason, correlationID string) (domain.RunDetail, error) {
+	if err := s.validateTerminalLogOutcome(strings.TrimSpace(runID), archive, logsUnavailableReason); err != nil {
+		return domain.RunDetail{}, err
+	}
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.RunDetail{}, storageFailure("begin run stopped transition", err)
 	}
@@ -1146,6 +1228,13 @@ func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, d
 		return domain.RunDetail{}, err
 	}
 	if run.Status == domain.RunStopped {
+		matches, matchErr := s.terminalRunLogOutcomeReplayMatches(ctx, tx, run, archive, logsUnavailableReason)
+		if matchErr != nil {
+			return domain.RunDetail{}, matchErr
+		}
+		if !matches {
+			return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "stopped run log outcome replay differs"}
+		}
 		return runDetailInTransaction(ctx, tx, run)
 	}
 	if run.Status != domain.RunStopping {
@@ -1153,9 +1242,17 @@ func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, d
 	}
 	now := s.nowText()
 	run.Status, run.StopGraceMillis, run.StopForced, run.ResultSummary, run.FinishedAt, run.Revision = domain.RunStopped, 0, forced, strings.TrimSpace(diagnostic), now, run.Revision+1
-	run.RuntimeHandle, run.ProviderHandle = "", ""
+	if err := deleteRunRuntimeBinding(ctx, tx, run.ID); err != nil {
+		return domain.RunDetail{}, err
+	}
+	clearRunRuntimeProjection(&run)
 	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
+	}
+	if archive != nil {
+		if err := s.insertRunLogArchive(ctx, tx, run.ID, now, archive); err != nil {
+			return domain.RunDetail{}, err
+		}
 	}
 	task, err := queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
 	if err != nil {
@@ -1178,7 +1275,7 @@ func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, d
 	if err := appendRunTimeline(ctx, tx, run.ID, runStoppedEvent, message, nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStoppedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"forced": forced, "diagnostic": message}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStoppedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, mergeEventData(map[string]any{"forced": forced, "diagnostic": message}, terminalLogEventData(archive, logsUnavailableReason))); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskRunStoppedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
@@ -1198,7 +1295,7 @@ func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, d
 }
 
 func (s *Store) LoseRun(ctx context.Context, runID, message, correlationID string) (domain.RunDetail, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.RunDetail{}, storageFailure("begin run lost transition", err)
 	}
@@ -1236,7 +1333,7 @@ func (s *Store) LoseRun(ctx context.Context, runID, message, correlationID strin
 	if err := appendRunTimeline(ctx, tx, run.ID, runLostEvent, message, nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runLostEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message, "capacity_retained": true}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runLostEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message, "capacity_retained": true, "logs_available": false, "logs_unavailable_reason": "runtime identity or outcome is not trusted"}); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskBlocked, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": message, "status": task.Status}); err != nil {
@@ -1275,7 +1372,7 @@ func (s *Store) ResolveLostRun(ctx context.Context, command ResolveLostRunComman
 		return replay, nil
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return RunLossResolutionResult{}, storageFailure("begin lost-run resolution", err)
 	}
@@ -1321,8 +1418,10 @@ func (s *Store) ResolveLostRun(ctx context.Context, command ResolveLostRunComman
 	run.Status = domain.RunFailed
 	run.FailureCode = "runtime_retired_by_owner"
 	run.FailureMessage = command.Note
-	run.RuntimeHandle = ""
-	run.ProviderHandle = ""
+	if err := deleteRunRuntimeBinding(ctx, tx, run.ID); err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	clearRunRuntimeProjection(&run)
 	run.FinishedAt = now
 	run.Revision++
 	if err := updateRunProjectionForActor(ctx, tx, run, now, localOwnerActorID); err != nil {
@@ -1424,7 +1523,7 @@ func (s *Store) DeferRunJob(ctx context.Context, runID string, delay time.Durati
 	}
 	nowTime := s.clock().UTC()
 	now, available := nowTime.Format(time.RFC3339Nano), nowTime.Add(delay).Format(time.RFC3339Nano)
-	result, err := s.db.ExecContext(ctx, "UPDATE run_jobs SET status = 'pending', available_at = ?, lease_expires_at = NULL, updated_at = ? WHERE run_id = ? AND status = 'leased'", available, now, strings.TrimSpace(runID))
+	result, err := s.writeDB.ExecContext(ctx, "UPDATE run_jobs SET status = 'pending', available_at = ?, lease_expires_at = NULL, updated_at = ? WHERE run_id = ? AND status = 'leased'", available, now, strings.TrimSpace(runID))
 	if err != nil {
 		return storageFailure("defer run job", err)
 	}
@@ -1434,8 +1533,11 @@ func (s *Store) DeferRunJob(ctx context.Context, runID string, delay time.Durati
 	return nil
 }
 
-func (s *Store) FailRun(ctx context.Context, runID, code, message, correlationID string) (domain.RunDetail, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (s *Store) FailRun(ctx context.Context, runID, code, message string, archive *domain.RunLogArchive, logsUnavailableReason, correlationID string) (domain.RunDetail, error) {
+	if err := s.validateTerminalLogOutcome(strings.TrimSpace(runID), archive, logsUnavailableReason); err != nil {
+		return domain.RunDetail{}, err
+	}
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.RunDetail{}, storageFailure("begin run failure", err)
 	}
@@ -1445,6 +1547,13 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message, correlationID
 		return domain.RunDetail{}, err
 	}
 	if run.Status == domain.RunFailed {
+		matches, matchErr := s.terminalRunLogOutcomeReplayMatches(ctx, tx, run, archive, logsUnavailableReason)
+		if matchErr != nil {
+			return domain.RunDetail{}, matchErr
+		}
+		if !matches {
+			return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "failed run log outcome replay differs"}
+		}
 		return runDetailInTransaction(ctx, tx, run)
 	}
 	if run.Status != domain.RunActive {
@@ -1452,10 +1561,18 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message, correlationID
 	}
 	now := s.nowText()
 	run.Status, run.FailureCode, run.FailureMessage, run.FinishedAt = domain.RunFailed, strings.TrimSpace(code), strings.TrimSpace(message), now
-	run.RuntimeHandle, run.ProviderHandle = "", ""
+	if err := deleteRunRuntimeBinding(ctx, tx, run.ID); err != nil {
+		return domain.RunDetail{}, err
+	}
+	clearRunRuntimeProjection(&run)
 	run.Revision++
 	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
+	}
+	if archive != nil {
+		if err := s.insertRunLogArchive(ctx, tx, run.ID, now, archive); err != nil {
+			return domain.RunDetail{}, err
+		}
 	}
 	task, err := queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
 	if err != nil {
@@ -1474,7 +1591,7 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message, correlationID
 	if err := appendRunTimeline(ctx, tx, run.ID, runFailedEvent, run.FailureMessage, nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": run.FailureMessage}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, mergeEventData(map[string]any{"code": run.FailureCode, "message": run.FailureMessage}, terminalLogEventData(archive, logsUnavailableReason))); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": run.FailureMessage}); err != nil {
@@ -1494,7 +1611,7 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message, correlationID
 }
 
 func (s *Store) mutateWorkerRun(ctx context.Context, runID, correlationID string, mutation func(*sql.Tx, *domain.Run, string) (int64, error)) (domain.Run, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.Run{}, storageFailure("begin worker run mutation", err)
 	}
@@ -1552,13 +1669,16 @@ const runSelect = `
 SELECT r.id, r.workspace_id, r.project_id, r.task_id, COALESCE(r.assignment_id, ''), r.agent_id, r.checkout_id,
        COALESCE(b.context_packet_id, ''),
        r.runtime, r.provider, r.scenario_name, r.status, r.step_cursor,
-       COALESCE(r.runtime_handle, ''), COALESCE(r.provider_handle, ''),
+       COALESCE(runtime_binding.runtime_handle, ''), COALESCE(runtime_binding.provider_handle, ''),
+       COALESCE(runtime_binding.node_id, ''), COALESCE(runtime_binding.node_fingerprint, ''),
+       COALESCE(runtime_binding.operation_id, ''),
        COALESCE(r.blocked_question, ''), COALESCE(r.result_summary, ''),
        COALESCE(r.failure_code, ''), COALESCE(r.failure_message, ''), r.stop_grace_millis, r.stop_forced, r.revision,
        r.created_at, r.updated_at, COALESCE(r.started_at, ''), COALESCE(r.finished_at, ''),
        r.created_by, r.updated_by, c.path, c.write_mode, r.placement_reasons_json
 FROM runs r JOIN checkouts c ON c.id = r.checkout_id
-LEFT JOIN run_context_bindings b ON b.run_id = r.id`
+LEFT JOIN run_context_bindings b ON b.run_id = r.id
+LEFT JOIN run_runtime_bindings runtime_binding ON runtime_binding.run_id = r.id`
 
 func queryRun(ctx context.Context, database queryRower, workspaceID, runID string) (domain.Run, error) {
 	query := runSelect + " WHERE r.id = ?"
@@ -1583,7 +1703,8 @@ func scanRun(row rowScanner, run *domain.Run) error {
 	err := row.Scan(&run.ID, &run.WorkspaceID, &run.ProjectID, &run.TaskID, &run.AssignmentID, &run.AgentID, &run.CheckoutID,
 		&run.ContextPacketID,
 		&run.Runtime, &run.Provider, &run.ScenarioName, &run.Status, &run.StepCursor,
-		&run.RuntimeHandle, &run.ProviderHandle, &run.BlockedQuestion, &run.ResultSummary,
+		&run.RuntimeHandle, &run.ProviderHandle, &run.RuntimeNodeID, &run.RuntimeNodeFingerprint, &run.RuntimeOperationID,
+		&run.BlockedQuestion, &run.ResultSummary,
 		&run.FailureCode, &run.FailureMessage, &run.StopGraceMillis, &run.StopForced, &run.Revision, &run.CreatedAt, &run.UpdatedAt,
 		&run.StartedAt, &run.FinishedAt, &run.CreatedBy, &run.UpdatedBy,
 		&run.Placement.CheckoutPath, &run.Placement.WriteMode, &reasonsJSON)
@@ -1736,11 +1857,11 @@ func updateRunProjection(ctx context.Context, tx *sql.Tx, run domain.Run, now st
 func updateRunProjectionForActor(ctx context.Context, tx *sql.Tx, run domain.Run, now, actorID string) error {
 	run.UpdatedAt, run.UpdatedBy = now, actorID
 	_, err := tx.ExecContext(ctx, `
-UPDATE runs SET status = ?, step_cursor = ?, runtime_handle = NULLIF(?, ''), provider_handle = NULLIF(?, ''),
+UPDATE runs SET status = ?, step_cursor = ?,
     blocked_question = NULLIF(?, ''), result_summary = NULLIF(?, ''), failure_code = NULLIF(?, ''),
     failure_message = NULLIF(?, ''), stop_grace_millis = ?, stop_forced = ?, revision = ?, updated_at = ?, started_at = NULLIF(?, ''),
 	    finished_at = NULLIF(?, ''), updated_by = ? WHERE id = ?`, run.Status, run.StepCursor,
-		run.RuntimeHandle, run.ProviderHandle, run.BlockedQuestion, run.ResultSummary, run.FailureCode,
+		run.BlockedQuestion, run.ResultSummary, run.FailureCode,
 		run.FailureMessage, run.StopGraceMillis, run.StopForced, run.Revision, now, run.StartedAt, run.FinishedAt, actorID, run.ID)
 	if err != nil {
 		return storageFailure("update run projection", err)

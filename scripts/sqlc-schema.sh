@@ -13,14 +13,13 @@ output_dir=$1
 
 # sqlc needs table, view, and index definitions to type-check named queries, but
 # it does not use runtime triggers. Large SQLite trigger expressions can make the
-# pinned parser pathologically slow, so provide the same ordered migrations with
-# complete CREATE TRIGGER statements removed. Runtime migration execution still
-# uses the authoritative files byte-for-byte.
-find internal/store/migrations -type f -name '*.sql' -print |
-    LC_ALL=C sort |
-    while IFS= read -r migration
+# pinned parser pathologically slow, so provide the same current baseline with
+# complete CREATE TRIGGER statements removed. Fresh database creation still uses
+# the authoritative current baseline byte-for-byte.
+find internal/store/baseline -type f -name 'current.sql' -print |
+    while IFS= read -r baseline
     do
-        output_path="$output_dir/$(basename "$migration")"
+        output_path="$output_dir/$(basename "$baseline")"
         awk '
             /^[[:space:]]*CREATE( TEMP| TEMPORARY)? TRIGGER[[:space:]]/ {
                 if ($0 !~ /END;[[:space:]]*$/) {
@@ -43,7 +42,7 @@ find internal/store/migrations -type f -name '*.sql' -print |
                     exit 1
                 }
             }
-        ' "$migration" > "$output_path"
+        ' "$baseline" > "$output_path"
     done
 
 object_manifest() {
@@ -77,7 +76,7 @@ trap cleanup EXIT HUP INT TERM
 
 # Guard the projection itself: a new compact trigger spelling must never make
 # the filter consume the table/view/index definition that follows it.
-object_manifest internal/store/migrations/*.sql > "$expected_manifest"
+object_manifest internal/store/baseline/current.sql > "$expected_manifest"
 object_manifest "$output_dir"/*.sql > "$actual_manifest"
 if ! diff -u "$expected_manifest" "$actual_manifest" >&2
 then

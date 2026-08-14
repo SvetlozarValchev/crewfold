@@ -42,15 +42,15 @@ func TestDeferredSchedulingActionSealsCompletePlacementPreflight(t *testing.T) {
 		t.Fatalf("deferred placement seal = %#v; want stable schema/code", snapshot)
 	}
 	for _, field := range []string{
-		"launch_profile", "agent", "workspace_active_runs", "workspace_starting_runs",
-		"project_active_runs", "provider_active_runs", "agent_active_runs", "task_readiness",
+		"launch_profile", "agent", "node_unresolved", "workspace_starting", "workspace_unresolved",
+		"project_unresolved", "provider_unresolved", "agent_active_runs", "task_readiness",
 		"coordination_holds", "checkout_candidates", "checkout", "claim_requirements", "claim_conflicts",
 	} {
 		if _, exists := snapshot[field]; !exists {
 			t.Fatalf("deferred placement seal omitted %q: %#v", field, snapshot)
 		}
 	}
-	for _, field := range []string{"workspace_active_runs", "workspace_starting_runs", "project_active_runs", "provider_active_runs", "agent_active_runs"} {
+	for _, field := range []string{"node_unresolved", "workspace_starting", "workspace_unresolved", "project_unresolved", "provider_unresolved", "agent_active_runs"} {
 		capacity, ok := snapshot[field].(map[string]any)
 		if !ok || capacity["scope"] == nil || capacity["actual"] == nil || capacity["limit"] == nil || capacity["available"] == nil {
 			t.Fatalf("deferred capacity %q = %#v; want exact scope/actual/limit/available", field, snapshot[field])
@@ -93,7 +93,7 @@ func TestStaleProfileDeferralStillSealsCompletePlacementPreflight(t *testing.T) 
 	if snapshot["snapshot_schema"] != "supervisor-placement:v1" || snapshot["deferral_code"] != CodePlacementUnavailable {
 		t.Fatalf("stale profile snapshot = %#v; want complete stable placement seal", snapshot)
 	}
-	for _, field := range []string{"launch_profile", "agent", "workspace_active_runs", "task_readiness", "checkout_candidates", "claim_requirements"} {
+	for _, field := range []string{"launch_profile", "agent", "node_unresolved", "workspace_unresolved", "task_readiness", "checkout_candidates", "claim_requirements"} {
 		if _, exists := snapshot[field]; !exists {
 			t.Fatalf("stale profile snapshot omitted %q: %#v", field, snapshot)
 		}

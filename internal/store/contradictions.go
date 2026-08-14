@@ -66,7 +66,7 @@ func (s *Store) reportKnowledgeContradiction(ctx context.Context, command Report
 	if err := validateMutationMetadata(command.IdempotencyKey, command.CorrelationID, CodeInvalidKnowledge); err != nil {
 		return KnowledgeContradictionMutationResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return KnowledgeContradictionMutationResult{}, storageFailure("begin contradiction report", err)
 	}
@@ -203,7 +203,7 @@ func (s *Store) decideKnowledgeContradiction(ctx context.Context, action string,
 	if err != nil {
 		return KnowledgeContradictionMutationResult{}, storageFailure("hash contradiction decision", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return KnowledgeContradictionMutationResult{}, storageFailure("begin contradiction decision", err)
 	}
@@ -358,7 +358,7 @@ func (s *Store) KnowledgeContradictionDetail(ctx context.Context, workspaceIdent
 	if workspaceIdentifier == "" || !validKnowledgeContradictionID(contradictionID) {
 		return domain.KnowledgeContradictionDetail{}, knowledgeInvalid("contradiction detail requires workspace and contradiction ID")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.KnowledgeContradictionDetail{}, storageFailure("begin contradiction detail snapshot", err)
 	}
@@ -387,7 +387,7 @@ func (s *Store) ListKnowledgeContradictionDetails(ctx context.Context, query Lis
 		(query.RevisionID != "" && !validContextKnowledgeRevisionID(query.RevisionID)) {
 		return nil, knowledgeInvalid("contradiction list requires workspace, valid optional filters, and limit from 1 to 200")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, storageFailure("begin contradiction list snapshot", err)
 	}
@@ -448,7 +448,7 @@ func (s *Store) KnowledgeRevisionDispute(ctx context.Context, workspaceIdentifie
 	if workspaceIdentifier == "" || !validContextKnowledgeRevisionID(revisionID) {
 		return domain.KnowledgeRevisionDispute{}, knowledgeInvalid("knowledge dispute lookup requires workspace and exact revision ID")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.KnowledgeRevisionDispute{}, storageFailure("begin knowledge dispute snapshot", err)
 	}

@@ -39,8 +39,11 @@ var operatorRequestParamContracts = map[string]string{
 	localapi.MethodRunAttach:            "local/v1/run-attach.params.schema.json",
 	localapi.MethodRunResume:            "local/v1/run-resume.params.schema.json",
 	localapi.MethodRunStop:              "local/v1/run-stop.params.schema.json",
+	localapi.MethodRunLostResolve:       "local/v1/run-lost-resolve.params.schema.json",
 	localapi.MethodApprovalAllow:        "local/v1/approval-decision.params.schema.json",
 	localapi.MethodApprovalDeny:         "local/v1/approval-decision.params.schema.json",
+	localapi.MethodSystemDoctorFull:     "local/v1/system-doctor-full.params.schema.json",
+	localapi.MethodBackupCreate:         "local/v1/backup-create.params.schema.json",
 }
 
 func validateOperatorRequestParams(request localapi.Request) error {

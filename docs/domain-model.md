@@ -109,14 +109,18 @@ One concrete attempt to execute work using an agent definition. The implemented
 run binds:
 
 - an agent definition and provider adapter;
-- a runtime driver and runtime handle;
+- canonical runtime and provider names;
 - one primary assigned task;
 - one eligible checkout, whether it is a standalone clone or linked worktree;
 - one immutable context packet fixing role/task/checkout revisions and policy;
-- opaque runtime/provider names and handles;
 - an explainable placement decision;
 - a persisted fake-scenario cursor, timestamps, result, and failure diagnosis;
 - normalized progress, blockage, completion evidence, and an accepted handoff.
+
+While a run is live, its opaque runtime/provider identities reside only in a
+separate internal binding tied to the current node and launch operation. Public
+run records and event payloads never expose those handles, and every terminal
+transition clears the binding.
 
 Run state:
 

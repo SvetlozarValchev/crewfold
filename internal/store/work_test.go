@@ -233,6 +233,66 @@ func TestAssignmentExpiryUsesControlledClockAndRetainsHistory(t *testing.T) {
 	}
 }
 
+func TestM20LeaseReconciliationBatchesBoundPerWorkspaceWork(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	storage := openTestStore(t, t.TempDir(), Options{Clock: func() time.Time { return now }})
+	workspace, project := initializeWorkTestProject(t, storage)
+	checkout := claimTestCheckout(t, storage, workspace.ID, project.ID)
+	agent, err := storage.CreateAgent(context.Background(), CreateAgentCommand{
+		WorkspaceIdentifier: workspace.ID, Name: "lease-batcher", Role: "implementer", Provider: "fake",
+		IdempotencyKey: "m20-lease-batcher-agent", CorrelationID: "m20-lease-batcher-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"one", "two", "three"} {
+		task := createWorkTestTask(t, storage, workspace.ID, project.ID, "batch "+suffix, "m20-batch-task-"+suffix)
+		if _, err := storage.AssignTask(context.Background(), AssignTaskCommand{
+			WorkspaceIdentifier: workspace.ID, TaskID: task.Task.ID, AgentIdentifier: agent.Value.ID,
+			LeaseSeconds: 1, ExpectedRevision: task.Task.Revision,
+			IdempotencyKey: "m20-batch-assignment-" + suffix, CorrelationID: "m20-batch-assignment-" + suffix,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		addClaimTest(t, storage, AddClaimCommand{
+			WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, TaskID: task.Task.ID, CheckoutIdentifier: checkout.ID,
+			Kind: domain.ClaimKindPath, Target: "batch/" + suffix, Mode: domain.ClaimModeExclusive,
+			ConflictPolicy: domain.ClaimPolicyNotify, LeaseDuration: time.Second,
+			IdempotencyKey: "m20-batch-claim-" + suffix, CorrelationID: "m20-batch-claim-" + suffix,
+		})
+	}
+	now = now.Add(2 * time.Second)
+
+	if count, err := storage.ReconcileExpiredAssignmentsBatch(context.Background(), workspace.ID, "m20-batch-assignments-one", 2); err != nil || count != 2 {
+		t.Fatalf("first assignment batch = %d, %v; want 2", count, err)
+	}
+	if count, err := storage.ReconcileExpiredClaimsBatch(context.Background(), workspace.ID, "m20-batch-claims-one", 2); err != nil || count != 2 {
+		t.Fatalf("first claim batch = %d, %v; want 2", count, err)
+	}
+	var activeAssignments, activeClaims int
+	if err := storage.db.QueryRow("SELECT COUNT(*) FROM task_assignments WHERE status = 'active'").Scan(&activeAssignments); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.db.QueryRow("SELECT COUNT(*) FROM work_claims WHERE status = 'active'").Scan(&activeClaims); err != nil {
+		t.Fatal(err)
+	}
+	if activeAssignments != 1 || activeClaims != 1 {
+		t.Fatalf("active rows after first bounded pass = assignments %d claims %d, want 1/1", activeAssignments, activeClaims)
+	}
+	if count, err := storage.ReconcileExpiredAssignmentsBatch(context.Background(), workspace.ID, "m20-batch-assignments-two", 2); err != nil || count != 1 {
+		t.Fatalf("second assignment batch = %d, %v; want 1", count, err)
+	}
+	if count, err := storage.ReconcileExpiredClaimsBatch(context.Background(), workspace.ID, "m20-batch-claims-two", 2); err != nil || count != 1 {
+		t.Fatalf("second claim batch = %d, %v; want 1", count, err)
+	}
+	if _, err := storage.ReconcileExpiredAssignmentsBatch(context.Background(), workspace.ID, "m20-invalid-assignment-batch", MaximumLeaseReconciliationBatchLimit+1); ErrorCode(err) != CodeInvalidTask {
+		t.Fatalf("oversized assignment batch error = %v, code = %q", err, ErrorCode(err))
+	}
+	if _, err := storage.ReconcileExpiredClaimsBatch(context.Background(), workspace.ID, "m20-invalid-claim-batch", 0); ErrorCode(err) != CodeInvalidClaim {
+		t.Fatalf("zero claim batch error = %v, code = %q", err, ErrorCode(err))
+	}
+}
+
 func TestBlockedTaskStaysBlockedWhenItsAssignmentExpires(t *testing.T) {
 	t.Parallel()
 

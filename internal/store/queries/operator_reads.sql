@@ -125,7 +125,10 @@ SELECT id, workspace_id, project_id, task_id, agent_id, runtime, provider,
        COALESCE(failure_code, '') AS failure_code, revision, created_at,
        updated_at, COALESCE(started_at, '') AS started_at,
        COALESCE(finished_at, '') AS finished_at,
-       COALESCE(runtime_handle, '') AS runtime_handle
+       CAST(EXISTS(SELECT 1 FROM run_runtime_bindings binding
+         WHERE binding.run_id=runs.id AND binding.node_id=sqlc.arg(runtime_node_id)
+           AND binding.node_fingerprint=sqlc.arg(runtime_node_fingerprint)
+           AND binding.operation_id=runs.id) AS INTEGER) AS runtime_binding_current
 FROM runs
 WHERE workspace_id = sqlc.arg(workspace_id)
   AND (CAST(sqlc.arg(project_id) AS TEXT) = '' OR project_id = sqlc.arg(project_id))

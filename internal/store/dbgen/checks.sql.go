@@ -109,6 +109,18 @@ func (q *Queries) CountOpenCheckRepairProposals(ctx context.Context, arg CountOp
 	return column_1, err
 }
 
+const deleteCheckRuntimeBinding = `-- name: DeleteCheckRuntimeBinding :execrows
+DELETE FROM check_runtime_bindings WHERE check_run_id=?1
+`
+
+func (q *Queries) DeleteCheckRuntimeBinding(ctx context.Context, checkRunID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteCheckRuntimeBinding, checkRunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const finishTerminalCheckRun = `-- name: FinishTerminalCheckRun :exec
 UPDATE check_runs
 SET status='finished',revision=revision+1,finished_at=?1,
@@ -518,12 +530,61 @@ func (q *Queries) GetCheckRoute(ctx context.Context, arg GetCheckRouteParams) (C
 }
 
 const getCheckRun = `-- name: GetCheckRun :one
-SELECT id, workspace_id, project_id, task_id, task_revision, requirement_id, requirement_revision, definition_id, definition_content_revision, definition_sha256, checkout_id, checkout_revision, repository_id, repository_object_format, checkout_path, checkout_write_mode, source_type, source_actor_id, source_agent_id, source_agent_revision, source_run_id, source_grant_id, source_grant_revision, source_max_in_flight, status, runtime_handle, revision, created_at, updated_at, started_at, finished_at, created_by, updated_by FROM check_runs WHERE id=?1
+SELECT run.id,run.workspace_id,run.project_id,run.task_id,run.task_revision,
+ run.requirement_id,run.requirement_revision,run.definition_id,run.definition_content_revision,run.definition_sha256,
+ run.checkout_id,run.checkout_revision,run.repository_id,run.repository_object_format,run.checkout_path,run.checkout_write_mode,
+ run.source_type,run.source_actor_id,run.source_agent_id,run.source_agent_revision,run.source_run_id,run.source_grant_id,run.source_grant_revision,run.source_max_in_flight,
+ run.status,run.revision,run.created_at,run.updated_at,run.started_at,run.finished_at,run.created_by,run.updated_by,
+ COALESCE(binding.runtime_handle,'') AS runtime_handle,
+ COALESCE(binding.node_id,'') AS runtime_node_id,
+ COALESCE(binding.node_fingerprint,'') AS runtime_node_fingerprint,
+ COALESCE(binding.operation_id,'') AS runtime_operation_id
+FROM check_runs run LEFT JOIN check_runtime_bindings binding ON binding.check_run_id=run.id
+WHERE run.id=?1
 `
 
-func (q *Queries) GetCheckRun(ctx context.Context, id string) (CheckRun, error) {
+type GetCheckRunRow struct {
+	ID                        string  `json:"id"`
+	WorkspaceID               string  `json:"workspace_id"`
+	ProjectID                 string  `json:"project_id"`
+	TaskID                    string  `json:"task_id"`
+	TaskRevision              int64   `json:"task_revision"`
+	RequirementID             string  `json:"requirement_id"`
+	RequirementRevision       int64   `json:"requirement_revision"`
+	DefinitionID              string  `json:"definition_id"`
+	DefinitionContentRevision int64   `json:"definition_content_revision"`
+	DefinitionSha256          string  `json:"definition_sha256"`
+	CheckoutID                string  `json:"checkout_id"`
+	CheckoutRevision          int64   `json:"checkout_revision"`
+	RepositoryID              string  `json:"repository_id"`
+	RepositoryObjectFormat    string  `json:"repository_object_format"`
+	CheckoutPath              string  `json:"checkout_path"`
+	CheckoutWriteMode         string  `json:"checkout_write_mode"`
+	SourceType                string  `json:"source_type"`
+	SourceActorID             string  `json:"source_actor_id"`
+	SourceAgentID             *string `json:"source_agent_id"`
+	SourceAgentRevision       *int64  `json:"source_agent_revision"`
+	SourceRunID               *string `json:"source_run_id"`
+	SourceGrantID             *string `json:"source_grant_id"`
+	SourceGrantRevision       *int64  `json:"source_grant_revision"`
+	SourceMaxInFlight         int64   `json:"source_max_in_flight"`
+	Status                    string  `json:"status"`
+	Revision                  int64   `json:"revision"`
+	CreatedAt                 string  `json:"created_at"`
+	UpdatedAt                 string  `json:"updated_at"`
+	StartedAt                 *string `json:"started_at"`
+	FinishedAt                *string `json:"finished_at"`
+	CreatedBy                 string  `json:"created_by"`
+	UpdatedBy                 string  `json:"updated_by"`
+	RuntimeHandle             string  `json:"runtime_handle"`
+	RuntimeNodeID             string  `json:"runtime_node_id"`
+	RuntimeNodeFingerprint    string  `json:"runtime_node_fingerprint"`
+	RuntimeOperationID        string  `json:"runtime_operation_id"`
+}
+
+func (q *Queries) GetCheckRun(ctx context.Context, id string) (GetCheckRunRow, error) {
 	row := q.db.QueryRowContext(ctx, getCheckRun, id)
-	var i CheckRun
+	var i GetCheckRunRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
@@ -550,7 +611,6 @@ func (q *Queries) GetCheckRun(ctx context.Context, id string) (CheckRun, error) 
 		&i.SourceGrantRevision,
 		&i.SourceMaxInFlight,
 		&i.Status,
-		&i.RuntimeHandle,
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -558,6 +618,10 @@ func (q *Queries) GetCheckRun(ctx context.Context, id string) (CheckRun, error) 
 		&i.FinishedAt,
 		&i.CreatedBy,
 		&i.UpdatedBy,
+		&i.RuntimeHandle,
+		&i.RuntimeNodeID,
+		&i.RuntimeNodeFingerprint,
+		&i.RuntimeOperationID,
 	)
 	return i, err
 }
@@ -1385,8 +1449,8 @@ func (q *Queries) InsertCheckRouteFailure(ctx context.Context, arg InsertCheckRo
 }
 
 const insertCheckRun = `-- name: InsertCheckRun :exec
-INSERT INTO check_runs(id,workspace_id,project_id,task_id,task_revision,requirement_id,requirement_revision,definition_id,definition_content_revision,definition_sha256,checkout_id,checkout_revision,repository_id,repository_object_format,checkout_path,checkout_write_mode,source_type,source_actor_id,source_agent_id,source_agent_revision,source_run_id,source_grant_id,source_grant_revision,source_max_in_flight,status,runtime_handle,revision,created_at,updated_at,started_at,finished_at,created_by,updated_by)
-VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,NULLIF(?19,''),NULLIF(?20,0),NULLIF(?21,''),NULLIF(?22,''),NULLIF(?23,0),?24,'requested',NULL,1,?25,?25,NULL,NULL,?26,?26)
+INSERT INTO check_runs(id,workspace_id,project_id,task_id,task_revision,requirement_id,requirement_revision,definition_id,definition_content_revision,definition_sha256,checkout_id,checkout_revision,repository_id,repository_object_format,checkout_path,checkout_write_mode,source_type,source_actor_id,source_agent_id,source_agent_revision,source_run_id,source_grant_id,source_grant_revision,source_max_in_flight,status,revision,created_at,updated_at,started_at,finished_at,created_by,updated_by)
+VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,NULLIF(?19,''),NULLIF(?20,0),NULLIF(?21,''),NULLIF(?22,''),NULLIF(?23,0),?24,'requested',1,?25,?25,NULL,NULL,?26,?26)
 `
 
 type InsertCheckRunParams struct {

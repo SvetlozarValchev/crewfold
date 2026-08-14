@@ -188,6 +188,95 @@ func TestCheckWorkerRecoversReceiptedLaunchExactlyOnce(t *testing.T) {
 	}
 }
 
+type mismatchedCheckReconcileRuntime struct {
+	base           *execution.DirectRuntime
+	reconcileCalls atomic.Int64
+	inspectCalls   atomic.Int64
+	logCalls       atomic.Int64
+}
+
+func (*mismatchedCheckReconcileRuntime) Name() string { return "direct" }
+
+func (runtime *mismatchedCheckReconcileRuntime) PrepareLaunch(ctx context.Context, operationID string, placement domain.RunPlacement, spec execution.LaunchSpec) (execution.RuntimeLaunchPreparation, error) {
+	return runtime.base.PrepareLaunch(ctx, operationID, placement, spec)
+}
+
+func (runtime *mismatchedCheckReconcileRuntime) Launch(ctx context.Context, operationID string, placement domain.RunPlacement, spec execution.LaunchSpec) (execution.RuntimeBinding, error) {
+	return runtime.base.Launch(ctx, operationID, placement, spec)
+}
+
+func (runtime *mismatchedCheckReconcileRuntime) Reconcile(ctx context.Context, operationID, handle string) (execution.RuntimeBinding, error) {
+	runtime.reconcileCalls.Add(1)
+	binding, err := runtime.base.Reconcile(ctx, operationID, handle)
+	if err == nil {
+		binding.RuntimeHandle += "-different-operation"
+	}
+	return binding, err
+}
+
+func (runtime *mismatchedCheckReconcileRuntime) Inspect(ctx context.Context, operationID, handle string) (execution.RuntimeSnapshot, error) {
+	runtime.inspectCalls.Add(1)
+	return runtime.base.Inspect(ctx, operationID, handle)
+}
+
+func (runtime *mismatchedCheckReconcileRuntime) InspectStatus(ctx context.Context, operationID, handle string) (execution.RuntimeStatus, error) {
+	runtime.inspectCalls.Add(1)
+	return runtime.base.InspectStatus(ctx, operationID, handle)
+}
+
+func (runtime *mismatchedCheckReconcileRuntime) Stop(ctx context.Context, operationID, handle string, spec execution.StopSpec) (execution.StopResult, error) {
+	return runtime.base.Stop(ctx, operationID, handle, spec)
+}
+
+func (runtime *mismatchedCheckReconcileRuntime) Logs(ctx context.Context, operationID, handle string, tail int) (domain.RunLogs, error) {
+	runtime.logCalls.Add(1)
+	return runtime.base.Logs(ctx, operationID, handle, tail)
+}
+
+func TestCheckWorkerRejectsMismatchedReconciledBindingBeforeFurtherRuntimeContact(t *testing.T) {
+	fixtureRoot := t.TempDir()
+	createGitFixture(t, fixtureRoot)
+	config, executable := checkWorkerTestConfig(t)
+	var barrierReached atomic.Bool
+	config.CheckWorkerHook = func(stage string, _ domain.CheckRun) error {
+		if stage == "after_check_runtime_binding" && barrierReached.CompareAndSwap(false, true) {
+			return errors.New("injected restart after exact check runtime binding")
+		}
+		return nil
+	}
+
+	first := startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+	started := createOwnerCheckRun(t, client, fixtureRoot, executable, ".", []string{
+		"-test.run=^TestCheckProcessHelper$", "--", "crewfold-check-process-helper", "sleep-pass",
+	}, 4096)
+	if err := first.wait(); err != nil {
+		t.Fatalf("Run(first) error = %v", err)
+	}
+	if !barrierReached.Load() {
+		t.Fatal("check runtime-binding barrier was not reached")
+	}
+
+	config.CheckWorkerHook = nil
+	runtime := &mismatchedCheckReconcileRuntime{base: newCheckWorkerDirectRuntime(t, config.DataDir, executable)}
+	config.CheckRuntimeDriver = runtime
+	second := startTestServer(t, config)
+	restarted := localapi.NewClient(config.SocketPath)
+	detail := waitForCheckResult(t, restarted, started.Run.ID)
+	if detail.Result.Outcome != domain.CheckOutcomeUnknown || detail.Result.DiagnosticCode != "runtime_binding_mismatch" {
+		t.Fatalf("mismatched reconciled binding result = %#v", detail.Result)
+	}
+	if runtime.reconcileCalls.Load() != 1 || runtime.inspectCalls.Load() != 0 || runtime.logCalls.Load() != 0 {
+		t.Fatalf("runtime contacts after mismatched reconcile: reconcile=%d inspect=%d logs=%d", runtime.reconcileCalls.Load(), runtime.inspectCalls.Load(), runtime.logCalls.Load())
+	}
+	if _, err := restarted.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop(second) error = %v", err)
+	}
+	if err := second.wait(); err != nil {
+		t.Fatalf("Run(second) error = %v", err)
+	}
+}
+
 func TestCheckWorkerRejectsWorkingDirectorySymlinkSwapAfterLaunchReceipt(t *testing.T) {
 	fixtureRoot := t.TempDir()
 	createGitFixture(t, fixtureRoot)

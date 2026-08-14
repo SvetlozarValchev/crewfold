@@ -49,7 +49,7 @@ func (s *Store) ReplayCheckWatch(ctx context.Context, command PrepareCheckWatchC
 	if command.WorkspaceIdentifier == "" || command.ProjectIdentifier == "" || idempotencyKey == "" || limit > maximumCheckWatchCandidates {
 		return MutationResult[domain.CheckWatchReceipt]{}, false, checkError(CodeInvalidRun, "check-watch replay request is invalid")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return MutationResult[domain.CheckWatchReceipt]{}, false, storageFailure("begin check-watch replay", err)
 	}
@@ -111,7 +111,7 @@ func (s *Store) PrepareCheckWatch(ctx context.Context, command PrepareCheckWatch
 	if command.WorkspaceIdentifier == "" || command.ProjectIdentifier == "" || limit > maximumCheckWatchCandidates {
 		return PreparedCheckWatch{}, checkError(CodeInvalidRun, "check watch requires an exact project and a limit from 1 to 100")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return PreparedCheckWatch{}, storageFailure("begin check-watch preparation", err)
 	}
@@ -210,7 +210,7 @@ func (s *Store) ApplyCheckWatch(ctx context.Context, command ApplyCheckWatchComm
 	if command.IdempotencyKey == "" || command.CorrelationID == "" || !validLowerSHA256(command.Preparation.RequestSHA256) || !validLowerSHA256(command.Preparation.PreparationSHA256) {
 		return MutationResult[domain.CheckWatchReceipt]{}, checkError(CodeInvalidRun, "check-watch apply metadata is invalid")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckWatchReceipt]{}, storageFailure("begin check-watch apply", err)
 	}

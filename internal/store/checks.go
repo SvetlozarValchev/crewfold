@@ -87,7 +87,7 @@ func (s *Store) CreateCheckDefinition(ctx context.Context, command CreateCheckDe
 	if err != nil {
 		return MutationResult[domain.CheckDefinition]{}, storageFailure("hash check definition", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckDefinition]{}, storageFailure("begin check definition", err)
 	}
@@ -195,7 +195,7 @@ func (s *Store) retireCheckDefinition(ctx context.Context, command RetireCheckDe
 		return MutationResult[domain.CheckDefinition]{}, err
 	}
 	hash, _ := checkSemanticHash("check.definition.retire", command)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.CheckDefinition]{}, storageFailure("begin check definition retirement", err)
 	}
@@ -257,7 +257,7 @@ func (s *Store) CreateTaskCheckRequirement(ctx context.Context, command CreateTa
 		return MutationResult[domain.TaskCheckRequirement]{}, err
 	}
 	hash, _ := checkSemanticHash("check.requirement.create", command)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.TaskCheckRequirement]{}, storageFailure("begin check requirement", err)
 	}
@@ -320,7 +320,7 @@ func (s *Store) RetireTaskCheckRequirement(ctx context.Context, command RetireTa
 		return MutationResult[domain.TaskCheckRequirement]{}, err
 	}
 	hash, _ := checkSemanticHash("check.requirement.retire", command)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.TaskCheckRequirement]{}, storageFailure("begin requirement retirement", err)
 	}

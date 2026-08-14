@@ -19,8 +19,6 @@
     "scenario_name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
     "status": {"enum": ["requested", "starting", "active", "blocked", "stopping", "stopped", "lost", "review", "completed", "start_failed", "failed"]},
     "step_cursor": {"type": "integer", "minimum": 0},
-    "runtime_handle": {"type": "string", "minLength": 1},
-    "provider_handle": {"type": "string", "minLength": 1},
     "blocked_question": {"type": "string", "minLength": 1, "maxLength": 1024},
     "result_summary": {"type": "string", "minLength": 1, "maxLength": 1024},
     "failure_code": {"type": "string", "minLength": 1, "maxLength": 128},

@@ -54,7 +54,7 @@ func (s *Store) RefreshContext(ctx context.Context, command RefreshContextComman
 	if err := validateMutationMetadata(key, correlationID, CodeInvalidContextDelta); err != nil {
 		return domain.ContextRefreshResult{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.ContextRefreshResult{}, storageFailure("begin context refresh", err)
 	}
@@ -291,7 +291,7 @@ func (s *Store) ListContextDeltas(ctx context.Context, query ListContextDeltasQu
 	if query.WorkspaceIdentifier == "" || query.RunID == "" || query.AfterSequence < 0 || query.Limit < 1 || query.Limit > 100 {
 		return domain.ContextDeltaList{}, &Error{Code: CodeInvalidContextDelta, Message: "context delta list requires workspace, run, non-negative sequence, and limit from 1 to 100"}
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.ContextDeltaList{}, storageFailure("begin context delta list", err)
 	}
@@ -346,7 +346,7 @@ func (s *Store) ContextDelta(ctx context.Context, workspaceIdentifier, deltaID s
 	if !validContextDeltaID(deltaID) {
 		return domain.ContextDelta{}, &Error{Code: CodeInvalidContextDelta, Message: "context delta ID is invalid"}
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.ContextDelta{}, storageFailure("begin context delta query", err)
 	}
@@ -400,7 +400,7 @@ func (s *Store) ExplainContextDelta(ctx context.Context, workspaceIdentifier, de
 }
 
 func (s *Store) FetchRunContextDelta(ctx context.Context, runID string) (domain.ContextDeltaFetchResult, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.ContextDeltaFetchResult{}, storageFailure("begin context delta fetch", err)
 	}
@@ -451,7 +451,7 @@ func (s *Store) AcknowledgeRunContextDelta(ctx context.Context, command Acknowle
 	if err != nil {
 		return domain.ContextDeltaAcknowledgement{}, storageFailure("hash context delta acknowledgement", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return domain.ContextDeltaAcknowledgement{}, storageFailure("begin context delta acknowledgement", err)
 	}

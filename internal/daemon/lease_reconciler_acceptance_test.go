@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -269,6 +270,116 @@ func TestM19DaemonStopCancelsBlockedLeaseReconciliation(t *testing.T) {
 	if reconcileContext.Err() == nil {
 		t.Fatal("daemon stop left the lease reconciliation context live")
 	}
+}
+
+func TestM20LeaseReconcilerBoundsAndDrainsEachWorkspaceWithinControlBudget(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	config := testConfig(t)
+	config.StoreOptions.Clock = func() time.Time { return now }
+	storage, err := store.Open(ctx, t.TempDir(), config.StoreOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	workspace, err := storage.InitWorkspace(ctx, store.InitWorkspaceCommand{
+		Name: "personal", IdempotencyKey: "m20-batch-workspace", CorrelationID: "m20-batch-workspace",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkoutPath := filepath.Join(t.TempDir(), "batch-fixture")
+	project, err := storage.RegisterProject(ctx, store.RegisterProjectCommand{
+		WorkspaceIdentifier: workspace.Workspace.ID, Name: "batch-fixture", WriteMode: domain.WriteModeExclusive,
+		IdempotencyKey: "m20-batch-project", CorrelationID: "m20-batch-project",
+		Observation: domain.CheckoutObservation{
+			Path: checkoutPath, Availability: domain.CheckoutAvailable, CheckoutKind: domain.CheckoutStandalone,
+			Branch: "main", HeadCommit: "2222222222222222222222222222222222222222",
+			GitDir: filepath.Join(checkoutPath, ".git"), GitCommonDir: filepath.Join(checkoutPath, ".git"),
+			Repository: domain.RepositoryObservation{
+				Fingerprint:  "git_1111111111111111111111111111111111111111111111111111111111111111",
+				ObjectFormat: "sha1", RootCommits: []string{"0000000000000000000000000000000000000000"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := storage.CreateAgent(ctx, store.CreateAgentCommand{
+		WorkspaceIdentifier: workspace.Workspace.ID, Name: "lease-batcher", Role: "implementer", Provider: "fake", Runtime: "fake",
+		IdempotencyKey: "m20-batch-agent", CorrelationID: "m20-batch-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureCount := store.MaximumLeaseReconciliationBatchLimit + 1
+	for index := range fixtureCount {
+		suffix := fmt.Sprintf("%03d", index)
+		task, createErr := storage.CreateTask(ctx, store.CreateTaskCommand{
+			WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID,
+			Title: "elapsed batch task " + suffix, Priority: 100,
+			IdempotencyKey: "m20-batch-task-" + suffix, CorrelationID: "m20-batch-task-" + suffix,
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, assignErr := storage.AssignTask(ctx, store.AssignTaskCommand{
+			WorkspaceIdentifier: workspace.Workspace.ID, TaskID: task.Detail.Task.ID, AgentIdentifier: agent.Value.ID,
+			LeaseSeconds: 60, ExpectedRevision: task.Detail.Task.Revision,
+			IdempotencyKey: "m20-batch-assignment-" + suffix, CorrelationID: "m20-batch-assignment-" + suffix,
+		}); assignErr != nil {
+			t.Fatal(assignErr)
+		}
+		if _, claimErr := storage.AddClaim(ctx, store.AddClaimCommand{
+			WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID,
+			TaskID: task.Detail.Task.ID, CheckoutIdentifier: project.Checkout.ID,
+			Kind: domain.ClaimKindPath, Target: "batch/" + suffix + ".go", Mode: domain.ClaimModeExclusive,
+			ConflictPolicy: domain.ClaimPolicyNotify, LeaseDuration: time.Minute,
+			IdempotencyKey: "m20-batch-claim-" + suffix, CorrelationID: "m20-batch-claim-" + suffix,
+		}); claimErr != nil {
+			t.Fatal(claimErr)
+		}
+	}
+	now = now.Add(2 * time.Minute)
+	instance := &server{config: config, store: storage, startedAt: now}
+
+	started := time.Now()
+	instance.runLeaseReconciliationSweep(ctx)
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("bounded lease reconciliation took %s, want at most 2s", elapsed)
+	}
+	database, err := sql.Open("sqlite3", storage.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	assertLeaseBatchCounts := func(wantExpired int) {
+		t.Helper()
+		var expiredAssignments, expiredClaims, assignmentEvents, claimEvents int
+		if err := database.QueryRow("SELECT COUNT(*) FROM task_assignments WHERE status = 'expired'").Scan(&expiredAssignments); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.QueryRow("SELECT COUNT(*) FROM work_claims WHERE status = 'expired'").Scan(&expiredClaims); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.QueryRow("SELECT COUNT(*) FROM events WHERE type = 'task.assignment_expired'").Scan(&assignmentEvents); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.QueryRow("SELECT COUNT(*) FROM events WHERE type = 'claim.expired'").Scan(&claimEvents); err != nil {
+			t.Fatal(err)
+		}
+		if expiredAssignments != wantExpired || expiredClaims != wantExpired || assignmentEvents != wantExpired || claimEvents != wantExpired {
+			t.Fatalf("lease batch assignments/claims/events = %d/%d/%d/%d, want %d each", expiredAssignments, expiredClaims, assignmentEvents, claimEvents, wantExpired)
+		}
+	}
+	assertLeaseBatchCounts(store.MaximumLeaseReconciliationBatchLimit)
+
+	started = time.Now()
+	instance.runLeaseReconciliationSweep(ctx)
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("lease reconciliation drain took %s, want at most 2s", elapsed)
+	}
+	assertLeaseBatchCounts(fixtureCount)
 }
 
 func assertM19LeaseEventCounts(t *testing.T, database *sql.DB, wantHighWater int64) {

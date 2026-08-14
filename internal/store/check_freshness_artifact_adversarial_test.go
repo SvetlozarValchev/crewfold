@@ -232,7 +232,7 @@ func TestPrepareCheckArtifactRejectsSymlinkedPrivateDirectoryComponents(t *testi
 			seed: func(t *testing.T, storage *Store, outside, shard string) {
 				t.Helper()
 				root := filepath.Join(filepath.Dir(storage.path), "check-artifacts")
-				if err := os.Mkdir(root, 0o700); err != nil {
+				if err := os.MkdirAll(root, 0o700); err != nil {
 					t.Fatalf("mkdir artifact root: %v", err)
 				}
 				if err := os.Symlink(outside, filepath.Join(root, shard)); err != nil {

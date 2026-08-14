@@ -235,7 +235,7 @@ func TestSupervisorDeferredPageBackoffCannotStarveLaterEligibleIntent(t *testing
 	}
 	if _, err := storage.ApplyRunObservation(context.Background(), runID, domain.RunObservation{
 		Kind: domain.ObservationCompletion, Message: "unrelated manager work completed",
-		Evidence: []string{"proposal accepted"}, Handoff: "continue deterministic scheduling",
+		Evidence: []string{"proposal accepted"}, Handoff: "continue deterministic scheduling", LogArchive: prepareTestRunLogArchive(t, storage, runID),
 	}, true, nil, "request-queue-boundary-manager-completed"); err != nil {
 		t.Fatalf("ApplyRunObservation(unrelated manager completion) = %v", err)
 	}
@@ -675,6 +675,17 @@ func TestSupervisorUnrelatedScopedRunFactDoesNotWakeDeferredCapacityPage(t *test
 	agentProfile := queueBoundaryCreateLaunchProfile(t, storage, fixture, agentAgent, "", "selective-agent")
 	checkoutProfile := queueBoundaryCreateLaunchProfile(t, storage, fixture, checkoutAgent,
 		exclusiveCheckout.Checkout.ID, "selective-checkout")
+	// Install the exact scoped limits before constructing the four durable
+	// blockers. Admission itself now enforces the current two-starting default,
+	// so configuring afterward would make this formerly valid queue fixture
+	// unreachable rather than testing selective retry wakeups.
+	configureSupervisorForContention(t, storage, fixture.workspace.ID, domain.SupervisorLimits{
+		MaxActiveRuns: 100, MaxStartingRuns: 100,
+		DefaultProjectConcurrency:  100,
+		ProjectConcurrency:         map[string]int{projectFixture.project.ID: 1},
+		DefaultProviderConcurrency: 100,
+		ProviderConcurrency:        map[string]int{providerAgent.Provider: 1},
+	}, "selective-scopes")
 
 	queueBoundaryCreateReservedRun(t, storage, fixture, providerAgent.ID, providerAgent.Runtime,
 		providerAgent.Provider, sharedCheckoutID, "selective-provider-blocker")
@@ -698,13 +709,6 @@ func TestSupervisorUnrelatedScopedRunFactDoesNotWakeDeferredCapacityPage(t *test
 		},
 	}})
 	tailIntentID := queueBoundaryProposalIntentID(t, storage, tailProposal.ID)
-	configureSupervisorForContention(t, storage, fixture.workspace.ID, domain.SupervisorLimits{
-		MaxActiveRuns: 100, MaxStartingRuns: 100,
-		DefaultProjectConcurrency:  100,
-		ProjectConcurrency:         map[string]int{projectFixture.project.ID: 1},
-		DefaultProviderConcurrency: 100,
-		ProviderConcurrency:        map[string]int{providerAgent.Provider: 1},
-	}, "selective-scopes")
 	autoAdvance = false
 
 	first, err := storage.RunSupervisor(ctx, RunSupervisorCommand{
@@ -726,13 +730,13 @@ func TestSupervisorUnrelatedScopedRunFactDoesNotWakeDeferredCapacityPage(t *test
 		}
 		dimension := queueBoundaryPrimaryFailure(t, action.ConstraintSnapshot)
 		switch dimension {
-		case "project_active_runs", "provider_active_runs", "agent_active_runs", "checkout":
+		case "project_unresolved", "provider_unresolved", "agent_active_runs", "checkout":
 			witnesses[dimension] = action.IntentID
 		default:
 			t.Fatalf("selective first-page primary failure = %q in %#v", dimension, action.ConstraintSnapshot)
 		}
 	}
-	for _, dimension := range []string{"project_active_runs", "provider_active_runs", "agent_active_runs", "checkout"} {
+	for _, dimension := range []string{"project_unresolved", "provider_unresolved", "agent_active_runs", "checkout"} {
 		if witnesses[dimension] == "" {
 			t.Fatalf("selective first page omitted %s witness: %#v", dimension, first.Actions)
 		}
@@ -815,7 +819,22 @@ func TestSupervisorBlockedQueuePagesPastReceiptedFirstPage(t *testing.T) {
 		Scan(&checkoutID); err != nil {
 		t.Fatalf("read shared checkout = %v", err)
 	}
-	const blockedRunCount = 101
+	// Twenty simultaneously unresolved runs are the exact current node ceiling.
+	// Two ten-item pages retain the receipt-pagination proof without constructing
+	// an impossible pre-admission state.
+	const blockedRunCount = NodeExecutionCapacityLimit
+	const pageLimit = blockedRunCount / 2
+	if _, err := storage.ConfigureSupervisorPolicy(ctx, ConfigureSupervisorPolicyCommand{
+		WorkspaceIdentifier: fixture.workspace.ID, Enabled: true, AutoSchedule: false,
+		Limits: domain.SupervisorLimits{
+			MaxActiveRuns: blockedRunCount, MaxStartingRuns: 2,
+			DefaultProjectConcurrency: blockedRunCount, DefaultProviderConcurrency: blockedRunCount,
+		},
+		AutoRetryLimit: 0, RetryCooldownSeconds: 0, ExpectedRevision: 1,
+		IdempotencyKey: "blocked-page-policy", CorrelationID: "request-blocked-page-policy",
+	}); err != nil {
+		t.Fatalf("ConfigureSupervisorPolicy(blocked page) = %v", err)
+	}
 	runIDs := make([]string, 0, blockedRunCount)
 	for index := 0; index < blockedRunCount; index++ {
 		task, err := storage.CreateTask(ctx, CreateTaskCommand{
@@ -871,21 +890,19 @@ func TestSupervisorBlockedQueuePagesPastReceiptedFirstPage(t *testing.T) {
 		}
 		runIDs = append(runIDs, blocked.Run.ID)
 	}
-	configureAdversarialSupervisor(t, storage, fixture.workspace.ID, "blocked-page-policy")
-
 	first, err := storage.RunSupervisor(ctx, RunSupervisorCommand{
-		WorkspaceIdentifier: fixture.workspace.ID, Limit: 100,
+		WorkspaceIdentifier: fixture.workspace.ID, Limit: pageLimit,
 		IdempotencyKey: "blocked-page-first", CorrelationID: "request-blocked-page-first",
 	})
-	if err != nil || len(first.Actions) != 100 {
-		t.Fatalf("RunSupervisor(blocked first page) = %#v, %v; want 100 approval actions", first, err)
+	if err != nil || len(first.Actions) != pageLimit {
+		t.Fatalf("RunSupervisor(blocked first page) = %#v, %v; want %d approval actions", first, err, pageLimit)
 	}
 	second, err := storage.RunSupervisor(ctx, RunSupervisorCommand{
-		WorkspaceIdentifier: fixture.workspace.ID, Limit: 100,
+		WorkspaceIdentifier: fixture.workspace.ID, Limit: pageLimit,
 		IdempotencyKey: "blocked-page-second", CorrelationID: "request-blocked-page-second",
 	})
-	if err != nil || len(second.Actions) != 1 || second.Actions[0].RunID != runIDs[blockedRunCount-1] {
-		t.Fatalf("RunSupervisor(blocked second page) = %#v, %v; want final blocked run after receipted page", second, err)
+	if err != nil || len(second.Actions) != pageLimit || second.Actions[pageLimit-1].RunID != runIDs[blockedRunCount-1] {
+		t.Fatalf("RunSupervisor(blocked second page) = %#v, %v; want remaining %d blocked runs after receipted page", second, err, pageLimit)
 	}
 	assertManagementRowCount(t, storage, blockedRunCount, `SELECT COUNT(*) FROM supervisor_action_receipts receipt
 JOIN supervisor_actions action ON action.id=receipt.action_id WHERE action.condition='blocked'`)
@@ -1369,7 +1386,7 @@ func queueBoundaryCompleteManagerRun(t *testing.T, storage *Store, runID, key st
 	}
 	if _, err := storage.ApplyRunObservation(context.Background(), runID, domain.RunObservation{
 		Kind: domain.ObservationCompletion, Message: "completed unrelated selective-scope management",
-		Evidence: []string{"scoped fixture accepted"}, Handoff: "continue bounded scheduling",
+		Evidence: []string{"scoped fixture accepted"}, Handoff: "continue bounded scheduling", LogArchive: prepareTestRunLogArchive(t, storage, runID),
 	}, true, nil, "request-"+key+"-completed"); err != nil {
 		t.Fatalf("ApplyRunObservation(%s completion) = %v", key, err)
 	}

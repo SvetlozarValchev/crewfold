@@ -12,7 +12,10 @@ import (
 func TestRunContradictionReportDerivesLiveActorAndExactTaskScope(t *testing.T) {
 	t.Parallel()
 	dataDirectory := t.TempDir()
-	storage, err := Open(context.Background(), dataDirectory, Options{})
+	storage, err := Open(context.Background(), dataDirectory, Options{
+		RuntimeNodeID:          "11111111111111111111111111111111",
+		RuntimeNodeFingerprint: "2222222222222222222222222222222222222222222222222222222222222222",
+	})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -68,14 +71,17 @@ func TestRunContradictionReportDerivesLiveActorAndExactTaskScope(t *testing.T) {
 		t.Fatalf("MarkRunStarted() error = %v", err)
 	}
 	if _, err := storage.ApplyRunObservation(context.Background(), starting.ID, domain.RunObservation{
-		Kind: domain.ObservationCompletion, Message: "done", Handoff: "review contradiction report",
+		Kind: domain.ObservationCompletion, Message: "done", Handoff: "review contradiction report", LogArchive: prepareTestRunLogArchive(t, storage, starting.ID),
 	}, true, nil, "complete-run-report-replay"); err != nil {
 		t.Fatalf("ApplyRunObservation(completed) error = %v", err)
 	}
 	if err := storage.Close(); err != nil {
 		t.Fatalf("Close(before replay) error = %v", err)
 	}
-	storage, err = Open(context.Background(), dataDirectory, Options{})
+	storage, err = Open(context.Background(), dataDirectory, Options{
+		RuntimeNodeID:          "11111111111111111111111111111111",
+		RuntimeNodeFingerprint: "2222222222222222222222222222222222222222222222222222222222222222",
+	})
 	if err != nil {
 		t.Fatalf("Open(restart) error = %v", err)
 	}

@@ -72,7 +72,7 @@ func TestCheckLaunchNamedFaultBarriersRollbackAndReplay(t *testing.T) {
 			}
 			fixture.storage.mutationHook = nil
 
-			assertCheckRowCount(t, fixture.storage, 1, `SELECT COUNT(*) FROM check_runs WHERE id=? AND status='requested' AND runtime_handle IS NULL AND revision=1`, work.Run.ID)
+			assertCheckRowCount(t, fixture.storage, 1, `SELECT COUNT(*) FROM check_runs run WHERE id=? AND status='requested' AND revision=1 AND NOT EXISTS(SELECT 1 FROM check_runtime_bindings binding WHERE binding.check_run_id=run.id)`, work.Run.ID)
 			assertCheckRowCount(t, fixture.storage, 1, `SELECT COUNT(*) FROM check_jobs WHERE check_run_id=? AND status='leased'`, work.Run.ID)
 			assertCheckRowCount(t, fixture.storage, 0, `SELECT COUNT(*) FROM check_launch_receipts WHERE check_run_id=?`, work.Run.ID)
 			assertCheckRowCount(t, fixture.storage, 0, `SELECT COUNT(*) FROM events WHERE type='check.run_starting' AND entity_id=?`, work.Run.ID)
@@ -108,7 +108,7 @@ func TestCheckRuntimeBindingNamedFaultBarrierRollsBackAndReplays(t *testing.T) {
 	}
 	fixture.storage.mutationHook = nil
 
-	assertCheckRowCount(t, fixture.storage, 1, `SELECT COUNT(*) FROM check_runs WHERE id=? AND status='starting' AND runtime_handle IS NULL AND revision=2`, work.Run.ID)
+	assertCheckRowCount(t, fixture.storage, 1, `SELECT COUNT(*) FROM check_runs run WHERE id=? AND status='starting' AND revision=2 AND NOT EXISTS(SELECT 1 FROM check_runtime_bindings binding WHERE binding.check_run_id=run.id)`, work.Run.ID)
 	assertCheckRowCount(t, fixture.storage, 1, `SELECT COUNT(*) FROM check_jobs WHERE check_run_id=? AND status='leased'`, work.Run.ID)
 	assertCheckRowCount(t, fixture.storage, 0, `SELECT COUNT(*) FROM events WHERE type='check.run_runtime_observed' AND entity_id=?`, work.Run.ID)
 

@@ -158,6 +158,77 @@ func (q *Queries) GetAcceptedDecisionForOutcome(ctx context.Context, arg GetAcce
 	return i, err
 }
 
+const getAcceptedOutcomeAssessmentClaimSource = `-- name: GetAcceptedOutcomeAssessmentClaimSource :one
+SELECT assessment.id AS assessment_id,assessment.state_revision,assessment.review_state,assessment.conclusion,assessment.content_sha256,
+ assessment.project_id,assessment.objective_id,assessment.task_id,assessment.commitment_id,
+ commitment.title AS commitment_title,commitment.content_sha256 AS commitment_sha256,
+ receipt.event_sequence AS commitment_event_sequence,
+ governance.decision_event_sequence AS event_sequence,basis.source_sha256 AS acceptance_basis_sha256,
+ governance.superseded_assessment_id,governance.superseded_event_sequence,
+ prior.content_sha256 AS superseded_content_sha256,prior.state_revision AS superseded_state_revision
+FROM outcome_assessments assessment
+JOIN deliverable_commitments commitment ON commitment.id=assessment.commitment_id
+JOIN outcome_commitment_receipts receipt ON receipt.commitment_id=commitment.id
+JOIN outcome_assessment_governance governance ON governance.assessment_id=assessment.id AND governance.decision='accepted'
+JOIN outcome_assessment_acceptance_basis basis ON basis.assessment_id=assessment.id AND basis.event_sequence=governance.decision_event_sequence
+LEFT JOIN outcome_assessments prior ON prior.id=governance.superseded_assessment_id
+WHERE assessment.workspace_id=?1 AND assessment.id=?2
+ AND assessment.review_state='accepted' AND governance.decision_event_sequence<=?3
+`
+
+type GetAcceptedOutcomeAssessmentClaimSourceParams struct {
+	WorkspaceID  string `json:"workspace_id"`
+	AssessmentID string `json:"assessment_id"`
+	EventCursor  int64  `json:"event_cursor"`
+}
+
+type GetAcceptedOutcomeAssessmentClaimSourceRow struct {
+	AssessmentID            string  `json:"assessment_id"`
+	StateRevision           int64   `json:"state_revision"`
+	ReviewState             string  `json:"review_state"`
+	Conclusion              string  `json:"conclusion"`
+	ContentSha256           string  `json:"content_sha256"`
+	ProjectID               string  `json:"project_id"`
+	ObjectiveID             string  `json:"objective_id"`
+	TaskID                  string  `json:"task_id"`
+	CommitmentID            string  `json:"commitment_id"`
+	CommitmentTitle         string  `json:"commitment_title"`
+	CommitmentSha256        string  `json:"commitment_sha256"`
+	CommitmentEventSequence int64   `json:"commitment_event_sequence"`
+	EventSequence           int64   `json:"event_sequence"`
+	AcceptanceBasisSha256   string  `json:"acceptance_basis_sha256"`
+	SupersededAssessmentID  *string `json:"superseded_assessment_id"`
+	SupersededEventSequence *int64  `json:"superseded_event_sequence"`
+	SupersededContentSha256 *string `json:"superseded_content_sha256"`
+	SupersededStateRevision *int64  `json:"superseded_state_revision"`
+}
+
+func (q *Queries) GetAcceptedOutcomeAssessmentClaimSource(ctx context.Context, arg GetAcceptedOutcomeAssessmentClaimSourceParams) (GetAcceptedOutcomeAssessmentClaimSourceRow, error) {
+	row := q.db.QueryRowContext(ctx, getAcceptedOutcomeAssessmentClaimSource, arg.WorkspaceID, arg.AssessmentID, arg.EventCursor)
+	var i GetAcceptedOutcomeAssessmentClaimSourceRow
+	err := row.Scan(
+		&i.AssessmentID,
+		&i.StateRevision,
+		&i.ReviewState,
+		&i.Conclusion,
+		&i.ContentSha256,
+		&i.ProjectID,
+		&i.ObjectiveID,
+		&i.TaskID,
+		&i.CommitmentID,
+		&i.CommitmentTitle,
+		&i.CommitmentSha256,
+		&i.CommitmentEventSequence,
+		&i.EventSequence,
+		&i.AcceptanceBasisSha256,
+		&i.SupersededAssessmentID,
+		&i.SupersededEventSequence,
+		&i.SupersededContentSha256,
+		&i.SupersededStateRevision,
+	)
+	return i, err
+}
+
 const getCurrentAcceptedOutcomeAssessmentID = `-- name: GetCurrentAcceptedOutcomeAssessmentID :one
 SELECT id FROM outcome_assessments
 WHERE commitment_id=?1 AND review_state='accepted'
@@ -231,34 +302,6 @@ func (q *Queries) GetManagementBriefing(ctx context.Context, arg GetManagementBr
 		&i.ContentSha256,
 		&i.ByteSize,
 		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const getManagementBriefingClaim = `-- name: GetManagementBriefingClaim :one
-SELECT briefing_id, ordinal, claim_id, semantic_key, kind, urgency, summary, status, project_id, source_event_sequence, claim_json FROM management_briefing_claims WHERE briefing_id=?1 AND claim_id=?2
-`
-
-type GetManagementBriefingClaimParams struct {
-	BriefingID string `json:"briefing_id"`
-	ClaimID    string `json:"claim_id"`
-}
-
-func (q *Queries) GetManagementBriefingClaim(ctx context.Context, arg GetManagementBriefingClaimParams) (ManagementBriefingClaim, error) {
-	row := q.db.QueryRowContext(ctx, getManagementBriefingClaim, arg.BriefingID, arg.ClaimID)
-	var i ManagementBriefingClaim
-	err := row.Scan(
-		&i.BriefingID,
-		&i.Ordinal,
-		&i.ClaimID,
-		&i.SemanticKey,
-		&i.Kind,
-		&i.Urgency,
-		&i.Summary,
-		&i.Status,
-		&i.ProjectID,
-		&i.SourceEventSequence,
-		&i.ClaimJson,
 	)
 	return i, err
 }
@@ -1361,105 +1404,6 @@ func (q *Queries) InsertOwnerCheckpoint(ctx context.Context, arg InsertOwnerChec
 	return err
 }
 
-const listAcceptedOutcomeAssessmentClaims = `-- name: ListAcceptedOutcomeAssessmentClaims :many
-SELECT assessment.id AS assessment_id,assessment.state_revision,assessment.review_state,assessment.conclusion,assessment.content_sha256,
- assessment.project_id,assessment.objective_id,assessment.task_id,assessment.commitment_id,
- commitment.title AS commitment_title,commitment.content_sha256 AS commitment_sha256,
- receipt.event_sequence AS commitment_event_sequence,
- governance.decision_event_sequence AS event_sequence,basis.source_sha256 AS acceptance_basis_sha256,
- governance.superseded_assessment_id,governance.superseded_event_sequence,
- prior.content_sha256 AS superseded_content_sha256,prior.state_revision AS superseded_state_revision
-FROM outcome_assessments assessment
-JOIN deliverable_commitments commitment ON commitment.id=assessment.commitment_id
-JOIN outcome_commitment_receipts receipt ON receipt.commitment_id=commitment.id
-JOIN outcome_assessment_governance governance ON governance.assessment_id=assessment.id AND governance.decision='accepted'
-JOIN outcome_assessment_acceptance_basis basis ON basis.assessment_id=assessment.id AND basis.event_sequence=governance.decision_event_sequence
-LEFT JOIN outcome_assessments prior ON prior.id=governance.superseded_assessment_id
-WHERE assessment.workspace_id=?1 AND assessment.review_state='accepted'
- AND governance.decision_event_sequence<=?2
- AND (CAST(?3 AS TEXT)='' OR assessment.project_id=?3)
- AND (CAST(?4 AS TEXT)='' OR assessment.objective_id=?4)
- AND (CAST(?5 AS TEXT)='' OR assessment.task_id=?5)
-ORDER BY governance.decision_event_sequence DESC,assessment.id
-`
-
-type ListAcceptedOutcomeAssessmentClaimsParams struct {
-	WorkspaceID string `json:"workspace_id"`
-	EventCursor int64  `json:"event_cursor"`
-	ProjectID   string `json:"project_id"`
-	ObjectiveID string `json:"objective_id"`
-	TaskID      string `json:"task_id"`
-}
-
-type ListAcceptedOutcomeAssessmentClaimsRow struct {
-	AssessmentID            string  `json:"assessment_id"`
-	StateRevision           int64   `json:"state_revision"`
-	ReviewState             string  `json:"review_state"`
-	Conclusion              string  `json:"conclusion"`
-	ContentSha256           string  `json:"content_sha256"`
-	ProjectID               string  `json:"project_id"`
-	ObjectiveID             string  `json:"objective_id"`
-	TaskID                  string  `json:"task_id"`
-	CommitmentID            string  `json:"commitment_id"`
-	CommitmentTitle         string  `json:"commitment_title"`
-	CommitmentSha256        string  `json:"commitment_sha256"`
-	CommitmentEventSequence int64   `json:"commitment_event_sequence"`
-	EventSequence           int64   `json:"event_sequence"`
-	AcceptanceBasisSha256   string  `json:"acceptance_basis_sha256"`
-	SupersededAssessmentID  *string `json:"superseded_assessment_id"`
-	SupersededEventSequence *int64  `json:"superseded_event_sequence"`
-	SupersededContentSha256 *string `json:"superseded_content_sha256"`
-	SupersededStateRevision *int64  `json:"superseded_state_revision"`
-}
-
-func (q *Queries) ListAcceptedOutcomeAssessmentClaims(ctx context.Context, arg ListAcceptedOutcomeAssessmentClaimsParams) ([]ListAcceptedOutcomeAssessmentClaimsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listAcceptedOutcomeAssessmentClaims,
-		arg.WorkspaceID,
-		arg.EventCursor,
-		arg.ProjectID,
-		arg.ObjectiveID,
-		arg.TaskID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListAcceptedOutcomeAssessmentClaimsRow{}
-	for rows.Next() {
-		var i ListAcceptedOutcomeAssessmentClaimsRow
-		if err := rows.Scan(
-			&i.AssessmentID,
-			&i.StateRevision,
-			&i.ReviewState,
-			&i.Conclusion,
-			&i.ContentSha256,
-			&i.ProjectID,
-			&i.ObjectiveID,
-			&i.TaskID,
-			&i.CommitmentID,
-			&i.CommitmentTitle,
-			&i.CommitmentSha256,
-			&i.CommitmentEventSequence,
-			&i.EventSequence,
-			&i.AcceptanceBasisSha256,
-			&i.SupersededAssessmentID,
-			&i.SupersededEventSequence,
-			&i.SupersededContentSha256,
-			&i.SupersededStateRevision,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listAssessmentAcceptedEvent = `-- name: ListAssessmentAcceptedEvent :one
 SELECT event.sequence FROM events event WHERE event.workspace_id=?1
  AND event.entity_type='outcome_assessment' AND event.entity_id=?2
@@ -1476,6 +1420,263 @@ func (q *Queries) ListAssessmentAcceptedEvent(ctx context.Context, arg ListAsses
 	var sequence int64
 	err := row.Scan(&sequence)
 	return sequence, err
+}
+
+const listContradictionManagementBriefingCandidateSeeds = `-- name: ListContradictionManagementBriefingCandidateSeeds :many
+WITH raw AS (
+ SELECT 'contradictions' AS section,'now' AS urgency,contradiction.project_id,
+  CAST(contradiction.confirm_event_sequence AS INTEGER) AS source_event_sequence,'open_contradiction' AS source_kind,
+  contradiction.id AS source_id,'contradiction' AS variant,-1 AS child_ordinal,
+  contradiction.state_revision AS source_revision,'' AS content_sha256,
+  CAST(COALESCE(NULLIF(trim(contradiction.report_note),''),
+   'Accepted knowledge revisions contradict: '||contradiction.left_revision_id||' and '||contradiction.right_revision_id) AS TEXT) AS summary
+ FROM knowledge_contradictions contradiction
+ WHERE contradiction.workspace_id=?1 AND contradiction.status='open'
+  AND contradiction.confirm_event_sequence<=CAST(?2 AS INTEGER)
+  AND (CAST(?3 AS TEXT)='' OR contradiction.project_id=?3)
+  AND (
+   (CAST(?4 AS TEXT)<>'task' AND CAST(?4 AS TEXT)<>'objective') OR EXISTS(
+    SELECT 1 FROM knowledge_revisions revision JOIN knowledge_items item ON item.id=revision.item_id
+    WHERE revision.id IN (contradiction.left_revision_id,contradiction.right_revision_id)
+     AND item.workspace_id=?1
+     AND ((CAST(?4 AS TEXT)='task' AND (item.task_scope_id IS NULL OR item.task_scope_id=CAST(?5 AS TEXT)))
+       OR (CAST(?4 AS TEXT)='objective' AND
+           (item.task_scope_id IS NULL OR item.task_scope_id IN
+            (SELECT task.id FROM tasks task WHERE task.objective_id=CAST(?6 AS TEXT)))))
+   )
+  )
+),
+project_ranked AS (
+ SELECT raw.section,raw.urgency,raw.project_id,raw.source_event_sequence,raw.source_kind,
+  raw.source_id,raw.variant,raw.child_ordinal,raw.source_revision,raw.content_sha256,raw.summary,
+  count(*) OVER (PARTITION BY raw.section) AS section_total,
+  CASE raw.urgency WHEN 'now' THEN 0 WHEN 'next' THEN 1 ELSE 2 END AS urgency_order,
+  row_number() OVER (
+   PARTITION BY raw.section,raw.urgency,raw.project_id
+   ORDER BY raw.source_event_sequence DESC,raw.source_kind,raw.source_id,raw.variant,raw.child_ordinal
+  ) AS project_rank
+ FROM raw
+),
+ranked AS (
+ SELECT project_ranked.section, project_ranked.urgency, project_ranked.project_id, project_ranked.source_event_sequence, project_ranked.source_kind, project_ranked.source_id, project_ranked.variant, project_ranked.child_ordinal, project_ranked.source_revision, project_ranked.content_sha256, project_ranked.summary, project_ranked.section_total, project_ranked.urgency_order, project_ranked.project_rank,
+  row_number() OVER (
+   PARTITION BY section
+   ORDER BY urgency_order,project_rank,project_id,source_event_sequence DESC,source_kind,source_id,variant,child_ordinal
+  ) AS global_rank
+ FROM project_ranked
+)
+SELECT section,urgency,project_id,source_event_sequence,source_kind,source_id,variant,
+ child_ordinal,source_revision,content_sha256,summary,section_total
+FROM ranked WHERE global_rank<=128
+ORDER BY section,global_rank
+LIMIT 896
+`
+
+type ListContradictionManagementBriefingCandidateSeedsParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	EventCursor int64  `json:"event_cursor"`
+	ProjectID   string `json:"project_id"`
+	ScopeType   string `json:"scope_type"`
+	TaskID      string `json:"task_id"`
+	ObjectiveID string `json:"objective_id"`
+}
+
+type ListContradictionManagementBriefingCandidateSeedsRow struct {
+	Section             string `json:"section"`
+	Urgency             string `json:"urgency"`
+	ProjectID           string `json:"project_id"`
+	SourceEventSequence int64  `json:"source_event_sequence"`
+	SourceKind          string `json:"source_kind"`
+	SourceID            string `json:"source_id"`
+	Variant             string `json:"variant"`
+	ChildOrdinal        int64  `json:"child_ordinal"`
+	SourceRevision      int64  `json:"source_revision"`
+	ContentSha256       string `json:"content_sha256"`
+	Summary             string `json:"summary"`
+	SectionTotal        int64  `json:"section_total"`
+}
+
+func (q *Queries) ListContradictionManagementBriefingCandidateSeeds(ctx context.Context, arg ListContradictionManagementBriefingCandidateSeedsParams) ([]ListContradictionManagementBriefingCandidateSeedsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listContradictionManagementBriefingCandidateSeeds,
+		arg.WorkspaceID,
+		arg.EventCursor,
+		arg.ProjectID,
+		arg.ScopeType,
+		arg.TaskID,
+		arg.ObjectiveID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListContradictionManagementBriefingCandidateSeedsRow{}
+	for rows.Next() {
+		var i ListContradictionManagementBriefingCandidateSeedsRow
+		if err := rows.Scan(
+			&i.Section,
+			&i.Urgency,
+			&i.ProjectID,
+			&i.SourceEventSequence,
+			&i.SourceKind,
+			&i.SourceID,
+			&i.Variant,
+			&i.ChildOrdinal,
+			&i.SourceRevision,
+			&i.ContentSha256,
+			&i.Summary,
+			&i.SectionTotal,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDecisionManagementBriefingCandidateSeeds = `-- name: ListDecisionManagementBriefingCandidateSeeds :many
+WITH accepted AS (
+ SELECT assessment.id,assessment.state_revision,assessment.content_sha256,assessment.project_id,
+  assessment.task_id,governance.decision_event_sequence AS event_sequence,
+  governance.decision_event_sequence>?1 AS changed_since
+ FROM outcome_assessments assessment
+ JOIN outcome_assessment_governance governance ON governance.assessment_id=assessment.id AND governance.decision='accepted'
+ JOIN outcome_assessment_acceptance_basis basis ON basis.assessment_id=assessment.id AND basis.event_sequence=governance.decision_event_sequence
+ WHERE assessment.workspace_id=?2 AND assessment.review_state='accepted'
+  AND governance.decision_event_sequence<=?3
+  AND (CAST(?4 AS TEXT)='' OR assessment.project_id=?4)
+  AND (CAST(?5 AS TEXT)='' OR assessment.objective_id=?5)
+  AND (CAST(?6 AS TEXT)='' OR assessment.task_id=?6)
+),
+state AS (
+ SELECT accepted.id, accepted.state_revision, accepted.content_sha256, accepted.project_id, accepted.task_id, accepted.event_sequence, accepted.changed_since,reference.ordinal,reference.revision_id,reference.content_sha256 AS decision_sha256,
+  reference.event_sequence AS decision_event_sequence,
+  EXISTS(
+   SELECT 1 FROM knowledge_revisions revision JOIN knowledge_items item ON item.id=revision.item_id
+   WHERE revision.id=reference.revision_id AND item.workspace_id=?2
+    AND item.project_id=accepted.project_id AND (item.task_scope_id IS NULL OR item.task_scope_id=accepted.task_id)
+    AND item.type='decision' AND revision.review_status='accepted'
+    AND revision.content_hash=reference.content_sha256 AND revision.currency_status='current'
+    AND (revision.freshness_policy<>'expires_at' OR
+         (revision.fresh_until IS NOT NULL AND crewfold_timestamp_key(revision.fresh_until)>crewfold_timestamp_key(CAST(?7 AS TEXT))))
+  ) AS is_current,
+  EXISTS(
+   SELECT 1 FROM knowledge_contradictions contradiction
+   WHERE contradiction.workspace_id=?2 AND contradiction.status='open'
+    AND (contradiction.left_revision_id=reference.revision_id OR contradiction.right_revision_id=reference.revision_id)
+  ) AS is_disputed
+ FROM accepted JOIN outcome_assessment_decision_refs reference ON reference.assessment_id=accepted.id
+),
+raw AS (
+ SELECT 'verification_gaps' AS section,'now' AS urgency,state.project_id AS project_id,
+  CAST(max(state.event_sequence,state.decision_event_sequence) AS INTEGER) AS source_event_sequence,
+  'accepted_assessment' AS source_kind,state.id AS source_id,'decision_gap' AS variant,
+  state.ordinal AS child_ordinal,state.state_revision AS source_revision,
+  state.content_sha256 AS content_sha256,'' AS summary
+ FROM state WHERE NOT state.is_current OR state.is_disputed
+ UNION ALL
+ SELECT 'rationale_change','later',state.project_id,CAST(max(state.event_sequence,state.decision_event_sequence) AS INTEGER),
+  'accepted_assessment',state.id,'decision',state.ordinal,state.state_revision,state.content_sha256,''
+ FROM state WHERE state.changed_since
+),
+project_ranked AS (
+ SELECT raw.section,raw.urgency,raw.project_id,raw.source_event_sequence,raw.source_kind,
+  raw.source_id,raw.variant,raw.child_ordinal,raw.source_revision,raw.content_sha256,raw.summary,
+  count(*) OVER (PARTITION BY raw.section) AS section_total,
+  CASE raw.urgency WHEN 'now' THEN 0 WHEN 'next' THEN 1 ELSE 2 END AS urgency_order,
+  row_number() OVER (
+   PARTITION BY raw.section,raw.urgency,raw.project_id
+   ORDER BY raw.source_event_sequence DESC,raw.source_kind,raw.source_id,raw.variant,raw.child_ordinal
+  ) AS project_rank
+ FROM raw
+),
+ranked AS (
+ SELECT project_ranked.section, project_ranked.urgency, project_ranked.project_id, project_ranked.source_event_sequence, project_ranked.source_kind, project_ranked.source_id, project_ranked.variant, project_ranked.child_ordinal, project_ranked.source_revision, project_ranked.content_sha256, project_ranked.summary, project_ranked.section_total, project_ranked.urgency_order, project_ranked.project_rank,
+  row_number() OVER (
+   PARTITION BY section
+   ORDER BY urgency_order,project_rank,project_id,source_event_sequence DESC,source_kind,source_id,variant,child_ordinal
+  ) AS global_rank
+ FROM project_ranked
+)
+SELECT section,urgency,project_id,source_event_sequence,source_kind,source_id,variant,
+ child_ordinal,source_revision,content_sha256,summary,section_total
+FROM ranked WHERE global_rank<=128
+ORDER BY section,global_rank
+LIMIT 896
+`
+
+type ListDecisionManagementBriefingCandidateSeedsParams struct {
+	SinceSequence int64  `json:"since_sequence"`
+	WorkspaceID   string `json:"workspace_id"`
+	EventCursor   int64  `json:"event_cursor"`
+	ProjectID     string `json:"project_id"`
+	ObjectiveID   string `json:"objective_id"`
+	TaskID        string `json:"task_id"`
+	EvaluatedAt   string `json:"evaluated_at"`
+}
+
+type ListDecisionManagementBriefingCandidateSeedsRow struct {
+	Section             string `json:"section"`
+	Urgency             string `json:"urgency"`
+	ProjectID           string `json:"project_id"`
+	SourceEventSequence int64  `json:"source_event_sequence"`
+	SourceKind          string `json:"source_kind"`
+	SourceID            string `json:"source_id"`
+	Variant             string `json:"variant"`
+	ChildOrdinal        int64  `json:"child_ordinal"`
+	SourceRevision      int64  `json:"source_revision"`
+	ContentSha256       string `json:"content_sha256"`
+	Summary             string `json:"summary"`
+	SectionTotal        int64  `json:"section_total"`
+}
+
+func (q *Queries) ListDecisionManagementBriefingCandidateSeeds(ctx context.Context, arg ListDecisionManagementBriefingCandidateSeedsParams) ([]ListDecisionManagementBriefingCandidateSeedsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDecisionManagementBriefingCandidateSeeds,
+		arg.SinceSequence,
+		arg.WorkspaceID,
+		arg.EventCursor,
+		arg.ProjectID,
+		arg.ObjectiveID,
+		arg.TaskID,
+		arg.EvaluatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDecisionManagementBriefingCandidateSeedsRow{}
+	for rows.Next() {
+		var i ListDecisionManagementBriefingCandidateSeedsRow
+		if err := rows.Scan(
+			&i.Section,
+			&i.Urgency,
+			&i.ProjectID,
+			&i.SourceEventSequence,
+			&i.SourceKind,
+			&i.SourceID,
+			&i.Variant,
+			&i.ChildOrdinal,
+			&i.SourceRevision,
+			&i.ContentSha256,
+			&i.Summary,
+			&i.SectionTotal,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDeliverableCommitments = `-- name: ListDeliverableCommitments :many
@@ -1539,18 +1740,196 @@ func (q *Queries) ListDeliverableCommitments(ctx context.Context, arg ListDelive
 	return items, nil
 }
 
-const listManagementBriefingClaimSources = `-- name: ListManagementBriefingClaimSources :many
-SELECT briefing_id, claim_id, ordinal, entity_type, entity_id, entity_revision, content_sha256, event_sequence, evidence_class, evidence_effect, pinned_freshness, current_freshness FROM management_briefing_claim_sources
-WHERE briefing_id=?1 AND claim_id=?2 ORDER BY ordinal
+const listEvidenceManagementBriefingCandidateSeeds = `-- name: ListEvidenceManagementBriefingCandidateSeeds :many
+WITH accepted AS (
+ SELECT assessment.id,assessment.state_revision,assessment.content_sha256,assessment.project_id,
+  assessment.task_id,governance.decision_event_sequence AS event_sequence
+ FROM outcome_assessments assessment
+ JOIN outcome_assessment_governance governance ON governance.assessment_id=assessment.id AND governance.decision='accepted'
+ JOIN outcome_assessment_acceptance_basis basis ON basis.assessment_id=assessment.id AND basis.event_sequence=governance.decision_event_sequence
+ WHERE assessment.workspace_id=?1 AND assessment.review_state='accepted'
+  AND governance.decision_event_sequence<=?2
+  AND (CAST(?3 AS TEXT)='' OR assessment.project_id=?3)
+  AND (CAST(?4 AS TEXT)='' OR assessment.objective_id=?4)
+  AND (CAST(?5 AS TEXT)='' OR assessment.task_id=?5)
+),
+state AS (
+ SELECT accepted.id, accepted.state_revision, accepted.content_sha256, accepted.project_id, accepted.task_id, accepted.event_sequence,reference.ordinal,reference.event_sequence AS evidence_event_sequence,
+  CASE reference.source_type
+   WHEN 'handoff' THEN EXISTS(
+    SELECT 1 FROM run_handoffs handoff JOIN runs run ON run.id=handoff.run_id
+    WHERE handoff.id=reference.source_id AND run.workspace_id=?1 AND run.status='completed'
+     AND reference.source_sha256=lower(hex(sha256(CAST(json_object(
+      'created_at',handoff.created_at,'evidence_json',json(handoff.evidence_json),'id',handoff.id,
+      'run_id',handoff.run_id,'summary',handoff.summary,'task_id',handoff.task_id
+     ) AS BLOB))))
+     AND reference.event_sequence=(
+      SELECT event.sequence FROM events event WHERE event.workspace_id=run.workspace_id
+       AND event.entity_type='task' AND event.type='task.handoff_recorded'
+       AND json_extract(event.data_json,'$.handoff_id')=handoff.id
+      ORDER BY event.sequence DESC LIMIT 1)
+     AND reference.source_revision=(
+      SELECT event.entity_revision FROM events event WHERE event.workspace_id=run.workspace_id
+       AND event.entity_type='task' AND event.type='task.handoff_recorded'
+       AND json_extract(event.data_json,'$.handoff_id')=handoff.id
+      ORDER BY event.sequence DESC LIMIT 1)
+   )
+   WHEN 'check_requirement_evidence' THEN EXISTS(
+    SELECT 1 FROM check_requirement_evidence evidence
+    JOIN check_results result ON result.id=evidence.check_result_id
+    JOIN check_runs run ON run.id=result.check_run_id
+    JOIN task_check_requirements requirement ON requirement.id=evidence.requirement_id
+    JOIN check_result_freshness pinned ON pinned.check_result_id=result.id AND pinned.revision=evidence.freshness_revision
+    JOIN check_result_freshness current_freshness ON current_freshness.check_result_id=result.id
+     AND current_freshness.revision=(SELECT MAX(latest.revision) FROM check_result_freshness latest WHERE latest.check_result_id=result.id)
+    WHERE evidence.id=reference.source_id AND run.workspace_id=?1
+     AND run.task_id=accepted.task_id
+     AND reference.source_sha256=lower(hex(sha256(CAST(json_object(
+      'check_result_id',evidence.check_result_id,'class',evidence.class,'effect',evidence.effect,
+      'freshness_revision',evidence.freshness_revision,'id',evidence.id,
+      'pinned_freshness',pinned.status,'requirement_id',evidence.requirement_id,
+      'requirement_revision',evidence.requirement_revision
+     ) AS BLOB))))
+     AND reference.event_sequence=(
+      SELECT event.sequence FROM events event WHERE event.workspace_id=run.workspace_id
+       AND event.entity_type='check_result' AND event.entity_id=result.id
+       AND event.entity_revision=evidence.freshness_revision
+       AND event.type IN ('check.result_recorded','check.freshness_observed','check.freshness_stale')
+      ORDER BY event.sequence DESC LIMIT 1)
+     AND requirement.status='active' AND requirement.revision=evidence.requirement_revision
+     AND evidence.check_result_id=(
+      SELECT latest_result.id FROM check_runs latest_run
+      LEFT JOIN check_results latest_result ON latest_result.check_run_id=latest_run.id
+      WHERE latest_run.requirement_id=evidence.requirement_id AND latest_run.requirement_revision=requirement.revision
+      ORDER BY latest_run.created_at DESC,latest_run.id DESC LIMIT 1)
+     AND current_freshness.revision=reference.source_revision AND current_freshness.status='fresh'
+   )
+   ELSE 0
+  END AS is_current,
+  reference.source_type='check_requirement_evidence' AND EXISTS(
+   SELECT 1 FROM check_requirement_evidence evidence
+   JOIN check_results result ON result.id=evidence.check_result_id
+   JOIN check_runs run ON run.id=result.check_run_id
+   JOIN task_check_requirements requirement ON requirement.id=evidence.requirement_id
+   JOIN check_result_freshness current_freshness ON current_freshness.check_result_id=result.id
+    AND current_freshness.revision=(SELECT MAX(latest.revision) FROM check_result_freshness latest WHERE latest.check_result_id=result.id)
+   WHERE evidence.id=reference.source_id AND run.workspace_id=?1
+    AND evidence.effect='contradicts' AND requirement.status='active'
+    AND requirement.revision=evidence.requirement_revision
+    AND evidence.check_result_id=(
+     SELECT latest_result.id FROM check_runs latest_run
+     LEFT JOIN check_results latest_result ON latest_result.check_run_id=latest_run.id
+     WHERE latest_run.requirement_id=evidence.requirement_id AND latest_run.requirement_revision=requirement.revision
+     ORDER BY latest_run.created_at DESC,latest_run.id DESC LIMIT 1)
+    AND current_freshness.status='fresh'
+  ) AS is_contradictory
+ FROM accepted JOIN outcome_assessment_evidence_refs reference ON reference.assessment_id=accepted.id
+),
+raw AS (
+ SELECT 'verification_gaps' AS section,'now' AS urgency,state.project_id,
+  CAST(max(state.event_sequence,state.evidence_event_sequence) AS INTEGER) AS source_event_sequence,
+  'accepted_assessment' AS source_kind,state.id AS source_id,'evidence_gap' AS variant,
+  state.ordinal AS child_ordinal,state.state_revision AS source_revision,state.content_sha256,'' AS summary
+ FROM state WHERE NOT state.is_current OR state.is_contradictory
+),
+project_ranked AS (
+ SELECT raw.section,raw.urgency,raw.project_id,raw.source_event_sequence,raw.source_kind,
+  raw.source_id,raw.variant,raw.child_ordinal,raw.source_revision,raw.content_sha256,raw.summary,
+  count(*) OVER (PARTITION BY raw.section) AS section_total,
+  CASE raw.urgency WHEN 'now' THEN 0 WHEN 'next' THEN 1 ELSE 2 END AS urgency_order,
+  row_number() OVER (
+   PARTITION BY raw.section,raw.urgency,raw.project_id
+   ORDER BY raw.source_event_sequence DESC,raw.source_kind,raw.source_id,raw.variant,raw.child_ordinal
+  ) AS project_rank
+ FROM raw
+),
+ranked AS (
+ SELECT project_ranked.section, project_ranked.urgency, project_ranked.project_id, project_ranked.source_event_sequence, project_ranked.source_kind, project_ranked.source_id, project_ranked.variant, project_ranked.child_ordinal, project_ranked.source_revision, project_ranked.content_sha256, project_ranked.summary, project_ranked.section_total, project_ranked.urgency_order, project_ranked.project_rank,
+  row_number() OVER (
+   PARTITION BY section
+   ORDER BY urgency_order,project_rank,project_id,source_event_sequence DESC,source_kind,source_id,variant,child_ordinal
+  ) AS global_rank
+ FROM project_ranked
+)
+SELECT section,urgency,project_id,source_event_sequence,source_kind,source_id,variant,
+ child_ordinal,source_revision,content_sha256,summary,section_total
+FROM ranked WHERE global_rank<=128
+ORDER BY section,global_rank
+LIMIT 896
 `
 
-type ListManagementBriefingClaimSourcesParams struct {
-	BriefingID string `json:"briefing_id"`
-	ClaimID    string `json:"claim_id"`
+type ListEvidenceManagementBriefingCandidateSeedsParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	EventCursor int64  `json:"event_cursor"`
+	ProjectID   string `json:"project_id"`
+	ObjectiveID string `json:"objective_id"`
+	TaskID      string `json:"task_id"`
 }
 
-func (q *Queries) ListManagementBriefingClaimSources(ctx context.Context, arg ListManagementBriefingClaimSourcesParams) ([]ManagementBriefingClaimSource, error) {
-	rows, err := q.db.QueryContext(ctx, listManagementBriefingClaimSources, arg.BriefingID, arg.ClaimID)
+type ListEvidenceManagementBriefingCandidateSeedsRow struct {
+	Section             string `json:"section"`
+	Urgency             string `json:"urgency"`
+	ProjectID           string `json:"project_id"`
+	SourceEventSequence int64  `json:"source_event_sequence"`
+	SourceKind          string `json:"source_kind"`
+	SourceID            string `json:"source_id"`
+	Variant             string `json:"variant"`
+	ChildOrdinal        int64  `json:"child_ordinal"`
+	SourceRevision      int64  `json:"source_revision"`
+	ContentSha256       string `json:"content_sha256"`
+	Summary             string `json:"summary"`
+	SectionTotal        int64  `json:"section_total"`
+}
+
+func (q *Queries) ListEvidenceManagementBriefingCandidateSeeds(ctx context.Context, arg ListEvidenceManagementBriefingCandidateSeedsParams) ([]ListEvidenceManagementBriefingCandidateSeedsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listEvidenceManagementBriefingCandidateSeeds,
+		arg.WorkspaceID,
+		arg.EventCursor,
+		arg.ProjectID,
+		arg.ObjectiveID,
+		arg.TaskID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEvidenceManagementBriefingCandidateSeedsRow{}
+	for rows.Next() {
+		var i ListEvidenceManagementBriefingCandidateSeedsRow
+		if err := rows.Scan(
+			&i.Section,
+			&i.Urgency,
+			&i.ProjectID,
+			&i.SourceEventSequence,
+			&i.SourceKind,
+			&i.SourceID,
+			&i.Variant,
+			&i.ChildOrdinal,
+			&i.SourceRevision,
+			&i.ContentSha256,
+			&i.Summary,
+			&i.SectionTotal,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagementBriefingClaimSourcesForBriefing = `-- name: ListManagementBriefingClaimSourcesForBriefing :many
+SELECT briefing_id, claim_id, ordinal, entity_type, entity_id, entity_revision, content_sha256, event_sequence, evidence_class, evidence_effect, pinned_freshness, current_freshness FROM management_briefing_claim_sources
+WHERE briefing_id=?1 ORDER BY claim_id,ordinal
+`
+
+func (q *Queries) ListManagementBriefingClaimSourcesForBriefing(ctx context.Context, briefingID string) ([]ManagementBriefingClaimSource, error) {
+	rows, err := q.db.QueryContext(ctx, listManagementBriefingClaimSourcesForBriefing, briefingID)
 	if err != nil {
 		return nil, err
 	}
@@ -1610,63 +1989,6 @@ func (q *Queries) ListManagementBriefingClaims(ctx context.Context, briefingID s
 			&i.ProjectID,
 			&i.SourceEventSequence,
 			&i.ClaimJson,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listOpenOutcomeContradictions = `-- name: ListOpenOutcomeContradictions :many
-SELECT contradiction.id,contradiction.state_revision,contradiction.project_id,contradiction.report_note,
- contradiction.left_revision_id,contradiction.right_revision_id,contradiction.confirm_event_sequence AS event_sequence
-FROM knowledge_contradictions contradiction
-WHERE contradiction.workspace_id=?1 AND contradiction.status='open'
- AND contradiction.confirm_event_sequence<=?2
- AND (CAST(?3 AS TEXT)='' OR contradiction.project_id=?3)
-ORDER BY contradiction.confirm_event_sequence DESC,contradiction.id
-`
-
-type ListOpenOutcomeContradictionsParams struct {
-	WorkspaceID string `json:"workspace_id"`
-	EventCursor *int64 `json:"event_cursor"`
-	ProjectID   string `json:"project_id"`
-}
-
-type ListOpenOutcomeContradictionsRow struct {
-	ID              string `json:"id"`
-	StateRevision   int64  `json:"state_revision"`
-	ProjectID       string `json:"project_id"`
-	ReportNote      string `json:"report_note"`
-	LeftRevisionID  string `json:"left_revision_id"`
-	RightRevisionID string `json:"right_revision_id"`
-	EventSequence   *int64 `json:"event_sequence"`
-}
-
-func (q *Queries) ListOpenOutcomeContradictions(ctx context.Context, arg ListOpenOutcomeContradictionsParams) ([]ListOpenOutcomeContradictionsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listOpenOutcomeContradictions, arg.WorkspaceID, arg.EventCursor, arg.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListOpenOutcomeContradictionsRow{}
-	for rows.Next() {
-		var i ListOpenOutcomeContradictionsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.StateRevision,
-			&i.ProjectID,
-			&i.ReportNote,
-			&i.LeftRevisionID,
-			&i.RightRevisionID,
-			&i.EventSequence,
 		); err != nil {
 			return nil, err
 		}
@@ -2091,41 +2413,126 @@ func (q *Queries) ListOwnerCheckpoints(ctx context.Context, arg ListOwnerCheckpo
 	return items, nil
 }
 
-const listUnassessedOutcomeCommitments = `-- name: ListUnassessedOutcomeCommitments :many
-SELECT commitment.id,commitment.project_id,commitment.objective_id,commitment.task_id,
- commitment.title,commitment.content_sha256,receipt.event_sequence
-FROM deliverable_commitments commitment
-JOIN outcome_commitment_receipts receipt ON receipt.commitment_id=commitment.id
-WHERE commitment.workspace_id=?1
- AND receipt.event_sequence<=?2
- AND (CAST(?3 AS TEXT)='' OR commitment.project_id=?3)
- AND (CAST(?4 AS TEXT)='' OR commitment.objective_id=?4)
- AND (CAST(?5 AS TEXT)='' OR commitment.task_id=?5)
- AND NOT EXISTS(SELECT 1 FROM outcome_assessments assessment
-  WHERE assessment.commitment_id=commitment.id AND assessment.review_state='accepted')
-ORDER BY receipt.event_sequence DESC,commitment.id
+const listStaticManagementBriefingCandidateSeeds = `-- name: ListStaticManagementBriefingCandidateSeeds :many
+
+WITH accepted AS (
+ SELECT assessment.id,assessment.state_revision,assessment.content_sha256,assessment.project_id,
+  assessment.objective_id,assessment.task_id,assessment.unmet_scope_json,
+  governance.decision_event_sequence AS event_sequence,
+  governance.decision_event_sequence>?1 AS changed_since,
+  governance.superseded_assessment_id,governance.superseded_event_sequence,
+  prior.content_sha256 AS superseded_content_sha256,prior.state_revision AS superseded_state_revision
+ FROM outcome_assessments assessment
+ JOIN outcome_assessment_governance governance ON governance.assessment_id=assessment.id AND governance.decision='accepted'
+ JOIN outcome_assessment_acceptance_basis basis ON basis.assessment_id=assessment.id AND basis.event_sequence=governance.decision_event_sequence
+ LEFT JOIN outcome_assessments prior ON prior.id=governance.superseded_assessment_id
+ WHERE assessment.workspace_id=?2 AND assessment.review_state='accepted'
+  AND governance.decision_event_sequence<=?3
+  AND (CAST(?4 AS TEXT)='' OR assessment.project_id=?4)
+  AND (CAST(?5 AS TEXT)='' OR assessment.objective_id=?5)
+  AND (CAST(?6 AS TEXT)='' OR assessment.task_id=?6)
+),
+raw AS (
+ SELECT 'required_decisions' AS section,attention.urgency AS urgency,accepted.project_id AS project_id,
+  accepted.event_sequence AS source_event_sequence,'accepted_assessment' AS source_kind,
+  accepted.id AS source_id,'attention' AS variant,attention.ordinal AS child_ordinal,
+  accepted.state_revision AS source_revision,accepted.content_sha256 AS content_sha256,'' AS summary
+ FROM accepted JOIN outcome_assessment_owner_attention attention ON attention.assessment_id=accepted.id
+ UNION ALL
+ SELECT 'required_decisions','next',accepted.project_id,max(accepted.event_sequence,follow_up.event_sequence),
+  'accepted_assessment',accepted.id,'follow_up',follow_up.ordinal,accepted.state_revision,accepted.content_sha256,''
+ FROM accepted JOIN outcome_assessment_follow_up_tasks follow_up ON follow_up.assessment_id=accepted.id
+ UNION ALL
+ SELECT 'risks_unknowns',CASE WHEN risk.severity IN ('critical','high') THEN 'now' WHEN risk.severity='medium' THEN 'next' ELSE 'later' END,
+  accepted.project_id,accepted.event_sequence,'accepted_assessment',accepted.id,'risk',risk.ordinal,accepted.state_revision,accepted.content_sha256,''
+ FROM accepted JOIN outcome_assessment_risks risk ON risk.assessment_id=accepted.id
+ UNION ALL
+ SELECT 'risks_unknowns','now',accepted.project_id,accepted.event_sequence,
+  'accepted_assessment',accepted.id,'unknown',unknown.ordinal,accepted.state_revision,accepted.content_sha256,''
+ FROM accepted JOIN outcome_assessment_unknowns unknown ON unknown.assessment_id=accepted.id
+ UNION ALL
+ SELECT 'deviations_unmet','next',accepted.project_id,accepted.event_sequence,
+  'accepted_assessment',accepted.id,'deviation',deviation.ordinal,accepted.state_revision,accepted.content_sha256,''
+ FROM accepted JOIN outcome_assessment_deviations deviation ON deviation.assessment_id=accepted.id
+ UNION ALL
+ SELECT 'deviations_unmet','now',accepted.project_id,accepted.event_sequence,
+  'accepted_assessment',accepted.id,'unmet',-1,accepted.state_revision,accepted.content_sha256,''
+ FROM accepted WHERE json_array_length(accepted.unmet_scope_json)<>0
+ UNION ALL
+ SELECT 'accepted_delivery','later',accepted.project_id,max(accepted.event_sequence,COALESCE((
+   SELECT max(reference.event_sequence) FROM outcome_assessment_evidence_refs reference WHERE reference.assessment_id=accepted.id
+  ),accepted.event_sequence)),
+  'accepted_assessment',accepted.id,'delivery',-1,accepted.state_revision,accepted.content_sha256,''
+ FROM accepted
+ UNION ALL
+ SELECT 'rationale_change','next',accepted.project_id,max(accepted.event_sequence,accepted.superseded_event_sequence),
+  'accepted_assessment',accepted.id,'delivery_revised',-1,accepted.state_revision,accepted.content_sha256,''
+ FROM accepted WHERE accepted.changed_since
+  AND accepted.superseded_assessment_id IS NOT NULL AND accepted.superseded_event_sequence IS NOT NULL
+  AND accepted.superseded_content_sha256 IS NOT NULL AND accepted.superseded_state_revision IS NOT NULL
+ UNION ALL
+ SELECT 'rationale_change','later',accepted.project_id,accepted.event_sequence,
+  'accepted_assessment',accepted.id,'effect',effect.ordinal,accepted.state_revision,accepted.content_sha256,''
+ FROM accepted JOIN outcome_assessment_effects effect ON effect.assessment_id=accepted.id
+ WHERE accepted.changed_since
+),
+project_ranked AS (
+ SELECT raw.section,raw.urgency,raw.project_id,raw.source_event_sequence,raw.source_kind,
+  raw.source_id,raw.variant,raw.child_ordinal,raw.source_revision,raw.content_sha256,raw.summary,
+  count(*) OVER (PARTITION BY raw.section) AS section_total,
+  CASE raw.urgency WHEN 'now' THEN 0 WHEN 'next' THEN 1 ELSE 2 END AS urgency_order,
+  row_number() OVER (
+   PARTITION BY raw.section,raw.urgency,raw.project_id
+   ORDER BY raw.source_event_sequence DESC,raw.source_kind,raw.source_id,raw.variant,raw.child_ordinal
+  ) AS project_rank
+ FROM raw
+),
+ranked AS (
+ SELECT project_ranked.section, project_ranked.urgency, project_ranked.project_id, project_ranked.source_event_sequence, project_ranked.source_kind, project_ranked.source_id, project_ranked.variant, project_ranked.child_ordinal, project_ranked.source_revision, project_ranked.content_sha256, project_ranked.summary, project_ranked.section_total, project_ranked.urgency_order, project_ranked.project_rank,
+  row_number() OVER (
+   PARTITION BY section
+   ORDER BY urgency_order,project_rank,project_id,source_event_sequence DESC,source_kind,source_id,variant,child_ordinal
+  ) AS global_rank
+ FROM project_ranked
+)
+SELECT section,urgency,project_id,source_event_sequence,source_kind,source_id,variant,
+ child_ordinal,source_revision,content_sha256,summary,section_total
+FROM ranked WHERE global_rank<=128
+ORDER BY section,global_rank
+LIMIT 896
 `
 
-type ListUnassessedOutcomeCommitmentsParams struct {
-	WorkspaceID string `json:"workspace_id"`
-	EventCursor int64  `json:"event_cursor"`
-	ProjectID   string `json:"project_id"`
-	ObjectiveID string `json:"objective_id"`
-	TaskID      string `json:"task_id"`
-}
-
-type ListUnassessedOutcomeCommitmentsRow struct {
-	ID            string `json:"id"`
+type ListStaticManagementBriefingCandidateSeedsParams struct {
+	SinceSequence int64  `json:"since_sequence"`
+	WorkspaceID   string `json:"workspace_id"`
+	EventCursor   int64  `json:"event_cursor"`
 	ProjectID     string `json:"project_id"`
 	ObjectiveID   string `json:"objective_id"`
 	TaskID        string `json:"task_id"`
-	Title         string `json:"title"`
-	ContentSha256 string `json:"content_sha256"`
-	EventSequence int64  `json:"event_sequence"`
 }
 
-func (q *Queries) ListUnassessedOutcomeCommitments(ctx context.Context, arg ListUnassessedOutcomeCommitmentsParams) ([]ListUnassessedOutcomeCommitmentsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listUnassessedOutcomeCommitments,
+type ListStaticManagementBriefingCandidateSeedsRow struct {
+	Section             string `json:"section"`
+	Urgency             string `json:"urgency"`
+	ProjectID           string `json:"project_id"`
+	SourceEventSequence int64  `json:"source_event_sequence"`
+	SourceKind          string `json:"source_kind"`
+	SourceID            string `json:"source_id"`
+	Variant             string `json:"variant"`
+	ChildOrdinal        int64  `json:"child_ordinal"`
+	SourceRevision      int64  `json:"source_revision"`
+	ContentSha256       string `json:"content_sha256"`
+	Summary             string `json:"summary"`
+	SectionTotal        int64  `json:"section_total"`
+}
+
+// Candidate seed queries calculate a per-project row number for fair workspace
+// ordering, then apply a global 128-row cap per section. Each query is therefore
+// bounded independently of database and project cardinality before authenticated
+// detail expansion. section_total is counted before the cap and keeps omissions exact.
+func (q *Queries) ListStaticManagementBriefingCandidateSeeds(ctx context.Context, arg ListStaticManagementBriefingCandidateSeedsParams) ([]ListStaticManagementBriefingCandidateSeedsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listStaticManagementBriefingCandidateSeeds,
+		arg.SinceSequence,
 		arg.WorkspaceID,
 		arg.EventCursor,
 		arg.ProjectID,
@@ -2136,17 +2543,128 @@ func (q *Queries) ListUnassessedOutcomeCommitments(ctx context.Context, arg List
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListUnassessedOutcomeCommitmentsRow{}
+	items := []ListStaticManagementBriefingCandidateSeedsRow{}
 	for rows.Next() {
-		var i ListUnassessedOutcomeCommitmentsRow
+		var i ListStaticManagementBriefingCandidateSeedsRow
 		if err := rows.Scan(
-			&i.ID,
+			&i.Section,
+			&i.Urgency,
 			&i.ProjectID,
-			&i.ObjectiveID,
-			&i.TaskID,
-			&i.Title,
+			&i.SourceEventSequence,
+			&i.SourceKind,
+			&i.SourceID,
+			&i.Variant,
+			&i.ChildOrdinal,
+			&i.SourceRevision,
 			&i.ContentSha256,
-			&i.EventSequence,
+			&i.Summary,
+			&i.SectionTotal,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnassessedManagementBriefingCandidateSeeds = `-- name: ListUnassessedManagementBriefingCandidateSeeds :many
+WITH raw AS (
+ SELECT 'deviations_unmet' AS section,'now' AS urgency,commitment.project_id,
+  receipt.event_sequence AS source_event_sequence,'unassessed_commitment' AS source_kind,
+  commitment.id AS source_id,'unassessed' AS variant,-1 AS child_ordinal,1 AS source_revision,
+  commitment.content_sha256,commitment.title AS summary
+ FROM deliverable_commitments commitment
+ JOIN outcome_commitment_receipts receipt ON receipt.commitment_id=commitment.id
+ WHERE commitment.workspace_id=?1 AND receipt.event_sequence<=?2
+  AND (CAST(?3 AS TEXT)='' OR commitment.project_id=?3)
+  AND (CAST(?4 AS TEXT)='' OR commitment.objective_id=?4)
+  AND (CAST(?5 AS TEXT)='' OR commitment.task_id=?5)
+  AND NOT EXISTS(SELECT 1 FROM outcome_assessments assessment
+   WHERE assessment.commitment_id=commitment.id AND assessment.review_state='accepted')
+),
+project_ranked AS (
+ SELECT raw.section,raw.urgency,raw.project_id,raw.source_event_sequence,raw.source_kind,
+  raw.source_id,raw.variant,raw.child_ordinal,raw.source_revision,raw.content_sha256,raw.summary,
+  count(*) OVER (PARTITION BY raw.section) AS section_total,
+  CASE raw.urgency WHEN 'now' THEN 0 WHEN 'next' THEN 1 ELSE 2 END AS urgency_order,
+  row_number() OVER (
+   PARTITION BY raw.section,raw.urgency,raw.project_id
+   ORDER BY raw.source_event_sequence DESC,raw.source_kind,raw.source_id,raw.variant,raw.child_ordinal
+  ) AS project_rank
+ FROM raw
+),
+ranked AS (
+ SELECT project_ranked.section, project_ranked.urgency, project_ranked.project_id, project_ranked.source_event_sequence, project_ranked.source_kind, project_ranked.source_id, project_ranked.variant, project_ranked.child_ordinal, project_ranked.source_revision, project_ranked.content_sha256, project_ranked.summary, project_ranked.section_total, project_ranked.urgency_order, project_ranked.project_rank,
+  row_number() OVER (
+   PARTITION BY section
+   ORDER BY urgency_order,project_rank,project_id,source_event_sequence DESC,source_kind,source_id,variant,child_ordinal
+  ) AS global_rank
+ FROM project_ranked
+)
+SELECT section,urgency,project_id,source_event_sequence,source_kind,source_id,variant,
+ child_ordinal,source_revision,content_sha256,summary,section_total
+FROM ranked WHERE global_rank<=128
+ORDER BY section,global_rank
+LIMIT 896
+`
+
+type ListUnassessedManagementBriefingCandidateSeedsParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	EventCursor int64  `json:"event_cursor"`
+	ProjectID   string `json:"project_id"`
+	ObjectiveID string `json:"objective_id"`
+	TaskID      string `json:"task_id"`
+}
+
+type ListUnassessedManagementBriefingCandidateSeedsRow struct {
+	Section             string `json:"section"`
+	Urgency             string `json:"urgency"`
+	ProjectID           string `json:"project_id"`
+	SourceEventSequence int64  `json:"source_event_sequence"`
+	SourceKind          string `json:"source_kind"`
+	SourceID            string `json:"source_id"`
+	Variant             string `json:"variant"`
+	ChildOrdinal        int64  `json:"child_ordinal"`
+	SourceRevision      int64  `json:"source_revision"`
+	ContentSha256       string `json:"content_sha256"`
+	Summary             string `json:"summary"`
+	SectionTotal        int64  `json:"section_total"`
+}
+
+func (q *Queries) ListUnassessedManagementBriefingCandidateSeeds(ctx context.Context, arg ListUnassessedManagementBriefingCandidateSeedsParams) ([]ListUnassessedManagementBriefingCandidateSeedsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUnassessedManagementBriefingCandidateSeeds,
+		arg.WorkspaceID,
+		arg.EventCursor,
+		arg.ProjectID,
+		arg.ObjectiveID,
+		arg.TaskID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnassessedManagementBriefingCandidateSeedsRow{}
+	for rows.Next() {
+		var i ListUnassessedManagementBriefingCandidateSeedsRow
+		if err := rows.Scan(
+			&i.Section,
+			&i.Urgency,
+			&i.ProjectID,
+			&i.SourceEventSequence,
+			&i.SourceKind,
+			&i.SourceID,
+			&i.Variant,
+			&i.ChildOrdinal,
+			&i.SourceRevision,
+			&i.ContentSha256,
+			&i.Summary,
+			&i.SectionTotal,
 		); err != nil {
 			return nil, err
 		}
@@ -2201,41 +2719,6 @@ func (q *Queries) NextOutcomeAssessmentRevision(ctx context.Context, commitmentI
 	var next_revision int64
 	err := row.Scan(&next_revision)
 	return next_revision, err
-}
-
-const outcomeContradictionTouchesScopeDecision = `-- name: OutcomeContradictionTouchesScopeDecision :one
-SELECT EXISTS(
- SELECT 1 FROM knowledge_revisions revision
- JOIN knowledge_items item ON item.id=revision.item_id
- WHERE revision.id IN (?1,?2)
-  AND item.workspace_id=?3
-  AND (
-   (CAST(?4 AS TEXT)<>'' AND (item.task_scope_id IS NULL OR item.task_scope_id=?4))
-   OR (CAST(?4 AS TEXT)='' AND CAST(?5 AS TEXT)<>'' AND
-       (item.task_scope_id IS NULL OR item.task_scope_id IN (SELECT task.id FROM tasks task WHERE task.objective_id=?5)))
-  )
-) AS relevant
-`
-
-type OutcomeContradictionTouchesScopeDecisionParams struct {
-	LeftRevisionID  string `json:"left_revision_id"`
-	RightRevisionID string `json:"right_revision_id"`
-	WorkspaceID     string `json:"workspace_id"`
-	TaskID          string `json:"task_id"`
-	ObjectiveID     string `json:"objective_id"`
-}
-
-func (q *Queries) OutcomeContradictionTouchesScopeDecision(ctx context.Context, arg OutcomeContradictionTouchesScopeDecisionParams) (bool, error) {
-	row := q.db.QueryRowContext(ctx, outcomeContradictionTouchesScopeDecision,
-		arg.LeftRevisionID,
-		arg.RightRevisionID,
-		arg.WorkspaceID,
-		arg.TaskID,
-		arg.ObjectiveID,
-	)
-	var relevant bool
-	err := row.Scan(&relevant)
-	return relevant, err
 }
 
 const outcomeDecisionHasOpenContradiction = `-- name: OutcomeDecisionHasOpenContradiction :one

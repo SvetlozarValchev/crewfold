@@ -43,6 +43,13 @@ func TestOutcomeDecisionExpiryUsesRFC3339InstantAcrossOffsetAndFractionForms(t *
 	if len(accepted.Detail.Decisions) != 1 || !accepted.Detail.Decisions[0].Current {
 		t.Fatalf("accepted outcome decision before expiry = %#v, want current", accepted.Detail.Decisions)
 	}
+	query := ShowManagementBriefingQuery{
+		WorkspaceIdentifier: fixture.workspace.ID, ScopeType: domain.OwnerCheckpointTask, ScopeIdentifier: fixture.task.Task.ID,
+	}
+	beforeBriefing, err := storage.ShowManagementBriefing(context.Background(), query)
+	if err != nil {
+		t.Fatalf("ShowManagementBriefing(before expiry) = %v", err)
+	}
 
 	storage.clock = func() time.Time { return expiry }
 	read, err := storage.OutcomeAssessment(context.Background(), fixture.workspace.ID, accepted.Detail.Assessment.ID)
@@ -52,11 +59,12 @@ func TestOutcomeDecisionExpiryUsesRFC3339InstantAcrossOffsetAndFractionForms(t *
 	if len(read.Decisions) != 1 || read.Decisions[0].Current {
 		t.Fatalf("outcome decision at exact instant %s from offset spelling %s = %#v, want stale", expiry.Format(time.RFC3339Nano), freshUntil, read.Decisions)
 	}
-	briefing, err := storage.ShowManagementBriefing(context.Background(), ShowManagementBriefingQuery{
-		WorkspaceIdentifier: fixture.workspace.ID, ScopeType: domain.OwnerCheckpointTask, ScopeIdentifier: fixture.task.Task.ID,
-	})
+	briefing, err := storage.ShowManagementBriefing(context.Background(), query)
 	if err != nil {
 		t.Fatalf("ShowManagementBriefing(at exact expiry) = %v", err)
+	}
+	if briefing.ID == beforeBriefing.ID || briefing.Revision != beforeBriefing.Revision+1 || briefing.ContentSHA256 == beforeBriefing.ContentSHA256 {
+		t.Fatalf("freshness transition did not create one new semantic briefing: before=%#v after=%#v", beforeBriefing, briefing)
 	}
 	foundGap := false
 	for _, claim := range briefing.Claims {

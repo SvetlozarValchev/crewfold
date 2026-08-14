@@ -89,14 +89,21 @@ func (s *server) processRunWork(ctx context.Context, work store.RunWork) error {
 	providerAdapter, providerFound := s.providers[run.Provider]
 	if !runtimeFound || !providerFound {
 		message := fmt.Sprintf("configured adapters are unavailable for %s/%s", run.Runtime, run.Provider)
-		if run.Status == domain.RunRequested || run.Status == domain.RunStarting {
+		if run.Status == domain.RunRequested || run.Status == domain.RunStarting && run.RuntimeHandle == "" {
 			_, err := s.store.FailRunStart(ctx, run.ID, message, correlationID)
 			s.logRunWorkerStoreError(run.ID, "record unavailable start adapter", err)
-		} else if run.Status == domain.RunActive {
-			_, err := s.store.FailRun(ctx, run.ID, "adapter_unavailable", message, correlationID)
-			s.logRunWorkerStoreError(run.ID, "record unavailable active adapter", err)
+		} else if run.Status == domain.RunStarting || run.Status == domain.RunActive || run.Status == domain.RunStopping {
+			_, err := s.store.LoseRun(ctx, run.ID, message+"; terminal logs could not be captured safely", correlationID)
+			s.logRunWorkerStoreError(run.ID, "record lost bound runtime adapter", err)
 		}
 		return nil
+	}
+	if (run.Status == domain.RunStarting && run.RuntimeHandle != "") || run.Status == domain.RunActive || run.Status == domain.RunStopping {
+		if !s.store.RunBindingIsCurrent(run) {
+			_, recordErr := s.store.LoseRun(ctx, run.ID, "runtime binding does not belong to the current node and operation", correlationID)
+			s.logRunWorkerStoreError(run.ID, "record foreign or missing runtime binding", recordErr)
+			return nil
+		}
 	}
 
 	switch run.Status {
@@ -138,6 +145,11 @@ func (s *server) processRunWork(ctx context.Context, work store.RunWork) error {
 				}
 				_, recordErr := s.store.LoseRun(ctx, run.ID, "runtime launch outcome could not be reconciled safely: "+reconcileErr.Error(), correlationID)
 				s.logRunWorkerStoreError(run.ID, "record lost runtime start", recordErr)
+				return nil
+			}
+			if binding.RuntimeHandle != run.RuntimeHandle {
+				_, recordErr := s.store.LoseRun(ctx, run.ID, "runtime reconciliation returned a different operation binding", correlationID)
+				s.logRunWorkerStoreError(run.ID, "record mismatched runtime reconciliation", recordErr)
 				return nil
 			}
 			bindContext, cancelBind := context.WithTimeout(ctx, runAdapterCallTimeout)
@@ -187,10 +199,12 @@ func (s *server) processRunWork(ctx context.Context, work store.RunWork) error {
 			s.logRunWorkerStoreError(run.ID, "record runtime start failure", recordErr)
 			return nil
 		}
-		if _, err := s.store.RecordRunRuntimeBinding(ctx, run.ID, binding.RuntimeHandle, correlationID); err != nil {
+		boundRun, err := s.store.RecordRunRuntimeBinding(ctx, run.ID, binding.RuntimeHandle, correlationID)
+		if err != nil {
 			s.config.Logger.Error("run worker could not persist runtime binding; the durable job will reconcile", "component", "run_worker", "run_id", run.ID, "error", err)
 			return nil
 		}
+		run = boundRun
 		if err := s.runWorkerBarrier("after_runtime_launch", run); err != nil {
 			return err
 		}
@@ -252,10 +266,12 @@ func (s *server) processRunWork(ctx context.Context, work store.RunWork) error {
 			}
 		}
 		if !found {
-			s.handleRunWithoutObservation(ctx, run, snapshot, correlationID)
+			s.handleRunWithoutObservation(ctx, run, snapshot, runtimeDriver, correlationID)
 			return nil
 		}
 		accepted, missing := true, []string(nil)
+		var archive *domain.RunLogArchive
+		var logsUnavailableReason string
 		if observation.Kind == domain.ObservationCompletion {
 			if !snapshot.CompletionReady {
 				if err := s.store.DeferRunJob(ctx, run.ID, runActivePollDelay); err != nil {
@@ -264,9 +280,15 @@ func (s *server) processRunWork(ctx context.Context, work store.RunWork) error {
 				return nil
 			}
 			accepted, missing = execution.AcceptancePasses(work.Scenario.Acceptance, observation.Evidence)
+			archive, err = s.captureRunLogArchive(ctx, run, runtimeDriver, domain.RunActive)
+			if err != nil {
+				logsUnavailableReason = "terminal runtime logs could not be captured safely: " + err.Error()
+			}
+			observation.LogArchive = archive
+			observation.LogUnavailableReason = logsUnavailableReason
 		}
 		if queued {
-			_, err = s.store.ApplyQueuedRunReport(ctx, run.ID, report.ID, accepted, missing, correlationID)
+			_, err = s.store.ApplyQueuedRunReport(ctx, run.ID, report.ID, accepted, missing, archive, logsUnavailableReason, correlationID)
 		} else {
 			_, err = s.store.ApplyRunObservation(ctx, run.ID, observation, accepted, missing, correlationID)
 		}
@@ -293,7 +315,12 @@ func (s *server) processRunWork(ctx context.Context, work store.RunWork) error {
 			}
 			return nil
 		}
-		_, recordErr := s.store.MarkRunStopped(ctx, run.ID, result.Forced, result.Diagnostic, correlationID)
+		archive, archiveErr := s.captureRunLogArchive(ctx, run, runtimeDriver, domain.RunStopping)
+		logsUnavailableReason := ""
+		if archiveErr != nil {
+			logsUnavailableReason = "runtime stop was definitive but terminal logs could not be captured safely: " + archiveErr.Error()
+		}
+		_, recordErr := s.store.MarkRunStopped(ctx, run.ID, result.Forced, result.Diagnostic, archive, logsUnavailableReason, correlationID)
 		s.logRunWorkerStoreError(run.ID, "mark run stopped", recordErr)
 		return nil
 	default:
@@ -302,9 +329,19 @@ func (s *server) processRunWork(ctx context.Context, work store.RunWork) error {
 }
 
 func (s *server) handleProviderBindingFailure(ctx context.Context, run domain.Run, runtimeDriver execution.RuntimeDriver, runtimeHandle string, bindingErr error, correlationID string) {
+	current, loadErr := s.store.RunByID(ctx, run.ID)
+	if loadErr != nil || current.Status != domain.RunStarting || current.RuntimeHandle != runtimeHandle || !s.store.RunBindingIsCurrent(current) {
+		message := "provider binding failed, but runtime cleanup was refused because the durable binding is missing, foreign, changed, or no longer starting"
+		if loadErr != nil {
+			message += ": " + loadErr.Error()
+		}
+		_, recordErr := s.store.LoseRun(ctx, run.ID, message, correlationID)
+		s.logRunWorkerStoreError(run.ID, "record unsafe provider-binding cleanup", recordErr)
+		return
+	}
 	const cleanupGrace = 500 * time.Millisecond
 	stopContext, cancelStop := context.WithTimeout(ctx, cleanupGrace+runStopDeadlinePadding)
-	_, stopErr := runtimeDriver.Stop(stopContext, run.ID, runtimeHandle, execution.StopSpec{GracePeriod: cleanupGrace})
+	_, stopErr := runtimeDriver.Stop(stopContext, current.ID, current.RuntimeHandle, execution.StopSpec{GracePeriod: cleanupGrace})
 	cancelStop()
 	if ctx.Err() != nil {
 		return
@@ -319,7 +356,7 @@ func (s *server) handleProviderBindingFailure(ctx context.Context, run domain.Ru
 	s.logRunWorkerStoreError(run.ID, "record provider binding failure after runtime cleanup", recordErr)
 }
 
-func (s *server) handleRunWithoutObservation(ctx context.Context, run domain.Run, snapshot execution.RuntimeSnapshot, correlationID string) {
+func (s *server) handleRunWithoutObservation(ctx context.Context, run domain.Run, snapshot execution.RuntimeSnapshot, runtimeDriver execution.RuntimeDriver, correlationID string) {
 	var code, message string
 	switch snapshot.State {
 	case execution.RuntimeStateStarting, execution.RuntimeStateRunning:
@@ -348,8 +385,34 @@ func (s *server) handleRunWithoutObservation(ctx context.Context, run domain.Run
 		s.logRunWorkerStoreError(run.ID, "record lost runtime state", err)
 		return
 	}
-	_, err := s.store.FailRun(ctx, run.ID, code, message, correlationID)
+	archive, archiveErr := s.captureRunLogArchive(ctx, run, runtimeDriver, domain.RunActive)
+	logsUnavailableReason := ""
+	if archiveErr != nil {
+		logsUnavailableReason = "runtime outcome was definitive but terminal logs could not be captured safely: " + archiveErr.Error()
+	}
+	_, err := s.store.FailRun(ctx, run.ID, code, message, archive, logsUnavailableReason, correlationID)
 	s.logRunWorkerStoreError(run.ID, "record terminal runtime without provider observation", err)
+}
+
+func (s *server) captureRunLogArchive(ctx context.Context, run domain.Run, runtimeDriver execution.RuntimeDriver, allowedStatus string) (*domain.RunLogArchive, error) {
+	current, err := s.store.RunByID(ctx, run.ID)
+	if err != nil {
+		return nil, err
+	}
+	if current.Status != allowedStatus || current.RuntimeHandle != run.RuntimeHandle || !s.store.RunBindingIsCurrent(current) {
+		return nil, errors.New("terminal log capture requires this node's exact live runtime binding and state")
+	}
+	logsContext, cancelLogs := context.WithTimeout(ctx, runAdapterCallTimeout)
+	logs, err := runtimeDriver.Logs(logsContext, current.ID, current.RuntimeHandle, 0)
+	cancelLogs()
+	if err != nil {
+		return nil, err
+	}
+	archive, err := s.store.PrepareRunLogArchive(ctx, run.ID, logs)
+	if err != nil {
+		return nil, err
+	}
+	return &archive, nil
 }
 
 func (s *server) logRunWorkerStoreError(runID, operation string, err error) {

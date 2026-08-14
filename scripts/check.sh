@@ -108,3 +108,9 @@ printf 'Codex provider black-box acceptance\n'
 
 printf 'Claude provider and cross-provider handoff black-box acceptance\n'
 "$repo_root/test/scenarios/claude-provider/run.sh"
+
+printf 'Reproducible unpublished Linux package candidate\n'
+"$repo_root/scripts/package-linux_test.sh"
+
+printf 'Provider-free personal beta recovery and load acceptance\n'
+"$repo_root/test/scenarios/personal-beta/run.sh"

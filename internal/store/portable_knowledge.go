@@ -163,7 +163,7 @@ func (s *Store) ExportKnowledgeBundle(ctx context.Context, query ExportKnowledge
 	if query.WorkspaceIdentifier == "" || query.ProjectIdentifier == "" {
 		return KnowledgeBundleExportResult{}, invalidKnowledgeBundle("knowledge export requires workspace and project")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return KnowledgeBundleExportResult{}, storageFailure("begin portable knowledge export", err)
 	}
@@ -497,7 +497,7 @@ func (s *Store) ImportKnowledgeBundle(ctx context.Context, command ImportKnowled
 	if err != nil {
 		return KnowledgeBundleImportResult{}, storageFailure("hash portable knowledge import", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return KnowledgeBundleImportResult{}, storageFailure("begin portable knowledge import", err)
 	}

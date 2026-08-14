@@ -59,7 +59,7 @@ func TestM19ResumeRunReplayAfterLeaseExpiryHasNoReconciliationSideEffect(t *test
 	if err != nil {
 		t.Fatalf("RequestRunStop() error = %v", err)
 	}
-	stopped, err := storage.MarkRunStopped(context.Background(), stopRequested.Detail.Run.ID, false, "stopped for replay proof", "resume-replay-stopped")
+	stopped, err := storage.MarkRunStopped(context.Background(), stopRequested.Detail.Run.ID, false, "stopped for replay proof", prepareTestRunLogArchive(t, storage, stopRequested.Detail.Run.ID), "", "resume-replay-stopped")
 	if err != nil || stopped.Run.Status != domain.RunStopped || stopped.Task.AssignmentID == "" {
 		t.Fatalf("MarkRunStopped() = %#v, %v", stopped, err)
 	}

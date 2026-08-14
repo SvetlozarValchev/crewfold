@@ -40,7 +40,7 @@ func (s *Store) InitWorkspace(ctx context.Context, command InitWorkspaceCommand)
 	}
 
 	requestHash := hashWorkspaceInit(name)
-	transaction, err := s.db.BeginTx(ctx, nil)
+	transaction, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return WorkspaceInitResult{}, storageFailure("begin workspace initialization", err)
 	}
@@ -203,7 +203,7 @@ func lookupIdempotency(ctx context.Context, transaction *sql.Tx, key, command, r
 // still repeats the lookup in its write transaction after reconciliation to
 // close races with another caller using the same key.
 func (s *Store) lookupIdempotencyBeforeEffects(ctx context.Context, key, command, requestHash string, target any) (bool, error) {
-	transaction, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	transaction, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return false, storageFailure("begin idempotency replay lookup", err)
 	}

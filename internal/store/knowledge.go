@@ -52,7 +52,7 @@ func (s *Store) ProposeKnowledge(ctx context.Context, command ProposeKnowledgeCo
 	if err != nil {
 		return KnowledgeMutationResult{}, storageFailure("hash knowledge proposal", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return KnowledgeMutationResult{}, storageFailure("begin knowledge proposal", err)
 	}
@@ -255,7 +255,7 @@ func (s *Store) decideKnowledge(ctx context.Context, action, workspaceIdentifier
 	if err != nil {
 		return KnowledgeMutationResult{}, storageFailure("hash knowledge decision", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return KnowledgeMutationResult{}, storageFailure("begin knowledge decision", err)
 	}

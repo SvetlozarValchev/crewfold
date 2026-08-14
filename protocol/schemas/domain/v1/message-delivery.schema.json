@@ -15,7 +15,7 @@
     "read_at": {"type": "string", "format": "date-time"},
     "acknowledged_at": {"type": "string", "format": "date-time"},
     "delivered_run_id": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
-    "wake_status": {"enum": ["not_requested", "pending", "leased", "succeeded", "failed"]},
+    "wake_status": {"enum": ["not_requested", "pending", "leased", "succeeded", "failed", "failed_unknown"]},
     "wake_diagnostic": {"type": "string", "maxLength": 1024}
   }
 }

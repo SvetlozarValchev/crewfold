@@ -14,7 +14,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 "$repo_root/scripts/sqlc-schema.sh" "$schema_dir"
-sed "s#schema: \"internal/store/migrations\"#schema: \"$schema_relative\"#" \
+sed "s#schema: \"internal/store/baseline/current.sql\"#schema: \"$schema_relative/current.sql\"#" \
     "$repo_root/sqlc.yaml" > "$config_file"
 "$repo_root/scripts/sqlc.sh" generate -f "$config_file"
 

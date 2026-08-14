@@ -56,12 +56,12 @@ func (s *server) runLeaseReconciliationSweep(ctx context.Context) {
 		}
 		pass := s.leaseReconcilePass.Add(1)
 		correlationID := fmt.Sprintf("daemon-lease-%d-%d-%s", s.startedAt.UnixNano(), pass, workspace.ID)
-		assignments, assignmentErr := s.store.ReconcileExpiredAssignments(ctx, workspace.ID, correlationID+"-assignments")
+		assignments, assignmentErr := s.store.ReconcileExpiredAssignmentsBatch(ctx, workspace.ID, correlationID+"-assignments", store.MaximumLeaseReconciliationBatchLimit)
 		if assignmentErr != nil {
 			s.config.Logger.Error("assignment lease reconciliation failed", "component", "lease_reconciler", "workspace_id", workspace.ID, "error", assignmentErr)
 			continue
 		}
-		claims, claimErr := s.store.ReconcileExpiredClaims(ctx, workspace.ID, correlationID+"-claims")
+		claims, claimErr := s.store.ReconcileExpiredClaimsBatch(ctx, workspace.ID, correlationID+"-claims", store.MaximumLeaseReconciliationBatchLimit)
 		if claimErr != nil {
 			s.config.Logger.Error("claim lease reconciliation failed", "component", "lease_reconciler", "workspace_id", workspace.ID, "error", claimErr)
 			continue

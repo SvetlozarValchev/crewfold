@@ -7,8 +7,8 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M17 are complete**. Evidence is recorded in the [M0
-review](reviews/buildable-repository.md), [M1
+Current status: **M0 through M19 are complete; M20 is active**. Evidence is
+recorded in the [M0 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
 review](reviews/projects-checkouts.md). [M4 evidence](reviews/durable-coordination.md)
@@ -79,6 +79,12 @@ restart-safe bounded projection, exact claim provenance, current-only briefing
 truth, and the complete integrity, race, and public-scenario gate. Its
 implementation commit is `2e7ee9882173a91a7997dead40aaccd091fcb901`.
 
+M19's [passed operator-TUI review](reviews/operator-tui.md) records the Go-native
+dashboard, exact canonical-read and applied-cursor boundary, owner-reviewed
+interventions, terminal safety, restart/reconnect behavior, bounded resources,
+and the complete provider-free public scenario. Its implementation commit is
+`12cc6e147a6d5ffc92c15708656fecdcaec3d98c`.
+
 ## Sequence
 
 | Milestone | Increment | Demonstrable outcome | Depends on |
@@ -102,7 +108,7 @@ implementation commit is `2e7ee9882173a91a7997dead40aaccd091fcb901`.
 | M16 ✓ | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
 | M17 ✓ | Local checks/check-watch capability | Route fresh check evidence without granting merge authority | M16 |
 | M18 ✓ | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
-| M19 | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
+| M19 ✓ | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
 | M20 | Personal beta | Back up, restore, verify current-baseline integrity, and load-test 100 registered agent definitions | M19 |
 | M21 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M20 |
 
@@ -192,8 +198,13 @@ intervenable without polling panes.
 ### Personal beta — M20
 
 One developer can operate and recover the system at the target of roughly 100
-registered agent definitions with bounded active concurrency. Their role strings
-remain arbitrary descriptive labels rather than an authority taxonomy.
+registered agent definitions, 1,000 tasks, and 100,000 events with bounded active
+concurrency. Recovery is a path-addressed quiescent database-and-artifact cut,
+not a clone of node keys, capabilities, or external runtime sessions. A restored
+directory remains inert until the owner confirms the source is retired and
+activates it with a fresh node key. Role and purpose strings remain arbitrary
+descriptive labels rather than an authority taxonomy. The exact contract is
+[ADR-0019](decisions/0019-personal-scale-hardening-and-recovery.md).
 
 ### Public release candidate — M21
 
@@ -248,12 +259,20 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M19 is active. It adds one Go-native terminal dashboard launched with
-`crewfold ui`. The dashboard consumes the exact M18 briefing and canonical local
-API records, follows the durable event cursor for invalidation and reconnect,
-defaults to read-only navigation, and submits confirmed interventions through the
-same typed APIs as the CLI. Herdr remains an explicit attach target rather than a
-second control surface.
+M20 is active. It freezes one exact current baseline, full online health and
+offline repair diagnosis, SQLite online backup into a quiescent private bundle,
+source-independent verification and restore-to-new-directory, explicit
+source-retired activation, node-bound live runtime identity, immutable bounded
+terminal logs, admission/backpressure limits, and the deterministic
+`personal-100` load/fault/endurance gate. Bundle paths are explicit; there is no
+backup-ID registry, old-baseline conversion, in-place restore, cloned node
+authority, or role/purpose authorization.
+
+M19 is complete at implementation commit
+`12cc6e147a6d5ffc92c15708656fecdcaec3d98c`; its
+[passed review](reviews/operator-tui.md) records exact canonical read and cursor
+semantics, owner-reviewed interventions, reconnect and terminal safety, resource
+bounds, race coverage, and the real provider-free terminal scenario.
 
 M18 is complete at implementation commit
 `2e7ee9882173a91a7997dead40aaccd091fcb901`; its

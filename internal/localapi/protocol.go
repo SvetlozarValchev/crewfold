@@ -81,6 +81,7 @@ const (
 	MethodRunList               = "run.list"
 	MethodRunResume             = "run.resume"
 	MethodRunStop               = "run.stop"
+	MethodRunLostResolve        = "run.lost.resolve"
 	MethodRunLogs               = "run.logs"
 	MethodRunPrompt             = "run.prompt"
 	MethodRunInterrupt          = "run.interrupt"
@@ -152,6 +153,7 @@ const (
 	ParticipantThreadSchema         = "urn:crewfold:schema:local-api:participant-thread-result:v1"
 	ThreadShowSchema                = "urn:crewfold:schema:local-api:thread-show-result:v1"
 	RunMutationSchema               = "urn:crewfold:schema:local-api:run-mutation-result:v1"
+	RunLossResolutionSchema         = "urn:crewfold:schema:local-api:run-loss-resolution-result:v1"
 	RunShowSchema                   = "urn:crewfold:schema:local-api:run-show-result:v1"
 	RunListSchema                   = "urn:crewfold:schema:local-api:run-list-result:v1"
 	RunLogsSchema                   = "urn:crewfold:schema:local-api:run-logs-result:v1"
@@ -233,14 +235,15 @@ type StopResult struct {
 }
 
 type DatabaseStatusResult struct {
-	Schema              string `json:"schema"`
-	Type                string `json:"type"`
-	Status              string `json:"status"`
-	SchemaVersion       int    `json:"schema_version"`
-	LatestSchemaVersion int    `json:"latest_schema_version"`
-	JournalMode         string `json:"journal_mode"`
-	ForeignKeys         bool   `json:"foreign_keys"`
-	IntegrityCheck      string `json:"integrity_check"`
+	Schema         string `json:"schema"`
+	Type           string `json:"type"`
+	Status         string `json:"status"`
+	SchemaVersion  int    `json:"schema_version"`
+	BaselineSHA256 string `json:"baseline_sha256"`
+	CatalogSHA256  string `json:"catalog_sha256"`
+	JournalMode    string `json:"journal_mode"`
+	ForeignKeys    bool   `json:"foreign_keys"`
+	IntegrityCheck string `json:"integrity_check"`
 }
 
 type WorkspaceInitParams struct {
@@ -1177,6 +1180,15 @@ type RunStopParams struct {
 	IdempotencyKey    string `json:"idempotency_key"`
 }
 
+type RunLostResolveParams struct {
+	Workspace               string `json:"workspace"`
+	Run                     string `json:"run"`
+	ExpectedRevision        int64  `json:"expected_revision"`
+	Note                    string `json:"note"`
+	RuntimeRetiredConfirmed bool   `json:"runtime_retired_confirmed"`
+	IdempotencyKey          string `json:"idempotency_key"`
+}
+
 type RunLogsParams struct {
 	Workspace string `json:"workspace"`
 	Run       string `json:"run"`
@@ -1199,6 +1211,14 @@ type RunMutationResult struct {
 	Type          string           `json:"type"`
 	Detail        domain.RunDetail `json:"detail"`
 	EventSequence int64            `json:"event_sequence"`
+}
+
+type RunLossResolutionResult struct {
+	Schema        string                   `json:"schema"`
+	Type          string                   `json:"type"`
+	Detail        domain.RunDetail         `json:"detail"`
+	Resolution    domain.RunLossResolution `json:"resolution"`
+	EventSequence int64                    `json:"event_sequence"`
 }
 
 type RunShowResult struct {

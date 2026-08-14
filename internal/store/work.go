@@ -26,6 +26,10 @@ const (
 	taskCancelled                     = "task.cancelled"
 	taskAssignmentExpired             = "task.assignment_expired"
 	ownerTaskCancellationIntentReason = "task cancelled by local owner"
+	// MaximumLeaseReconciliationBatchLimit bounds each daemon-owned lease
+	// transaction. Command paths that require complete reconciliation continue to
+	// use ReconcileExpiredAssignments without a batch limit.
+	MaximumLeaseReconciliationBatchLimit = 32
 )
 
 func (s *Store) CreateAgent(ctx context.Context, command CreateAgentCommand) (MutationResult[domain.AgentDefinition], error) {
@@ -52,7 +56,7 @@ func (s *Store) CreateAgent(ctx context.Context, command CreateAgentCommand) (Mu
 	if err != nil {
 		return MutationResult[domain.AgentDefinition]{}, storageFailure("hash agent creation", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.AgentDefinition]{}, storageFailure("begin agent creation", err)
 	}
@@ -124,7 +128,7 @@ func (s *Store) UpdateAgent(ctx context.Context, command UpdateAgentCommand) (Mu
 	if err != nil {
 		return MutationResult[domain.AgentDefinition]{}, storageFailure("hash agent update", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.AgentDefinition]{}, storageFailure("begin agent update", err)
 	}
@@ -205,7 +209,7 @@ func (s *Store) CreateObjective(ctx context.Context, command CreateObjectiveComm
 	if err != nil {
 		return MutationResult[domain.Objective]{}, storageFailure("hash objective creation", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.Objective]{}, storageFailure("begin objective creation", err)
 	}
@@ -266,7 +270,7 @@ func (s *Store) UpdateObjective(ctx context.Context, command UpdateObjectiveComm
 	if err != nil {
 		return MutationResult[domain.Objective]{}, storageFailure("hash objective update", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.Objective]{}, storageFailure("begin objective update", err)
 	}
@@ -343,7 +347,7 @@ func (s *Store) CreateTask(ctx context.Context, command CreateTaskCommand) (Task
 	if err != nil {
 		return TaskMutationResult{}, storageFailure("hash task creation", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return TaskMutationResult{}, storageFailure("begin task creation", err)
 	}
@@ -597,7 +601,7 @@ func (s *Store) mutateTask(ctx context.Context, commandName, key, correlationID 
 	if err != nil {
 		return TaskMutationResult{}, storageFailure("hash task mutation", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return TaskMutationResult{}, storageFailure("begin task mutation", err)
 	}
@@ -758,10 +762,24 @@ func (s *Store) TaskDetail(ctx context.Context, workspaceIdentifier, taskID stri
 }
 
 func (s *Store) ReconcileExpiredAssignments(ctx context.Context, workspaceIdentifier, correlationID string) (int, error) {
+	return s.reconcileExpiredAssignments(ctx, workspaceIdentifier, correlationID, 0)
+}
+
+// ReconcileExpiredAssignmentsBatch advances at most limit elapsed assignments.
+// Repeated calls drain the stable lease-expiry/id order without a persisted
+// cursor because each committed row leaves the active candidate set.
+func (s *Store) ReconcileExpiredAssignmentsBatch(ctx context.Context, workspaceIdentifier, correlationID string, limit int) (int, error) {
+	if limit < 1 || limit > MaximumLeaseReconciliationBatchLimit {
+		return 0, &Error{Code: CodeInvalidTask, Message: fmt.Sprintf("assignment reconciliation limit must be between 1 and %d", MaximumLeaseReconciliationBatchLimit)}
+	}
+	return s.reconcileExpiredAssignments(ctx, workspaceIdentifier, correlationID, limit)
+}
+
+func (s *Store) reconcileExpiredAssignments(ctx context.Context, workspaceIdentifier, correlationID string, limit int) (int, error) {
 	if strings.TrimSpace(correlationID) == "" {
 		correlationID = "lease-reconciliation"
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return 0, storageFailure("begin assignment reconciliation", err)
 	}
@@ -770,7 +788,7 @@ func (s *Store) ReconcileExpiredAssignments(ctx context.Context, workspaceIdenti
 	if err != nil {
 		return 0, err
 	}
-	count, err := expireAssignmentsInTransaction(ctx, tx, workspace.ID, s.clock().UTC(), correlationID)
+	count, err := expireAssignmentsInTransactionLimit(ctx, tx, workspace.ID, s.clock().UTC(), correlationID, limit)
 	if err != nil {
 		return 0, err
 	}
@@ -781,7 +799,11 @@ func (s *Store) ReconcileExpiredAssignments(ctx context.Context, workspaceIdenti
 }
 
 func expireAssignmentsInTransaction(ctx context.Context, tx *sql.Tx, workspaceID string, now time.Time, correlationID string) (int, error) {
-	rows, err := tx.QueryContext(ctx, `
+	return expireAssignmentsInTransactionLimit(ctx, tx, workspaceID, now, correlationID, 0)
+}
+
+func expireAssignmentsInTransactionLimit(ctx context.Context, tx *sql.Tx, workspaceID string, now time.Time, correlationID string, limit int) (int, error) {
+	query := `
 SELECT a.id, a.task_id
 FROM task_assignments a JOIN tasks t ON t.id = a.task_id
 WHERE t.workspace_id = ? AND a.status = 'active'
@@ -791,7 +813,13 @@ WHERE t.workspace_id = ? AND a.status = 'active'
       WHERE run.assignment_id = a.id
         AND run.status IN ('requested','starting','active','blocked','stopping','lost')
   )
-ORDER BY crewfold_timestamp_key(a.lease_expires_at), a.id`, workspaceID, now.Format(time.RFC3339Nano))
+ORDER BY crewfold_timestamp_key(a.lease_expires_at), a.id`
+	arguments := []any{workspaceID, now.Format(time.RFC3339Nano)}
+	if limit > 0 {
+		query += "\nLIMIT ?"
+		arguments = append(arguments, limit)
+	}
+	rows, err := tx.QueryContext(ctx, query, arguments...)
 	if err != nil {
 		return 0, storageFailure("list expired assignments", err)
 	}

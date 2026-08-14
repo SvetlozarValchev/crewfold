@@ -144,6 +144,9 @@ func (s *server) processCheckWork(ctx context.Context, work store.CheckWork) err
 				work.LaunchReceipt.PreflightFailureCode, work.LaunchReceipt.PreflightFailureDiagnostic,
 				domain.RunLogs{}, correlationID)
 		}
+		if work.Run.RuntimeHandle != "" && !s.store.CheckBindingIsCurrent(work.Run) {
+			return s.finishCheck(ctx, work, domain.CheckOutcomeUnknown, nil, false, "runtime_binding_foreign", "check runtime binding does not belong to the current node and operation", domain.RunLogs{}, correlationID)
+		}
 		if work.Run.RuntimeHandle == "" {
 			// After the pre-effect receipt commits, replay uses its exact
 			// canonical working directory. Requiring the checkout path to remain
@@ -192,7 +195,7 @@ func (s *server) processCheckWork(ctx context.Context, work store.CheckWork) err
 			}
 		} else {
 			reconcileContext, cancelReconcile := context.WithTimeout(ctx, checkAdapterCallTimeout)
-			_, err := s.checkRuntime.Reconcile(reconcileContext, work.Run.ID, work.Run.RuntimeHandle)
+			binding, err := s.checkRuntime.Reconcile(reconcileContext, work.Run.ID, work.Run.RuntimeHandle)
 			cancelReconcile()
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -204,6 +207,9 @@ func (s *server) processCheckWork(ctx context.Context, work store.CheckWork) err
 				}
 				return s.finishCheck(ctx, work, domain.CheckOutcomeUnknown, nil, false, "runtime_reconcile_unknown", err.Error(), domain.RunLogs{}, correlationID)
 			}
+			if binding.RuntimeHandle != work.Run.RuntimeHandle {
+				return s.finishCheck(ctx, work, domain.CheckOutcomeUnknown, nil, false, "runtime_binding_mismatch", "runtime reconciliation returned a different operation binding", domain.RunLogs{}, correlationID)
+			}
 		}
 		detail, err := s.store.MarkCheckRunning(ctx, work.Run.ID, correlationID)
 		if err != nil {
@@ -214,6 +220,9 @@ func (s *server) processCheckWork(ctx context.Context, work store.CheckWork) err
 
 	if work.Run.Status != domain.CheckRunRunning {
 		return nil
+	}
+	if !s.store.CheckBindingIsCurrent(work.Run) {
+		return s.finishCheck(ctx, work, domain.CheckOutcomeUnknown, nil, false, "runtime_binding_foreign", "check runtime binding does not belong to the current node and operation", domain.RunLogs{}, correlationID)
 	}
 	inspectContext, cancelInspect := context.WithTimeout(ctx, checkAdapterCallTimeout)
 	status, err := statusInspector.InspectStatus(inspectContext, work.Run.ID, work.Run.RuntimeHandle)
@@ -381,11 +390,16 @@ func boundedCheckDiagnostic(value string) string {
 }
 
 func (s *server) checkLogs(ctx context.Context, run domain.CheckRun) (domain.RunLogs, error) {
-	if run.RuntimeHandle == "" {
-		return domain.RunLogs{}, nil
+	detail, err := s.store.CheckRunDetail(ctx, run.WorkspaceID, run.ID)
+	if err != nil {
+		return domain.RunLogs{}, err
+	}
+	current := detail.Run
+	if current.Status != domain.CheckRunRunning || current.RuntimeHandle == "" || current.RuntimeHandle != run.RuntimeHandle || !s.store.CheckBindingIsCurrent(current) {
+		return domain.RunLogs{}, errors.New("check log capture requires this node's exact running operation binding")
 	}
 	logsContext, cancelLogs := context.WithTimeout(ctx, checkAdapterCallTimeout)
-	logs, err := s.checkRuntime.Logs(logsContext, run.ID, run.RuntimeHandle, 0)
+	logs, err := s.checkRuntime.Logs(logsContext, current.ID, current.RuntimeHandle, 0)
 	cancelLogs()
 	if err != nil {
 		return domain.RunLogs{}, err

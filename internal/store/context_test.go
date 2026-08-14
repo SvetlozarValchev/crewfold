@@ -907,7 +907,7 @@ func TestContextPacketBindingReportsArtifactsAndScopeAreDurable(t *testing.T) {
 	if err != nil || !found || pending.ID != report.ID {
 		t.Fatalf("NextPendingRunReport() = %#v, %t, %v", pending, found, err)
 	}
-	applied, err := storage.ApplyQueuedRunReport(context.Background(), active.Run.ID, pending.ID, true, nil, "worker-apply-scoped")
+	applied, err := storage.ApplyQueuedRunReport(context.Background(), active.Run.ID, pending.ID, true, nil, nil, "", "worker-apply-scoped")
 	if err != nil || applied.Run.StepCursor != 1 {
 		t.Fatalf("ApplyQueuedRunReport() = %#v, %v", applied, err)
 	}
@@ -931,7 +931,7 @@ func TestContextPacketBindingReportsArtifactsAndScopeAreDurable(t *testing.T) {
 	if err != nil || !found || pendingCompletion.ID != completionReport.ID {
 		t.Fatalf("NextPendingRunReport(completion) = %#v, %t, %v", pendingCompletion, found, err)
 	}
-	completed, err := storage.ApplyQueuedRunReport(context.Background(), active.Run.ID, pendingCompletion.ID, true, nil, "worker-apply-authenticated-completion")
+	completed, err := storage.ApplyQueuedRunReport(context.Background(), active.Run.ID, pendingCompletion.ID, true, nil, prepareTestRunLogArchive(t, storage, active.Run.ID), "", "worker-apply-authenticated-completion")
 	if err != nil || completed.Run.Status != domain.RunCompleted || completed.Task.Status != domain.TaskCompleted || completed.Handoff == nil {
 		t.Fatalf("ApplyQueuedRunReport(completion) = %#v, %v", completed, err)
 	}
@@ -1027,7 +1027,7 @@ func TestRunCapabilityExpiresAndBecomesInactiveAfterStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RequestRunStop() error = %v", err)
 	}
-	if _, err := secondStorage.MarkRunStopped(context.Background(), stopping.Detail.Run.ID, false, "stopped", "worker-stopped-scoped"); err != nil {
+	if _, err := secondStorage.MarkRunStopped(context.Background(), stopping.Detail.Run.ID, false, "stopped", prepareTestRunLogArchive(t, secondStorage, stopping.Detail.Run.ID), "", "worker-stopped-scoped"); err != nil {
 		t.Fatalf("MarkRunStopped() error = %v", err)
 	}
 	if _, err := secondStorage.AuthorizeRunCapability(context.Background(), second.Detail.Run.ID); ErrorCode(err) != CodeCapabilityInactive {

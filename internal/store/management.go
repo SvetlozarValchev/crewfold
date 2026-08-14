@@ -89,11 +89,11 @@ const schedulingIntentRelevantWakeSQL = `EXISTS (
               AND newer_receipt.condition_key=newer_action.condition_key
               AND newer_receipt.event_sequence>deferred_receipt.event_sequence)
           AND json_extract(deferred_action.constraint_snapshot_json,'$.failing_dimensions[0]')
-            IN ('workspace_active_runs','workspace_starting_runs','project_active_runs',
-              'provider_active_runs','agent_active_runs')
+            IN ('node_unresolved','workspace_starting','workspace_unresolved',
+              'project_unresolved','provider_unresolved','agent_active_runs')
       ))
       OR (event.entity_type='run'
-        AND event.type IN ('run.started','run.completion_proposed','run.completed','run.start_failed','run.failed','run.stopped','run.lost')
+        AND event.type IN ('run.started','run.completion_proposed','run.completed','run.start_failed','run.failed','run.stopped','run.lost','run.lost_resolved')
         AND EXISTS (
           SELECT 1 FROM supervisor_actions deferred_action
           JOIN supervisor_action_receipts deferred_receipt ON deferred_receipt.action_id=deferred_action.id
@@ -106,18 +106,18 @@ const schedulingIntentRelevantWakeSQL = `EXISTS (
                 AND newer_receipt.condition_key=newer_action.condition_key
                 AND newer_receipt.event_sequence>deferred_receipt.event_sequence)
             AND (
-              (json_extract(deferred_action.constraint_snapshot_json,'$.failing_dimensions[0]')='workspace_active_runs'
-                AND event.type IN ('run.completion_proposed','run.completed','run.start_failed','run.failed','run.stopped'))
-              OR (json_extract(deferred_action.constraint_snapshot_json,'$.failing_dimensions[0]')='workspace_starting_runs'
+              (json_extract(deferred_action.constraint_snapshot_json,'$.failing_dimensions[0]') IN ('node_unresolved','workspace_unresolved')
+                AND event.type IN ('run.completion_proposed','run.completed','run.start_failed','run.failed','run.stopped','run.lost_resolved'))
+              OR (json_extract(deferred_action.constraint_snapshot_json,'$.failing_dimensions[0]')='workspace_starting'
                 AND event.type IN ('run.started','run.start_failed','run.failed','run.stopped','run.lost'))
-              OR (json_extract(deferred_action.constraint_snapshot_json,'$.failing_dimensions[0]')='project_active_runs'
-                AND event.type IN ('run.completion_proposed','run.completed','run.start_failed','run.failed','run.stopped')
-                AND changed_run.project_id=json_extract(deferred_action.constraint_snapshot_json,'$.project_active_runs.scope'))
-              OR (json_extract(deferred_action.constraint_snapshot_json,'$.failing_dimensions[0]')='provider_active_runs'
-                AND event.type IN ('run.completion_proposed','run.completed','run.start_failed','run.failed','run.stopped')
-                AND changed_run.provider=json_extract(deferred_action.constraint_snapshot_json,'$.provider_active_runs.scope'))
+              OR (json_extract(deferred_action.constraint_snapshot_json,'$.failing_dimensions[0]')='project_unresolved'
+                AND event.type IN ('run.completion_proposed','run.completed','run.start_failed','run.failed','run.stopped','run.lost_resolved')
+                AND changed_run.project_id=json_extract(deferred_action.constraint_snapshot_json,'$.project_unresolved.scope'))
+              OR (json_extract(deferred_action.constraint_snapshot_json,'$.failing_dimensions[0]')='provider_unresolved'
+                AND event.type IN ('run.completion_proposed','run.completed','run.start_failed','run.failed','run.stopped','run.lost_resolved')
+                AND changed_run.provider=json_extract(deferred_action.constraint_snapshot_json,'$.provider_unresolved.scope'))
               OR (json_extract(deferred_action.constraint_snapshot_json,'$.failing_dimensions[0]')='agent_active_runs'
-                AND event.type IN ('run.completion_proposed','run.completed','run.start_failed','run.failed','run.stopped')
+                AND event.type IN ('run.completion_proposed','run.completed','run.start_failed','run.failed','run.stopped','run.lost_resolved')
                 AND changed_run.agent_id=json_extract(deferred_action.constraint_snapshot_json,'$.agent_active_runs.scope'))
               OR (json_extract(deferred_action.constraint_snapshot_json,'$.failing_dimensions[0]')='checkout'
                 AND event.type IN ('run.completion_proposed','run.completed','run.start_failed','run.failed','run.stopped')
@@ -279,7 +279,7 @@ func (s *Store) CreateLaunchProfile(ctx context.Context, command CreateLaunchPro
 	if err != nil {
 		return MutationResult[domain.LaunchProfile]{}, storageFailure("hash launch profile creation", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.LaunchProfile]{}, storageFailure("begin launch profile creation", err)
 	}
@@ -416,7 +416,7 @@ func (s *Store) RetireLaunchProfile(ctx context.Context, command RetireLaunchPro
 	if err != nil {
 		return MutationResult[domain.LaunchProfile]{}, storageFailure("hash launch profile retirement", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.LaunchProfile]{}, storageFailure("begin launch profile retirement", err)
 	}
@@ -549,7 +549,7 @@ func (s *Store) InvokeManager(ctx context.Context, command InvokeManagerCommand)
 	if err != nil {
 		return ManagerInvocationResult{}, storageFailure("hash manager invocation", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return ManagerInvocationResult{}, storageFailure("begin manager invocation", err)
 	}
@@ -644,6 +644,9 @@ func (s *Store) InvokeManager(ctx context.Context, command InvokeManagerCommand)
 	}
 	if activeForAgent >= agent.MaxConcurrency {
 		return ManagerInvocationResult{}, &Error{Code: CodePlacementUnavailable, Message: "manager agent has reached its exact concurrency limit"}
+	}
+	if err := s.enforceExecutionCapacity(ctx, tx, workspace.ID, task.ProjectID, profile.Provider); err != nil {
+		return ManagerInvocationResult{}, err
 	}
 	checkout, err := selectRunCheckout(ctx, tx, task.ProjectID, profile.CheckoutID)
 	if err != nil {
@@ -782,7 +785,7 @@ func (s *Store) CreateManagerGrant(ctx context.Context, command CreateManagerGra
 	if err != nil {
 		return MutationResult[domain.ManagerGrant]{}, storageFailure("hash manager grant creation", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.ManagerGrant]{}, storageFailure("begin manager grant creation", err)
 	}
@@ -932,7 +935,7 @@ func (s *Store) RevokeManagerGrant(ctx context.Context, command RevokeManagerGra
 	if err != nil {
 		return MutationResult[domain.ManagerGrant]{}, storageFailure("hash manager grant revocation", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.ManagerGrant]{}, storageFailure("begin manager grant revocation", err)
 	}
@@ -1048,7 +1051,7 @@ func (s *Store) SubmitManagerProposal(ctx context.Context, command SubmitManager
 	if err != nil {
 		return ManagerProposalMutationResult{}, storageFailure("hash manager proposal submission", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return ManagerProposalMutationResult{}, storageFailure("begin manager proposal submission", err)
 	}
@@ -1205,7 +1208,7 @@ func (s *Store) decideManagerProposal(ctx context.Context, command AcceptManager
 	if err != nil {
 		return ManagerProposalMutationResult{}, storageFailure("hash manager proposal decision", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return ManagerProposalMutationResult{}, storageFailure("begin manager proposal decision", err)
 	}
@@ -1710,7 +1713,7 @@ func (s *Store) ConfigureSupervisorPolicy(ctx context.Context, command Configure
 	if err != nil {
 		return MutationResult[domain.SupervisorPolicy]{}, storageFailure("hash supervisor policy", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return MutationResult[domain.SupervisorPolicy]{}, storageFailure("begin supervisor policy configuration", err)
 	}
@@ -1839,7 +1842,7 @@ func (s *Store) RunSupervisor(ctx context.Context, command RunSupervisorCommand)
 	if err != nil {
 		return SupervisorRunResult{}, storageFailure("hash supervisor run", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return SupervisorRunResult{}, storageFailure("begin supervisor run", err)
 	}
@@ -2128,7 +2131,11 @@ ORDER BY run.updated_at,run.id LIMIT ?`, workspace.ID, command.Limit-len(actions
 
 func isSupervisorCapacityError(err error) bool {
 	var typed *Error
-	return errors.As(err, &typed) && (typed.Code == CodePlacementUnavailable || typed.Code == CodeSchedulingPaused || typed.Code == CodeClaimConflict)
+	if errors.As(err, &typed) && (typed.Code == CodePlacementUnavailable || typed.Code == CodeSchedulingPaused || typed.Code == CodeClaimConflict || typed.Code == CodeExecutionCapacityExhausted) {
+		return true
+	}
+	_, capacity := ExecutionCapacityErrorDetails(err)
+	return capacity
 }
 
 type supervisorDeferralError struct {
@@ -2277,7 +2284,7 @@ ORDER BY run.updated_at,run.id LIMIT ?`,
 		if err != nil || nowTime.Before(failedAt.Add(time.Duration(policy.RetryCooldownSeconds)*time.Second)) {
 			continue
 		}
-		capacity, err := supervisorRetryCapacityAvailable(ctx, tx, policy, run, authority.profile)
+		capacity, err := s.supervisorRetryCapacityAvailable(ctx, tx, policy, run, authority.profile)
 		if err != nil {
 			return err
 		}
@@ -2469,7 +2476,13 @@ AND claim.target=requirement.target AND claim.mode=requirement.mode AND claim.co
 	return supervisorRetryAuthority{profile: profile, intentID: intentID, retryCount: retryCount}, assignmentOK == 1 && missingClaims == 0 && retryCount < policy.AutoRetryLimit, nil
 }
 
-func supervisorRetryCapacityAvailable(ctx context.Context, tx *sql.Tx, policy domain.SupervisorPolicy, run domain.Run, profile domain.LaunchProfile) (bool, error) {
+func (s *Store) supervisorRetryCapacityAvailable(ctx context.Context, tx *sql.Tx, policy domain.SupervisorPolicy, run domain.Run, profile domain.LaunchProfile) (bool, error) {
+	if err := s.enforceExecutionCapacity(ctx, tx, run.WorkspaceID, run.ProjectID, profile.Provider); err != nil {
+		if ErrorCode(err) == CodeExecutionCapacityExhausted {
+			return false, nil
+		}
+		return false, err
+	}
 	reserved := "('requested','starting','active','blocked','stopping','lost')"
 	counts := make([]int, 5)
 	queries := []struct {
@@ -2970,7 +2983,7 @@ func (s *Store) ExplainSupervisor(ctx context.Context, query ExplainSupervisorQu
 	if err != nil {
 		return domain.SupervisorExplanation{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domain.SupervisorExplanation{}, storageFailure("begin supervisor explanation", err)
 	}
@@ -3120,7 +3133,7 @@ func (s *Store) ApprovalRequests(ctx context.Context, query ListApprovalRequests
 	if err != nil {
 		return ApprovalPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return ApprovalPage{}, storageFailure("begin approval page snapshot", err)
 	}
@@ -3199,7 +3212,7 @@ func (s *Store) decideApproval(ctx context.Context, command DecideApprovalComman
 	if err != nil {
 		return ApprovalMutationResult{}, storageFailure("hash approval decision", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
 		return ApprovalMutationResult{}, storageFailure("begin approval decision", err)
 	}
@@ -3319,6 +3332,9 @@ func (s *Store) applyApprovedRunResume(ctx context.Context, tx *sql.Tx, action *
 	if run.Revision != action.EntityRevision || run.Status != domain.RunBlocked {
 		return &Error{Code: CodeApprovalConflict, Message: "blocked run revision or state changed before approval"}
 	}
+	if !s.runBindingIsCurrent(run) {
+		return runtimeBindingUnavailable("run", run.ID)
+	}
 	var jobStatus string
 	if err := tx.QueryRowContext(ctx, `SELECT status FROM run_jobs WHERE run_id=?`, run.ID).Scan(&jobStatus); err != nil || jobStatus != "complete" {
 		return &Error{Code: CodeApprovalConflict, Message: "blocked run already has pending work", Cause: err}
@@ -3358,6 +3374,9 @@ func (s *Store) applyApprovedRunStop(ctx context.Context, tx *sql.Tx, action *do
 	}
 	if run.Revision != action.EntityRevision || (run.Status != domain.RunActive && run.Status != domain.RunBlocked) {
 		return &Error{Code: CodeApprovalConflict, Message: "run revision or actionable state changed before approved stop"}
+	}
+	if !s.runBindingIsCurrent(run) {
+		return runtimeBindingUnavailable("run", run.ID)
 	}
 	run.Status, run.StopGraceMillis, run.Revision = domain.RunStopping, 30000, run.Revision+1
 	if err := updateRunProjection(ctx, tx, run, now); err != nil {

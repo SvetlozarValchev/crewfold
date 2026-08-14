@@ -979,7 +979,7 @@ WHERE binding.run_id=?`, invoked.Detail.Run.ID).Scan(&asOfEventSequence); err !=
 		t.Fatalf("MarkRunStarted(manager) = %v", err)
 	}
 	if _, err := storage.ApplyRunObservation(ctx, invoked.Detail.Run.ID, domain.RunObservation{
-		Kind: domain.ObservationCompletion, Message: "Submitted exact bounded proposal.", Handoff: "Owner accepted the proposal.",
+		Kind: domain.ObservationCompletion, Message: "Submitted exact bounded proposal.", Handoff: "Owner accepted the proposal.", LogArchive: prepareTestRunLogArchive(t, storage, invoked.Detail.Run.ID),
 	}, true, nil, "request-adversarial-manager-completed"); err != nil {
 		t.Fatalf("ApplyRunObservation(manager completion) = %v", err)
 	}
@@ -1565,7 +1565,7 @@ func TestSupervisorMaterializesEveryNamedNonAutomaticCondition(t *testing.T) {
 		storage := openTestStore(t, t.TempDir(), Options{})
 		workspace, _, _, _, assigned := initializeRunTest(t, storage, "M16 failed condition")
 		active := startAdversarialRun(t, storage, workspace.ID, assigned, "M16-failed")
-		if _, err := storage.FailRun(context.Background(), active.Run.ID, "provider_failed", "definite provider failure", "request-M16-failed"); err != nil {
+		if _, err := storage.FailRun(context.Background(), active.Run.ID, "provider_failed", "definite provider failure", prepareTestRunLogArchive(t, storage, active.Run.ID), "", "request-M16-failed"); err != nil {
 			t.Fatalf("FailRun() = %v", err)
 		}
 		configureAdversarialSupervisor(t, storage, workspace.ID, "M16-failed-policy")
@@ -1588,7 +1588,7 @@ VALUES(?,?,?,?,?,?,'fake','fake','historical-failure','{}','[]','failed',0,'prov
 			t.Fatalf("seed historical failed run = %v", err)
 		}
 		active := startAdversarialRun(t, storage, workspace.ID, assigned, "M16-repeated-current")
-		if _, err := storage.FailRun(context.Background(), active.Run.ID, "provider_failed", "second definite provider failure", "request-M16-repeated-failed"); err != nil {
+		if _, err := storage.FailRun(context.Background(), active.Run.ID, "provider_failed", "second definite provider failure", prepareTestRunLogArchive(t, storage, active.Run.ID), "", "request-M16-repeated-failed"); err != nil {
 			t.Fatalf("FailRun(second) = %v", err)
 		}
 		configureAdversarialSupervisor(t, storage, workspace.ID, "M16-repeated-policy")
@@ -1861,7 +1861,7 @@ func acceptAdversarialSchedulingPair(t *testing.T, storage *Store, fixture manag
 		t.Fatalf("MarkRunStarted(%s manager) = %v", key, err)
 	}
 	if _, err := storage.ApplyRunObservation(context.Background(), runID, domain.RunObservation{
-		Kind: domain.ObservationCompletion, Message: "Submitted exact contention fixture.", Handoff: "Owner accepted both ready tasks.",
+		Kind: domain.ObservationCompletion, Message: "Submitted exact contention fixture.", Handoff: "Owner accepted both ready tasks.", LogArchive: prepareTestRunLogArchive(t, storage, runID),
 	}, true, nil, "request-"+key+"-completed"); err != nil {
 		t.Fatalf("ApplyRunObservation(%s manager completion) = %v", key, err)
 	}

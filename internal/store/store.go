@@ -18,19 +18,35 @@ import (
 	"github.com/ncruces/go-sqlite3/driver"
 	"github.com/ncruces/go-sqlite3/ext/fts5"
 	"github.com/ncruces/go-sqlite3/ext/hash"
+	"golang.org/x/sys/unix"
 )
 
 const databaseFilename = "crewfold.db"
+
+const (
+	// SQLite permits one writer at a time. Keeping that writer on its own
+	// connection serializes mutation admission without allowing a busy writer to
+	// consume every connection needed by WAL readers and control-plane status.
+	sqliteWriterConnections = 1
+	sqliteReaderConnections = 4
+	sqliteBusyTimeout       = 5 * time.Second
+)
+
+const databaseCreationStageName = ".crewfold.db.creating-v1"
 
 // sqliteApplicationID is the ASCII marker "CRFD" stored in SQLite's file header.
 const sqliteApplicationID = 0x43524644
 
 type Store struct {
 	db                         *sql.DB
+	writeDB                    *sql.DB
 	path                       string
+	runtimeNodeID              string
+	runtimeNodeFingerprint     string
 	mutationHook               func(string) error
 	clock                      func() time.Time
 	restoreActive              *atomic.Bool
+	runLossResolutionActive    *atomic.Bool
 	supervisorActionSealActive *atomic.Bool
 	checkMutationSealActive    *atomic.Bool
 	outcomeMutationSealActive  *atomic.Bool
@@ -39,16 +55,47 @@ type Store struct {
 
 func Open(ctx context.Context, dataDir string, options Options) (*Store, error) {
 	path := filepath.Join(dataDir, databaseFilename)
-	if err := validateDatabasePath(path); err != nil {
+	exists, err := inspectDatabasePath(path)
+	if err != nil {
 		return nil, err
 	}
+	if !exists {
+		if err := createAndPublishCurrentDatabase(ctx, path, options); err != nil {
+			return nil, err
+		}
+		if _, err := inspectDatabasePath(path); err != nil {
+			return nil, err
+		}
+	}
 
+	storage, err := openStoreFile(ctx, path, options)
+	if err != nil {
+		return nil, err
+	}
+	fail := func(openErr error) (*Store, error) {
+		_ = storage.Close()
+		return nil, openErr
+	}
+	if _, err := verifyBaselineIdentity(ctx, storage.db); err != nil {
+		return fail(err)
+	}
+	if err := storage.enableWAL(ctx); err != nil {
+		return fail(err)
+	}
+	if _, err := storage.Health(ctx); err != nil {
+		return fail(err)
+	}
+	return storage, nil
+}
+
+func openStoreFile(ctx context.Context, path string, options Options) (*Store, error) {
 	dsn := databaseDSN(path)
 	restoreActive := new(atomic.Bool)
+	runLossResolutionActive := new(atomic.Bool)
 	supervisorActionSealActive := new(atomic.Bool)
 	checkMutationSealActive := new(atomic.Bool)
 	outcomeMutationSealActive := new(atomic.Bool)
-	database, err := driver.Open(dsn, func(connection *sqlite3.Conn) error {
+	initializeConnection := func(connection *sqlite3.Conn) error {
 		if err := registerSQLiteExtensions(connection); err != nil {
 			return err
 		}
@@ -68,6 +115,16 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 		if err := connection.CreateFunction("crewfold_outcome_mutation_seal_active", 0, sqlite3.INNOCUOUS,
 			func(functionContext sqlite3.Context, _ ...sqlite3.Value) {
 				if outcomeMutationSealActive.Load() {
+					functionContext.ResultInt(1)
+					return
+				}
+				functionContext.ResultInt(0)
+			}); err != nil {
+			return err
+		}
+		if err := connection.CreateFunction("crewfold_run_loss_resolution_active", 0, sqlite3.INNOCUOUS,
+			func(functionContext sqlite3.Context, _ ...sqlite3.Value) {
+				if runLossResolutionActive.Load() {
 					functionContext.ResultInt(1)
 					return
 				}
@@ -121,41 +178,35 @@ func Open(ctx context.Context, dataDir string, options Options) (*Store, error) 
 				}
 				functionContext.ResultInt(0)
 			})
-	})
+	}
+	readDatabase, err := driver.Open(dsn, initializeConnection)
 	if err != nil {
 		return nil, &Error{Code: CodeStorageFailed, Message: "open SQLite database", Cause: err}
 	}
-	database.SetMaxOpenConns(1)
-	database.SetMaxIdleConns(1)
+	readDatabase.SetMaxOpenConns(sqliteReaderConnections)
+	readDatabase.SetMaxIdleConns(sqliteReaderConnections)
+	writeDatabase, err := driver.Open(dsn, initializeConnection)
+	if err != nil {
+		_ = readDatabase.Close()
+		return nil, &Error{Code: CodeStorageFailed, Message: "open SQLite writer", Cause: err}
+	}
+	writeDatabase.SetMaxOpenConns(sqliteWriterConnections)
+	writeDatabase.SetMaxIdleConns(sqliteWriterConnections)
 
 	clock := options.Clock
 	if clock == nil {
 		clock = time.Now
 	}
-	storage := &Store{db: database, path: path, mutationHook: options.MutationHook, clock: clock, restoreActive: restoreActive, supervisorActionSealActive: supervisorActionSealActive, checkMutationSealActive: checkMutationSealActive, outcomeMutationSealActive: outcomeMutationSealActive}
-	if err := database.PingContext(ctx); err != nil {
-		_ = database.Close()
+	storage := &Store{db: readDatabase, writeDB: writeDatabase, path: path, mutationHook: options.MutationHook, clock: clock,
+		runtimeNodeID: strings.TrimSpace(options.RuntimeNodeID), runtimeNodeFingerprint: strings.TrimSpace(options.RuntimeNodeFingerprint),
+		restoreActive: restoreActive, runLossResolutionActive: runLossResolutionActive, supervisorActionSealActive: supervisorActionSealActive, checkMutationSealActive: checkMutationSealActive, outcomeMutationSealActive: outcomeMutationSealActive}
+	if err := readDatabase.PingContext(ctx); err != nil {
+		_ = storage.Close()
 		return nil, &Error{Code: CodeStorageFailed, Message: "connect to SQLite database", Cause: err}
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		_ = database.Close()
-		return nil, &Error{Code: CodeStorageFailed, Message: "set database permissions", Cause: err}
-	}
-	if err := storage.ensureDatabaseIdentity(ctx); err != nil {
-		_ = database.Close()
-		return nil, err
-	}
-	if err := storage.enableWAL(ctx); err != nil {
-		_ = database.Close()
-		return nil, err
-	}
-	if err := storage.migrate(ctx); err != nil {
-		_ = database.Close()
-		return nil, err
-	}
-	if _, err := storage.Health(ctx); err != nil {
-		_ = database.Close()
-		return nil, err
+	if err := writeDatabase.PingContext(ctx); err != nil {
+		_ = storage.Close()
+		return nil, &Error{Code: CodeStorageFailed, Message: "connect to SQLite writer", Cause: err}
 	}
 	return storage, nil
 }
@@ -176,37 +227,6 @@ func registerSQLiteExtensions(connection *sqlite3.Conn) error {
 	return registerSQLiteUTF8Valid(connection)
 }
 
-func (s *Store) ensureDatabaseIdentity(ctx context.Context) error {
-	var applicationID, schemaVersion int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA application_id").Scan(&applicationID); err != nil {
-		return storageFailure("read database application id", err)
-	}
-	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&schemaVersion); err != nil {
-		return storageFailure("read database schema version", err)
-	}
-	if applicationID == sqliteApplicationID {
-		return nil
-	}
-	if applicationID != 0 || schemaVersion != 0 {
-		return &Error{Code: CodeStorageFailed, Message: "database file is not identified as a Crewfold database"}
-	}
-
-	var userTableCount int
-	if err := s.db.QueryRowContext(ctx, `
-SELECT COUNT(*)
-FROM sqlite_schema
-WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).Scan(&userTableCount); err != nil {
-		return storageFailure("inspect unidentified database", err)
-	}
-	if userTableCount != 0 {
-		return &Error{Code: CodeStorageFailed, Message: "unidentified database contains user tables and will not be adopted"}
-	}
-	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("PRAGMA application_id = %d", sqliteApplicationID)); err != nil {
-		return storageFailure("mark Crewfold database identity", err)
-	}
-	return nil
-}
-
 func (s *Store) enableWAL(ctx context.Context) error {
 	var journalMode string
 	if err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode = WAL").Scan(&journalMode); err != nil {
@@ -219,7 +239,22 @@ func (s *Store) enableWAL(ctx context.Context) error {
 }
 
 func (s *Store) Close() error {
-	return s.db.Close()
+	var writeErr error
+	if s.writeDB != nil {
+		writeErr = s.writeDB.Close()
+	}
+	readErr := s.db.Close()
+	return errors.Join(writeErr, readErr)
+}
+
+// beginTx routes all mutation transactions through the single writer pool while
+// leaving read-only snapshots on the bounded reader pool. The split is what lets
+// WAL reads remain responsive when another SQLite writer holds the database.
+func (s *Store) beginTx(ctx context.Context, options *sql.TxOptions) (*sql.Tx, error) {
+	if options != nil && options.ReadOnly {
+		return s.db.BeginTx(ctx, options)
+	}
+	return s.writeDB.BeginTx(ctx, options)
 }
 
 func (s *Store) Path() string {
@@ -227,13 +262,18 @@ func (s *Store) Path() string {
 }
 
 func (s *Store) Health(ctx context.Context) (DatabaseHealth, error) {
-	health := DatabaseHealth{LatestSchemaVersion: LatestSchemaVersion}
-	var foreignKeys, applicationID int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA application_id").Scan(&applicationID); err != nil {
-		return DatabaseHealth{}, storageFailure("read database application id", err)
+	health := DatabaseHealth{}
+	identity, err := verifyBaselineIdentity(ctx, s.db)
+	if err != nil {
+		return health, err
 	}
-	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&health.SchemaVersion); err != nil {
-		return DatabaseHealth{}, storageFailure("read database schema version", err)
+	health.SchemaVersion, health.SourceSHA256, health.CatalogSHA256 = identity.SchemaVersion, identity.SourceSHA256, identity.CatalogSHA256
+	var foreignKeys int
+	if err := s.db.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&health.SQLiteVersion); err != nil {
+		return DatabaseHealth{}, storageFailure("read SQLite runtime version", err)
+	}
+	if strings.TrimSpace(health.SQLiteVersion) == "" {
+		return DatabaseHealth{}, storageFailure("read SQLite runtime version", errors.New("SQLite returned an empty version"))
 	}
 	if err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&health.JournalMode); err != nil {
 		return DatabaseHealth{}, storageFailure("read database journal mode", err)
@@ -241,7 +281,6 @@ func (s *Store) Health(ctx context.Context) (DatabaseHealth, error) {
 	if err := s.db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
 		return DatabaseHealth{}, storageFailure("read database foreign-key mode", err)
 	}
-	var err error
 	health.IntegrityCheck, err = s.databaseIntegrityCheck(ctx)
 	if err != nil {
 		return DatabaseHealth{}, err
@@ -249,14 +288,15 @@ func (s *Store) Health(ctx context.Context) (DatabaseHealth, error) {
 	health.ForeignKeys = foreignKeys == 1
 	health.JournalMode = strings.ToLower(health.JournalMode)
 	health.Status = "ok"
-	if applicationID != sqliteApplicationID || health.SchemaVersion != LatestSchemaVersion || health.JournalMode != "wal" || !health.ForeignKeys || health.IntegrityCheck != "ok" {
+	if health.JournalMode != "wal" || !health.ForeignKeys || health.IntegrityCheck != "ok" {
 		health.Status = "failed"
 		return health, &Error{
 			Code: CodeStorageFailed,
 			Message: fmt.Sprintf(
-				"database health check failed (application_id=%#x schema=%d journal=%s foreign_keys=%t integrity=%s)",
-				applicationID,
+				"database health check failed (schema=%d source_sha256=%s catalog_sha256=%s journal=%s foreign_keys=%t integrity=%s)",
 				health.SchemaVersion,
+				health.SourceSHA256,
+				health.CatalogSHA256,
 				health.JournalMode,
 				health.ForeignKeys,
 				health.IntegrityCheck,
@@ -319,24 +359,161 @@ func runSQLiteQuickCheck(ctx context.Context, database *sql.DB) (string, error) 
 	return result, nil
 }
 
-func validateDatabasePath(path string) error {
+func inspectDatabasePath(path string) (bool, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return storageFailure("inspect database path", err)
+		return false, storageFailure("inspect database path", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return &Error{Code: CodeStorageFailed, Message: "database path must be a regular file and not a symbolic link"}
+		return false, &Error{Code: CodeStorageFailed, Message: "database path must be a regular file and not a symbolic link"}
+	}
+	if info.Mode().Perm() != 0o600 {
+		return false, &Error{Code: CodeStorageFailed, Message: "database file permissions must be exactly 0600"}
+	}
+	if info.Sys() != nil {
+		if stat, ok := info.Sys().(*unix.Stat_t); ok && stat.Nlink != 1 {
+			return false, &Error{Code: CodeStorageFailed, Message: "database file must not have hard-link aliases"}
+		}
+	}
+	return true, nil
+}
+
+func createAndPublishCurrentDatabase(ctx context.Context, path string, options Options) (err error) {
+	parent := filepath.Dir(path)
+	parentDirectory, err := os.Open(parent)
+	if err != nil {
+		return storageFailure("open database parent for staged creation", err)
+	}
+	defer parentDirectory.Close()
+	if err := unix.Flock(int(parentDirectory.Fd()), unix.LOCK_EX); err != nil {
+		return storageFailure("lock database parent for staged creation", err)
+	}
+	defer unix.Flock(int(parentDirectory.Fd()), unix.LOCK_UN)
+	if exists, inspectErr := inspectDatabasePath(path); inspectErr != nil {
+		return inspectErr
+	} else if exists {
+		return nil
+	}
+	stagingPath := filepath.Join(parent, databaseCreationStageName)
+	if err := cleanupInterruptedDatabaseCreation(parentDirectory, stagingPath); err != nil {
+		return storageFailure("reconcile interrupted staged database", err)
+	}
+	stagingFD, err := unix.Open(stagingPath, unix.O_RDWR|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return storageFailure("create staged database file", err)
+	}
+	stagingFile := os.NewFile(uintptr(stagingFD), stagingPath)
+	published := false
+	defer func() {
+		if published {
+			return
+		}
+		_ = cleanupInterruptedDatabaseCreation(parentDirectory, stagingPath)
+	}()
+	if err := stagingFile.Chmod(0o600); err != nil {
+		_ = stagingFile.Close()
+		return storageFailure("set staged database permissions", err)
+	}
+	if err := stagingFile.Close(); err != nil {
+		return storageFailure("close staged database file", err)
+	}
+
+	staged, err := openStoreFile(ctx, stagingPath, options)
+	if err != nil {
+		return err
+	}
+	if err := staged.initializeCurrentBaseline(ctx); err != nil {
+		_ = staged.Close()
+		return err
+	}
+	if err := staged.Close(); err != nil {
+		return storageFailure("close staged current database", err)
+	}
+	for _, suffix := range []string{"-journal", "-wal", "-shm"} {
+		if _, err := os.Lstat(stagingPath + suffix); err == nil {
+			return &Error{Code: CodeStorageFailed, Message: "staged current database retained a SQLite sidecar before publication"}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return storageFailure("inspect staged SQLite sidecar", err)
+		}
+	}
+	if err := syncStagedDatabaseFile(stagingPath); err != nil {
+		return storageFailure("sync staged current database", err)
+	}
+	if err := staged.runMutationHook(MutationBeforeBaselinePublish); err != nil {
+		return err
+	}
+	if err := unix.Renameat2(unix.AT_FDCWD, stagingPath, unix.AT_FDCWD, path, unix.RENAME_NOREPLACE); err != nil {
+		if errors.Is(err, unix.EEXIST) {
+			return nil
+		}
+		return storageFailure("publish current database baseline", err)
+	}
+	published = true
+	if err := syncDirectory(parent); err != nil {
+		return storageFailure("sync database directory after baseline publication", err)
+	}
+	if err := staged.runMutationHook(MutationAfterBaselinePublish); err != nil {
+		return err
 	}
 	return nil
+}
+
+func cleanupInterruptedDatabaseCreation(parentDirectory *os.File, stagingPath string) error {
+	removed := false
+	for _, suffix := range []string{"", "-journal", "-wal", "-shm"} {
+		candidate := stagingPath + suffix
+		var stat unix.Stat_t
+		if err := unix.Lstat(candidate, &stat); errors.Is(err, unix.ENOENT) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 || stat.Mode&0o777 != 0o600 {
+			return errors.New("interrupted staged database is not exact private single-link storage")
+		}
+		if err := unix.Unlink(candidate); err != nil {
+			return err
+		}
+		removed = true
+	}
+	if removed {
+		return parentDirectory.Sync()
+	}
+	return nil
+}
+
+func syncStagedDatabaseFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := directory.Sync(); err != nil {
+		_ = directory.Close()
+		return err
+	}
+	return directory.Close()
 }
 
 func databaseDSN(path string) string {
 	location := &url.URL{Scheme: "file", Path: path}
 	query := location.Query()
-	query.Add("_pragma", "busy_timeout(5000)")
+	query.Set("mode", "rw")
+	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", sqliteBusyTimeout.Milliseconds()))
 	query.Add("_pragma", "foreign_keys(ON)")
 	query.Add("_pragma", "synchronous(FULL)")
 	query.Set("_txlock", "immediate")
@@ -345,5 +522,8 @@ func databaseDSN(path string) string {
 }
 
 func storageFailure(operation string, err error) *Error {
+	if errors.Is(err, sqlite3.BUSY) {
+		return &Error{Code: CodeDatabaseBusy, Message: operation, Cause: err}
+	}
 	return &Error{Code: CodeStorageFailed, Message: operation, Cause: err}
 }

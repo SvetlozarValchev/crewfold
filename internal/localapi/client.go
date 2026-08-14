@@ -11,13 +11,15 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	"crewfold/internal/domain"
 )
 
 const (
-	defaultTimeout           = 2 * time.Second
+	defaultDialTimeout       = 2 * time.Second
+	defaultRoundTripTimeout  = 10 * time.Second
 	portableKnowledgeTimeout = 2 * time.Minute
 	maximumResponseBytes     = 16 * 1024 * 1024
 )
@@ -40,22 +42,23 @@ func (e *ProtocolMismatchError) Error() string {
 func (e *ProtocolMismatchError) Unwrap() error { return ErrProtocolMismatch }
 
 type Client struct {
-	socketPath string
-	timeout    time.Duration
+	socketPath      string
+	timeout         time.Duration
+	timeoutOverride bool
 }
 
 func NewClient(socketPath string) *Client {
-	return &Client{socketPath: socketPath, timeout: defaultTimeout}
+	return &Client{socketPath: socketPath, timeout: defaultRoundTripTimeout}
 }
 
-// WithTimeout returns a concrete client clone with the requested per-call
-// connection deadline. It does not mutate a client that may be shared by the
-// event poller and slower canonical refreshes.
+// WithTimeout returns a concrete client clone with the requested complete
+// round-trip deadline. Connection establishment retains its separate two-second
+// cap. The clone does not mutate a client shared by faster and slower callers.
 func (c *Client) WithTimeout(timeout time.Duration) *Client {
 	if timeout <= 0 {
-		timeout = defaultTimeout
+		timeout = defaultRoundTripTimeout
 	}
-	return &Client{socketPath: c.socketPath, timeout: timeout}
+	return &Client{socketPath: c.socketPath, timeout: timeout, timeoutOverride: true}
 }
 
 func (c *Client) Hello(ctx context.Context) (HelloResult, error) {
@@ -810,6 +813,21 @@ func (c *Client) RunStop(ctx context.Context, paramsValue RunStopParams) (RunMut
 	return result, nil
 }
 
+func (c *Client) RunLostResolve(ctx context.Context, paramsValue RunLostResolveParams) (RunLossResolutionResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, paramsValue.Workspace)
+	if err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	paramsValue.Workspace = workspaceID
+	paramsValue.Note = strings.TrimSpace(paramsValue.Note)
+	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
+	var result RunLossResolutionResult
+	if err := c.callParamsStrict(ctx, MethodRunLostResolve, paramsValue, &result); err != nil {
+		return RunLossResolutionResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) RunLogs(ctx context.Context, workspace, run string, tail int) (RunLogsResult, error) {
 	var result RunLogsResult
 	if err := c.callParams(ctx, MethodRunLogs, RunLogsParams{Workspace: workspace, Run: run, Tail: tail}, &result); err != nil {
@@ -1021,14 +1039,24 @@ func (c *Client) call(ctx context.Context, method string, params json.RawMessage
 
 	hello, err := negotiate(connection)
 	if err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
 		return err
 	}
-	return roundTrip(connection, Request{
+	err = roundTrip(connection, Request{
 		ID:       requestID(),
 		Protocol: hello.SelectedProtocol,
 		Method:   method,
 		Params:   params,
 	}, result)
+	if err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *Client) callParams(ctx context.Context, method string, paramsValue, result any) error {
@@ -1058,15 +1086,14 @@ func (c *Client) callParamsStrict(ctx context.Context, method string, paramsValu
 
 func (c *Client) callParamsStrictWithTimeout(ctx context.Context, timeout time.Duration, method string, paramsValue, result any) error {
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		if c.timeoutOverride && c.timeout < timeout {
+			timeout = c.timeout
+		}
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	params, err := json.Marshal(paramsValue)
-	if err != nil {
-		return fmt.Errorf("marshal %s parameters: %w", method, err)
-	}
-	return c.callStrict(ctx, method, params, result)
+	return c.callParamsStrict(ctx, method, paramsValue, result)
 }
 
 func (c *Client) callStrict(ctx context.Context, method string, params json.RawMessage, result any) error {
@@ -1078,11 +1105,21 @@ func (c *Client) callStrict(ctx context.Context, method string, params json.RawM
 	defer connection.Close()
 	hello, err := negotiate(connection)
 	if err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
 		return err
 	}
-	return roundTripStrict(connection, Request{
+	err = roundTripStrict(connection, Request{
 		ID: requestID(), Protocol: hello.SelectedProtocol, Method: method, Params: params,
 	}, result)
+	if err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		return err
+	}
+	return nil
 }
 
 func defaultIdempotencyKey(value string) string {
@@ -1093,28 +1130,29 @@ func defaultIdempotencyKey(value string) string {
 }
 
 func (c *Client) dial(ctx context.Context) (net.Conn, context.CancelFunc, error) {
+	timeoutCancel := func() {}
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.timeout)
-		connection, err := (&net.Dialer{}).DialContext(ctx, "unix", c.socketPath)
-		if err != nil {
-			cancel()
-			return nil, func() {}, fmt.Errorf("connect to Crewfold daemon at %s: %w", c.socketPath, err)
-		}
-		if deadline, ok := ctx.Deadline(); ok {
-			_ = connection.SetDeadline(deadline)
-		}
-		return connection, cancel, nil
+		timeoutCancel = cancel
 	}
-
-	connection, err := (&net.Dialer{}).DialContext(ctx, "unix", c.socketPath)
+	dialContext, cancelDial := context.WithTimeout(ctx, defaultDialTimeout)
+	connection, err := (&net.Dialer{}).DialContext(dialContext, "unix", c.socketPath)
+	cancelDial()
 	if err != nil {
+		timeoutCancel()
 		return nil, func() {}, fmt.Errorf("connect to Crewfold daemon at %s: %w", c.socketPath, err)
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = connection.SetDeadline(deadline)
 	}
-	return connection, func() {}, nil
+	stopCancellation := context.AfterFunc(ctx, func() {
+		_ = connection.SetDeadline(time.Now())
+	})
+	return connection, func() {
+		stopCancellation()
+		timeoutCancel()
+	}, nil
 }
 
 func negotiate(connection net.Conn) (HelloResult, error) {
