@@ -20,8 +20,8 @@ than forcing the core to understand every terminal UI.
 
 ## Status
 
-Crewfold has completed operator alpha and is in M20 personal-beta hardening. The
-current binary provides a
+Crewfold has completed M20 personal-beta hardening. M21, the OSS release
+candidate, is next and has not started. The current binary provides a
 foreground local daemon, an owner-only Unix socket, and durable workspace,
 project, repository, checkout, agent, objective, task, dependency, assignment,
 lease, budget, run, placement, timeline, handoff, and event records in SQLite. It
@@ -82,7 +82,7 @@ item/revision/source/applicability and contradiction snapshots without provider
 state, operational ghost tasks, or reliance on FTS. Owner-granted manager
 proposals, deterministic supervision, local check evidence, reviewed outcomes,
 bounded project/workspace briefings, and the Go-native terminal dashboard are
-implemented. M20 now hardens the one exact current baseline, path-based
+implemented. M20 hardened the one exact current baseline, path-based
 quiescent backup/restore, offline repair diagnosis, node-bound runtime identity,
 and provider-free personal-100 load envelope. Model-assisted curation, semantic
 conflict detection, and broader knowledge types remain outside the current

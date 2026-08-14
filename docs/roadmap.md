@@ -7,7 +7,7 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M19 are complete; M20 is active**. Evidence is
+Current status: **M0 through M20 are complete; M21 is next and has not started**. Evidence is
 recorded in the [M0 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -85,6 +85,13 @@ interventions, terminal safety, restart/reconnect behavior, bounded resources,
 and the complete provider-free public scenario. Its implementation commit is
 `12cc6e147a6d5ffc92c15708656fecdcaec3d98c`.
 
+M20's [passed personal-beta review](reviews/personal-beta.md) records the exact
+current baseline, full integrity/health boundary, quiescent source-independent
+backup and restore activation, node-bound runtime safety, deterministic
+personal-100 scale envelope, endurance/fault/security matrix, reproducible Linux
+candidate, and complete prior-scenario gate. Its implementation commit is
+`359522d8aa58a18a7d1151584a8f9bc48b4bfc56`.
+
 ## Sequence
 
 | Milestone | Increment | Demonstrable outcome | Depends on |
@@ -109,7 +116,7 @@ and the complete provider-free public scenario. Its implementation commit is
 | M17 ✓ | Local checks/check-watch capability | Route fresh check evidence without granting merge authority | M16 |
 | M18 ✓ | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
 | M19 ✓ | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
-| M20 | Personal beta | Back up, restore, verify current-baseline integrity, and load-test 100 registered agent definitions | M19 |
+| M20 ✓ | Personal beta | Back up, restore, verify current-baseline integrity, and load-test 100 registered agent definitions | M19 |
 | M21 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M20 |
 
 ## Capability ladder
@@ -259,14 +266,19 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M20 is active. It freezes one exact current baseline, full online health and
-offline repair diagnosis, SQLite online backup into a quiescent private bundle,
-source-independent verification and restore-to-new-directory, explicit
-source-retired activation, node-bound live runtime identity, immutable bounded
-terminal logs, admission/backpressure limits, and the deterministic
-`personal-100` load/fault/endurance gate. Bundle paths are explicit; there is no
-backup-ID registry, old-baseline conversion, in-place restore, cloned node
-authority, or role/purpose authorization.
+M21 is next and has not started. Its entry work is the clean-environment OSS
+release candidate: install, demo, extension documentation, and release-quality
+packaging must build on the accepted M20 contract without reopening compatibility
+or migration paths.
+
+M20 is complete at implementation commit
+`359522d8aa58a18a7d1151584a8f9bc48b4bfc56`; its
+[passed review](reviews/personal-beta.md) records the exact current baseline,
+full online health and offline repair diagnosis, quiescent private backup,
+source-independent verification and restore activation, node-bound runtime
+identity, immutable bounded logs, admission/backpressure limits, deterministic
+`personal-100` load/fault/endurance gates, reproducible Linux candidate, and the
+complete prior-scenario gate.
 
 M19 is complete at implementation commit
 `12cc6e147a6d5ffc92c15708656fecdcaec3d98c`; its
