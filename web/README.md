@@ -5,12 +5,15 @@ It will orchestrate objectives and work, inspect agents, explain delivery, and
 render tasks, dependencies, messages, meetings, claims, knowledge revisions, and
 audit history.
 
-The first M21 implementation slice is live: a pinned React/TypeScript/Vite shell
-is built into content-hashed assets, embedded in the Go binary, and served by the
-daemon on exact IPv4 loopback. `crewfold open` obtains a one-time grant through
-the owner-only Unix socket, exchanges it for a private browser session, and loads
-live daemon status. The shell deliberately renders no invented workspace, project,
-task, or agent state while onboarding is unfinished.
+The M21 workbench is live: a pinned React/TypeScript/Vite application is built
+into content-hashed assets, embedded in the Go binary, and served by the daemon
+on exact IPv4 loopback. `crewfold open` obtains a one-time grant through the
+owner-only Unix socket and exchanges it for a private browser session. From there
+the owner can onboard a repository/provider/runtime, query or direct canonical
+work, edit and execute a frozen plan, inspect crew/Git/logs/evidence/activity,
+make exact approval decisions, generate a bounded briefing, run full health, and
+open a separately granted current-run terminal. Empty state is always rendered
+honestly; the client invents no workspace, project, task, or agent records.
 
 The accepted contract is
 [ADR-0020](../docs/decisions/0020-local-web-workbench.md). The workbench will

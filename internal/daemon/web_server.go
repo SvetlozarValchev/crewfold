@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"crewfold/internal/localapi"
+	"crewfold/internal/store"
 	webui "crewfold/web"
 )
 
@@ -28,8 +30,11 @@ const (
 	workbenchSessionTTL   = 8 * time.Hour
 	workbenchCookieName   = "crewfold_owner"
 	maxWebRequestBytes    = 4 * 1024
+	maxWorkbenchRPCBytes  = 64 * 1024
 	maxWorkbenchGrants    = 32
 	maxWorkbenchSessions  = 32
+	maxWorkbenchStreams   = 16
+	maxWorkbenchTerminals = 4
 )
 
 const (
@@ -43,16 +48,26 @@ type workbenchSession struct {
 	routeHash [32]byte
 }
 
+type workbenchTerminalGrant struct {
+	expiresAt time.Time
+	routeHash [32]byte
+	workspace string
+	run       string
+}
+
 type workbenchServer struct {
-	daemon    *server
-	listener  net.Listener
-	http      *http.Server
-	origin    string
-	host      string
-	now       func() time.Time
-	mu        sync.Mutex
-	bootstrap map[[32]byte]time.Time
-	sessions  map[[32]byte]workbenchSession
+	daemon         *server
+	listener       net.Listener
+	http           *http.Server
+	origin         string
+	host           string
+	now            func() time.Time
+	mu             sync.Mutex
+	bootstrap      map[[32]byte]time.Time
+	sessions       map[[32]byte]workbenchSession
+	streams        chan struct{}
+	terminals      chan struct{}
+	terminalGrants map[[32]byte]workbenchTerminalGrant
 }
 
 func newWorkbenchServer(address string, daemon *server) (*workbenchServer, error) {
@@ -75,6 +90,8 @@ func newWorkbenchServer(address string, daemon *server) (*workbenchServer, error
 	instance := &workbenchServer{
 		daemon: daemon, listener: listener, origin: "http://" + exactHost, host: exactHost,
 		now: time.Now, bootstrap: make(map[[32]byte]time.Time), sessions: make(map[[32]byte]workbenchSession),
+		streams: make(chan struct{}, maxWorkbenchStreams), terminals: make(chan struct{}, maxWorkbenchTerminals),
+		terminalGrants: make(map[[32]byte]workbenchTerminalGrant),
 	}
 	mux, err := instance.routes()
 	if err != nil {
@@ -265,40 +282,66 @@ func (w *workbenchServer) handleSessionAPI(response http.ResponseWriter, request
 	}
 	remainder := strings.TrimPrefix(request.URL.Path, "/api/v1/session/")
 	route, operation, exact := strings.Cut(remainder, "/")
-	if !exact || operation != "status" || len(route) != 64 || strings.Contains(operation, "/") {
+	if !exact || len(route) != 64 || strings.Contains(operation, "/") {
 		http.NotFound(response, request)
 		return
 	}
-	if request.Method != http.MethodGet {
-		w.writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "workbench status requires GET")
-		return
-	}
-	if !w.authenticated(request, route) {
+	session, authenticated := w.authenticate(request, route)
+	if !authenticated {
 		w.writeError(response, http.StatusUnauthorized, "unauthorized", "owner session is missing or expired")
 		return
 	}
-	w.writeJSON(response, http.StatusOK, map[string]any{
-		"schema": workbenchStatusSchema, "type": "workbench_status", "status": "ok",
-		"protocol": localapi.MaxProtocol, "pid": os.Getpid(),
-		"started_at":     w.daemon.startedAt.Format(time.RFC3339Nano),
-		"uptime_ms":      time.Since(w.daemon.startedAt).Milliseconds(),
-		"server_version": w.daemon.config.Version,
-	})
+	switch operation {
+	case "status":
+		if request.Method != http.MethodGet {
+			w.writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "workbench status requires GET")
+			return
+		}
+		w.writeJSON(response, http.StatusOK, map[string]any{
+			"schema": workbenchStatusSchema, "type": "workbench_status", "status": "ok",
+			"protocol": localapi.MaxProtocol, "pid": os.Getpid(),
+			"started_at":     w.daemon.startedAt.Format(time.RFC3339Nano),
+			"uptime_ms":      time.Since(w.daemon.startedAt).Milliseconds(),
+			"server_version": w.daemon.config.Version,
+		})
+	case "rpc":
+		w.handleRPC(response, request, session)
+	case "events":
+		w.handleEventStream(response, request)
+	case "conversation":
+		w.handleOwnerConversation(response, request, session)
+	case "intent":
+		w.handleOwnerIntent(response, request, session)
+	case "onboarding":
+		w.handleWorkbenchOnboarding(response, request, session)
+	case "execute":
+		w.handleOwnerPlanExecution(response, request, session)
+	case "plan":
+		w.handleOwnerPlanEdit(response, request, session)
+	case "git":
+		w.handleWorkbenchGitObservation(response, request)
+	case "terminal-grant":
+		w.handleWorkbenchTerminalGrant(response, request, session)
+	case "terminal":
+		w.handleWorkbenchTerminal(response, request, session)
+	default:
+		http.NotFound(response, request)
+	}
 }
 
-func (w *workbenchServer) authenticated(request *http.Request, route string) bool {
+func (w *workbenchServer) authenticate(request *http.Request, route string) (workbenchSession, bool) {
 	cookie, err := request.Cookie(workbenchCookieName)
 	if err != nil || len(cookie.Value) != 64 {
-		return false
+		return workbenchSession{}, false
 	}
 	token, err := hex.DecodeString(cookie.Value)
 	if err != nil || len(token) != 32 {
-		return false
+		return workbenchSession{}, false
 	}
 	digest := sha256.Sum256(token)
 	routeBytes, err := hex.DecodeString(route)
 	if err != nil || len(routeBytes) != 32 {
-		return false
+		return workbenchSession{}, false
 	}
 	routeDigest := sha256.Sum256(routeBytes)
 	now := w.now().UTC()
@@ -307,9 +350,162 @@ func (w *workbenchServer) authenticated(request *http.Request, route string) boo
 	session, exists := w.sessions[digest]
 	if !exists || !now.Before(session.expiresAt) || session.routeHash != routeDigest {
 		delete(w.sessions, digest)
+		return workbenchSession{}, false
+	}
+	return session, true
+}
+
+func (w *workbenchServer) handleRPC(response http.ResponseWriter, request *http.Request, session workbenchSession) {
+	if !w.authorizeMutation(response, request, session, "workbench RPC") {
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(response, request.Body, maxWorkbenchRPCBytes))
+	if err != nil {
+		w.writeError(response, http.StatusRequestEntityTooLarge, "request_too_large", "workbench RPC exceeds the bounded body limit")
+		return
+	}
+	if err := rejectDuplicateJSONFields(body); err != nil {
+		w.writeError(response, http.StatusBadRequest, "invalid_request", "workbench RPC is not exact JSON")
+		return
+	}
+	var rpc struct {
+		ID     string          `json:"id"`
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&rpc); err != nil || decodeHasTrailingValue(decoder) || len(rpc.Params) == 0 {
+		w.writeError(response, http.StatusBadRequest, "invalid_request", "workbench RPC does not match the current contract")
+		return
+	}
+	if !workbenchMethodAllowed(rpc.Method) {
+		w.writeError(response, http.StatusForbidden, "method_not_allowed", "method is not exposed to the owner workbench")
+		return
+	}
+	result, stop := w.daemon.handleRequest(localapi.Request{ID: rpc.ID, Protocol: localapi.MaxProtocol, Method: rpc.Method, Params: rpc.Params})
+	if stop {
+		w.writeError(response, http.StatusForbidden, "method_not_allowed", "the owner workbench cannot stop the daemon")
+		return
+	}
+	w.writeJSON(response, http.StatusOK, result)
+}
+
+func (w *workbenchServer) authorizeMutation(response http.ResponseWriter, request *http.Request, session workbenchSession, label string) bool {
+	if request.Method != http.MethodPost {
+		w.writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", label+" requires POST")
+		return false
+	}
+	if request.Header.Get("Origin") != w.origin {
+		w.writeError(response, http.StatusForbidden, "origin_mismatch", "request origin does not match the owner-local workbench")
+		return false
+	}
+	csrf, err := hex.DecodeString(request.Header.Get("X-Crewfold-CSRF"))
+	csrfDigest := sha256Digest(csrf)
+	if err != nil || len(csrf) != 32 || subtle.ConstantTimeCompare(session.csrfHash[:], csrfDigest[:]) != 1 {
+		w.writeError(response, http.StatusForbidden, "csrf_mismatch", "request does not carry the owner session CSRF grant")
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		w.writeError(response, http.StatusUnsupportedMediaType, "invalid_content_type", label+" requires application/json")
 		return false
 	}
 	return true
+}
+
+func (w *workbenchServer) handleEventStream(response http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		w.writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "workbench events require GET")
+		return
+	}
+	workspace := strings.TrimSpace(request.URL.Query().Get("workspace"))
+	if workspace == "" || len(workspace) > 128 {
+		w.writeError(response, http.StatusBadRequest, "invalid_request", "workspace is required for event invalidation")
+		return
+	}
+	select {
+	case w.streams <- struct{}{}:
+		defer func() { <-w.streams }()
+	default:
+		w.writeError(response, http.StatusServiceUnavailable, "stream_capacity_exhausted", "too many owner event streams are active")
+		return
+	}
+	flusher, ok := response.(http.Flusher)
+	if !ok {
+		w.writeError(response, http.StatusInternalServerError, "stream_unavailable", "streaming is unavailable")
+		return
+	}
+	_ = http.NewResponseController(response).SetWriteDeadline(time.Time{})
+	response.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	response.Header().Set("Connection", "keep-alive")
+	response.Header().Set("X-Accel-Buffering", "no")
+	response.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(response, ": crewfold owner event stream\n\n")
+	flusher.Flush()
+
+	last := int64(0)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+	for {
+		select {
+		case <-request.Context().Done():
+			return
+		case <-w.daemon.stopCh:
+			return
+		case <-keepalive.C:
+			_, _ = io.WriteString(response, ": keepalive\n\n")
+			flusher.Flush()
+		case <-ticker.C:
+			page, err := w.daemon.store.ListEvents(request.Context(), store.ListEventsQuery{WorkspaceIdentifier: workspace, After: last, Limit: 1})
+			if err != nil {
+				payload, _ := json.Marshal(map[string]any{"schema": "urn:crewfold:schema:web:invalidation:v1", "type": "invalidated", "workspace": workspace, "reason": "read_failed"})
+				_, _ = fmt.Fprintf(response, "event: invalidated\ndata: %s\n\n", payload)
+				flusher.Flush()
+				return
+			}
+			if page.HighWater <= last {
+				continue
+			}
+			last = page.HighWater
+			if len(page.Events) == 0 && page.Total == 0 {
+				continue
+			}
+			payload, _ := json.Marshal(map[string]any{"schema": "urn:crewfold:schema:web:invalidation:v1", "type": "invalidated", "workspace_id": page.WorkspaceID, "high_water": page.HighWater})
+			_, _ = fmt.Fprintf(response, "event: invalidated\ndata: %s\n\n", payload)
+			flusher.Flush()
+		}
+	}
+}
+
+func sha256Digest(value []byte) [32]byte { return sha256.Sum256(value) }
+
+func workbenchMethodAllowed(method string) bool {
+	_, allowed := workbenchMethods[method]
+	return allowed
+}
+
+var workbenchMethods = map[string]struct{}{
+	localapi.MethodWorkspaceInit: {}, localapi.MethodWorkspaceShow: {}, localapi.MethodWorkspaceList: {},
+	localapi.MethodProjectAdd: {}, localapi.MethodProjectShow: {}, localapi.MethodProjectInspect: {}, localapi.MethodProjectList: {},
+	localapi.MethodCheckoutAdd: {}, localapi.MethodCheckoutList: {},
+	localapi.MethodAgentCreate: {}, localapi.MethodAgentUpdate: {}, localapi.MethodAgentShow: {}, localapi.MethodAgentList: {},
+	localapi.MethodObjectiveCreate: {}, localapi.MethodObjectiveUpdate: {}, localapi.MethodObjectiveShow: {}, localapi.MethodObjectiveList: {},
+	localapi.MethodTaskCreate: {}, localapi.MethodTaskUpdate: {}, localapi.MethodTaskShow: {}, localapi.MethodTaskList: {},
+	localapi.MethodTaskDepend: {}, localapi.MethodTaskAssign: {}, localapi.MethodTaskTransition: {}, localapi.MethodTaskTimeline: {},
+	localapi.MethodRunStart: {}, localapi.MethodRunShow: {}, localapi.MethodRunList: {}, localapi.MethodRunResume: {},
+	localapi.MethodRunStop: {}, localapi.MethodRunLostResolve: {}, localapi.MethodRunLogs: {}, localapi.MethodRunPrompt: {}, localapi.MethodRunInterrupt: {},
+	localapi.MethodMessageSend: {}, localapi.MethodInboxList: {},
+	localapi.MethodCoordinationStatus: {}, localapi.MethodClaimList: {}, localapi.MethodOverlapList: {}, localapi.MethodDriftList: {},
+	localapi.MethodEventsList: {}, localapi.MethodEventsTimeline: {},
+	localapi.MethodApprovalList: {}, localapi.MethodApprovalInspect: {}, localapi.MethodApprovalAllow: {}, localapi.MethodApprovalDeny: {},
+	localapi.MethodSupervisorPolicyShow: {}, localapi.MethodSupervisorPolicyConfigure: {},
+	localapi.MethodSupervisorActionList: {}, localapi.MethodSupervisorActionShow: {},
+	localapi.MethodBriefingShow: {}, localapi.MethodBriefingExplain: {},
+	localapi.MethodCheckList: {}, localapi.MethodCheckInspect: {}, localapi.MethodCheckLogs: {},
+	localapi.MethodSystemDoctorFull: {},
 }
 
 func (w *workbenchServer) removeExpiredLocked(now time.Time) {
@@ -321,6 +517,11 @@ func (w *workbenchServer) removeExpiredLocked(now time.Time) {
 	for digest, session := range w.sessions {
 		if !now.Before(session.expiresAt) {
 			delete(w.sessions, digest)
+		}
+	}
+	for digest, grant := range w.terminalGrants {
+		if !now.Before(grant.expiresAt) {
+			delete(w.terminalGrants, digest)
 		}
 	}
 }

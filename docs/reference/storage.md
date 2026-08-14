@@ -470,6 +470,34 @@ one whole delta/event/state transition, advances the no-op cursor without an
 event, or records rebase event/state. Event payloads are candidate/audit data, not
 the stored delta's content authority.
 
+## Owner workbench conversations
+
+`owner_conversations` is the bounded workspace/project thread shown by the local
+web workbench. `owner_turns` freezes each query, plan, or act instruction at one
+event high-water together with its canonical operation-array SHA-256 and exact
+execution state. Query turns contain no operations and append no domain event.
+
+`owner_turn_operations` contains the closed current operation set
+`create_objective|create_task|assign_task|start_run`, ordered at most 16 entries
+per turn. Each row seals its typed payload, policy result, state, result entity,
+and event sequence. A reviewed plan edit can change the task/objective title,
+description, priority, current local token/time limits, and enabled agent only
+while every operation is still pending. The M21 browser grants no paid-cost
+authority (`cost_cents` remains zero) and caps reviewed plans at 1,000,000 tokens
+and 86,400 seconds. Editing replaces all four payload hashes and advances the
+turn revision in one transaction without a domain event. Launch requires the
+same frozen workspace event high-water, so concurrent canonical work makes the
+plan stale rather than being merged in the browser.
+
+`owner_effect_receipts` links each applied operation to its canonical method,
+idempotency key, request/response hashes, event sequence, and commit time. A lost
+browser response therefore resumes the same pending operation graph instead of
+reinterpreting prose. Destructive, publication, external-communication,
+credential, network, budget-escalation, or authority-changing instructions stay
+`awaiting_approval` before any operation is applied. Conversation records are an
+audited execution envelope; objectives, tasks, assignments, runs, approvals, and
+events remain the sole domain truth.
+
 ## Manager delegation and deterministic supervision
 
 The current baseline includes owner-granted manager proposals and a deterministic local

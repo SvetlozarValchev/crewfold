@@ -161,14 +161,21 @@ exchange clears the fragment, sets an HttpOnly `SameSite=Strict` owner cookie on
 one random 256-bit API-path prefix, and returns that prefix plus a separate
 in-memory CSRF token. Scoping the cookie to an unguessable path prevents a browser
 from attaching it to ordinary requests sent to another service on `127.0.0.1`.
-The current authenticated browser API contains only read-only
-`<api_base>/status`. Static assets and the shell are public
-only to exact loopback Host and disclose no daemon data before session exchange.
+The current authenticated browser API contains bounded status and strict
+canonical-RPC reads, cursor-bearing SSE invalidation, repository/provider
+onboarding, durable owner conversation query/plan/act turns, plan revision and
+execution, fresh bounded Git observation, and one separately granted run-bound
+terminal WebSocket. Browser mutations require the exact in-memory CSRF token.
+Static assets and the shell are public only to exact loopback Host and disclose
+no daemon data before session exchange.
 
 The listener is exact `127.0.0.1`, sends no wildcard CORS policy, denies framing,
 sets `nosniff` and no-referrer policy, and restricts scripts, styles, connections,
-objects, forms, and ancestors with CSP. Remote bind, terminal streaming, SSE,
-onboarding, and browser mutations are not part of this first slice.
+objects, forms, and ancestors with CSP. The terminal grant is single-use,
+short-lived, bound to one session/workspace/run and carried as a WebSocket
+subprotocol rather than a URL. Remote bind, hosted access, browser credential
+storage, direct SQLite access, and unbounded event/log/source streaming are not
+part of the current contract.
 
 ### `database.status`
 

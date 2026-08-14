@@ -72,7 +72,8 @@ var semanticFamilyRegistry = []semanticFamilyDefinition{
 		"supervisor_policy_project_limits", "supervisor_policy_provider_limits",
 		"supervisor_actions", "supervisor_action_receipts", "approval_requests",
 		"supervisor_state", "run_scheduling_receipts", "run_retry_receipts",
-		"scheduling_intents",
+		"scheduling_intents", "owner_conversations", "owner_turns",
+		"owner_turn_operations", "owner_effect_receipts",
 	}},
 	{name: "messaging", tables: []string{
 		"message_threads", "messages", "message_recipients", "message_wake_jobs",

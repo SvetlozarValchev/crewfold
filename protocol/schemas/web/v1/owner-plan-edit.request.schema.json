@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:web:owner-plan-edit-request:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "turn_id", "expected_revision", "title", "description", "priority", "budget", "agent"],
+  "properties": {
+    "workspace": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "turn_id": {"type": "string", "pattern": "^turn_[0-9a-f]{32}$"},
+    "expected_revision": {"type": "integer", "minimum": 1},
+    "title": {"type": "string", "minLength": 1, "maxLength": 256},
+    "description": {"type": "string", "maxLength": 4096},
+    "priority": {"type": "integer", "minimum": 0, "maximum": 1000},
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["token_limit", "cost_cents", "time_seconds"],
+      "properties": {
+        "token_limit": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "cost_cents": {"const": 0},
+        "time_seconds": {"type": "integer", "minimum": 0, "maximum": 86400}
+      }
+    },
+    "agent": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"}
+  }
+}

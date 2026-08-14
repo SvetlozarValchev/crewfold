@@ -10,6 +10,7 @@ runtime_dir="$scenario_root/run/crewfold"
 socket_path="$runtime_dir/crewfold.sock"
 daemon_log="$scenario_root/daemon.log"
 daemon_pid=""
+chrome_pid=""
 
 cleanup() {
   status=$?
@@ -24,12 +25,22 @@ cleanup() {
     kill "$daemon_pid" 2>/dev/null || true
     wait "$daemon_pid" 2>/dev/null || true
   fi
+  if [ -n "$chrome_pid" ] && kill -0 "$chrome_pid" 2>/dev/null
+  then
+    kill "$chrome_pid" 2>/dev/null || true
+    wait "$chrome_pid" 2>/dev/null || true
+  fi
   [ ! -d "$scenario_root" ] || find "$scenario_root" -depth -delete
 }
 trap cleanup EXIT HUP INT TERM
 
 GOTOOLCHAIN=local GOPROXY=off "$go_runner" build -trimpath -o "$binary" "$repo_root/cmd/crewfold"
 mkdir -m 0700 -p "$runtime_dir" "$scenario_root/fakebin"
+mkdir -m 0700 "$scenario_root/world-engine-2"
+git -C "$scenario_root/world-engine-2" init -q -b main
+printf '# World Engine 2\n' >"$scenario_root/world-engine-2/README.md"
+git -C "$scenario_root/world-engine-2" add README.md
+git -C "$scenario_root/world-engine-2" -c user.name='Crewfold Fixture' -c user.email='fixture@invalid' commit -q -m 'initial fixture'
 
 cat >"$scenario_root/fakebin/xdg-open" <<'SH'
 #!/bin/sh
@@ -106,12 +117,41 @@ browser_url=$(sed -n '1p' "$CREWFOLD_OPEN_CAPTURE")
 google-chrome --headless --disable-gpu --no-sandbox --disable-dev-shm-usage \
   --user-data-dir="$scenario_root/chrome" --virtual-time-budget=2000 \
   --dump-dom "$browser_url" >"$scenario_root/browser.dom" 2>"$scenario_root/browser.stderr"
-grep -Fq 'Connected to Crewfold' "$scenario_root/browser.dom"
-grep -Fq 'Authenticated over the owner-local workbench boundary.' "$scenario_root/browser.dom"
-grep -Fq 'Onboarding not implemented yet' "$scenario_root/browser.dom"
+grep -Fq 'Bring your repository into the workbench.' "$scenario_root/browser.dom"
+grep -Fq 'Set up your workbench' "$scenario_root/browser.dom"
+grep -Fq 'Codex subscription' "$scenario_root/browser.dom"
+grep -Fq 'lucide' "$scenario_root/browser.dom"
+
+# Drive the built application through a real browser from empty canonical
+# state. All domain setup and execution below is performed by browser controls;
+# the shell supplies only an isolated committed repository and opens Crewfold.
+export CREWFOLD_OPEN_CAPTURE="$scenario_root/flow.url"
+"$binary" open >"$scenario_root/flow-open.stdout" 2>"$scenario_root/flow-open.stderr"
+flow_url=$(sed -n '1p' "$CREWFOLD_OPEN_CAPTURE")
+flow_profile="$scenario_root/chrome-flow"
+google-chrome --headless --disable-gpu --no-sandbox --disable-dev-shm-usage \
+  --user-data-dir="$flow_profile" --remote-debugging-port=0 "$flow_url" \
+  >"$scenario_root/flow-chrome.stdout" 2>"$scenario_root/flow-chrome.stderr" &
+chrome_pid=$!
+attempts=0
+until [ -s "$flow_profile/DevToolsActivePort" ]
+do
+  kill -0 "$chrome_pid" 2>/dev/null || exit 1
+  attempts=$((attempts + 1))
+  [ "$attempts" -lt 400 ] || exit 1
+  sleep 0.01
+done
+debugger_port=$(sed -n '1p' "$flow_profile/DevToolsActivePort")
+node "$repo_root/test/scenarios/web-workbench-shell/browser.mjs" \
+  "$debugger_port" "$scenario_root/world-engine-2" "$scenario_root/browser-flow.json"
+grep -Fq '"iconCount"' "$scenario_root/browser-flow.json"
+grep -Fq 'Project briefing' "$scenario_root/browser-flow.json"
+kill "$chrome_pid" 2>/dev/null || true
+wait "$chrome_pid" 2>/dev/null || true
+chrome_pid=""
 
 "$binary" daemon stop --socket "$socket_path" --output json >"$scenario_root/stop.json"
 wait "$daemon_pid"
 daemon_pid=""
 
-printf 'Authenticated local web workbench shell acceptance: PASS\n'
+printf 'Authenticated local web workbench browser acceptance: PASS\n'

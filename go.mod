@@ -8,6 +8,8 @@ require (
 	charm.land/bubbles/v2 v2.1.1
 	charm.land/bubbletea/v2 v2.0.8
 	charm.land/lipgloss/v2 v2.0.6
+	github.com/creack/pty v1.1.24
+	github.com/gorilla/websocket v1.5.3
 	github.com/ncruces/go-sqlite3 v0.35.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	golang.org/x/sys v0.47.0

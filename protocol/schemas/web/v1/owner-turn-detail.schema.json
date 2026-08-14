@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:web:owner-turn-detail:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["conversation", "turn", "operations", "receipts"],
+  "properties": {
+    "conversation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "workspace_id", "project_id", "title", "status", "revision", "created_at", "updated_at"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^conv_[0-9a-f]{32}$"},
+        "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+        "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+        "title": {"type": "string", "minLength": 1, "maxLength": 160},
+        "status": {"enum": ["open", "archived"]},
+        "revision": {"type": "integer", "minimum": 1},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "turn": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "conversation_id", "ordinal", "kind", "instruction", "status", "as_of_event_sequence", "plan_sha256", "revision", "created_at", "updated_at"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^turn_[0-9a-f]{32}$"},
+        "conversation_id": {"type": "string", "pattern": "^conv_[0-9a-f]{32}$"},
+        "ordinal": {"type": "integer", "minimum": 1},
+        "kind": {"enum": ["query", "plan", "act"]},
+        "instruction": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "status": {"enum": ["planned", "executing", "completed", "failed", "awaiting_approval"]},
+        "as_of_event_sequence": {"type": "integer", "minimum": 0},
+        "answer": {"type": "string", "minLength": 1, "maxLength": 8192},
+        "plan_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "error_code": {"type": "string", "minLength": 1, "maxLength": 128},
+        "revision": {"type": "integer", "minimum": 1},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "completed_event_sequence": {"type": "integer", "minimum": 1}
+      }
+    },
+    "operations": {
+      "type": "array", "maxItems": 16,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "turn_id", "ordinal", "type", "payload", "payload_sha256", "policy_result", "status", "revision", "created_at", "updated_at"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^op_[0-9a-f]{32}$"},
+          "turn_id": {"type": "string", "pattern": "^turn_[0-9a-f]{32}$"},
+          "ordinal": {"type": "integer", "minimum": 1, "maximum": 16},
+          "type": {"enum": ["create_objective", "create_task", "assign_task", "start_run"]},
+          "payload": {"type": "object"},
+          "payload_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "policy_result": {"enum": ["allowed", "gated", "denied"]},
+          "status": {"enum": ["pending", "applied", "awaiting_approval", "failed", "skipped"]},
+          "result_entity_type": {"enum": ["objective", "task", "assignment", "run"]},
+          "result_entity_id": {"type": "string", "minLength": 1, "maxLength": 64},
+          "event_sequence": {"type": "integer", "minimum": 1},
+          "diagnosis": {"type": "string", "minLength": 1, "maxLength": 2048},
+          "revision": {"type": "integer", "minimum": 1},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    },
+    "receipts": {
+      "type": "array", "maxItems": 16,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["operation_id", "method", "idempotency_key", "request_sha256", "response_sha256", "committed_at"],
+        "properties": {
+          "operation_id": {"type": "string", "pattern": "^op_[0-9a-f]{32}$"},
+          "method": {"enum": ["objective.create", "task.create", "task.assign", "run.start"]},
+          "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128},
+          "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "response_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "event_sequence": {"type": "integer", "minimum": 1},
+          "committed_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

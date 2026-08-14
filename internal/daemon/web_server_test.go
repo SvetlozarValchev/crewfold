@@ -5,16 +5,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"crewfold/internal/domain"
+	"crewfold/internal/execution"
 	"crewfold/internal/localapi"
 	protocolschema "crewfold/protocol"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestM21WorkbenchBootstrapIsSingleUseAndStatusIsAuthenticated(t *testing.T) {
@@ -165,6 +171,458 @@ func TestM21WorkbenchRejectsOriginHostAndUnknownSessionFields(t *testing.T) {
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("unknown-field status = %d, want 400", response.StatusCode)
 	}
+}
+
+func TestM21WorkbenchRPCRequiresExactCSRFAndExposesOnlyOwnerMethods(t *testing.T) {
+	t.Parallel()
+
+	running := startTestServer(t, testConfig(t))
+	bootstrap, err := localapi.NewClient(running.config.SocketPath).WebBootstrap(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(bootstrap.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := strings.TrimPrefix(parsed.Fragment, "bootstrap=")
+	parsed.Fragment = ""
+	origin := strings.TrimSuffix(parsed.String(), "/")
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	raw := exchangeWorkbenchBootstrap(t, client, origin, token, origin)
+	var session struct {
+		APIBase string `json:"api_base"`
+		CSRF    string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(raw, &session); err != nil {
+		t.Fatal(err)
+	}
+
+	call := func(method, csrf string) (*http.Response, []byte) {
+		t.Helper()
+		body := `{"id":"web-test","method":"` + method + `","params":{"limit":1}}`
+		request, err := http.NewRequest(http.MethodPost, origin+session.APIBase+"/rpc", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Crewfold-CSRF", csrf)
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response, result
+	}
+
+	response, result := call(localapi.MethodWorkspaceList, session.CSRF)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("workspace RPC status = %d: %s", response.StatusCode, result)
+	}
+	if err := protocolschema.ValidateJSON("local/v1/response.schema.json", result); err != nil {
+		t.Fatalf("workspace RPC response schema = %v: %s", err, result)
+	}
+	var envelope localapi.Response
+	if err := json.Unmarshal(result, &envelope); err != nil || envelope.Error != nil || len(envelope.Result) == 0 {
+		t.Fatalf("workspace RPC envelope = %#v, error = %v", envelope, err)
+	}
+
+	response, result = call(localapi.MethodWorkspaceList, strings.Repeat("0", 64))
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("wrong CSRF status = %d: %s", response.StatusCode, result)
+	}
+	response, result = call(localapi.MethodStop, session.CSRF)
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("system.stop RPC status = %d: %s", response.StatusCode, result)
+	}
+}
+
+func TestM21OwnerIntentCommitsReceiptedWorkAndStartsFixtureAgent(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t)
+	config.GitInspector = m21WorkbenchInspector{}
+	running := startTestServer(t, config)
+	api := localapi.NewClient(running.config.SocketPath)
+	workspace, err := api.WorkspaceInit(context.Background(), "personal", "web-intent-workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "world-engine")
+	project, err := api.ProjectAdd(context.Background(), workspace.Workspace.ID, "world-engine", root, domain.WriteModeShared, "web-intent-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.AgentCreate(context.Background(), localapi.AgentCreateParams{Workspace: workspace.Workspace.ID, Name: "builder", Role: "implementation", Provider: "fixture-mcp", Runtime: "direct", MaxConcurrency: 2, IdempotencyKey: "web-intent-agent"}); err != nil {
+		t.Fatal(err)
+	}
+
+	bootstrap, err := localapi.NewClient(running.config.SocketPath).WebBootstrap(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(bootstrap.URL)
+	token := strings.TrimPrefix(parsed.Fragment, "bootstrap=")
+	parsed.Fragment = ""
+	origin := strings.TrimSuffix(parsed.String(), "/")
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	var session struct {
+		APIBase string `json:"api_base"`
+		CSRF    string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(exchangeWorkbenchBootstrap(t, client, origin, token, origin), &session); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"workspace": workspace.Workspace.ID, "project": project.Project.ID, "instruction": "Build the first playable world loop",
+		"mode": "act", "idempotency_key": "web-owner-act-one",
+	})
+	call := func() []byte {
+		request, err := http.NewRequest(http.MethodPost, origin+session.APIBase+"/intent", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Crewfold-CSRF", session.CSRF)
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		raw, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("owner intent status = %d: %s", response.StatusCode, raw)
+		}
+		return raw
+	}
+	first := call()
+	second := call()
+	if err := protocolschema.ValidateJSON("web/v1/owner-intent.response.schema.json", first); err != nil {
+		t.Fatalf("owner intent response schema = %v: %s", err, first)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("owner act replay changed:\nfirst=%s\nsecond=%s", first, second)
+	}
+	var result struct {
+		Detail domain.OwnerTurnDetail `json:"detail"`
+	}
+	if err := json.Unmarshal(first, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Detail.Turn.Status != "completed" || len(result.Detail.Operations) != 4 || len(result.Detail.Receipts) != 4 {
+		t.Fatalf("owner intent detail = %#v", result.Detail)
+	}
+	for _, operation := range result.Detail.Operations {
+		if operation.Status != "applied" || operation.EventSequence == 0 {
+			t.Fatalf("owner operation = %#v", operation)
+		}
+	}
+	tasks, err := api.TaskList(context.Background(), localapi.TaskListParams{Workspace: workspace.Workspace.ID, Project: project.Project.ID, PageParams: localapi.PageParams{Limit: 10}})
+	if err != nil || len(tasks.Tasks) != 1 || tasks.Tasks[0].Task.AssignedAgentID == "" {
+		t.Fatalf("owner-created tasks = %#v, %v", tasks, err)
+	}
+	runs, err := api.RunList(context.Background(), localapi.RunListParams{Workspace: workspace.Workspace.ID, Project: project.Project.ID, PageParams: localapi.PageParams{Limit: 10}})
+	if err != nil || len(runs.Runs) != 1 {
+		t.Fatalf("owner-created runs = %#v, %v", runs, err)
+	}
+}
+
+func TestM21WorkbenchOnboardingPreflightsBeforeMutationAndReplaysExactly(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t)
+	config.GitInspector = m21WorkbenchInspector{}
+	running := startTestServer(t, config)
+	api := localapi.NewClient(running.config.SocketPath)
+	bootstrap, err := api.WebBootstrap(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(bootstrap.URL)
+	token := strings.TrimPrefix(parsed.Fragment, "bootstrap=")
+	parsed.Fragment = ""
+	origin := strings.TrimSuffix(parsed.String(), "/")
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	var session struct {
+		APIBase string `json:"api_base"`
+		CSRF    string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(exchangeWorkbenchBootstrap(t, client, origin, token, origin), &session); err != nil {
+		t.Fatal(err)
+	}
+	call := func(provider string) (int, []byte) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{
+			"repository_path": filepath.Join(t.TempDir(), "world-engine"), "workspace": "personal", "project": "world-engine",
+			"agent": "builder", "provider": provider, "runtime": "direct", "write_mode": "shared",
+		})
+		request, err := http.NewRequest(http.MethodPost, origin+session.APIBase+"/onboarding", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Crewfold-CSRF", session.CSRF)
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		raw, _ := io.ReadAll(response.Body)
+		return response.StatusCode, raw
+	}
+	status, raw := call("missing-provider")
+	if status != http.StatusConflict {
+		t.Fatalf("invalid-provider onboarding = %d: %s", status, raw)
+	}
+	workspaces, err := api.WorkspaceList(context.Background(), localapi.WorkspaceListParams{PageParams: localapi.PageParams{Limit: 10}})
+	if err != nil || len(workspaces.Workspaces) != 0 {
+		t.Fatalf("preflight failure workspaces = %#v, %v", workspaces, err)
+	}
+
+	// Use one stable path for the exact replay request.
+	path := filepath.Join(t.TempDir(), "world-engine")
+	body, _ := json.Marshal(map[string]any{"repository_path": path, "workspace": "personal", "project": "world-engine", "agent": "builder", "provider": "fixture-mcp", "runtime": "direct", "write_mode": "shared"})
+	validCall := func() []byte {
+		request, _ := http.NewRequest(http.MethodPost, origin+session.APIBase+"/onboarding", bytes.NewReader(body))
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Crewfold-CSRF", session.CSRF)
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		raw, _ := io.ReadAll(response.Body)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("valid onboarding = %d: %s", response.StatusCode, raw)
+		}
+		return raw
+	}
+	first, replay := validCall(), validCall()
+	if err := protocolschema.ValidateJSON("web/v1/onboarding.response.schema.json", first); err != nil {
+		t.Fatalf("onboarding response schema = %v: %s", err, first)
+	}
+	if !bytes.Equal(first, replay) {
+		t.Fatalf("onboarding replay changed:\nfirst=%s\nreplay=%s", first, replay)
+	}
+	workspaces, err = api.WorkspaceList(context.Background(), localapi.WorkspaceListParams{PageParams: localapi.PageParams{Limit: 10}})
+	if err != nil || len(workspaces.Workspaces) != 1 {
+		t.Fatalf("onboarded workspaces = %#v, %v", workspaces, err)
+	}
+}
+
+func TestM21WorkbenchGitObservationIsFreshBoundedAndSchemaValid(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t)
+	paths := make([]string, 140)
+	// Stable unique, sorted values model an intentionally noisy checkout.
+	for index := range paths {
+		paths[index] = filepath.ToSlash(filepath.Join("src", "generated", fmt.Sprintf("file-%03d.go", index)))
+	}
+	config.GitInspector = fixedWorkbenchGitInspector{observation: domain.CheckoutObservation{
+		Availability: domain.CheckoutAvailable, CheckoutKind: domain.CheckoutStandalone,
+		Branch: "feature/workbench", HeadCommit: strings.Repeat("3", 40), Dirty: true, DirtyPaths: paths,
+		Repository: domain.RepositoryObservation{Fingerprint: "git_" + strings.Repeat("4", 64), ObjectFormat: "sha1", RootCommits: []string{strings.Repeat("5", 40)}},
+	}}
+	running := startTestServer(t, config)
+	api := localapi.NewClient(running.config.SocketPath)
+	workspace, err := api.WorkspaceInit(context.Background(), "personal", "web-git-workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := api.ProjectAdd(context.Background(), workspace.Workspace.ID, "world-engine", filepath.Join(t.TempDir(), "world-engine"), domain.WriteModeShared, "web-git-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, err := api.WebBootstrap(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(bootstrap.URL)
+	token := strings.TrimPrefix(parsed.Fragment, "bootstrap=")
+	parsed.Fragment = ""
+	origin := strings.TrimSuffix(parsed.String(), "/")
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	var session struct {
+		APIBase string `json:"api_base"`
+	}
+	if err := json.Unmarshal(exchangeWorkbenchBootstrap(t, client, origin, token, origin), &session); err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Get(origin + session.APIBase + "/git?workspace=" + url.QueryEscape(workspace.Workspace.ID) + "&project=" + url.QueryEscape(project.Project.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	raw, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("Git observation status = %d: %s", response.StatusCode, raw)
+	}
+	if err := protocolschema.ValidateJSON("web/v1/git-observation.response.schema.json", raw); err != nil {
+		t.Fatalf("Git observation schema = %v: %s", err, raw)
+	}
+	var result struct {
+		Observations []workbenchGitObservation `json:"observations"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil || len(result.Observations) != 1 {
+		t.Fatalf("Git observation = %#v, %v", result, err)
+	}
+	if value := result.Observations[0]; len(value.DirtyPaths) != maximumWorkbenchDirtyPaths || value.OmittedPaths != 12 || !value.Truncated || value.Branch != "feature/workbench" {
+		t.Fatalf("bounded Git observation = %#v", value)
+	}
+	if strings.Contains(string(raw), project.Checkout.Path) || strings.Contains(string(raw), ".git") {
+		t.Fatalf("Git observation leaked checkout or metadata path: %s", raw)
+	}
+}
+
+func TestM21WorkbenchTerminalGrantIsRunBoundSingleUseAndInteractive(t *testing.T) {
+	t.Parallel()
+
+	runtimeDriver := &m21TerminalRuntime{FakeRuntime: execution.NewFakeRuntime()}
+	config := testConfig(t)
+	config.GitInspector = m21WorkbenchInspector{}
+	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"fake": runtimeDriver}
+	config.ProviderAdapters = map[string]execution.ProviderAdapter{"fake": execution.FakeProvider{}}
+	running := startTestServer(t, config)
+	api := localapi.NewClient(running.config.SocketPath)
+	project, agent := initializeRunWorkerAPI(t, api, t.TempDir())
+	task := createAssignedRunWorkerTask(t, api, project.Project.ID, agent.Agent.ID, "web terminal")
+	created, err := api.RunStart(context.Background(), localapi.RunStartParams{
+		Workspace: "personal", Task: task.Detail.Task.ID, Runtime: "fake", Provider: "fake",
+		Scenario:             domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "web-terminal", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "waiting", WaitForResume: true}}},
+		ExpectedTaskRevision: task.Detail.Task.Revision, IdempotencyKey: "web-terminal-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := waitForRunStatus(t, api, created.Detail.Run.ID, domain.RunActive)
+
+	bootstrap, err := api.WebBootstrap(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(bootstrap.URL)
+	token := strings.TrimPrefix(parsed.Fragment, "bootstrap=")
+	parsed.Fragment = ""
+	origin := strings.TrimSuffix(parsed.String(), "/")
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	var session struct {
+		APIBase string `json:"api_base"`
+		CSRF    string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(exchangeWorkbenchBootstrap(t, client, origin, token, origin), &session); err != nil {
+		t.Fatal(err)
+	}
+	grantBody, _ := json.Marshal(map[string]string{"workspace": "personal", "run": active.Detail.Run.ID})
+	grantRequest, _ := http.NewRequest(http.MethodPost, origin+session.APIBase+"/terminal-grant", bytes.NewReader(grantBody))
+	grantRequest.Header.Set("Origin", origin)
+	grantRequest.Header.Set("Content-Type", "application/json")
+	grantRequest.Header.Set("X-Crewfold-CSRF", session.CSRF)
+	grantResponse, err := client.Do(grantRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantRaw, _ := io.ReadAll(grantResponse.Body)
+	_ = grantResponse.Body.Close()
+	if grantResponse.StatusCode != http.StatusOK {
+		t.Fatalf("terminal grant = %d: %s", grantResponse.StatusCode, grantRaw)
+	}
+	if err := protocolschema.ValidateJSON("web/v1/terminal-grant.response.schema.json", grantRaw); err != nil {
+		t.Fatalf("terminal grant schema = %v: %s", err, grantRaw)
+	}
+	var grant struct {
+		Protocol string `json:"protocol"`
+	}
+	if err := json.Unmarshal(grantRaw, &grant); err != nil {
+		t.Fatal(err)
+	}
+	websocketURL := "ws" + strings.TrimPrefix(origin, "http") + session.APIBase + "/terminal"
+	headers := http.Header{"Origin": []string{origin}}
+	cookieURL, _ := url.Parse(origin + session.APIBase + "/terminal")
+	for _, cookie := range jar.Cookies(cookieURL) {
+		headers.Add("Cookie", cookie.String())
+	}
+	dialer := websocket.Dialer{Subprotocols: []string{grant.Protocol}}
+	connection, response, err := dialer.Dial(websocketURL, headers)
+	if err != nil {
+		if response != nil {
+			t.Fatalf("terminal WebSocket = %d, %v", response.StatusCode, err)
+		}
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if connection.Subprotocol() != grant.Protocol {
+		t.Fatalf("terminal subprotocol = %q", connection.Subprotocol())
+	}
+	_ = connection.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, ready, err := connection.ReadMessage()
+	if err != nil || !bytes.Contains(ready, []byte("terminal-ready")) {
+		t.Fatalf("terminal initial output = %q, %v", ready, err)
+	}
+	if err := connection.WriteJSON(workbenchTerminalClientMessage{Type: "input", Data: "hello\n"}); err != nil {
+		t.Fatal(err)
+	}
+	var output []byte
+	for !bytes.Contains(output, []byte("terminal-echo:hello")) {
+		_, chunk, err := connection.ReadMessage()
+		if err != nil {
+			t.Fatalf("read terminal echo = %q, %v", output, err)
+		}
+		output = append(output, chunk...)
+	}
+
+	replayDialer := websocket.Dialer{Subprotocols: []string{grant.Protocol}}
+	if replay, replayResponse, replayErr := replayDialer.Dial(websocketURL, headers); replayErr == nil {
+		replay.Close()
+		t.Fatal("consumed terminal grant was replayed")
+	} else if replayResponse == nil || replayResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("terminal grant replay response = %#v, %v", replayResponse, replayErr)
+	}
+}
+
+type m21WorkbenchInspector struct{}
+
+func (m21WorkbenchInspector) Inspect(_ context.Context, path string) (domain.CheckoutObservation, error) {
+	return domain.CheckoutObservation{
+		Path: path, Availability: domain.CheckoutAvailable, CheckoutKind: domain.CheckoutStandalone,
+		Branch: "main", HeadCommit: strings.Repeat("2", 40), DirtyPaths: []string{}, GitDir: filepath.Join(path, ".git"), GitCommonDir: filepath.Join(path, ".git"),
+		Repository: domain.RepositoryObservation{Fingerprint: "git_" + strings.Repeat("1", 64), ObjectFormat: "sha1", RootCommits: []string{strings.Repeat("0", 40)}},
+	}, nil
+}
+
+type fixedWorkbenchGitInspector struct{ observation domain.CheckoutObservation }
+
+func (value fixedWorkbenchGitInspector) Inspect(_ context.Context, path string) (domain.CheckoutObservation, error) {
+	result := value.observation
+	result.Path = path
+	result.GitDir = filepath.Join(path, ".git")
+	result.GitCommonDir = result.GitDir
+	return result, nil
+}
+
+type m21TerminalRuntime struct{ *execution.FakeRuntime }
+
+func (runtime *m21TerminalRuntime) Attach(context.Context, string, string) (execution.AttachSpec, error) {
+	return execution.AttachSpec{Executable: "/bin/sh", Arguments: []string{"-c", `printf 'terminal-ready\n'; IFS= read -r line; printf 'terminal-echo:%s\n' "$line"; sleep 1`}}, nil
 }
 
 func TestM21WorkbenchShellIsEmbeddedAndSecurityHeadersAreExact(t *testing.T) {

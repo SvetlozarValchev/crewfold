@@ -1226,14 +1226,15 @@ decision.
 
 ### M21 — Local web workbench
 
-**Implementation checkpoint:** Slice 1 and the security-bearing foundation of
-slice 2 are implemented: exact XDG paths, a private systemd user unit,
-`service install|start|stop|status`, `crewfold open`, pinned React/Vite assets
-embedded in Go, exact IPv4-loopback serving, single-use Unix-socket bootstrap,
-strict owner sessions, and authenticated live daemon status. The shell explicitly
-shows onboarding as unavailable rather than rendering fixture state. SSE,
-onboarding, conversational execution, planning, inspection, and the full M21 exit
-gate remain open.
+**Implementation checkpoint:** Complete. Exact XDG service/open lifecycle, pinned
+embedded React assets, loopback bootstrap/session/CSRF security, strict canonical
+RPC plus SSE invalidation, browser onboarding, durable query/plan/act turns,
+editable reviewed plan revisions, automatic receipted execution, work/crew/inbox/
+decision/evidence/activity/briefing/health surfaces, bounded Git and logs, and a
+single-use run-bound terminal WebSocket are implemented. A built-binary real-Chrome
+scenario begins with an empty store and uses browser controls to onboard a committed
+repository, execute work, edit and launch a successor plan, inspect its agent, and
+generate the exact project briefing.
 
 **Question answered:** Can one developer start, direct, inspect, understand, and
 intervene in a real local crew from one owner interface instead of composing the

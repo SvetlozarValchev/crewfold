@@ -18,10 +18,12 @@ gated live conformance call is pending. Owner-granted manager proposals,
 immutable launch profiles, deterministic supervisor passes, and exact approval
 decisions are also implemented. Owner-created deliverable commitments,
 owner-reviewed outcome assessments, immutable checkpoints, and bounded structured
-management briefings are implemented. The first M21 workbench slice adds private
-XDG defaults, `crewfold service install|start|stop|status`, and `crewfold open`.
-The embedded browser shell proves authenticated live daemon status; onboarding and
-work mutation remain pending. The Go-native operator dashboard is launched with
+management briefings are implemented. M21 adds private XDG defaults,
+`crewfold service install|start|stop|status`, and `crewfold open`, plus the
+embedded authenticated workbench for repository/provider onboarding, canonical
+query/plan/act conversation, editable reviewed plans, automatic receipted work,
+crew/work/inbox/decision/evidence/activity/briefing views, bounded Git and logs,
+full health, and a separately authorized live terminal. The Go-native operator dashboard is launched with
 `crewfold ui`; ordinary commands continue to support text and JSON output. M20
 freezes full health, quiescent backup, source-independent
 verify/restore, explicit restore activation, offline repair inspection, and the
@@ -60,9 +62,10 @@ provider call, model charge, or credential.
 `crewfold open` contacts that private socket, asks the daemon for one short-lived
 single-use browser grant, passes the fragment-bearing URL directly to `xdg-open`,
 and never prints or logs the grant. The loopback page exchanges it for an
-HttpOnly/SameSite-Strict session and displays live daemon version/protocol/process
-state. This first shell has no onboarding or command execution yet and labels that
-boundary explicitly.
+HttpOnly/SameSite-Strict session and opens the primary owner workflow. Normal
+repository setup and work orchestration happen in that browser; the CLI remains
+the complete typed automation, recovery, conformance, and advanced-administration
+surface.
 
 ## Operator dashboard
 

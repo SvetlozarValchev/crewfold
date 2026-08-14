@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:web:owner-intent-request:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "project", "instruction", "mode", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "project": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "conversation_id": {"type": "string", "pattern": "^conv_[0-9a-f]{32}$"},
+    "instruction": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "mode": {"enum": ["query", "plan", "act"]},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

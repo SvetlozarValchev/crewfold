@@ -315,7 +315,26 @@ WHERE receipt.workspace_id<>action.workspace_id OR receipt.condition_key<>action
    OR event.type<>'supervisor.action_recorded' OR event.entity_type<>'supervisor_action' OR event.entity_id<>action.id
 UNION ALL
 SELECT 'approval:'||approval.id FROM approval_requests approval JOIN supervisor_actions action ON action.id=approval.action_id
-WHERE action.approval_id<>approval.id OR (approval.status IN ('denied','expired','consumed') AND approval.decision_event_sequence IS NULL)`},
+WHERE action.approval_id<>approval.id OR (approval.status IN ('denied','expired','consumed') AND approval.decision_event_sequence IS NULL)
+UNION ALL
+SELECT 'owner_conversation:'||conversation.id FROM owner_conversations conversation
+JOIN projects project ON project.id=conversation.project_id
+WHERE project.workspace_id<>conversation.workspace_id
+UNION ALL
+SELECT 'owner_turn:'||turn.id FROM owner_turns turn
+WHERE turn.plan_sha256<>lower(hex(sha256(CAST(turn.plan_json AS BLOB))))
+   OR json_array_length(turn.plan_json)<>(SELECT count(*) FROM owner_turn_operations operation WHERE operation.turn_id=turn.id)
+   OR (turn.kind='query' AND (turn.status<>'completed' OR turn.answer IS NULL OR json_array_length(turn.plan_json)<>0))
+   OR (turn.kind='plan' AND turn.status='planned' AND EXISTS(SELECT 1 FROM owner_turn_operations operation WHERE operation.turn_id=turn.id AND operation.status<>'pending'))
+   OR (turn.status='completed' AND EXISTS(SELECT 1 FROM owner_turn_operations operation WHERE operation.turn_id=turn.id AND operation.status<>'applied'))
+UNION ALL
+SELECT 'owner_operation:'||operation.id FROM owner_turn_operations operation
+LEFT JOIN owner_effect_receipts receipt ON receipt.operation_id=operation.id
+WHERE operation.payload_sha256<>lower(hex(sha256(CAST(operation.payload_json AS BLOB))))
+   OR (operation.status='applied')<>(receipt.operation_id IS NOT NULL)
+   OR (receipt.operation_id IS NOT NULL AND (receipt.response_sha256<>lower(hex(sha256(CAST(receipt.response_json AS BLOB))))
+      OR receipt.event_sequence IS NOT operation.event_sequence
+      OR NOT EXISTS(SELECT 1 FROM events event WHERE event.sequence=receipt.event_sequence)))`},
 		{name: "scheduling_receipts", query: `
 SELECT 'scheduling:'||receipt.run_id AS sample FROM run_scheduling_receipts receipt
 JOIN runs run ON run.id=receipt.run_id JOIN scheduling_intents intent ON intent.id=receipt.intent_id

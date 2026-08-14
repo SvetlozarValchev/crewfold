@@ -6184,6 +6184,77 @@ END;
 CREATE TRIGGER management_briefing_receipt_reject_update BEFORE UPDATE ON management_briefing_receipts BEGIN SELECT RAISE(ABORT,'management briefing receipts are immutable'); END;
 CREATE TRIGGER management_briefing_receipt_reject_delete BEFORE DELETE ON management_briefing_receipts BEGIN SELECT RAISE(ABORT,'management briefing receipts are immutable'); END;
 
+-- Owner workbench conversations freeze the interpreted plan and bind every
+-- executed effect to its existing canonical mutation receipt. They are
+-- authority records, not an alternate event journal.
+CREATE TABLE owner_conversations (
+ id TEXT PRIMARY KEY CHECK(length(id)=37 AND substr(id,1,5)='conv_' AND substr(id,6) NOT GLOB '*[^0-9a-f]*'),
+ workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ title TEXT NOT NULL CHECK(length(CAST(title AS BLOB)) BETWEEN 1 AND 160),
+ status TEXT NOT NULL CHECK(status IN ('open','archived')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ created_by TEXT NOT NULL CHECK(created_by='local-owner'),
+ updated_by TEXT NOT NULL CHECK(updated_by='local-owner')
+) STRICT;
+CREATE INDEX owner_conversations_scope_idx ON owner_conversations(workspace_id,project_id,status,updated_at,id);
+
+CREATE TABLE owner_turns (
+ id TEXT PRIMARY KEY CHECK(length(id)=37 AND substr(id,1,5)='turn_' AND substr(id,6) NOT GLOB '*[^0-9a-f]*'),
+ conversation_id TEXT NOT NULL REFERENCES owner_conversations(id),
+ ordinal INTEGER NOT NULL CHECK(ordinal>0),
+ kind TEXT NOT NULL CHECK(kind IN ('query','plan','act')),
+ instruction TEXT NOT NULL CHECK(length(CAST(instruction AS BLOB)) BETWEEN 1 AND 4096),
+ status TEXT NOT NULL CHECK(status IN ('planned','executing','completed','failed','awaiting_approval')),
+ as_of_event_sequence INTEGER NOT NULL CHECK(as_of_event_sequence>=0),
+ answer TEXT CHECK(answer IS NULL OR length(CAST(answer AS BLOB)) BETWEEN 1 AND 8192),
+ plan_json TEXT NOT NULL CHECK(json_valid(plan_json) AND json_type(plan_json)='array' AND json_array_length(plan_json)<=16 AND length(CAST(plan_json AS BLOB))<=32768),
+ plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256)=64 AND plan_sha256 NOT GLOB '*[^0-9a-f]*'),
+ error_code TEXT CHECK(error_code IS NULL OR length(error_code) BETWEEN 1 AND 128),
+ completed_event_sequence INTEGER CHECK(completed_event_sequence IS NULL OR completed_event_sequence>0),
+ idempotency_key TEXT NOT NULL CHECK(length(CAST(idempotency_key AS BLOB)) BETWEEN 1 AND 128),
+ request_sha256 TEXT NOT NULL CHECK(length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ UNIQUE(conversation_id,ordinal),
+ UNIQUE(idempotency_key)
+) STRICT;
+
+CREATE TABLE owner_turn_operations (
+ id TEXT PRIMARY KEY CHECK(length(id)=35 AND substr(id,1,3)='op_' AND substr(id,4) NOT GLOB '*[^0-9a-f]*'),
+ turn_id TEXT NOT NULL REFERENCES owner_turns(id),
+ ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 16),
+ type TEXT NOT NULL CHECK(type IN ('create_objective','create_task','assign_task','start_run')),
+ payload_json TEXT NOT NULL CHECK(json_valid(payload_json) AND json_type(payload_json)='object' AND length(CAST(payload_json AS BLOB))<=8192),
+ payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256)=64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+ policy_result TEXT NOT NULL CHECK(policy_result IN ('allowed','gated','denied')),
+ status TEXT NOT NULL CHECK(status IN ('pending','applied','awaiting_approval','failed','skipped')),
+ result_entity_type TEXT CHECK(result_entity_type IS NULL OR result_entity_type IN ('objective','task','assignment','run')),
+ result_entity_id TEXT CHECK(result_entity_id IS NULL OR length(result_entity_id) BETWEEN 1 AND 64),
+ event_sequence INTEGER CHECK(event_sequence IS NULL OR event_sequence>0),
+ diagnosis TEXT CHECK(diagnosis IS NULL OR length(CAST(diagnosis AS BLOB)) BETWEEN 1 AND 2048),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ UNIQUE(turn_id,ordinal)
+) STRICT;
+
+CREATE TABLE owner_effect_receipts (
+ operation_id TEXT PRIMARY KEY REFERENCES owner_turn_operations(id),
+ method TEXT NOT NULL CHECK(method IN ('objective.create','task.create','task.assign','run.start')),
+ idempotency_key TEXT NOT NULL CHECK(length(CAST(idempotency_key AS BLOB)) BETWEEN 1 AND 128),
+ request_sha256 TEXT NOT NULL CHECK(length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'),
+ response_json TEXT NOT NULL CHECK(json_valid(response_json) AND json_type(response_json)='object' AND length(CAST(response_json AS BLOB))<=32768),
+ response_sha256 TEXT NOT NULL CHECK(length(response_sha256)=64 AND response_sha256 NOT GLOB '*[^0-9a-f]*'),
+ event_sequence INTEGER CHECK(event_sequence IS NULL OR event_sequence>0),
+ committed_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX owner_turns_conversation_idx ON owner_turns(conversation_id,ordinal);
+CREATE INDEX owner_turn_operations_turn_idx ON owner_turn_operations(turn_id,ordinal);
+
 -- The disposable retrieval projection still needs one current generation on a
 -- clean database. Its source set and canonical event interval are both empty.
 INSERT INTO knowledge_search(revision_id,workspace_id,title,body)

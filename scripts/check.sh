@@ -40,7 +40,7 @@ fi
 printf 'Buildable repository black-box acceptance\n'
 "$repo_root/test/scenarios/buildable-repository/run.sh"
 
-printf 'Authenticated local web workbench shell acceptance\n'
+printf 'Authenticated local web workbench browser acceptance\n'
 "$repo_root/test/scenarios/web-workbench-shell/run.sh"
 
 printf 'Daemon API spine black-box acceptance\n'

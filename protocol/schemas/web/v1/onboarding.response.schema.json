@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:web:onboarding:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "status", "workspace", "project", "checkout", "agent", "provider_diagnosis", "repository"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:web:onboarding:v1"},
+    "type": {"const": "workbench_onboarding"},
+    "status": {"const": "completed"},
+    "workspace": {"$ref": "../../domain/v1/workspace.schema.json"},
+    "project": {"$ref": "../../domain/v1/project.schema.json"},
+    "checkout": {"$ref": "../../domain/v1/checkout.schema.json"},
+    "agent": {"$ref": "../../domain/v1/agent.schema.json"},
+    "provider_diagnosis": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provider", "status", "capabilities"],
+      "properties": {
+        "provider": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"const": "ok"},
+        "version": {"type": "string", "minLength": 1, "maxLength": 128},
+        "capabilities": {"type": "array", "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 128}}
+      }
+    },
+    "repository": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dirty", "dirty_path_count"],
+      "properties": {
+        "branch": {"type": "string", "maxLength": 1024},
+        "dirty": {"type": "boolean"},
+        "dirty_path_count": {"type": "integer", "minimum": 0, "maximum": 4096}
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:web:owner-intent:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "detail"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:web:owner-intent:v1"},
+    "type": {"const": "owner_intent"},
+    "detail": {"$ref": "owner-turn-detail.schema.json"}
+  }
+}
