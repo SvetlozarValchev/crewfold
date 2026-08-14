@@ -73,6 +73,12 @@ evidence and monotonic freshness, honest subsystem routing, inert repair
 proposals, the single current schema, and the complete race/scenario gate. Its
 implementation commit is `91d4cb4d3f62f058d20c9b18bc2d408b988e78b8`.
 
+M18's [passed outcome-briefing review](reviews/outcome-briefings.md) records
+owner-only deliverable governance, derived evidence trust and freshness,
+restart-safe bounded projection, exact claim provenance, current-only briefing
+truth, and the complete integrity, race, and public-scenario gate. Its
+implementation commit is `2e7ee9882173a91a7997dead40aaccd091fcb901`.
+
 ## Sequence
 
 | Milestone | Increment | Demonstrable outcome | Depends on |
@@ -95,7 +101,7 @@ implementation commit is `91d4cb4d3f62f058d20c9b18bc2d408b988e78b8`.
 | M15 ✓ | Curator/retrieval | Retrieve, curate, exchange, export, dispute, and incrementally deliver canonical context under bounded authority | M14 |
 | M16 ✓ | Manager/supervisor | Propose work and advance dependencies under explainable policy | M15 |
 | M17 ✓ | Local checks/check-watch capability | Route fresh check evidence without granting merge authority | M16 |
-| M18 | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
+| M18 ✓ | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
 | M19 | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
 | M20 | Personal beta | Back up, restore, verify current-baseline integrity, and load-test 100 registered agent definitions | M19 |
 | M21 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M20 |
@@ -242,15 +248,19 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M18 is active. It adds explicit pre-work deliverable commitments, revisioned
-owner-reviewed outcome assessments, immutable owner checkpoints, and bounded
-deterministic management briefings. Every material briefing claim must retain an
-exact provenance path to durable decisions, evidence, verification freshness,
-risks, unknowns, deviations, or follow-up work. A run, handoff, or check result
-can support an assessment but cannot make delivery accepted by implication.
-Its current structured briefing/claim/explanation schemas are also the fixed read
-model the M19 operator TUI must consume; M19 does not start until the M18 public
-scenario and review gate pass.
+M19 is active. It adds one Go-native terminal dashboard launched with
+`crewfold ui`. The dashboard consumes the exact M18 briefing and canonical local
+API records, follows the durable event cursor for invalidation and reconnect,
+defaults to read-only navigation, and submits confirmed interventions through the
+same typed APIs as the CLI. Herdr remains an explicit attach target rather than a
+second control surface.
+
+M18 is complete at implementation commit
+`2e7ee9882173a91a7997dead40aaccd091fcb901`; its
+[passed review](reviews/outcome-briefings.md) records owner-only commitments and
+governance, derived evidence trust, bounded restart-safe projection, exact claim
+provenance, current-only briefing truth, raw-construction security, race, and
+public scenario proofs.
 
 M17 is complete at implementation commit
 `91d4cb4d3f62f058d20c9b18bc2d408b988e78b8`; its

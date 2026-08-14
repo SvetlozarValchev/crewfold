@@ -54,6 +54,7 @@ explicitly rather than silently treating either as authoritative.
 - [Curation, retrieval, collaboration, and live-context milestone review](reviews/curation-retrieval-live-context.md)
 - [Manager proposals and deterministic supervision milestone review](reviews/manager-supervisor.md)
 - [Owner-granted local checks milestone review](reviews/local-checks.md)
+- [Owner-reviewed outcome briefings milestone review](reviews/outcome-briefings.md)
 - [Personal workspace example](examples/personal.yaml)
 - [Agent definition example](examples/agent.yaml)
 
