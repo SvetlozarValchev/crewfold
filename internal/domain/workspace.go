@@ -43,7 +43,7 @@ func KnownEventType(value string) bool {
 		"claim.added", "claim.released", "claim.expired", "claim.drift_opened", "claim.drift_resolved",
 		"overlap.opened", "overlap.resolved",
 		"thread.created", "thread.participant_added", "message.sent", "message.delivered", "message.read",
-		"message.acknowledged", "message.wake_succeeded", "message.wake_failed",
+		"message.acknowledged", "message.wake_succeeded", "message.wake_failed", "message.wake_failed_unknown",
 		"meeting.created", "meeting.positions_collected", "meeting.resolution_proposed", "meeting.stalled",
 		"meeting.concluded", "meeting.human_takeover",
 		"knowledge.proposed", "knowledge.accepted", "knowledge.rejected", "knowledge.marked_stale",

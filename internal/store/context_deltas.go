@@ -630,7 +630,7 @@ WHERE workspace_id = ? AND sequence > ? AND sequence <= ? AND (
 		   WHERE participant.id = delivery.recipient_participant_id AND participant.status = 'active'
 			 AND participant.agent_id = ? AND participant.project_id = ? AND participant.task_id = ?)))))
    OR
-   (type NOT IN ('message.sent','message.delivered','message.read','message.acknowledged','message.wake_succeeded','message.wake_failed')
+   (type NOT IN ('message.sent','message.delivered','message.read','message.acknowledged','message.wake_succeeded','message.wake_failed','message.wake_failed_unknown')
     AND (entity_id IN (SELECT value FROM json_each(?)) OR EXISTS (
     SELECT 1 FROM message_recipients delivery
     JOIN messages message ON message.id = delivery.message_id

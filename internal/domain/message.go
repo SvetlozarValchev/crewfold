@@ -23,11 +23,12 @@ const (
 	DeliveryRead         = "read"
 	DeliveryAcknowledged = "acknowledged"
 
-	WakeNotRequested = "not_requested"
-	WakePending      = "pending"
-	WakeLeased       = "leased"
-	WakeSucceeded    = "succeeded"
-	WakeFailed       = "failed"
+	WakeNotRequested  = "not_requested"
+	WakePending       = "pending"
+	WakeLeased        = "leased"
+	WakeSucceeded     = "succeeded"
+	WakeFailed        = "failed"
+	WakeFailedUnknown = "failed_unknown"
 )
 
 // ParticipantBindingInput identifies the exact agent/task assignment that an

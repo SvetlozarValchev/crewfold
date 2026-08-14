@@ -22,6 +22,7 @@ const (
 	messageAcknowledgedEvent  = "message.acknowledged"
 	messageWakeSucceeded      = "message.wake_succeeded"
 	messageWakeFailed         = "message.wake_failed"
+	messageWakeFailedUnknown  = "message.wake_failed_unknown"
 	threadParticipantAdded    = "thread.participant_added"
 	messageWakeActorID        = "message-wake-worker"
 	maximumMessageBytes       = 4096
@@ -30,6 +31,7 @@ const (
 	contextInboxItems         = 10
 	minimumThreadParticipants = 2
 	maximumThreadParticipants = 8
+	maximumWakeRecoveryBatch  = 16
 )
 
 var supportedMessageKinds = map[string]bool{
@@ -736,6 +738,73 @@ func (s *Store) Thread(ctx context.Context, workspaceIdentifier, threadID string
 	return domain.ThreadDetail{Thread: thread, Messages: messages, Recipients: recipients}, nil
 }
 
+const expiredMessageWakeDiagnostic = "wake lease expired before durable completion; external delivery outcome is unknown"
+
+type expiredMessageWake struct {
+	ID               string
+	MessageID        string
+	RecipientAgentID string
+	TargetRunID      string
+	WorkspaceID      string
+}
+
+// settleExpiredMessageWakes makes the at-most-once boundary explicit. Once a
+// wake lease has expired, Crewfold cannot know whether the external prompt was
+// delivered before the worker disappeared. Such a job is terminal and visible;
+// it is never returned to the pending queue.
+func settleExpiredMessageWakes(ctx context.Context, tx *sql.Tx, now string) (int, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT j.id, j.message_id, j.recipient_agent_id, j.target_run_id, m.workspace_id
+FROM message_wake_jobs j
+JOIN messages m ON m.id = j.message_id
+WHERE j.status = 'leased' AND j.lease_expires_at <= ?
+ORDER BY j.sequence
+LIMIT ?`, now, maximumWakeRecoveryBatch)
+	if err != nil {
+		return 0, storageFailure("query expired message wakes", err)
+	}
+	expired := make([]expiredMessageWake, 0, maximumWakeRecoveryBatch)
+	for rows.Next() {
+		var job expiredMessageWake
+		if err := rows.Scan(&job.ID, &job.MessageID, &job.RecipientAgentID, &job.TargetRunID, &job.WorkspaceID); err != nil {
+			rows.Close()
+			return 0, storageFailure("scan expired message wake", err)
+		}
+		expired = append(expired, job)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, storageFailure("close expired message wake rows", err)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, storageFailure("iterate expired message wakes", err)
+	}
+
+	settled := 0
+	for _, job := range expired {
+		result, err := tx.ExecContext(ctx, `UPDATE message_wake_jobs
+SET status = ?, diagnostic = ?, lease_expires_at = NULL, updated_at = ?
+WHERE id = ? AND status = 'leased' AND lease_expires_at <= ?`, domain.WakeFailedUnknown, expiredMessageWakeDiagnostic, now, job.ID, now)
+		if err != nil {
+			return 0, storageFailure("settle expired message wake", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return 0, storageFailure("inspect expired message wake settlement", err)
+		}
+		if changed == 0 {
+			continue
+		}
+		if _, err := appendEventForActor(ctx, tx, job.WorkspaceID, "message", job.MessageID, 1, messageWakeFailedUnknown, "wake-unknown-"+job.ID, now, messageWakeActorID, "subsystem", map[string]any{
+			"recipient_agent_id": job.RecipientAgentID,
+			"target_run_id":      job.TargetRunID,
+			"diagnostic":         expiredMessageWakeDiagnostic,
+		}); err != nil {
+			return 0, err
+		}
+		settled++
+	}
+	return settled, nil
+}
+
 func (s *Store) ClaimMessageWakeJob(ctx context.Context, lease time.Duration) (domain.MessageWakeJob, bool, error) {
 	if lease <= 0 {
 		lease = time.Second
@@ -745,19 +814,26 @@ func (s *Store) ClaimMessageWakeJob(ctx context.Context, lease time.Duration) (d
 		return domain.MessageWakeJob{}, false, storageFailure("begin message wake claim", err)
 	}
 	defer tx.Rollback()
-	now, expires := s.clock().UTC(), s.clock().UTC().Add(lease)
+	now := s.clock().UTC()
+	nowText, expires := now.Format(time.RFC3339Nano), now.Add(lease).Format(time.RFC3339Nano)
+	if _, err := settleExpiredMessageWakes(ctx, tx, nowText); err != nil {
+		return domain.MessageWakeJob{}, false, err
+	}
 	var job domain.MessageWakeJob
 	err = tx.QueryRowContext(ctx, `SELECT id, message_id, recipient_agent_id, target_run_id, status, attempts, COALESCE(diagnostic, '')
-FROM message_wake_jobs WHERE (status = 'pending' AND available_at <= ?) OR (status = 'leased' AND lease_expires_at <= ?)
-ORDER BY sequence LIMIT 1`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)).Scan(&job.ID, &job.MessageID, &job.RecipientAgentID, &job.TargetRunID, &job.Status, &job.Attempts, &job.Diagnostic)
+FROM message_wake_jobs WHERE status = 'pending' AND available_at <= ?
+ORDER BY sequence LIMIT 1`, nowText).Scan(&job.ID, &job.MessageID, &job.RecipientAgentID, &job.TargetRunID, &job.Status, &job.Attempts, &job.Diagnostic)
 	if errors.Is(err, sql.ErrNoRows) {
+		if err := tx.Commit(); err != nil {
+			return domain.MessageWakeJob{}, false, storageFailure("commit message wake recovery", err)
+		}
 		return domain.MessageWakeJob{}, false, nil
 	}
 	if err != nil {
 		return domain.MessageWakeJob{}, false, storageFailure("query message wake", err)
 	}
 	job.Status, job.Attempts = domain.WakeLeased, job.Attempts+1
-	if _, err := tx.ExecContext(ctx, "UPDATE message_wake_jobs SET status = 'leased', attempts = ?, lease_expires_at = ?, updated_at = ? WHERE id = ?", job.Attempts, expires.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), job.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE message_wake_jobs SET status = 'leased', attempts = ?, lease_expires_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'", job.Attempts, expires, nowText, job.ID); err != nil {
 		return domain.MessageWakeJob{}, false, storageFailure("lease message wake", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -766,7 +842,11 @@ ORDER BY sequence LIMIT 1`, now.Format(time.RFC3339Nano), now.Format(time.RFC333
 	return job, true, nil
 }
 
-func (s *Store) CompleteMessageWakeJob(ctx context.Context, jobID string, succeeded bool, diagnostic string) error {
+func (s *Store) SettleMessageWakeJob(ctx context.Context, jobID, outcome, diagnostic string) error {
+	outcome = strings.TrimSpace(outcome)
+	if outcome != domain.WakeSucceeded && outcome != domain.WakeFailed && outcome != domain.WakeFailedUnknown {
+		return &Error{Code: CodeInvalidMessage, Message: "message wake outcome must be succeeded, failed, or failed_unknown"}
+	}
 	diagnostic = strings.TrimSpace(diagnostic)
 	if len(diagnostic) > 1024 {
 		maximum := 1024
@@ -795,13 +875,13 @@ WHERE j.id = ?`, strings.TrimSpace(jobID)).Scan(&workspaceID, &messageProjectID,
 	if err != nil {
 		return storageFailure("query message wake completion", err)
 	}
-	if job.Status == domain.WakeSucceeded || job.Status == domain.WakeFailed {
+	if job.Status == domain.WakeSucceeded || job.Status == domain.WakeFailed || job.Status == domain.WakeFailedUnknown {
 		return tx.Commit()
 	}
 	if job.Status != domain.WakeLeased {
 		return &Error{Code: CodeInvalidMessage, Message: "message wake job is not leased"}
 	}
-	if succeeded {
+	if outcome == domain.WakeSucceeded {
 		var targetStatus, targetAgentID, targetProjectID, targetTaskID string
 		targetErr := tx.QueryRowContext(ctx, "SELECT status, agent_id, project_id, task_id FROM runs WHERE id = ?", job.TargetRunID).Scan(&targetStatus, &targetAgentID, &targetProjectID, &targetTaskID)
 		if targetErr != nil && !errors.Is(targetErr, sql.ErrNoRows) {
@@ -810,7 +890,7 @@ WHERE j.id = ?`, strings.TrimSpace(jobID)).Scan(&workspaceID, &messageProjectID,
 		directMismatch := threadKind == domain.ThreadKindDirect && messageProjectID != "" && targetProjectID != messageProjectID
 		participantMismatch := threadKind == domain.ThreadKindParticipantBound && (recipientProjectID == "" || recipientTaskID == "" || targetProjectID != recipientProjectID || targetTaskID != recipientTaskID)
 		if targetErr != nil || targetAgentID != job.RecipientAgentID || !runCanUseMailbox(targetStatus) || directMismatch || participantMismatch {
-			succeeded = false
+			outcome = domain.WakeFailed
 			if threadKind == domain.ThreadKindParticipantBound {
 				diagnostic = "target run is no longer live in the authorized participant binding for wake-up"
 			} else {
@@ -819,15 +899,23 @@ WHERE j.id = ?`, strings.TrimSpace(jobID)).Scan(&workspaceID, &messageProjectID,
 		}
 	}
 	now := s.nowText()
-	status, eventType := domain.WakeFailed, messageWakeFailed
-	if succeeded {
-		status, eventType = domain.WakeSucceeded, messageWakeSucceeded
+	eventType := messageWakeFailed
+	correlationID := "wake-" + job.ID
+	switch outcome {
+	case domain.WakeSucceeded:
+		eventType = messageWakeSucceeded
+	case domain.WakeFailedUnknown:
+		eventType = messageWakeFailedUnknown
+		correlationID = "wake-unknown-" + job.ID
+		if diagnostic == "" {
+			diagnostic = expiredMessageWakeDiagnostic
+		}
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE message_wake_jobs SET status = ?, diagnostic = NULLIF(?, ''), lease_expires_at = NULL, updated_at = ? WHERE id = ?", status, diagnostic, now, job.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE message_wake_jobs SET status = ?, diagnostic = NULLIF(?, ''), lease_expires_at = NULL, updated_at = ? WHERE id = ?", outcome, diagnostic, now, job.ID); err != nil {
 		return storageFailure("complete message wake", err)
 	}
 	deliveryChanged := false
-	if succeeded {
+	if outcome == domain.WakeSucceeded {
 		var deliveryStatus string
 		if err := tx.QueryRowContext(ctx, "SELECT status FROM message_recipients WHERE message_id = ? AND recipient_agent_id = ?", job.MessageID, job.RecipientAgentID).Scan(&deliveryStatus); err != nil {
 			return storageFailure("query wake delivery", err)
@@ -838,10 +926,10 @@ delivered_at = COALESCE(delivered_at, ?), delivered_run_id = COALESCE(delivered_
 		}
 		deliveryChanged = deliveryStatus == domain.DeliveryQueued
 	}
-	if _, err := appendEventForActor(ctx, tx, workspaceID, "message", job.MessageID, 1, eventType, "wake-"+job.ID, now, messageWakeActorID, "subsystem", map[string]any{"recipient_agent_id": job.RecipientAgentID, "target_run_id": job.TargetRunID, "diagnostic": diagnostic}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, workspaceID, "message", job.MessageID, 1, eventType, correlationID, now, messageWakeActorID, "subsystem", map[string]any{"recipient_agent_id": job.RecipientAgentID, "target_run_id": job.TargetRunID, "diagnostic": diagnostic}); err != nil {
 		return err
 	}
-	if succeeded && deliveryChanged {
+	if outcome == domain.WakeSucceeded && deliveryChanged {
 		if _, err := appendEventForActor(ctx, tx, workspaceID, "message", job.MessageID, 2, messageDeliveredEvent, "wake-delivery-"+job.ID, now, messageWakeActorID, "subsystem", map[string]any{"recipient_agent_id": job.RecipientAgentID, "run_id": job.TargetRunID}); err != nil {
 			return err
 		}

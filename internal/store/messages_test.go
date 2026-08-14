@@ -117,8 +117,8 @@ func TestDurableMailboxSupportsOfflineDeliveryReplyAcknowledgementAndFailedWake(
 	if err != nil || !found || wake.MessageID != reply.Value.Message.ID || wake.TargetRunID != senderRun.Run.ID {
 		t.Fatalf("ClaimMessageWakeJob() = %#v, %t, %v", wake, found, err)
 	}
-	if err := storage.CompleteMessageWakeJob(context.Background(), wake.ID, false, "fixture prompt refused"); err != nil {
-		t.Fatalf("CompleteMessageWakeJob(failed) error = %v", err)
+	if err := storage.SettleMessageWakeJob(context.Background(), wake.ID, domain.WakeFailed, "fixture prompt refused"); err != nil {
+		t.Fatalf("SettleMessageWakeJob(failed) error = %v", err)
 	}
 	senderInbox, err := storage.Inbox(context.Background(), workspace.ID, sender.ID, 20)
 	if err != nil || len(senderInbox) != 1 || senderInbox[0].Delivery.Status != domain.DeliveryQueued || senderInbox[0].Delivery.WakeStatus != domain.WakeFailed || senderInbox[0].Delivery.WakeDiagnostic != "fixture prompt refused" {
@@ -133,6 +133,76 @@ func TestDurableMailboxSupportsOfflineDeliveryReplyAcknowledgementAndFailedWake(
 	thread, err := storage.Thread(context.Background(), workspace.ID, sent.Value.Thread.ID)
 	if err != nil || len(thread.Messages) != 2 || len(thread.Recipients) != 2 || thread.Recipients[0].Status != domain.DeliveryAcknowledged || thread.Recipients[1].Status != domain.DeliveryAcknowledged || thread.Recipients[1].WakeStatus != domain.WakeFailed {
 		t.Fatalf("Thread() = %#v, %v", thread, err)
+	}
+}
+
+func TestExpiredMessageWakeIsFailedUnknownAndNeverReissued(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
+	storage := openTestStore(t, t.TempDir(), Options{Clock: func() time.Time { return now }})
+	workspace, project := initializeWorkTestProject(t, storage)
+	recipient := createMessageTestAgent(t, storage, workspace.ID, "unknown-wake-recipient")
+	task := createAssignedMessageTestTask(t, storage, workspace.ID, project.ID, recipient.ID, "unknown wake task", "unknown-wake")
+	scenario := domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "unknown-wake", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "waiting"}}}
+	run := createRunTest(t, storage, workspace.ID, task, scenario, "unknown-wake-run")
+	starting, err := storage.MarkRunStarting(context.Background(), run.Run.ID, "unknown-wake-starting")
+	if err != nil {
+		t.Fatalf("MarkRunStarting() error = %v", err)
+	}
+	if _, err := storage.MarkRunStarted(context.Background(), starting.ID, "unknown-runtime", "unknown-provider", "unknown-wake-started"); err != nil {
+		t.Fatalf("MarkRunStarted() error = %v", err)
+	}
+
+	sent, err := storage.SendMessage(context.Background(), SendMessageCommand{
+		WorkspaceIdentifier: workspace.ID,
+		ProjectIdentifier:   project.ID,
+		RecipientAgent:      recipient.ID,
+		Kind:                domain.MessageInform,
+		Body:                "This prompt may already have reached the runtime.",
+		IdempotencyKey:      "unknown-wake-message",
+		CorrelationID:       "unknown-wake-message-request",
+	})
+	if err != nil || sent.Value.Recipient.WakeStatus != domain.WakePending {
+		t.Fatalf("SendMessage() = %#v, %v", sent, err)
+	}
+	wake, found, err := storage.ClaimMessageWakeJob(context.Background(), time.Second)
+	if err != nil || !found || wake.Attempts != 1 {
+		t.Fatalf("ClaimMessageWakeJob() = %#v, %t, %v", wake, found, err)
+	}
+
+	// This is the kill-after-effect-before-completion boundary. The worker never
+	// durably settled its leased operation, so recovery must report uncertainty
+	// rather than issue the external prompt again.
+	now = now.Add(2 * time.Second)
+	if next, found, err := storage.ClaimMessageWakeJob(context.Background(), time.Second); err != nil || found {
+		t.Fatalf("ClaimMessageWakeJob(after expiry) = %#v, %t, %v; want no reissue", next, found, err)
+	}
+	if next, found, err := storage.ClaimMessageWakeJob(context.Background(), time.Second); err != nil || found {
+		t.Fatalf("ClaimMessageWakeJob(repeated recovery) = %#v, %t, %v; want terminal", next, found, err)
+	}
+
+	var status, diagnostic string
+	var attempts, unknownEvents int
+	var leaseExpiresAt any
+	if err := storage.db.QueryRow(`SELECT status, attempts, COALESCE(diagnostic, ''), lease_expires_at
+FROM message_wake_jobs WHERE id = ?`, wake.ID).Scan(&status, &attempts, &diagnostic, &leaseExpiresAt); err != nil {
+		t.Fatalf("query recovered wake error = %v", err)
+	}
+	if err := storage.db.QueryRow(`SELECT COUNT(*) FROM events WHERE type = ? AND entity_id = ?`, messageWakeFailedUnknown, sent.Value.Message.ID).Scan(&unknownEvents); err != nil {
+		t.Fatalf("count failed-unknown events error = %v", err)
+	}
+	if status != domain.WakeFailedUnknown || attempts != 1 || diagnostic != expiredMessageWakeDiagnostic || leaseExpiresAt != nil || unknownEvents != 1 {
+		t.Fatalf("recovered wake status=%q attempts=%d diagnostic=%q lease=%v events=%d", status, attempts, diagnostic, leaseExpiresAt, unknownEvents)
+	}
+	if err := storage.SettleMessageWakeJob(context.Background(), wake.ID, domain.WakeSucceeded, "late worker completion"); err != nil {
+		t.Fatalf("SettleMessageWakeJob(late) error = %v", err)
+	}
+	if err := storage.db.QueryRow(`SELECT status FROM message_wake_jobs WHERE id = ?`, wake.ID).Scan(&status); err != nil || status != domain.WakeFailedUnknown {
+		t.Fatalf("late completion status = %q, %v; want failed_unknown", status, err)
+	}
+	inbox, err := storage.Inbox(context.Background(), workspace.ID, recipient.ID, 20)
+	if err != nil || len(inbox) != 1 || inbox[0].Delivery.Status != domain.DeliveryQueued || inbox[0].Delivery.WakeStatus != domain.WakeFailedUnknown || inbox[0].Delivery.WakeDiagnostic != expiredMessageWakeDiagnostic {
+		t.Fatalf("Inbox(after unknown wake) = %#v, %v", inbox, err)
 	}
 }
 
@@ -220,8 +290,8 @@ VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?)`, "wake_cross_project_regression", cr
 	if err != nil || !found {
 		t.Fatalf("ClaimMessageWakeJob(injected cross-project) = %#v, %t, %v", wake, found, err)
 	}
-	if err := storage.CompleteMessageWakeJob(context.Background(), wake.ID, true, ""); err != nil {
-		t.Fatalf("CompleteMessageWakeJob(cross-project) error = %v", err)
+	if err := storage.SettleMessageWakeJob(context.Background(), wake.ID, domain.WakeSucceeded, ""); err != nil {
+		t.Fatalf("SettleMessageWakeJob(cross-project) error = %v", err)
 	}
 	ownerInbox, err := storage.Inbox(context.Background(), workspace.ID, reviewer.ID, 20)
 	if err != nil || len(ownerInbox) != 2 || ownerInbox[1].Delivery.Status != domain.DeliveryQueued || ownerInbox[1].Delivery.WakeStatus != domain.WakeFailed || !strings.Contains(ownerInbox[1].Delivery.WakeDiagnostic, "message project") {
