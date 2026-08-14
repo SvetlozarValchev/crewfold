@@ -763,6 +763,56 @@ additional diagnosis.
 | `M20-PKG-01` | build Linux amd64 candidate twice with fixed metadata, extract separately | byte-identical archive/checksum; extracted `version` and `doctor --self` pass; nothing is published/installed and no license is implied |
 | `M20-ALL-01` | clean tree complete gate | `scripts/check.sh`, race suite, every prior scenario, and personal-beta scenario pass without paid provider calls or hidden cleanup |
 
+## M21 executable workbench and browser-security matrix
+
+M21's normal acceptance uses the provider-free fixture and a real browser engine;
+it must not require Herdr, model credentials, an API key, network access, or a
+paid call. Recorded provider boundaries separately prove Codex subscription and
+Claude authentication/launch behavior. Installed/live provider and Herdr runs
+remain explicit opt-in canaries.
+
+On the fixed `personal-100` profile, an already-running service must return the
+authenticated shell and first canonical overview within three seconds. Fifty
+warm project switches and agent-detail opens have p95 at most 500 milliseconds
+and maximum two seconds. Two hundred committed invalidations become visibly
+current at p95 at most one second and maximum two seconds. A local fixture
+terminal's 200 input/output round trips have p95 at most 250 milliseconds and
+maximum one second. Content-hashed production web assets total at most 5 MiB;
+one decoded HTTP response remains within the existing 16-MiB bound; activity,
+notification, canonical page, and route/cache retention remain no larger than
+their M19 bounds; and rendered entity rows stay bounded/virtualized rather than
+growing with all 100,000 events. Measurements report browser engine/version,
+asset bytes, DOM node peak, JavaScript heap when supported, and p50/p95/p99/max.
+
+| ID | Adversarial setup | Required observable result |
+| --- | --- | --- |
+| `M21-SVC-01` | fresh supported Linux user with no state/config/runtime roots | service install creates exact private XDG paths and current store, starts one daemon, and `crewfold open` reaches the workbench; it creates no project/model call |
+| `M21-SVC-02` | restart/login, duplicate install/start/open, stale socket/PID, unavailable user-service manager | one idempotent service identity and actionable diagnosis; no second daemon, path adoption, broad kill, or hidden fallback; explicit foreground development mode remains intact |
+| `M21-WEB-01` | compare browser, local API, CLI, and TUI reads at one fenced cursor | canonical IDs/revisions/counts/claims/evidence/hash/cursor are deeply equal; browser holds no independent domain projection |
+| `M21-WEB-02` | malformed/unknown/oversized HTTP result or SSE event, mixed refresh cut, response/event reordering | strict current schema and semantic binding fail closed; payload only invalidates; a final high-water fence prevents mixed state from becoming current |
+| `M21-AUTH-01` | direct URL, missing/expired/replayed bootstrap, stolen session, changed Host/Origin, DNS rebinding, wildcard CORS, CSRF, framed page, remote bind | only one exact loopback origin and owner bootstrap/session succeeds; every other request has a stable denial before canonical read/mutation/runtime contact |
+| `M21-AUTH-02` | inspect URLs, history, logs, HTML/JS, storage, cookies, HTTP/SSE/WebSocket frames and failures | no node key, provider credential, API key, MCP capability, runtime binding, attach environment, or owner bootstrap secret is exposed; CSP and no-frame policy are exact |
+| `M21-ONB-01` | no workspace; choose one valid committed Git repository and fixture provider | browser creates workspace/project/checkout/provider/runtime/policy setup and lands in the empty workbench without displaying or requiring IDs, revisions, sockets, or scenario files |
+| `M21-ONB-02` | missing/unborn/unsafe repository, duplicate project, provider unauthenticated/incompatible, Herdr absent | exact field-level diagnosis and recovery; no partial project/provider policy; direct remains available and optional Herdr absence never blocks headless onboarding |
+| `M21-CHAT-01` | ask a factual question about current work | answer cites exact canonical records/cursor, appends only bounded conversation history, and creates no domain event/effect |
+| `M21-CHAT-02` | say “organize this objective and start” under sufficient exact policy/budget/capacity | one frozen typed graph creates exact objective/tasks/dependencies/assignments/runs automatically; visible receipts link every entity/revision/event; no redundant confirmation |
+| `M21-CHAT-03` | graph mixes allowed local work with one over-budget, authority-changing, destructive, external, or publication operation | allowed dependency-independent operations and the gated cut are declared before execution; gated operation has no effect until exact review; approval executes only its frozen operation |
+| `M21-CHAT-04` | ambiguous instruction or manager output with unknown op/field, stale revision, cross-scope ID, cycle, invalid budget, excessive size, or prompt-injected authority claim | at most one bounded clarification or exact refusal; malformed graph creates no effect and role/purpose/prose cannot expand authority |
+| `M21-CHAT-05` | kill before interpretation seal, during graph execution, after effect/before receipt response, then replay/reconnect | request and operation idempotency recover one exact interpretation/effect set; committed subset and remaining graph are honest; no model reinterpretation or duplicate event/run |
+| `M21-PLAN-01` | edit tasks/dependencies/agents/budgets in a generated plan before launch | validation is deterministic, dependency graph remains acyclic/same-project, revisions/budget deltas are visible, and launch freezes exactly the reviewed graph |
+| `M21-PLAN-02` | current project/task/agent/policy changes while plan is open | stale plan cannot launch; exact changed inputs and required refresh are shown; no optimistic client-side merge or compatibility rewrite |
+| `M21-CODEX-01` | recorded Codex CLI authenticated through ChatGPT subscription with `OPENAI_API_KEY` absent | provider doctor, manager turn, and implementation launch succeed through the CLI adapter; no API key is requested/invented/stored; usage is attributed to provider limits, not fabricated API cost |
+| `M21-AGENT-01` | open each active/waiting/blocked/terminal/lost agent and compare API truth | task/run/context/messages/claims/checks/evidence/budget/history and available controls exactly match canonical state; no private reasoning or opaque handle is claimed/displayed |
+| `M21-AGENT-02` | large/hostile/binary Git diff, out-of-claim changes, checkout moves or disappears during read | bounded status/diff summary is valid UTF-8, control-safe, scoped and truncation-labeled; drift stays distinct from claim and accepted delivery; source is not persisted in browser/server history |
+| `M21-TERM-01` | current live Herdr run; move pane, restart daemon/browser, send input, resize, interrupt and stop | exact run-bound short grant reconnects to stable terminal, preserves byte order/size, and controls only that current-node pane; canonical state still comes from Crewfold reports/evidence |
+| `M21-TERM-02` | no Herdr, direct run, terminal run completes/lost/foreign-node, expired/replayed/cross-run grant | agent inspector and logs remain usable; live terminal capability is absent or revoked; no fallback guesses a PTY or contacts another run/session |
+| `M21-UI-01` | keyboard/screen-reader/reduced-motion/high-contrast use at narrow, desktop and wide layouts | every workflow/control is named, ordered and keyboard reachable; focus survives canonical refresh; meaning does not depend on color/motion; selected agent remains coherent |
+| `M21-UI-02` | invalid UTF-8, ESC/OSC, C0/C1, bidi, huge labels/messages/logs and 100,000-event activity | text and structure are bounded and safe; lists virtualize/cap with visible omissions; terminal bytes cannot inject workbench DOM/CSS/script or masquerade as canonical UI |
+| `M21-PERF-01` | run frozen personal-100 profile through browser bootstrap, project switch, work graph, crew/activity and agent detail plus fixture terminal | all stated latency/asset/response/retention bounds pass with a complete environment/resource report; daemon M20 limits remain unchanged |
+| `M21-REC-01` | daemon/browser/service restart during onboarding, conversation, approval, canonical refresh and terminal stream | visibly stale/disconnected states disable unsafe controls, recover from exact cursor/session/operation state, and preserve selected project/objective/agent where still valid |
+| `M21-PUBLIC-01` | built binary and real browser from no data using only service/open then browser actions | repository→instruction→automatic crew→agent inspection→decision→successor→restart→redirect/stop→briefing completes without CLI composition, paid call, required Herdr, leaked process/socket/profile, or hidden fixture setup |
+| `M21-ALL-01` | clean tree complete gate | frontend format/type/lint/unit/component/browser/security/accessibility suites, Go generated/vet/test/race, M21 public scenario, and every M0–M20 scenario pass; production build performs no network fetch and embeds only pinned assets |
+
 ## Test suite commands
 
 The complete implemented offline gate is:

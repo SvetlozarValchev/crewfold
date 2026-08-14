@@ -76,3 +76,7 @@ explicitly rather than silently treating either as authoritative.
 - [ADR-0014: Explicit bounded live context deltas](decisions/0014-explicit-bounded-live-context-deltas.md)
 - [ADR-0015: Owner-granted manager proposals and deterministic supervision](decisions/0015-owner-granted-manager-proposals-and-deterministic-supervision.md)
 - [ADR-0016: Owner-granted local checks as fresh mechanical evidence](decisions/0016-owner-granted-local-check-evidence.md)
+- [ADR-0017: Owner-reviewed outcomes and bounded management briefings](decisions/0017-owner-reviewed-outcomes-and-bounded-briefings.md)
+- [ADR-0018: Go-native operator TUI over the canonical local API](decisions/0018-go-native-operator-tui.md)
+- [ADR-0019: Personal-scale hardening and quiescent recovery](decisions/0019-personal-scale-hardening-and-recovery.md)
+- [ADR-0020: Local web workbench as the primary owner interface](decisions/0020-local-web-workbench.md)

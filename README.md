@@ -20,8 +20,9 @@ than forcing the core to understand every terminal UI.
 
 ## Status
 
-Crewfold has completed M20 personal-beta hardening. M21, the OSS release
-candidate, is next and has not started. The current binary provides a
+Crewfold has completed M20 personal-beta hardening. M21, the owner-local web
+workbench, is designed but implementation has not started; the OSS release
+candidate follows as M22. The current binary provides a
 foreground local daemon, an owner-only Unix socket, and durable workspace,
 project, repository, checkout, agent, objective, task, dependency, assignment,
 lease, budget, run, placement, timeline, handoff, and event records in SQLite. It
@@ -183,6 +184,7 @@ session formats.
 | `protocol/` | Versioned API, event, and adapter schemas |
 | `integrations/herdr/` | Preferred interactive runtime driver |
 | `integrations/providers/` | Provider adapter contracts and implementations |
+| `web/` | M21 local-workbench design and interactive product mock |
 | `docs/` | Product, architecture, protocol, and operating decisions |
 
 Start with the [documentation map](docs/README.md), then read the

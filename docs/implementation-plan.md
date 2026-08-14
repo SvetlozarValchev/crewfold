@@ -1224,7 +1224,136 @@ repair, old-baseline conversion, cloud/encrypted/signed backup, general GC,
 multi-node failover, replacement UI, public package publication, or license
 decision.
 
-### M21 — Public open-source release readiness
+### M21 — Local web workbench
+
+**Question answered:** Can one developer start, direct, inspect, understand, and
+intervene in a real local crew from one owner interface instead of composing the
+control plane through commands?
+
+**Visible result**
+
+```sh
+crewfold service install
+crewfold open
+```
+
+The browser opens the local workbench. From a fresh exact-current installation,
+the owner selects an existing Git repository, verifies a provider, describes an
+objective, lets Crewfold plan and execute work inside explicit policy, inspects
+one agent live, decides an exception, and reviews the resulting evidence without
+using another CLI command.
+
+**Contract**
+
+The accepted architecture and product boundary is
+[ADR-0020](decisions/0020-local-web-workbench.md). The interactive design
+reference is [`../web/workbench-mock.html`](../web/workbench-mock.html). The mock
+does not define a second source of truth; every displayed fact and effect comes
+from the daemon's canonical APIs.
+
+**Delivery slices**
+
+1. **Service and private defaults.** Add a Linux user service, XDG-derived
+   state/config/runtime paths, `crewfold service install|start|stop|status`, and
+   `crewfold open`. Retain explicit foreground paths for development and isolated
+   tests. Installation creates no workspace, project, provider call, or model
+   charge.
+2. **Secure embedded web shell.** Pin React, TypeScript, Vite, Node, and pnpm for
+   builds; embed content-hashed static assets in the Go
+   binary. Serve exact-loopback HTTP JSON and SSE behind a single-use local
+   bootstrap and bounded owner session. Render health, connection state, current
+   workspace/project selection, and canonical read-only records first.
+3. **Browser onboarding.** Create/open the first workspace, choose an existing Git
+   repository, register the project/checkout, diagnose Codex or Claude, choose
+   direct by default or optional Herdr, and freeze an initial concurrency/cost/
+   scope policy. The browser never receives provider credentials.
+4. **Durable command workbench.** Add owner conversations, turns, frozen typed
+   operation graphs, policy evaluations, approval links, execution states, and
+   exact effect receipts. Queries append no domain effect. An explicit act turn
+   executes currently allowed operations without a redundant confirmation and
+   shows the committed receipts. Unknown, stale, malformed, over-budget,
+   out-of-scope, externally effective, destructive, or materially ambiguous work
+   pauses before its first gated effect.
+5. **Planning and launch.** Reuse manager grants/proposals, launch profiles,
+   supervisor policy, task assignment, context, run admission, and approvals to
+   produce one editable objective/task/dependency/agent/budget plan. Accepting or
+   directly authorizing the plan launches every dependency-ready operation allowed
+   by policy and exposes the remaining gates.
+6. **Agent inspector.** Present canonical task/run/context/message/claim/check/
+   evidence/history state, bounded Git status/diff observations, budget/capacity,
+   direct logs, and controls. Add a short-lived run-bound WebSocket terminal grant
+   for a current live interactive runtime. Herdr is optional; absence removes only
+   the terminal capability.
+7. **Understanding surfaces.** Bring the exact M18/M19 Briefing, Work, Decisions,
+   Checks, Coordination, and Activity facts into the browser without client-side
+   reclassification. Add portfolio/project navigation, inbox, evidence drill-down,
+   visible stale/reconnect state, and progressive responsive layouts.
+8. **Hardening and browser-only acceptance.** Prove restart, idempotent replay,
+   browser security, hostile text, bounded transport/rendering, accessibility,
+   personal-100 scale, provider-free onboarding/execution, recorded subscription
+   authentication, optional Herdr, and every prior gate.
+
+**Deliverables**
+
+- Owner-local service lifecycle with safe default paths and exact diagnostics.
+- Embedded React/TypeScript workbench with no production Node process or Electron.
+- Loopback-only authenticated HTTP/SSE and run-scoped terminal WebSocket boundary.
+- First-run repository/provider/runtime/policy onboarding.
+- Durable conversation-to-typed-command execution and receipt model.
+- Editable plan, automatic within-policy execution, and exact approval cards.
+- Agent inspector with canonical activity/evidence and optional live terminal.
+- Browser presentations of the current work graph, inbox, decisions, checks,
+  coordination, activity, briefings, health, and recovery guidance.
+- Updated interface documentation that presents web as primary, CLI as
+  automation/recovery/administration, TUI as an operational fallback, Herdr as an
+  optional runtime, and MCP as the agent surface.
+
+**Automated acceptance**
+
+- One provider-free browser scenario starts from no data, registers a disposable
+  game repository, configures a fixture provider, enters “build the first playable
+  vertical slice; organize and start,” and observes exact objective/task/
+  assignment/run receipts.
+- The scenario opens the assigned agent, proves context/activity/changed-scope/
+  check/history parity, accepts one gated decision in conversation, sees successors
+  start, restarts browser and daemon, then redirects/stops work and reads an exact
+  outcome briefing.
+- Recorded Codex fixtures prove a ChatGPT-subscription-authenticated CLI path with
+  no API key in browser, daemon state, arguments, environment, logs, or events.
+- Browser transport suites prove origin/host/CSRF/bootstrap/session/terminal-grant
+  isolation, strict schemas, idempotent replay, bounded streams, and fail-closed
+  unknown fields/events.
+- Component and browser suites prove keyboard access, focus, screen-reader names,
+  contrast, reduced motion, narrow/desktop layouts, hostile-text sanitization, and
+  no unbounded DOM list.
+- The personal-100 fixture remains inside current M20 daemon limits while browser
+  bootstrap, project switching, activity, work graph, crew list, and agent detail
+  meet the M21 budgets frozen in `docs/testing.md`.
+
+**Failure injection**
+
+- Restart the service during bootstrap, manager interpretation, multi-operation
+  execution, SSE refresh, and terminal streaming. Lose the first committed
+  response, reuse an operation key with changed semantics, exceed budget/capacity,
+  inject a malformed plan, remove Herdr, move a pane, and close it unexpectedly.
+- Attempt cross-origin and DNS-rebinding requests, missing/expired/replayed
+  bootstrap and terminal grants, CSRF, wildcard Host, frame embedding, remote bind,
+  capability/provider-secret disclosure, path traversal, oversized payloads,
+  terminal control injection, and another run's terminal.
+
+**Exit gate**
+
+After one installation/open action, the complete provider-free personal workflow
+is operable and understandable through the browser without CLI composition. An
+explicit owner instruction executes permitted work with exact durable receipts;
+gated work stops before its first unauthorized effect. Browser/daemon restart
+preserves the conversation and canonical work, agent inspection remains honest,
+Herdr is optional, Codex subscription authentication needs no API key, M20 scale
+and recovery claims remain true, and every previous scenario passes. No hosted,
+remote, multi-user, push/deploy/publication, public-package, or compatibility path
+is introduced.
+
+### M22 — Public open-source release readiness
 
 **Question answered:** Can an unrelated developer install, understand, test, and
 extend Crewfold safely?
@@ -1277,7 +1406,8 @@ an explicit owner decision.
 | Management alpha | M18 | Evidence-backed outcomes and bounded owner briefings |
 | Operator alpha | M19 | One coherent terminal control surface |
 | Personal beta | M20 | Operable and recoverable at target local scale |
-| Public release candidate | M21 | Installable, documented, extensible OSS package |
+| Usable personal workbench | M21 | One local browser surface for intent, execution, inspection, and understanding |
+| Public release candidate | M22 | Installable, documented, extensible OSS package |
 
 These are capability labels, not promises of semantic-version numbers or dates.
 

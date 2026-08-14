@@ -3,8 +3,9 @@
 ## Recommendation
 
 Build the local core as a single Go binary backed by SQLite. Expose a versioned
-local API and MCP server, integrate Herdr as the primary runtime, and defer the web
-console until the control plane works end to end.
+local API and MCP server, and integrate replaceable direct and Herdr runtimes. The
+control plane now works end to end through M20; M21 adds the previously deferred
+owner-local web workbench without creating a second production service.
 
 The current implementation includes the Go binary, local Unix transport, SQLite
 storage, read-only installed-Git observation, and provider-neutral durable work
@@ -27,6 +28,8 @@ until their capability is implemented.
 | Source control | Installed Git CLI | Matches user Git behavior and supports worktrees without reimplementing Git |
 | Search | SQLite FTS5 | Adequate deterministic retrieval without another service |
 | TUI | Bubble Tea v2.0.8, Bubbles v2.1.1, Lip Gloss v2.0.6 | One Go-native event loop and renderer in the existing binary |
+| Web workbench (M21) | React, TypeScript, and Vite; static output embedded in Go | Rich local planning, conversation, graphs, evidence, and agent inspection with no production Node process or Electron |
+| Browser transport (M21) | Loopback HTTP JSON and SSE; WebSocket only for terminal streams | Canonical request/invalidations remain separate from optional untrusted PTY bytes |
 | Logging | Structured logs with redaction | Debuggable local operation and future telemetry bridge |
 | Metrics/tracing | Optional OpenTelemetry hooks | Standard observability without requiring a collector |
 
@@ -88,7 +91,7 @@ crewfold/
 ├─ integrations/
 │  ├─ herdr/                  # runtime driver
 │  └─ providers/              # provider adapters and conformance fixtures
-├─ web/                       # deferred browser console
+├─ web/                       # M21 embedded local workbench and reviewed product mock
 └─ docs/                      # product and architecture contract
 ```
 
@@ -98,17 +101,21 @@ not add a monorepo task runner before multiple build graphs exist.
 
 ## Human interfaces
 
-### First
+### Implemented through M20
 
 - `crewfold` CLI for commands and scripting;
 - `crewfold ui` terminal dashboard;
 - Herdr for live panes, layouts, and direct interaction;
 - MCP for agent participation.
 
-### Later
+### M21
 
-A local browser console can visualize dependency graphs, mailboxes, context
-revisions, and large fleets. It should call the same API and remain optional.
+The owner-local browser workbench becomes the primary human experience for
+onboarding, intent, planning, execution, dependency graphs, mailboxes, context,
+agent inspection, decisions, evidence, and briefings. It calls canonical daemon
+APIs and is embedded in the Go binary. CLI remains complete for automation,
+recovery, diagnosis, and advanced administration; the TUI remains an operational
+and SSH fallback; Herdr is optional interactive runtime infrastructure.
 
 ## Not in the MVP stack
 

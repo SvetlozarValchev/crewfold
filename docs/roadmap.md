@@ -7,7 +7,9 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M20 are complete; M21 is next and has not started**. Evidence is
+Current status: **M0 through M20 are complete. M21 is the next implementation
+milestone; its product and architecture contract is accepted, but implementation
+has not started.** Evidence is
 recorded in the [M0 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -117,7 +119,8 @@ candidate, and complete prior-scenario gate. Its implementation commit is
 | M18 ✓ | Outcome briefings | Explain accepted delivery, rationale, evidence, risk, and owner decisions | M17 |
 | M19 ✓ | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
 | M20 ✓ | Personal beta | Back up, restore, verify current-baseline integrity, and load-test 100 registered agent definitions | M19 |
-| M21 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M20 |
+| M21 | Local web workbench | Orchestrate, inspect, understand, and intervene from one owner-local browser interface | M20 |
+| M22 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M21 |
 
 ## Capability ladder
 
@@ -143,6 +146,7 @@ buildable binary
   -> outcome ledger and management briefings
   -> operator TUI
   -> personal-scale recovery
+  -> local web workbench
   -> public release readiness
 ```
 
@@ -213,7 +217,17 @@ activates it with a fresh node key. Role and purpose strings remain arbitrary
 descriptive labels rather than an authority taxonomy. The exact contract is
 [ADR-0019](decisions/0019-personal-scale-hardening-and-recovery.md).
 
-### Public release candidate — M21
+### Usable personal workbench — M21
+
+One developer opens one owner-local browser workbench, registers an existing
+repository, verifies a provider, describes an objective, and lets Crewfold plan
+and execute work within explicit policy. The same surface inspects any agent's
+canonical task, context, activity, and evidence plus bounded logs or an optional
+Herdr terminal. CLI and TUI remain secondary automation, recovery, and operational
+interfaces. The exact contract is
+[ADR-0020](decisions/0020-local-web-workbench.md).
+
+### Public release candidate — M22
 
 An unrelated developer can install, demo, test, and extend Crewfold without model
 credentials. Live provider tests remain explicit opt-in canaries.
@@ -258,7 +272,7 @@ the need:
 - PostgreSQL, Kubernetes, or required containers;
 - dedicated vector database or mandatory embeddings;
 - automatic pushes, merges, deployments, or messages to real people;
-- browser console as a prerequisite for basic operation;
+- hosted or remotely reachable browser control plane;
 - autonomous company hierarchy.
 
 The local node and protocols retain extension seams for those later capabilities,
@@ -266,10 +280,17 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M21 is next and has not started. Its entry work is the clean-environment OSS
-release candidate: install, demo, extension documentation, and release-quality
-packaging must build on the accepted M20 contract without reopening compatibility
-or migration paths.
+M21 is next. Its accepted design contract is
+[ADR-0020](decisions/0020-local-web-workbench.md), and its interactive reference is
+[`web/workbench-mock.html`](../web/workbench-mock.html). Implementation has not
+started. Entry work is the Linux owner-local service, default private paths, and
+secure embedded read-only web shell. Later slices add onboarding, durable
+conversation-to-command execution, editable plan launch, agent inspection,
+optional Herdr terminal streaming, and the complete browser-only acceptance path.
+
+The prior OSS release-readiness scope is M22. Packaging, adapter SDK/conformance,
+public governance/license work, and any upstream publication stay outside M21 and
+must build on its accepted single-place owner workflow.
 
 M20 is complete at implementation commit
 `359522d8aa58a18a7d1151584a8f9bc48b4bfc56`; its
