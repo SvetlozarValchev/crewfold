@@ -23,6 +23,13 @@ import (
 var _ RuntimeStatusInspector = (*DirectRuntime)(nil)
 var _ RuntimeLaunchPreparer = (*DirectRuntime)(nil)
 
+const directTestNodeID = "11111111111111111111111111111111"
+
+func newTestDirectRuntime(options DirectRuntimeOptions) *DirectRuntime {
+	options.NodeID = directTestNodeID
+	return NewDirectRuntime(options)
+}
+
 func TestDirectSupervisorHelper(t *testing.T) {
 	for index, argument := range os.Args {
 		if argument == "crewfold-direct-supervisor-test-helper" {
@@ -76,7 +83,7 @@ func TestDirectPrepareLaunchIsSideEffectFreeAndMatchesPersistedSpec(t *testing.T
 		t.Fatalf("os.Executable() error = %v", err)
 	}
 	stateRoot := filepath.Join(t.TempDir(), "check-runtime")
-	runtime := NewDirectRuntime(DirectRuntimeOptions{
+	runtime := newTestDirectRuntime(DirectRuntimeOptions{
 		StateRoot: stateRoot, SupervisorExecutable: executable,
 		SupervisorArguments:            []string{"-test.run=^TestDirectSupervisorHelper$", "--", "crewfold-direct-supervisor-test-helper"},
 		InheritedEnvironment:           []string{"PATH=/usr/bin", "LANG=C"},
@@ -104,7 +111,7 @@ func TestDirectPrepareLaunchIsSideEffectFreeAndMatchesPersistedSpec(t *testing.T
 	if stored.SpecSHA256 != prepared.SpecSHA256 {
 		t.Fatalf("persisted digest = %s, prepared = %s", stored.SpecSHA256, prepared.SpecSHA256)
 	}
-	waitForDirectCompletion(t, runtime, operationID, directHandle(operationID))
+	waitForDirectCompletion(t, runtime, operationID, directHandle(directTestNodeID, operationID))
 }
 
 func TestDirectLaunchRejectsPostPreparationWorkingDirectorySymlinkSwap(t *testing.T) {
@@ -120,7 +127,7 @@ func TestDirectLaunchRejectsPostPreparationWorkingDirectorySymlinkSwap(t *testin
 	if err := os.Mkdir(workingDirectory, 0o700); err != nil {
 		t.Fatalf("os.Mkdir(working directory) error = %v", err)
 	}
-	runtime := NewDirectRuntime(DirectRuntimeOptions{
+	runtime := newTestDirectRuntime(DirectRuntimeOptions{
 		StateRoot: filepath.Join(t.TempDir(), "check-runtime"), SupervisorExecutable: executable,
 		SupervisorArguments:  []string{"-test.run=^TestDirectSupervisorHelper$", "--", "crewfold-direct-supervisor-test-helper"},
 		InheritedEnvironment: []string{"PATH=/usr/bin"},
@@ -174,7 +181,7 @@ func TestDirectSupervisorUsesPinnedWorkingDirectoryAfterPathSwap(t *testing.T) {
 	}
 	runDirectory := t.TempDir()
 	spec := directSupervisorSpec{
-		Schema: directSupervisorSpecSchema, OperationID: "check_pinned_working_directory", Executable: "/bin/sh",
+		Schema: directSupervisorSpecSchema, NodeID: directTestNodeID, OperationID: "check_pinned_working_directory", Executable: "/bin/sh",
 		Arguments: []string{"-c", "printf pinned > effect.txt"}, StandardInput: []byte{}, Environment: []string{"PATH=/usr/bin"}, WorkingDirectory: workingDirectory,
 		OutputByteLimit: directDefaultOutputLimit, DefaultGraceMillis: directDefaultGracePeriod.Milliseconds(),
 	}
@@ -296,7 +303,7 @@ func TestDirectInspectionReportsUnknownWhenRecordedSupervisorDisappears(t *testi
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 	storedSpec := directSupervisorSpec{
-		Schema: directSupervisorSpecSchema, OperationID: runID, Executable: "/bin/true", Arguments: []string{}, StandardInput: []byte{}, Environment: []string{},
+		Schema: directSupervisorSpecSchema, NodeID: directTestNodeID, OperationID: runID, Executable: "/bin/true", Arguments: []string{}, StandardInput: []byte{}, Environment: []string{},
 		WorkingDirectory: root, OutputByteLimit: directDefaultOutputLimit, DefaultGraceMillis: directDefaultGracePeriod.Milliseconds(),
 	}
 	if err := writeDirectSpec(runDirectory, storedSpec); err != nil {
@@ -308,6 +315,7 @@ func TestDirectInspectionReportsUnknownWhenRecordedSupervisorDisappears(t *testi
 	}
 	if err := writeDirectState(runDirectory, directSupervisorState{
 		Schema:          directSupervisorStateSchema,
+		NodeID:          directTestNodeID,
 		OperationID:     runID,
 		Status:          RuntimeStateRunning,
 		SupervisorPID:   2147483647,
@@ -316,13 +324,13 @@ func TestDirectInspectionReportsUnknownWhenRecordedSupervisorDisappears(t *testi
 	}); err != nil {
 		t.Fatalf("writeDirectState() error = %v", err)
 	}
-	runtime := NewDirectRuntime(DirectRuntimeOptions{StateRoot: root})
-	_, stopErr := runtime.Stop(context.Background(), runID, directHandle(runID), StopSpec{GracePeriod: time.Millisecond})
+	runtime := newTestDirectRuntime(DirectRuntimeOptions{StateRoot: root})
+	_, stopErr := runtime.Stop(context.Background(), runID, directHandle(directTestNodeID, runID), StopSpec{GracePeriod: time.Millisecond})
 	var unknownError *OutcomeUnknownError
 	if !errors.As(stopErr, &unknownError) {
 		t.Fatalf("Stop() error = %v, want OutcomeUnknownError", stopErr)
 	}
-	snapshot, err := runtime.Inspect(context.Background(), runID, directHandle(runID))
+	snapshot, err := runtime.Inspect(context.Background(), runID, directHandle(directTestNodeID, runID))
 	if err != nil {
 		t.Fatalf("Inspect() error = %v", err)
 	}
@@ -359,8 +367,8 @@ func TestDirectStopRejectsMismatchedStateBeforeSignallingItsRecordedProcess(t *t
 	}); err != nil {
 		t.Fatalf("writeDirectState() error = %v", err)
 	}
-	runtime := NewDirectRuntime(DirectRuntimeOptions{StateRoot: root})
-	if _, err := runtime.Stop(context.Background(), operationID, directHandle(operationID), StopSpec{}); err == nil || !strings.Contains(err.Error(), "identity") {
+	runtime := newTestDirectRuntime(DirectRuntimeOptions{StateRoot: root})
+	if _, err := runtime.Stop(context.Background(), operationID, directHandle(directTestNodeID, operationID), StopSpec{}); err == nil || !strings.Contains(err.Error(), "identity") {
 		t.Fatalf("Stop(mismatched state) error = %v", err)
 	}
 	time.Sleep(2 * directPollInterval)
@@ -385,22 +393,22 @@ func TestDirectLaunchReplaysAcrossFreshRuntimeInstanceWithoutAnotherSupervisor(t
 	}
 	placement := domain.RunPlacement{CheckoutPath: t.TempDir()}
 	launch := LaunchSpec{Command: &CommandSpec{Executable: "/bin/true", Arguments: []string{"fixture"}, Timeout: time.Second}}
-	first, err := NewDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
-	if err != nil || first.RuntimeHandle != directHandle(operationID) {
+	first, err := newTestDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
+	if err != nil || first.RuntimeHandle != directHandle(directTestNodeID, operationID) {
 		t.Fatalf("Launch(fresh) = %#v, %v", first, err)
 	}
 
 	restartedOptions := options
 	restartedOptions.SupervisorExecutable = filepath.Join(t.TempDir(), "must-not-start-another-supervisor")
-	second, err := NewDirectRuntime(restartedOptions).Launch(context.Background(), operationID, placement, launch)
+	second, err := newTestDirectRuntime(restartedOptions).Launch(context.Background(), operationID, placement, launch)
 	if err != nil || second != first {
 		t.Fatalf("Launch(restarted replay) = %#v, %v; first = %#v", second, err, first)
 	}
 	launch.Command.Arguments = []string{"changed"}
-	if _, err := NewDirectRuntime(restartedOptions).Launch(context.Background(), operationID, placement, launch); err == nil || !strings.Contains(err.Error(), "different launch specification") {
+	if _, err := newTestDirectRuntime(restartedOptions).Launch(context.Background(), operationID, placement, launch); err == nil || !strings.Contains(err.Error(), "different launch specification") {
 		t.Fatalf("Launch(restarted mismatch) error = %v", err)
 	}
-	waitForDirectCompletion(t, NewDirectRuntime(options), operationID, first.RuntimeHandle)
+	waitForDirectCompletion(t, newTestDirectRuntime(options), operationID, first.RuntimeHandle)
 }
 
 func TestDirectLaunchReplayDoesNotRequireTheOriginalExecutableOrCheckoutToRemainAvailable(t *testing.T) {
@@ -441,8 +449,8 @@ func TestDirectLaunchReplayDoesNotRequireTheOriginalExecutableOrCheckoutToRemain
 	if err := os.Remove(placement.CheckoutPath); err != nil {
 		t.Fatalf("os.Remove(checkout) error = %v", err)
 	}
-	binding, err := NewDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
-	if err != nil || binding.RuntimeHandle != directHandle(operationID) {
+	binding, err := newTestDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
+	if err != nil || binding.RuntimeHandle != directHandle(directTestNodeID, operationID) {
 		t.Fatalf("Launch(unavailable exact replay) = %#v, %v", binding, err)
 	}
 }
@@ -484,19 +492,19 @@ func TestDirectLaunchReplayRequiresTheExactCanonicalEffectiveSpecification(t *te
 			operationID := "operation_" + strings.ReplaceAll(testCase.name, " ", "_")
 			options, placement, launch := directReplayFixture(t, operationID, RuntimeStateExited)
 
-			first := NewDirectRuntime(options)
+			first := newTestDirectRuntime(options)
 			binding, err := first.Launch(context.Background(), operationID, placement, launch)
-			if err != nil || binding.RuntimeHandle != directHandle(operationID) {
+			if err != nil || binding.RuntimeHandle != directHandle(directTestNodeID, operationID) {
 				t.Fatalf("Launch(existing) = %#v, %v", binding, err)
 			}
-			restarted := NewDirectRuntime(options)
+			restarted := newTestDirectRuntime(options)
 			binding, err = restarted.Launch(context.Background(), operationID, placement, launch)
-			if err != nil || binding.RuntimeHandle != directHandle(operationID) {
+			if err != nil || binding.RuntimeHandle != directHandle(directTestNodeID, operationID) {
 				t.Fatalf("Launch(after restart) = %#v, %v", binding, err)
 			}
 
 			testCase.mutate(&options, &placement, &launch)
-			_, err = NewDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
+			_, err = newTestDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
 			var unknownError *OutcomeUnknownError
 			if !errors.As(err, &unknownError) || !strings.Contains(err.Error(), "different launch specification") {
 				t.Fatalf("Launch(changed %s) error = %v, want immutable-spec rejection", testCase.name, err)
@@ -510,13 +518,13 @@ func TestDirectLaunchReplayValidatesSpecBeforeReturningRecordedStartFailure(t *t
 
 	const operationID = "operation_start_failed"
 	options, placement, launch := directReplayFixture(t, operationID, directStateStartFailed)
-	_, err := NewDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
+	_, err := newTestDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
 	var startError *StartError
 	if !errors.As(err, &startError) || err.Error() != "recorded fixture failure" {
 		t.Fatalf("Launch(same failed spec) error = %v", err)
 	}
 	launch.Command.Arguments = []string{"changed"}
-	_, err = NewDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
+	_, err = newTestDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
 	var unknownError *OutcomeUnknownError
 	if !errors.As(err, &unknownError) || !strings.Contains(err.Error(), "different launch specification") || strings.Contains(err.Error(), "recorded fixture failure") {
 		t.Fatalf("Launch(changed failed spec) error = %v, want spec rejection before old diagnostic", err)
@@ -538,7 +546,7 @@ func TestDirectLaunchWaitsForAnExactConcurrentLaunchState(t *testing.T) {
 		err     error
 	}, 1)
 	go func() {
-		binding, err := NewDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
+		binding, err := newTestDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
 		result <- struct {
 			binding RuntimeBinding
 			err     error
@@ -550,18 +558,34 @@ func TestDirectLaunchWaitsForAnExactConcurrentLaunchState(t *testing.T) {
 		t.Fatalf("readDirectSpec() error = %v", err)
 	}
 	if err := writeDirectState(runDirectory, directSupervisorState{
-		Schema: directSupervisorStateSchema, OperationID: operationID, Status: RuntimeStateRunning,
+		Schema: directSupervisorStateSchema, NodeID: directTestNodeID, OperationID: operationID, Status: RuntimeStateRunning,
 		SupervisorPID: os.Getpid(), SupervisorStart: processStartIdentity(os.Getpid()), SpecSHA256: spec.SpecSHA256,
 	}); err != nil {
 		t.Fatalf("writeDirectState() error = %v", err)
 	}
 	select {
 	case replay := <-result:
-		if replay.err != nil || replay.binding.RuntimeHandle != directHandle(operationID) {
+		if replay.err != nil || replay.binding.RuntimeHandle != directHandle(directTestNodeID, operationID) {
 			t.Fatalf("Launch(concurrent replay) = %#v, %v", replay.binding, replay.err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Launch(concurrent replay) did not observe the exact state")
+	}
+}
+
+func TestDirectRuntimeRejectsBindingsFromAnotherNodeBeforeStateAccess(t *testing.T) {
+	t.Parallel()
+
+	const operationID = "operation_node_bound"
+	const otherNodeID = "22222222222222222222222222222222"
+	runtime := NewDirectRuntime(DirectRuntimeOptions{
+		NodeID: otherNodeID, StateRoot: filepath.Join(t.TempDir(), "absent-runtime-root"), SupervisorExecutable: "/bin/true",
+	})
+	if _, err := runtime.InspectStatus(context.Background(), operationID, directHandle(directTestNodeID, operationID)); err == nil || !strings.Contains(err.Error(), "handle does not match") {
+		t.Fatalf("InspectStatus(foreign node handle) error = %v", err)
+	}
+	if _, err := runtime.Stop(context.Background(), operationID, directHandle(directTestNodeID, operationID), StopSpec{}); err == nil || !strings.Contains(err.Error(), "handle does not match") {
+		t.Fatalf("Stop(foreign node handle) error = %v", err)
 	}
 }
 
@@ -579,11 +603,11 @@ func TestDirectRuntimeRejectsCorruptSealedSpecAndState(t *testing.T) {
 		}
 		spec.Arguments = []string{"tampered"}
 		writeTestJSON(t, path, spec)
-		runtime := NewDirectRuntime(options)
+		runtime := newTestDirectRuntime(options)
 		if _, err := runtime.Launch(context.Background(), operationID, placement, launch); err == nil || !strings.Contains(err.Error(), "digest") {
 			t.Fatalf("Launch(tampered spec) error = %v", err)
 		}
-		if _, err := runtime.InspectStatus(context.Background(), operationID, directHandle(operationID)); err == nil || !strings.Contains(err.Error(), "digest") {
+		if _, err := runtime.InspectStatus(context.Background(), operationID, directHandle(directTestNodeID, operationID)); err == nil || !strings.Contains(err.Error(), "digest") {
 			t.Fatalf("InspectStatus(tampered spec) error = %v", err)
 		}
 	})
@@ -599,11 +623,11 @@ func TestDirectRuntimeRejectsCorruptSealedSpecAndState(t *testing.T) {
 		}
 		spec.SpecSHA256 = ""
 		writeTestJSON(t, path, spec)
-		runtime := NewDirectRuntime(options)
+		runtime := newTestDirectRuntime(options)
 		if _, err := runtime.Launch(context.Background(), operationID, placement, launch); err == nil || !strings.Contains(err.Error(), "digest is invalid") {
 			t.Fatalf("Launch(spec without seal) error = %v", err)
 		}
-		if _, err := runtime.InspectStatus(context.Background(), operationID, directHandle(operationID)); err == nil || !strings.Contains(err.Error(), "digest is invalid") {
+		if _, err := runtime.InspectStatus(context.Background(), operationID, directHandle(directTestNodeID, operationID)); err == nil || !strings.Contains(err.Error(), "digest is invalid") {
 			t.Fatalf("InspectStatus(spec without seal) error = %v", err)
 		}
 	})
@@ -619,11 +643,11 @@ func TestDirectRuntimeRejectsCorruptSealedSpecAndState(t *testing.T) {
 		}
 		state.StateSHA256 = ""
 		writeTestJSON(t, filepath.Join(runDirectory, "state.json"), state)
-		runtime := NewDirectRuntime(options)
+		runtime := newTestDirectRuntime(options)
 		if _, err := runtime.Launch(context.Background(), operationID, placement, launch); err == nil || !strings.Contains(err.Error(), "state digest is invalid") {
 			t.Fatalf("Launch(state without seal) error = %v", err)
 		}
-		if _, err := runtime.InspectStatus(context.Background(), operationID, directHandle(operationID)); err == nil || !strings.Contains(err.Error(), "state digest is invalid") {
+		if _, err := runtime.InspectStatus(context.Background(), operationID, directHandle(directTestNodeID, operationID)); err == nil || !strings.Contains(err.Error(), "state digest is invalid") {
 			t.Fatalf("InspectStatus(state without seal) error = %v", err)
 		}
 	})
@@ -633,14 +657,14 @@ func TestDirectRuntimeRejectsCorruptSealedSpecAndState(t *testing.T) {
 		const operationID = "operation_corrupt_state"
 		options, placement, launch := directReplayFixture(t, operationID, RuntimeStateExited)
 		statePath := filepath.Join(options.StateRoot, operationID, "state.json")
-		if err := os.WriteFile(statePath, []byte(`{"schema":"urn:crewfold:direct-supervisor-state:v1","operation_id":"operation_corrupt_state","status":"invented"}`), 0o600); err != nil {
+		if err := os.WriteFile(statePath, []byte(`{"schema":"urn:crewfold:direct-supervisor-state:v1","node_id":"11111111111111111111111111111111","operation_id":"operation_corrupt_state","status":"invented"}`), 0o600); err != nil {
 			t.Fatalf("os.WriteFile(state) error = %v", err)
 		}
-		runtime := NewDirectRuntime(options)
+		runtime := newTestDirectRuntime(options)
 		if _, err := runtime.Launch(context.Background(), operationID, placement, launch); err == nil || !strings.Contains(err.Error(), "status is invalid") {
 			t.Fatalf("Launch(corrupt state) error = %v", err)
 		}
-		if _, err := runtime.InspectStatus(context.Background(), operationID, directHandle(operationID)); err == nil || !strings.Contains(err.Error(), "status is invalid") {
+		if _, err := runtime.InspectStatus(context.Background(), operationID, directHandle(directTestNodeID, operationID)); err == nil || !strings.Contains(err.Error(), "status is invalid") {
 			t.Fatalf("InspectStatus(corrupt state) error = %v", err)
 		}
 	})
@@ -656,11 +680,11 @@ func TestDirectRuntimeRejectsCorruptSealedSpecAndState(t *testing.T) {
 		}
 		state.ExitKnown = false
 		writeTestJSON(t, statePath, state)
-		runtime := NewDirectRuntime(options)
+		runtime := newTestDirectRuntime(options)
 		if _, err := runtime.Launch(context.Background(), operationID, placement, launch); err == nil || !strings.Contains(err.Error(), "known process result") {
 			t.Fatalf("Launch(incomplete exit) error = %v", err)
 		}
-		if _, err := runtime.InspectStatus(context.Background(), operationID, directHandle(operationID)); err == nil || !strings.Contains(err.Error(), "known process result") {
+		if _, err := runtime.InspectStatus(context.Background(), operationID, directHandle(directTestNodeID, operationID)); err == nil || !strings.Contains(err.Error(), "known process result") {
 			t.Fatalf("InspectStatus(incomplete exit) error = %v", err)
 		}
 	})
@@ -678,7 +702,7 @@ func TestDirectRuntimeRejectsCorruptSealedSpecAndState(t *testing.T) {
 		if err := writeDirectState(runDirectory, state); err != nil {
 			t.Fatalf("writeDirectState() error = %v", err)
 		}
-		_, err = NewDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
+		_, err = newTestDirectRuntime(options).Launch(context.Background(), operationID, placement, launch)
 		var unknownError *OutcomeUnknownError
 		if !errors.As(err, &unknownError) || !strings.Contains(err.Error(), "impossible process result") {
 			t.Fatalf("Launch(corrupt start failure) error = %v", err)
@@ -707,12 +731,12 @@ func TestDirectStatusOmitsOutputAndLogsAreBoundedAndRedacted(t *testing.T) {
 		t.Fatalf("os.WriteFile(stderr) error = %v", err)
 	}
 	updateDirectTestCaptureState(t, runDirectory, int64(len(raw)), 128, int64(len("Authorization: Bearer "+secret+"\n")), 0)
-	runtime := NewDirectRuntime(options)
-	status, err := runtime.InspectStatus(context.Background(), operationID, directHandle(operationID))
+	runtime := newTestDirectRuntime(options)
+	status, err := runtime.InspectStatus(context.Background(), operationID, directHandle(directTestNodeID, operationID))
 	if err != nil || status.State != RuntimeStateExited || !status.ExitKnown || !status.CompletionReady {
 		t.Fatalf("InspectStatus() = %#v, %v", status, err)
 	}
-	logs, err := runtime.Logs(context.Background(), operationID, directHandle(operationID), 0)
+	logs, err := runtime.Logs(context.Background(), operationID, directHandle(directTestNodeID, operationID), 0)
 	if err != nil {
 		t.Fatalf("Logs() error = %v", err)
 	}
@@ -735,7 +759,7 @@ func TestDirectLogsRedactBeforeTailingAndRemainBoundedAfterExpansion(t *testing.
 		t.Fatalf("os.WriteFile(stdout) error = %v", err)
 	}
 	updateDirectTestCaptureState(t, runDirectory, int64(len("TOKEN=\n"+secret+"\n")), 0, 0, 0)
-	logs, err := NewDirectRuntime(options).Logs(context.Background(), operationID, directHandle(operationID), 1)
+	logs, err := newTestDirectRuntime(options).Logs(context.Background(), operationID, directHandle(directTestNodeID, operationID), 1)
 	if err != nil {
 		t.Fatalf("Logs() error = %v", err)
 	}
@@ -748,7 +772,7 @@ func TestDirectLogsRedactBeforeTailingAndRemainBoundedAfterExpansion(t *testing.
 		t.Fatalf("os.WriteFile(expanding stdout) error = %v", err)
 	}
 	updateDirectTestCaptureState(t, runDirectory, int64(len(expanding)), 0, 0, 0)
-	all, err := NewDirectRuntime(options).Logs(context.Background(), operationID, directHandle(operationID), 0)
+	all, err := newTestDirectRuntime(options).Logs(context.Background(), operationID, directHandle(directTestNodeID, operationID), 0)
 	if err != nil {
 		t.Fatalf("Logs(all) error = %v", err)
 	}
@@ -776,7 +800,7 @@ func TestDirectLogsNormalizeInvalidUTF8FromChildWithoutChangingRawAccounting(t *
 		Arguments:  []string{"-c", `printf '\377\n'`},
 		Timeout:    time.Second,
 	}}
-	runtime := NewDirectRuntime(options)
+	runtime := newTestDirectRuntime(options)
 	binding, err := runtime.Launch(context.Background(), operationID, placement, launch)
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
@@ -805,7 +829,7 @@ func TestDirectTerminalLogsRejectAppendedAndSameSizeReplacement(t *testing.T) {
 		t.Fatalf("os.WriteFile(stdout) error = %v", err)
 	}
 	updateDirectTestCaptureState(t, runDirectory, 7, 0, 0, 0)
-	runtime := NewDirectRuntime(options)
+	runtime := newTestDirectRuntime(options)
 	file, err := os.OpenFile(stdoutPath, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatalf("os.OpenFile(stdout append) error = %v", err)
@@ -816,13 +840,13 @@ func TestDirectTerminalLogsRejectAppendedAndSameSizeReplacement(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatalf("Close(append) error = %v", err)
 	}
-	if _, err := runtime.Logs(context.Background(), operationID, directHandle(operationID), 0); err == nil || !strings.Contains(err.Error(), "byte count") {
+	if _, err := runtime.Logs(context.Background(), operationID, directHandle(directTestNodeID, operationID), 0); err == nil || !strings.Contains(err.Error(), "byte count") {
 		t.Fatalf("Logs(appended terminal output) error = %v", err)
 	}
 	if err := os.WriteFile(stdoutPath, []byte("forged!"), 0o600); err != nil {
 		t.Fatalf("os.WriteFile(replacement) error = %v", err)
 	}
-	if _, err := runtime.Logs(context.Background(), operationID, directHandle(operationID), 0); err == nil || !strings.Contains(err.Error(), "digest") {
+	if _, err := runtime.Logs(context.Background(), operationID, directHandle(directTestNodeID, operationID), 0); err == nil || !strings.Contains(err.Error(), "digest") {
 		t.Fatalf("Logs(replaced terminal output) error = %v", err)
 	}
 }
@@ -839,7 +863,7 @@ func TestDirectSupervisorRefusesPreexistingOutputSymlink(t *testing.T) {
 		t.Fatalf("os.Symlink(stdout) error = %v", err)
 	}
 	spec := directSupervisorSpec{
-		Schema: directSupervisorSpecSchema, OperationID: "operation_symlink_capture", Executable: "/bin/true",
+		Schema: directSupervisorSpecSchema, NodeID: directTestNodeID, OperationID: "operation_symlink_capture", Executable: "/bin/true",
 		Arguments: []string{}, StandardInput: []byte{}, Environment: []string{"PATH=/usr/bin"}, WorkingDirectory: checkout,
 		OutputByteLimit: directDefaultOutputLimit, DefaultGraceMillis: directDefaultGracePeriod.Milliseconds(),
 	}
@@ -901,7 +925,7 @@ func directReplayFixture(t *testing.T, operationID, status string) (DirectRuntim
 	t.Helper()
 	root, checkout := t.TempDir(), t.TempDir()
 	options := DirectRuntimeOptions{
-		StateRoot: root, SupervisorExecutable: "/bin/true",
+		NodeID: directTestNodeID, StateRoot: root, SupervisorExecutable: "/bin/true",
 		InheritedEnvironment: []string{"PATH=/usr/bin", "LANG=C", "HOME=/must-not-pass"},
 		OutputByteLimit:      4096,
 	}
@@ -915,7 +939,7 @@ func directReplayFixture(t *testing.T, operationID, status string) (DirectRuntim
 		t.Fatalf("buildDirectEnvironment() error = %v", err)
 	}
 	spec := directSupervisorSpec{
-		Schema: directSupervisorSpecSchema, OperationID: operationID, Executable: launch.Command.Executable,
+		Schema: directSupervisorSpecSchema, NodeID: directTestNodeID, OperationID: operationID, Executable: launch.Command.Executable,
 		Arguments: append([]string{}, launch.Command.Arguments...), StandardInput: append([]byte{}, launch.Command.StandardInput...), Environment: environment,
 		WorkingDirectory: checkout, OutputByteLimit: launch.Command.OutputByteLimit, TimeoutMillis: launch.Command.Timeout.Milliseconds(), DefaultGraceMillis: directDefaultGracePeriod.Milliseconds(),
 	}
@@ -935,7 +959,7 @@ func directReplayFixture(t *testing.T, operationID, status string) (DirectRuntim
 	}
 	stateDigest := storedSpec.SpecSHA256
 	state := directSupervisorState{
-		Schema: directSupervisorStateSchema, OperationID: operationID, Status: status,
+		Schema: directSupervisorStateSchema, NodeID: directTestNodeID, OperationID: operationID, Status: status,
 		ExitCode: 0, ExitKnown: status == RuntimeStateExited, Diagnostic: "recorded fixture failure", SpecSHA256: stateDigest,
 	}
 	if directStateHasStableCaptures(status) && stateDigest != "" {

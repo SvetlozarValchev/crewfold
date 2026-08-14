@@ -38,6 +38,7 @@ var herdrManagedEnvironment = []string{
 }
 
 type HerdrRuntimeOptions struct {
+	NodeID               string
 	StateRoot            string
 	HerdrExecutable      string
 	CrewfoldExecutable   string
@@ -52,6 +53,7 @@ type HerdrRuntimeOptions struct {
 // anchored to Herdr's terminal ID, so visual pane moves never change run
 // identity.
 type HerdrRuntime struct {
+	nodeID               string
 	root                 string
 	crewfoldExecutable   string
 	inheritedEnvironment []string
@@ -77,7 +79,7 @@ func NewHerdrRuntime(options HerdrRuntimeOptions) *HerdrRuntime {
 		inherited = os.Environ()
 	}
 	return &HerdrRuntime{
-		root: options.StateRoot, crewfoldExecutable: options.CrewfoldExecutable,
+		nodeID: strings.TrimSpace(options.NodeID), root: options.StateRoot, crewfoldExecutable: options.CrewfoldExecutable,
 		inheritedEnvironment: inherited,
 		client:               herdr.NewClient(options.HerdrExecutable, options.Session, options.CommandRunner),
 		startupTimeout:       startupTimeout, pollInterval: pollInterval,
@@ -113,12 +115,12 @@ func (runtime *HerdrRuntime) Launch(ctx context.Context, operationID string, pla
 		return RuntimeBinding{}, &StartError{Message: err.Error()}
 	}
 	if !found {
-		surface, createErr := runtime.client.CreateWorkspace(ctx, placement.CheckoutPath, herdrWorkspaceLabel(operationID), map[string]string{"CREWFOLD_RUN_ID": operationID})
+		surface, createErr := runtime.client.CreateWorkspace(ctx, placement.CheckoutPath, herdrWorkspaceLabel(runtime.nodeID, operationID), map[string]string{"CREWFOLD_NODE_ID": runtime.nodeID, "CREWFOLD_RUN_ID": operationID})
 		if createErr != nil {
 			return RuntimeBinding{}, &StartError{Message: "create Herdr workspace: " + createErr.Error()}
 		}
 		handle = herdrRuntimeHandle{
-			Schema: herdrHandleSchema, OperationID: operationID, Session: runtime.client.Session(),
+			Schema: herdrHandleSchema, NodeID: runtime.nodeID, OperationID: operationID, Session: runtime.client.Session(),
 			WorkspaceID: surface.Workspace.WorkspaceID, TabID: surface.Tab.TabID,
 			PaneID: surface.Pane.PaneID, TerminalID: surface.Pane.TerminalID,
 		}
@@ -131,6 +133,9 @@ func (runtime *HerdrRuntime) Launch(ctx context.Context, operationID string, pla
 		return RuntimeBinding{}, &OutcomeUnknownError{Message: err.Error()}
 	}
 	if state, stateErr := readHerdrSupervisorState(runDirectory); stateErr == nil {
+		if err := validateHerdrStateBinding(state, runtime.nodeID, operationID); err != nil {
+			return RuntimeBinding{}, &OutcomeUnknownError{Message: err.Error()}
+		}
 		if state.Status == herdrSupervisorStartFailed {
 			return RuntimeBinding{}, &StartError{Message: state.Diagnostic}
 		}
@@ -143,7 +148,7 @@ func (runtime *HerdrRuntime) Launch(ctx context.Context, operationID string, pla
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return RuntimeBinding{}, &OutcomeUnknownError{Message: "inspect Herdr dispatch intent: " + err.Error()}
 	}
-	intent := herdrDispatchIntent{Schema: herdrDispatchSchema, OperationID: operationID, TerminalID: handle.TerminalID}
+	intent := herdrDispatchIntent{Schema: herdrDispatchSchema, NodeID: runtime.nodeID, OperationID: operationID, TerminalID: handle.TerminalID}
 	if err := writeJSONAtomic(filepath.Join(runDirectory, "dispatch.json"), intent); err != nil {
 		return RuntimeBinding{}, &StartError{Message: "record Herdr command dispatch intent: " + err.Error()}
 	}
@@ -159,6 +164,9 @@ func (runtime *HerdrRuntime) Launch(ctx context.Context, operationID string, pla
 	for {
 		state, stateErr := readHerdrSupervisorState(runDirectory)
 		if stateErr == nil {
+			if err := validateHerdrStateBinding(state, runtime.nodeID, operationID); err != nil {
+				return RuntimeBinding{}, &OutcomeUnknownError{Message: err.Error()}
+			}
 			switch state.Status {
 			case RuntimeStateStarting, RuntimeStateRunning, RuntimeStateExited, RuntimeStateStopped, RuntimeStateTimedOut:
 				return RuntimeBinding{RuntimeHandle: encoded}, nil
@@ -180,12 +188,16 @@ func (runtime *HerdrRuntime) Launch(ctx context.Context, operationID string, pla
 }
 
 func (runtime *HerdrRuntime) Reconcile(ctx context.Context, operationID, rawHandle string) (RuntimeBinding, error) {
-	if err := runtime.ensureCompatible(ctx); err != nil {
-		return RuntimeBinding{}, runtimeUnavailable(err)
-	}
-	handle, err := decodeHerdrHandle(operationID, rawHandle)
+	handle, err := decodeHerdrHandle(runtime.nodeID, operationID, rawHandle)
 	if err != nil {
 		return RuntimeBinding{}, err
+	}
+	state, err := readHerdrSupervisorState(filepath.Join(runtime.root, operationID))
+	if err != nil || validateHerdrStateBinding(state, runtime.nodeID, operationID) != nil {
+		return RuntimeBinding{}, errors.New("Herdr supervisor state does not match the current node binding")
+	}
+	if err := runtime.ensureCompatible(ctx); err != nil {
+		return RuntimeBinding{}, runtimeUnavailable(err)
 	}
 	pane, err := runtime.resolvePane(ctx, handle.TerminalID)
 	if err != nil {
@@ -196,14 +208,11 @@ func (runtime *HerdrRuntime) Reconcile(ctx context.Context, operationID, rawHand
 	if err != nil {
 		return RuntimeBinding{}, err
 	}
-	if _, err := readHerdrSupervisorState(filepath.Join(runtime.root, operationID)); err != nil {
-		return RuntimeBinding{}, fmt.Errorf("reconcile Herdr pane supervisor: %w", err)
-	}
 	return RuntimeBinding{RuntimeHandle: encoded}, nil
 }
 
 func (runtime *HerdrRuntime) Inspect(ctx context.Context, operationID, rawHandle string) (RuntimeSnapshot, error) {
-	handle, err := decodeHerdrHandle(operationID, rawHandle)
+	handle, err := decodeHerdrHandle(runtime.nodeID, operationID, rawHandle)
 	if err != nil {
 		return RuntimeSnapshot{}, err
 	}
@@ -211,6 +220,9 @@ func (runtime *HerdrRuntime) Inspect(ctx context.Context, operationID, rawHandle
 	state, err := readHerdrSupervisorState(runDirectory)
 	if err != nil {
 		return RuntimeSnapshot{}, fmt.Errorf("read Herdr pane supervisor state: %w", err)
+	}
+	if err := validateHerdrStateBinding(state, runtime.nodeID, operationID); err != nil {
+		return RuntimeSnapshot{}, err
 	}
 	terminal := state.Status == RuntimeStateExited || state.Status == RuntimeStateStopped || state.Status == RuntimeStateTimedOut || state.Status == herdrSupervisorStartFailed
 	var resolvedPane herdr.PaneInfo
@@ -227,7 +239,7 @@ func (runtime *HerdrRuntime) Inspect(ctx context.Context, operationID, rawHandle
 			}
 			if !herdrProcessMatchesState(processes, state) {
 				refreshed, refreshErr := readHerdrSupervisorState(runDirectory)
-				if refreshErr == nil {
+				if refreshErr == nil && validateHerdrStateBinding(refreshed, runtime.nodeID, operationID) == nil {
 					state = refreshed
 					terminal = state.Status == RuntimeStateExited || state.Status == RuntimeStateStopped || state.Status == RuntimeStateTimedOut || state.Status == herdrSupervisorStartFailed
 				}
@@ -251,11 +263,7 @@ func (runtime *HerdrRuntime) Inspect(ctx context.Context, operationID, rawHandle
 }
 
 func (runtime *HerdrRuntime) Stop(ctx context.Context, operationID, rawHandle string, spec StopSpec) (StopResult, error) {
-	handle, err := decodeHerdrHandle(operationID, rawHandle)
-	if err != nil {
-		return StopResult{}, err
-	}
-	pane, err := runtime.resolvePane(ctx, handle.TerminalID)
+	handle, err := decodeHerdrHandle(runtime.nodeID, operationID, rawHandle)
 	if err != nil {
 		return StopResult{}, err
 	}
@@ -263,6 +271,13 @@ func (runtime *HerdrRuntime) Stop(ctx context.Context, operationID, rawHandle st
 	state, stateErr := readHerdrSupervisorState(runDirectory)
 	if stateErr != nil {
 		return StopResult{}, stateErr
+	}
+	if err := validateHerdrStateBinding(state, runtime.nodeID, operationID); err != nil {
+		return StopResult{}, err
+	}
+	pane, err := runtime.resolvePane(ctx, handle.TerminalID)
+	if err != nil {
+		return StopResult{}, err
 	}
 	if state.Status == RuntimeStateRunning || state.Status == RuntimeStateStarting {
 		if err := runtime.client.SendKeys(ctx, pane.PaneID, "ctrl+c"); err != nil {
@@ -284,6 +299,9 @@ func (runtime *HerdrRuntime) Stop(ctx context.Context, operationID, rawHandle st
 				state.Status = RuntimeStateUnknown
 			case <-ticker.C:
 				if refreshed, refreshErr := readHerdrSupervisorState(runDirectory); refreshErr == nil {
+					if err := validateHerdrStateBinding(refreshed, runtime.nodeID, operationID); err != nil {
+						return StopResult{}, err
+					}
 					state = refreshed
 				}
 			}
@@ -315,8 +333,15 @@ func (runtime *HerdrRuntime) Stop(ctx context.Context, operationID, rawHandle st
 }
 
 func (runtime *HerdrRuntime) Logs(ctx context.Context, operationID, rawHandle string, tail int) (domain.RunLogs, error) {
-	handle, err := decodeHerdrHandle(operationID, rawHandle)
+	handle, err := decodeHerdrHandle(runtime.nodeID, operationID, rawHandle)
 	if err != nil {
+		return domain.RunLogs{}, err
+	}
+	state, err := readHerdrSupervisorState(filepath.Join(runtime.root, operationID))
+	if err != nil {
+		return domain.RunLogs{}, err
+	}
+	if err := validateHerdrStateBinding(state, runtime.nodeID, operationID); err != nil {
 		return domain.RunLogs{}, err
 	}
 	pane, err := runtime.resolvePane(ctx, handle.TerminalID)
@@ -327,10 +352,6 @@ func (runtime *HerdrRuntime) Logs(ctx context.Context, operationID, rawHandle st
 	if err != nil {
 		return domain.RunLogs{}, runtimeControlError("read Herdr pane", err)
 	}
-	state, err := readHerdrSupervisorState(filepath.Join(runtime.root, operationID))
-	if err != nil {
-		return domain.RunLogs{}, err
-	}
 	text = redactDirectOutput(text)
 	return domain.RunLogs{RunID: operationID, State: state.Status, Stdout: domain.CapturedLog{Text: text, CapturedBytes: int64(len(text))}}, nil
 }
@@ -339,12 +360,12 @@ func (runtime *HerdrRuntime) Prompt(ctx context.Context, operationID, rawHandle,
 	if strings.TrimSpace(prompt) == "" || strings.ContainsRune(prompt, '\x00') || len(prompt) > 16*1024 {
 		return errors.New("Herdr prompt must be non-empty, valid terminal text no larger than 16 KiB")
 	}
-	handle, err := decodeHerdrHandle(operationID, rawHandle)
+	handle, err := decodeHerdrHandle(runtime.nodeID, operationID, rawHandle)
 	if err != nil {
 		return err
 	}
 	state, err := readHerdrSupervisorState(filepath.Join(runtime.root, operationID))
-	if err != nil || (state.Status != RuntimeStateRunning && state.Status != RuntimeStateStarting) {
+	if err != nil || validateHerdrStateBinding(state, runtime.nodeID, operationID) != nil || (state.Status != RuntimeStateRunning && state.Status != RuntimeStateStarting) {
 		return errors.New("Herdr pane process is not accepting prompts")
 	}
 	pane, err := runtime.resolvePane(ctx, handle.TerminalID)
@@ -361,9 +382,13 @@ func (runtime *HerdrRuntime) Prompt(ctx context.Context, operationID, rawHandle,
 }
 
 func (runtime *HerdrRuntime) Interrupt(ctx context.Context, operationID, rawHandle string) error {
-	handle, err := decodeHerdrHandle(operationID, rawHandle)
+	handle, err := decodeHerdrHandle(runtime.nodeID, operationID, rawHandle)
 	if err != nil {
 		return err
+	}
+	state, err := readHerdrSupervisorState(filepath.Join(runtime.root, operationID))
+	if err != nil || validateHerdrStateBinding(state, runtime.nodeID, operationID) != nil || (state.Status != RuntimeStateRunning && state.Status != RuntimeStateStarting) {
+		return errors.New("Herdr pane process is not accepting interrupts")
 	}
 	pane, err := runtime.resolvePane(ctx, handle.TerminalID)
 	if err != nil {
@@ -376,9 +401,13 @@ func (runtime *HerdrRuntime) Interrupt(ctx context.Context, operationID, rawHand
 }
 
 func (runtime *HerdrRuntime) Attach(_ context.Context, operationID, rawHandle string) (AttachSpec, error) {
-	handle, err := decodeHerdrHandle(operationID, rawHandle)
+	handle, err := decodeHerdrHandle(runtime.nodeID, operationID, rawHandle)
 	if err != nil {
 		return AttachSpec{}, err
+	}
+	state, err := readHerdrSupervisorState(filepath.Join(runtime.root, operationID))
+	if err != nil || validateHerdrStateBinding(state, runtime.nodeID, operationID) != nil || (state.Status != RuntimeStateRunning && state.Status != RuntimeStateStarting) {
+		return AttachSpec{}, errors.New("Herdr pane is not live on the current node")
 	}
 	arguments := []string{"terminal", "attach", handle.TerminalID}
 	environment := map[string]string{}
@@ -390,6 +419,7 @@ func (runtime *HerdrRuntime) Attach(_ context.Context, operationID, rawHandle st
 
 type herdrRuntimeHandle struct {
 	Schema      string `json:"schema"`
+	NodeID      string `json:"node_id"`
 	OperationID string `json:"operation_id"`
 	Session     string `json:"session,omitempty"`
 	WorkspaceID string `json:"workspace_id"`
@@ -400,6 +430,7 @@ type herdrRuntimeHandle struct {
 
 type herdrSupervisorSpec struct {
 	Schema           string   `json:"schema"`
+	NodeID           string   `json:"node_id"`
 	OperationID      string   `json:"operation_id"`
 	Executable       string   `json:"executable"`
 	Arguments        []string `json:"arguments"`
@@ -412,6 +443,7 @@ type herdrSupervisorSpec struct {
 
 type herdrSupervisorState struct {
 	Schema          string `json:"schema"`
+	NodeID          string `json:"node_id"`
 	OperationID     string `json:"operation_id"`
 	Status          string `json:"status"`
 	SupervisorPID   int    `json:"supervisor_pid,omitempty"`
@@ -426,12 +458,13 @@ type herdrSupervisorState struct {
 
 type herdrDispatchIntent struct {
 	Schema      string `json:"schema"`
+	NodeID      string `json:"node_id"`
 	OperationID string `json:"operation_id"`
 	TerminalID  string `json:"terminal_id"`
 }
 
 func (runtime *HerdrRuntime) validate(operationID string, placement domain.RunPlacement, launch LaunchSpec) error {
-	if !directOperationPattern.MatchString(operationID) {
+	if !validNodeID(runtime.nodeID) || !directOperationPattern.MatchString(operationID) {
 		return errors.New("Herdr runtime operation ID is invalid")
 	}
 	if launch.Command == nil {
@@ -504,7 +537,7 @@ func rejectHerdrSymlink(path string) error {
 func (runtime *HerdrRuntime) ensureSupervisorSpec(runDirectory, operationID string, placement domain.RunPlacement, command CommandSpec) error {
 	path := filepath.Join(runDirectory, "launch.json")
 	if existing, err := readHerdrSupervisorSpec(path); err == nil {
-		if existing.OperationID != operationID || existing.Executable != command.Executable || !equalStrings(existing.Arguments, command.Arguments) {
+		if existing.NodeID != runtime.nodeID || existing.OperationID != operationID || existing.Executable != command.Executable || !equalStrings(existing.Arguments, command.Arguments) {
 			return errors.New("existing Herdr launch specification does not match the requested operation")
 		}
 		return nil
@@ -527,7 +560,7 @@ func (runtime *HerdrRuntime) ensureSupervisorSpec(runDirectory, operationID stri
 		return err
 	}
 	spec := herdrSupervisorSpec{
-		Schema: herdrSupervisorSpecSchema, OperationID: operationID, Executable: executable,
+		Schema: herdrSupervisorSpecSchema, NodeID: runtime.nodeID, OperationID: operationID, Executable: executable,
 		Arguments: append([]string(nil), command.Arguments...), StandardInput: append([]byte(nil), command.StandardInput...),
 		Environment: environment, WorkingDirectory: workingDirectory, TimeoutMillis: command.Timeout.Milliseconds(), HoldAfterExit: true,
 	}
@@ -551,7 +584,7 @@ func (runtime *HerdrRuntime) ensureSupervisorSpec(runDirectory, operationID stri
 
 func (runtime *HerdrRuntime) recoverSurface(ctx context.Context, operationID, runDirectory string) (herdrRuntimeHandle, bool, error) {
 	if handle, err := readHerdrHandleFile(filepath.Join(runDirectory, "surface.json")); err == nil {
-		if handle.OperationID != operationID {
+		if handle.NodeID != runtime.nodeID || handle.OperationID != operationID {
 			return herdrRuntimeHandle{}, false, errors.New("recorded Herdr surface belongs to another operation")
 		}
 		pane, resolveErr := runtime.resolvePane(ctx, handle.TerminalID)
@@ -569,7 +602,7 @@ func (runtime *HerdrRuntime) recoverSurface(ctx context.Context, operationID, ru
 	}
 	workspaceIDs := make(map[string]bool)
 	for _, workspace := range snapshot.Workspaces {
-		if workspace.Label == herdrWorkspaceLabel(operationID) {
+		if workspace.Label == herdrWorkspaceLabel(runtime.nodeID, operationID) {
 			workspaceIDs[workspace.WorkspaceID] = true
 		}
 	}
@@ -586,7 +619,7 @@ func (runtime *HerdrRuntime) recoverSurface(ctx context.Context, operationID, ru
 		return herdrRuntimeHandle{}, false, errors.New("Herdr recovery found an ambiguous Crewfold-labelled surface")
 	}
 	pane := panes[0]
-	handle := herdrRuntimeHandle{Schema: herdrHandleSchema, OperationID: operationID, Session: runtime.client.Session(), WorkspaceID: pane.WorkspaceID, TabID: pane.TabID, PaneID: pane.PaneID, TerminalID: pane.TerminalID}
+	handle := herdrRuntimeHandle{Schema: herdrHandleSchema, NodeID: runtime.nodeID, OperationID: operationID, Session: runtime.client.Session(), WorkspaceID: pane.WorkspaceID, TabID: pane.TabID, PaneID: pane.PaneID, TerminalID: pane.TerminalID}
 	if err := writeJSONAtomic(filepath.Join(runDirectory, "surface.json"), handle); err != nil {
 		return herdrRuntimeHandle{}, false, err
 	}
@@ -654,6 +687,13 @@ func herdrProcessMatchesState(processes herdr.ProcessInfo, state herdrSupervisor
 	return false
 }
 
+func validateHerdrStateBinding(state herdrSupervisorState, nodeID, operationID string) error {
+	if state.NodeID != nodeID || state.OperationID != operationID {
+		return errors.New("Herdr supervisor state does not match the current node binding")
+	}
+	return nil
+}
+
 func encodeHerdrHandle(handle herdrRuntimeHandle) (string, error) {
 	data, err := json.Marshal(handle)
 	if err != nil {
@@ -662,7 +702,7 @@ func encodeHerdrHandle(handle herdrRuntimeHandle) (string, error) {
 	return herdrHandlePrefix + base64.RawURLEncoding.EncodeToString(data), nil
 }
 
-func decodeHerdrHandle(operationID, raw string) (herdrRuntimeHandle, error) {
+func decodeHerdrHandle(nodeID, operationID, raw string) (herdrRuntimeHandle, error) {
 	if !strings.HasPrefix(raw, herdrHandlePrefix) {
 		return herdrRuntimeHandle{}, errors.New("Herdr runtime handle has an unsupported encoding")
 	}
@@ -673,7 +713,7 @@ func decodeHerdrHandle(operationID, raw string) (herdrRuntimeHandle, error) {
 	var handle herdrRuntimeHandle
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&handle); err != nil || handle.Schema != herdrHandleSchema || handle.OperationID != operationID || handle.WorkspaceID == "" || handle.TabID == "" || handle.PaneID == "" || handle.TerminalID == "" {
+	if err := decoder.Decode(&handle); err != nil || handle.Schema != herdrHandleSchema || handle.NodeID != nodeID || !validNodeID(handle.NodeID) || handle.OperationID != operationID || handle.WorkspaceID == "" || handle.TabID == "" || handle.PaneID == "" || handle.TerminalID == "" {
 		return herdrRuntimeHandle{}, errors.New("Herdr runtime handle does not match the operation")
 	}
 	return handle, nil
@@ -685,7 +725,7 @@ func readHerdrHandleFile(path string) (herdrRuntimeHandle, error) {
 		return herdrRuntimeHandle{}, err
 	}
 	var handle herdrRuntimeHandle
-	if err := json.Unmarshal(data, &handle); err != nil || handle.Schema != herdrHandleSchema {
+	if err := json.Unmarshal(data, &handle); err != nil || handle.Schema != herdrHandleSchema || !validNodeID(handle.NodeID) {
 		return herdrRuntimeHandle{}, errors.New("recorded Herdr surface is invalid")
 	}
 	return handle, nil
@@ -705,7 +745,7 @@ func readHerdrSupervisorSpec(path string) (herdrSupervisorSpec, error) {
 	if err := decoder.Decode(&spec); err != nil {
 		return herdrSupervisorSpec{}, err
 	}
-	if spec.Schema != herdrSupervisorSpecSchema || !directOperationPattern.MatchString(spec.OperationID) || !filepath.IsAbs(spec.Executable) || !filepath.IsAbs(spec.WorkingDirectory) || spec.TimeoutMillis < 0 {
+	if spec.Schema != herdrSupervisorSpecSchema || !validNodeID(spec.NodeID) || !directOperationPattern.MatchString(spec.OperationID) || !filepath.IsAbs(spec.Executable) || !filepath.IsAbs(spec.WorkingDirectory) || spec.TimeoutMillis < 0 {
 		return herdrSupervisorSpec{}, errors.New("Herdr supervisor specification is invalid")
 	}
 	return spec, nil
@@ -720,13 +760,15 @@ func readHerdrSupervisorState(runDirectory string) (herdrSupervisorState, error)
 	if err := json.Unmarshal(data, &state); err != nil {
 		return herdrSupervisorState{}, err
 	}
-	if state.Schema != herdrSupervisorStateSchema || !directOperationPattern.MatchString(state.OperationID) {
+	if state.Schema != herdrSupervisorStateSchema || !validNodeID(state.NodeID) || !directOperationPattern.MatchString(state.OperationID) {
 		return herdrSupervisorState{}, errors.New("Herdr supervisor state is invalid")
 	}
 	return state, nil
 }
 
-func herdrWorkspaceLabel(operationID string) string { return "crewfold-" + operationID }
+func herdrWorkspaceLabel(nodeID, operationID string) string {
+	return "crewfold-" + nodeID + "-" + operationID
+}
 
 func shellJoin(arguments ...string) string {
 	quoted := make([]string, 0, len(arguments))
@@ -767,7 +809,7 @@ func RunHerdrPaneSupervisor(arguments []string) int {
 	}
 	runDirectory := filepath.Dir(specPath)
 	state := herdrSupervisorState{
-		Schema: herdrSupervisorStateSchema, OperationID: spec.OperationID, Status: RuntimeStateStarting,
+		Schema: herdrSupervisorStateSchema, NodeID: spec.NodeID, OperationID: spec.OperationID, Status: RuntimeStateStarting,
 		SupervisorPID: os.Getpid(), SupervisorStart: processStartIdentity(os.Getpid()),
 	}
 	if err := writeJSONAtomic(filepath.Join(runDirectory, "state.json"), state); err != nil {

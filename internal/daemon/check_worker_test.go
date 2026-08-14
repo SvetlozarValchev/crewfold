@@ -267,6 +267,7 @@ func checkWorkerTestConfig(t *testing.T) (Config, string) {
 func newCheckWorkerDirectRuntime(t *testing.T, dataDir, executable string) *execution.DirectRuntime {
 	t.Helper()
 	return execution.NewDirectRuntime(execution.DirectRuntimeOptions{
+		NodeID:                         daemonTestNodeID,
 		StateRoot:                      filepath.Join(dataDir, "check-runtime"),
 		SupervisorExecutable:           executable,
 		SupervisorArguments:            []string{"-test.run=^TestDirectProcessHelper$", "--", "crewfold-direct-supervisor-helper"},

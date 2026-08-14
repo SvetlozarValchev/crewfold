@@ -17,6 +17,8 @@ import (
 	"crewfold/internal/store"
 )
 
+const daemonTestNodeID = "33333333333333333333333333333333"
+
 func TestDirectProcessHelper(t *testing.T) {
 	for index, argument := range os.Args {
 		switch argument {
@@ -336,10 +338,10 @@ func TestProviderBindingFailureStopsKnownRuntimeBeforeReleasingCapacity(t *testi
 		t.Fatalf("RunStart() error = %v", err)
 	}
 	failed := waitForRunStatus(t, client, started.Detail.Run.ID, domain.RunStartFailed)
-	if failed.Detail.Run.RuntimeHandle == "" || failed.Detail.Task.Status != domain.TaskAssigned || failed.Detail.Task.AssignmentID == "" {
+	if failed.Detail.Run.RuntimeHandle != "" || failed.Detail.Run.ProviderHandle != "" || failed.Detail.Task.Status != domain.TaskAssigned || failed.Detail.Task.AssignmentID == "" {
 		t.Fatalf("binding failure detail = %#v", failed.Detail)
 	}
-	snapshot, err := runtimeDriver.Inspect(context.Background(), failed.Detail.Run.ID, failed.Detail.Run.RuntimeHandle)
+	snapshot, err := runtimeDriver.Inspect(context.Background(), failed.Detail.Run.ID, "fake-runtime:"+failed.Detail.Run.ID)
 	if err != nil || snapshot.State != execution.RuntimeStateStopped {
 		t.Fatalf("runtime state after binding failure = %#v, %v", snapshot, err)
 	}
@@ -724,6 +726,7 @@ func TestDirectRunWorkerSupervisesCompletionCrashTimeoutOutputAndForcedStop(t *t
 		t.Fatalf("os.Executable() error = %v", err)
 	}
 	directRuntime := execution.NewDirectRuntime(execution.DirectRuntimeOptions{
+		NodeID:               daemonTestNodeID,
 		StateRoot:            filepath.Join(config.DataDir, "runtime"),
 		SupervisorExecutable: executable,
 		SupervisorArguments:  []string{"-test.run=^TestDirectProcessHelper$", "--", "crewfold-direct-supervisor-helper"},
@@ -762,7 +765,7 @@ func TestDirectRunWorkerSupervisesCompletionCrashTimeoutOutputAndForcedStop(t *t
 		scenario := domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "direct-completion", Steps: []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "done", Handoff: "review"}}, Process: domain.FixtureProcess{StdoutNoiseBytes: 200000, StderrNoiseBytes: 200000}}
 		started := start(t, "completion", scenario)
 		completed := waitForRunStatus(t, client, started.Detail.Run.ID, domain.RunCompleted)
-		if completed.Detail.Run.RuntimeHandle == "" || completed.Detail.Handoff == nil {
+		if completed.Detail.Run.RuntimeHandle != "" || completed.Detail.Run.ProviderHandle != "" || completed.Detail.Handoff == nil {
 			t.Fatalf("completed direct run = %#v", completed.Detail)
 		}
 		var logs localapi.RunLogsResult
@@ -900,6 +903,7 @@ func TestDirectRunReconcilesAcrossDaemonRestartWhileChildContinues(t *testing.T)
 	}
 	newDirectRuntime := func() *execution.DirectRuntime {
 		return execution.NewDirectRuntime(execution.DirectRuntimeOptions{
+			NodeID:               daemonTestNodeID,
 			StateRoot:            filepath.Join(config.DataDir, "runtime"),
 			SupervisorExecutable: executable,
 			SupervisorArguments:  []string{"-test.run=^TestDirectProcessHelper$", "--", "crewfold-direct-supervisor-helper"},

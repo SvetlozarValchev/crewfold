@@ -252,6 +252,14 @@ func (s *Store) FinishCheckRun(ctx context.Context, command FinishCheckRunComman
 			return err
 		}
 		for _, artifact := range command.Artifacts {
+			if err := queries.InsertImmutableArtifact(ctx, dbgen.InsertImmutableArtifactParams{
+				ContentSha256: artifact.ContentSHA256,
+				ByteSize:      artifact.CapturedBytes,
+				CreatedAt:     now,
+				CreatedBy:     "crewfold-check-worker",
+			}); err != nil {
+				return err
+			}
 			id, _ := randomID("checkartifact_")
 			if err := queries.InsertTerminalCheckArtifact(ctx, dbgen.InsertTerminalCheckArtifactParams{
 				ID: id, CheckResultID: resultID, Kind: artifact.Kind, ContentSha256: artifact.ContentSHA256,
@@ -376,9 +384,9 @@ func initialCheckFreshness(launch, terminal domain.CheckGitObservation) (string,
 func validTerminalCheckOutcome(work CheckWork, command FinishCheckRunCommand) bool {
 	switch command.Outcome {
 	case domain.CheckOutcomePassed, domain.CheckOutcomeFailed:
-		return work.Run.RuntimeHandle == "direct:"+work.Run.ID
+		return work.Run.RuntimeHandle != ""
 	case domain.CheckOutcomeTimedOut:
-		return work.Run.RuntimeHandle == "direct:"+work.Run.ID && command.DiagnosticCode == "runtime_timeout"
+		return work.Run.RuntimeHandle != "" && command.DiagnosticCode == "runtime_timeout"
 	case domain.CheckOutcomeStartFailed:
 		return work.Run.RuntimeHandle == "" && command.ExitCode == nil && !command.Forced
 	case domain.CheckOutcomeUnknown:

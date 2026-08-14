@@ -57,6 +57,7 @@ var (
 var directEnvironmentAllowlist = []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "CREWFOLD_MCP_CAPABILITY_FILE", "CREWFOLD_MCP_SOCKET", "LANG", "LC_ALL", "LC_CTYPE", "PATH", "TMPDIR", "TZ"}
 
 type DirectRuntimeOptions struct {
+	NodeID                         string
 	StateRoot                      string
 	SupervisorExecutable           string
 	SupervisorArguments            []string
@@ -70,6 +71,7 @@ type DirectRuntimeOptions struct {
 // deliberately a separate process so output bounds and exit records survive a
 // daemon restart.
 type DirectRuntime struct {
+	nodeID                         string
 	root                           string
 	supervisorExecutable           string
 	supervisorArguments            []string
@@ -100,6 +102,7 @@ func NewDirectRuntime(options DirectRuntimeOptions) *DirectRuntime {
 		operationIDEnvironmentVariable = DirectRunIDEnvironmentVariable
 	}
 	return &DirectRuntime{
+		nodeID:                         strings.TrimSpace(options.NodeID),
 		root:                           options.StateRoot,
 		supervisorExecutable:           options.SupervisorExecutable,
 		supervisorArguments:            append([]string(nil), options.SupervisorArguments...),
@@ -141,9 +144,9 @@ func (runtime *DirectRuntime) Launch(ctx context.Context, operationID string, pl
 	if err != nil {
 		return RuntimeBinding{}, &StartError{Message: err.Error()}
 	}
-	binding := RuntimeBinding{RuntimeHandle: directHandle(operationID)}
+	binding := RuntimeBinding{RuntimeHandle: directHandle(runtime.nodeID, operationID)}
 	if state, stateErr := readDirectState(runDirectory); stateErr == nil {
-		if state.OperationID != operationID {
+		if state.NodeID != runtime.nodeID || state.OperationID != operationID {
 			return RuntimeBinding{}, &OutcomeUnknownError{Message: "existing direct runtime state identity is invalid"}
 		}
 		if err := verifyDirectReplay(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, spec); err != nil {
@@ -188,7 +191,7 @@ func (runtime *DirectRuntime) Launch(ctx context.Context, operationID string, pl
 		}
 		return RuntimeBinding{}, &StartError{Message: err.Error()}
 	}
-	initial := directSupervisorState{Schema: directSupervisorStateSchema, OperationID: operationID, Status: RuntimeStateStarting, SpecSHA256: spec.SpecSHA256}
+	initial := directSupervisorState{Schema: directSupervisorStateSchema, NodeID: runtime.nodeID, OperationID: operationID, Status: RuntimeStateStarting, SpecSHA256: spec.SpecSHA256}
 	if err := writeDirectState(runDirectory, initial); err != nil {
 		return RuntimeBinding{}, &OutcomeUnknownError{Message: fmt.Sprintf("record direct runtime launch intent after publishing its immutable specification: %v", err)}
 	}
@@ -219,7 +222,7 @@ func (runtime *DirectRuntime) Launch(ctx context.Context, operationID string, pl
 	for {
 		state, stateErr := readDirectState(runDirectory)
 		if stateErr == nil {
-			if state.OperationID != operationID {
+			if state.NodeID != runtime.nodeID || state.OperationID != operationID {
 				return RuntimeBinding{}, &OutcomeUnknownError{Message: "direct runtime supervisor acknowledgement identity is invalid"}
 			}
 			if replayErr := verifyDirectReplay(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, spec); replayErr != nil {
@@ -254,7 +257,7 @@ func (runtime *DirectRuntime) waitForDirectReplayState(ctx context.Context, runD
 	for {
 		state, err := readDirectState(runDirectory)
 		if err == nil {
-			if state.OperationID != spec.OperationID {
+			if state.NodeID != runtime.nodeID || state.OperationID != spec.OperationID {
 				return RuntimeBinding{}, &OutcomeUnknownError{Message: "direct runtime concurrent launch state identity is invalid"}
 			}
 			if replayErr := verifyDirectReplay(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, spec); replayErr != nil {
@@ -283,7 +286,7 @@ func (runtime *DirectRuntime) waitForDirectReplayState(ctx context.Context, runD
 }
 
 func (runtime *DirectRuntime) Reconcile(ctx context.Context, operationID, handle string) (RuntimeBinding, error) {
-	if err := validateDirectHandle(operationID, handle); err != nil {
+	if err := validateDirectHandle(runtime.nodeID, operationID, handle); err != nil {
 		return RuntimeBinding{}, err
 	}
 	status, err := runtime.InspectStatus(ctx, operationID, handle)
@@ -333,7 +336,7 @@ func (runtime *DirectRuntime) InspectStatus(_ context.Context, operationID, hand
 }
 
 func (runtime *DirectRuntime) inspectState(operationID, handle string) (directSupervisorState, error) {
-	if err := validateDirectHandle(operationID, handle); err != nil {
+	if err := validateDirectHandle(runtime.nodeID, operationID, handle); err != nil {
 		return directSupervisorState{}, err
 	}
 	runDirectory, err := runtime.runDirectory(operationID)
@@ -344,16 +347,16 @@ func (runtime *DirectRuntime) inspectState(operationID, handle string) (directSu
 	if err != nil {
 		return directSupervisorState{}, fmt.Errorf("read direct runtime state: %w", err)
 	}
-	if state.OperationID != operationID || state.Schema != directSupervisorStateSchema {
+	if state.NodeID != runtime.nodeID || state.OperationID != operationID || state.Schema != directSupervisorStateSchema {
 		return directSupervisorState{}, errors.New("direct runtime state identity is invalid")
 	}
-	if err := verifyDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, operationID); err != nil {
+	if err := verifyDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, runtime.nodeID, operationID); err != nil {
 		return directSupervisorState{}, err
 	}
 	if (state.Status == RuntimeStateStarting || state.Status == RuntimeStateRunning) && state.SupervisorPID > 0 && !sameProcess(state.SupervisorPID, state.SupervisorStart) {
 		time.Sleep(directPollInterval)
 		if refreshed, refreshErr := readDirectState(runDirectory); refreshErr == nil {
-			if refreshed.OperationID != operationID || refreshed.Schema != directSupervisorStateSchema {
+			if refreshed.NodeID != runtime.nodeID || refreshed.OperationID != operationID || refreshed.Schema != directSupervisorStateSchema {
 				return directSupervisorState{}, errors.New("direct runtime state identity changed during inspection")
 			}
 			state = refreshed
@@ -365,7 +368,7 @@ func (runtime *DirectRuntime) inspectState(operationID, handle string) (directSu
 			state.Diagnostic = "direct runtime supervisor disappeared before recording a final process result"
 		}
 	}
-	if err := verifyDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, operationID); err != nil {
+	if err := verifyDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, runtime.nodeID, operationID); err != nil {
 		return directSupervisorState{}, err
 	}
 	if state.Status == RuntimeStateStarting && state.SupervisorPID == 0 {
@@ -395,7 +398,7 @@ func directStateHasStableCaptures(status string) bool {
 }
 
 func (runtime *DirectRuntime) Stop(ctx context.Context, operationID, handle string, spec StopSpec) (StopResult, error) {
-	if err := validateDirectHandle(operationID, handle); err != nil {
+	if err := validateDirectHandle(runtime.nodeID, operationID, handle); err != nil {
 		return StopResult{}, err
 	}
 	runDirectory, err := runtime.runDirectory(operationID)
@@ -406,10 +409,10 @@ func (runtime *DirectRuntime) Stop(ctx context.Context, operationID, handle stri
 	if err != nil {
 		return StopResult{}, err
 	}
-	if state.OperationID != operationID {
+	if state.NodeID != runtime.nodeID || state.OperationID != operationID {
 		return StopResult{}, errors.New("direct runtime state identity is invalid for stop")
 	}
-	if err := verifyDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, operationID); err != nil {
+	if err := verifyDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, runtime.nodeID, operationID); err != nil {
 		return StopResult{}, err
 	}
 	if state.Status == RuntimeStateStopped || state.Status == RuntimeStateExited || state.Status == RuntimeStateTimedOut {
@@ -418,8 +421,8 @@ func (runtime *DirectRuntime) Stop(ctx context.Context, operationID, handle stri
 	if state.SupervisorPID <= 0 || !sameProcess(state.SupervisorPID, state.SupervisorStart) {
 		time.Sleep(directPollInterval)
 		refreshed, refreshErr := readDirectState(runDirectory)
-		if refreshErr == nil && refreshed.OperationID == operationID {
-			if specErr := verifyDirectStoredSpec(directSpecPath(runDirectory), refreshed.SpecSHA256, refreshed.StateSHA256, operationID); specErr != nil {
+		if refreshErr == nil && refreshed.NodeID == runtime.nodeID && refreshed.OperationID == operationID {
+			if specErr := verifyDirectStoredSpec(directSpecPath(runDirectory), refreshed.SpecSHA256, refreshed.StateSHA256, runtime.nodeID, operationID); specErr != nil {
 				return StopResult{}, specErr
 			}
 			if refreshed.Status == RuntimeStateStopped || refreshed.Status == RuntimeStateExited || refreshed.Status == RuntimeStateTimedOut {
@@ -449,11 +452,11 @@ func (runtime *DirectRuntime) Stop(ctx context.Context, operationID, handle stri
 	defer ticker.Stop()
 	for {
 		current, stateErr := readDirectState(runDirectory)
-		if stateErr == nil && current.OperationID != operationID {
+		if stateErr == nil && (current.NodeID != runtime.nodeID || current.OperationID != operationID) {
 			return StopResult{}, errors.New("direct runtime state identity changed while stopping")
 		}
 		if stateErr == nil && (current.Status == RuntimeStateStopped || current.Status == RuntimeStateExited || current.Status == RuntimeStateTimedOut) {
-			if specErr := verifyDirectStoredSpec(directSpecPath(runDirectory), current.SpecSHA256, current.StateSHA256, operationID); specErr != nil {
+			if specErr := verifyDirectStoredSpec(directSpecPath(runDirectory), current.SpecSHA256, current.StateSHA256, runtime.nodeID, operationID); specErr != nil {
 				return StopResult{}, specErr
 			}
 			return StopResult{Forced: current.Forced, Diagnostic: current.Diagnostic}, nil
@@ -481,7 +484,7 @@ func (runtime *DirectRuntime) Logs(ctx context.Context, operationID, handle stri
 	if err != nil {
 		return domain.RunLogs{}, err
 	}
-	spec, err := readVerifiedDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, operationID)
+	spec, err := readVerifiedDirectStoredSpec(directSpecPath(runDirectory), state.SpecSHA256, state.StateSHA256, runtime.nodeID, operationID)
 	if err != nil {
 		return domain.RunLogs{}, err
 	}
@@ -555,6 +558,7 @@ func (runtime *DirectRuntime) prepareEffectiveSpec(operationID string, placement
 	}
 	spec := directSupervisorSpec{
 		Schema:             directSupervisorSpecSchema,
+		NodeID:             runtime.nodeID,
 		OperationID:        operationID,
 		Executable:         executable,
 		Arguments:          append([]string{}, launch.Command.Arguments...),
@@ -575,8 +579,8 @@ func (runtime *DirectRuntime) prepareEffectiveSpec(operationID string, placement
 }
 
 func (runtime *DirectRuntime) validate() error {
-	if strings.TrimSpace(runtime.root) == "" || strings.TrimSpace(runtime.supervisorExecutable) == "" {
-		return &StartError{Message: "direct runtime state root and supervisor executable are required"}
+	if !validNodeID(runtime.nodeID) || strings.TrimSpace(runtime.root) == "" || strings.TrimSpace(runtime.supervisorExecutable) == "" {
+		return &StartError{Message: "direct runtime node identity, state root, and supervisor executable are required"}
 	}
 	return validateDirectOperationIDEnvironmentVariable(runtime.operationIDEnvironmentVariable)
 }
@@ -619,6 +623,7 @@ func (runtime *DirectRuntime) runDirectory(operationID string) (string, error) {
 
 type directSupervisorSpec struct {
 	Schema             string   `json:"schema"`
+	NodeID             string   `json:"node_id"`
 	OperationID        string   `json:"operation_id"`
 	Executable         string   `json:"executable"`
 	Arguments          []string `json:"arguments"`
@@ -633,6 +638,7 @@ type directSupervisorSpec struct {
 
 type directSupervisorState struct {
 	Schema              string `json:"schema"`
+	NodeID              string `json:"node_id"`
 	OperationID         string `json:"operation_id"`
 	Status              string `json:"status"`
 	SupervisorPID       int    `json:"supervisor_pid,omitempty"`
@@ -658,10 +664,10 @@ type directStopRequest struct {
 	GraceMillis int64  `json:"grace_millis"`
 }
 
-func directHandle(operationID string) string { return "direct:" + operationID }
+func directHandle(nodeID, operationID string) string { return "direct:" + nodeID + ":" + operationID }
 
-func validateDirectHandle(operationID, handle string) error {
-	if !directOperationPattern.MatchString(operationID) || handle != directHandle(operationID) {
+func validateDirectHandle(nodeID, operationID, handle string) error {
+	if !validNodeID(nodeID) || !directOperationPattern.MatchString(operationID) || handle != directHandle(nodeID, operationID) {
 		return errors.New("direct runtime handle does not match the operation")
 	}
 	return nil
@@ -843,7 +849,7 @@ func readDirectSpec(path string) (directSupervisorSpec, error) {
 	if err := requireJSONEOF(decoder); err != nil {
 		return directSupervisorSpec{}, err
 	}
-	if spec.Schema != directSupervisorSpecSchema || !directOperationPattern.MatchString(spec.OperationID) || !filepath.IsAbs(spec.Executable) || !filepath.IsAbs(spec.WorkingDirectory) || spec.OutputByteLimit <= 0 || spec.OutputByteLimit > directMaximumOutputLimit || spec.TimeoutMillis < 0 || spec.DefaultGraceMillis <= 0 {
+	if spec.Schema != directSupervisorSpecSchema || !validNodeID(spec.NodeID) || !directOperationPattern.MatchString(spec.OperationID) || !filepath.IsAbs(spec.Executable) || !filepath.IsAbs(spec.WorkingDirectory) || spec.OutputByteLimit <= 0 || spec.OutputByteLimit > directMaximumOutputLimit || spec.TimeoutMillis < 0 || spec.DefaultGraceMillis <= 0 {
 		return directSupervisorSpec{}, errors.New("direct supervisor specification is invalid")
 	}
 	if !directSpecSHA256Pattern.MatchString(spec.SpecSHA256) {
@@ -892,7 +898,7 @@ func verifyDirectReplay(path, stateDigest, stateSeal string, desired directSuper
 	if err != nil {
 		return fmt.Errorf("read existing direct runtime launch specification: %w", err)
 	}
-	if stored.OperationID != desired.OperationID {
+	if stored.NodeID != desired.NodeID || stored.OperationID != desired.OperationID {
 		return errors.New("existing direct runtime launch specification identity is invalid")
 	}
 	storedDigest, err := directSpecDigest(stored)
@@ -920,7 +926,7 @@ func verifyDirectPendingReplay(path string, desired directSupervisorSpec) error 
 	if err != nil {
 		return fmt.Errorf("read existing direct runtime launch specification: %w", err)
 	}
-	if stored.OperationID != desired.OperationID {
+	if stored.NodeID != desired.NodeID || stored.OperationID != desired.OperationID {
 		return errors.New("existing direct runtime launch specification identity is invalid")
 	}
 	storedDigest, err := directSpecDigest(stored)
@@ -937,17 +943,17 @@ func verifyDirectPendingReplay(path string, desired directSupervisorSpec) error 
 	return nil
 }
 
-func verifyDirectStoredSpec(path, stateDigest, stateSeal, operationID string) error {
-	_, err := readVerifiedDirectStoredSpec(path, stateDigest, stateSeal, operationID)
+func verifyDirectStoredSpec(path, stateDigest, stateSeal, nodeID, operationID string) error {
+	_, err := readVerifiedDirectStoredSpec(path, stateDigest, stateSeal, nodeID, operationID)
 	return err
 }
 
-func readVerifiedDirectStoredSpec(path, stateDigest, stateSeal, operationID string) (directSupervisorSpec, error) {
+func readVerifiedDirectStoredSpec(path, stateDigest, stateSeal, nodeID, operationID string) (directSupervisorSpec, error) {
 	stored, err := readDirectSpec(path)
 	if err != nil {
 		return directSupervisorSpec{}, fmt.Errorf("read direct runtime launch specification: %w", err)
 	}
-	if stored.OperationID != operationID {
+	if stored.NodeID != nodeID || stored.OperationID != operationID {
 		return directSupervisorSpec{}, errors.New("direct runtime launch specification identity does not match its state")
 	}
 	if stateSeal == "" {
@@ -1005,7 +1011,7 @@ func readDirectState(runDirectory string) (directSupervisorState, error) {
 }
 
 func validateDirectState(state directSupervisorState) error {
-	if state.Schema != directSupervisorStateSchema || !directOperationPattern.MatchString(state.OperationID) {
+	if state.Schema != directSupervisorStateSchema || !validNodeID(state.NodeID) || !directOperationPattern.MatchString(state.OperationID) {
 		return errors.New("direct runtime state identity is invalid")
 	}
 	switch state.Status {
@@ -1251,7 +1257,7 @@ func RunDirectSupervisor(arguments []string) int {
 	}
 	runDirectory := filepath.Dir(specPath)
 	state := directSupervisorState{
-		Schema: directSupervisorStateSchema, OperationID: spec.OperationID,
+		Schema: directSupervisorStateSchema, NodeID: spec.NodeID, OperationID: spec.OperationID,
 		Status: RuntimeStateStarting, SupervisorPID: os.Getpid(), SupervisorStart: processStartIdentity(os.Getpid()), SpecSHA256: spec.SpecSHA256,
 	}
 	_ = writeDirectState(runDirectory, state)

@@ -537,7 +537,7 @@ func internallyDerivedCheckLaunchDenial(code string) bool {
 
 func (s *Store) RecordCheckRuntimeBinding(ctx context.Context, runID, runtimeHandle, correlationID string) (domain.CheckRun, error) {
 	runID, runtimeHandle, correlationID = strings.TrimSpace(runID), strings.TrimSpace(runtimeHandle), strings.TrimSpace(correlationID)
-	if runtimeHandle != "direct:"+runID {
+	if !validCheckText(runtimeHandle, 8*1024) {
 		return domain.CheckRun{}, checkError(CodeInvalidRun, "runtime binding requires handle")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

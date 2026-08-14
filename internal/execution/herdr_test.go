@@ -15,6 +15,13 @@ import (
 	"crewfold/internal/herdr"
 )
 
+const herdrTestNodeID = "11111111111111111111111111111111"
+
+func newTestHerdrRuntime(options HerdrRuntimeOptions) *HerdrRuntime {
+	options.NodeID = herdrTestNodeID
+	return NewHerdrRuntime(options)
+}
+
 type fixtureHerdrRunner struct {
 	mu                 sync.Mutex
 	root               string
@@ -66,7 +73,7 @@ func (runner *fixtureHerdrRunner) Run(_ context.Context, _ string, arguments []s
 		return herdr.CommandResult{}, nil
 	}
 	if len(arguments) >= 4 && arguments[0] == "pane" && arguments[1] == "run" {
-		state := herdrSupervisorState{Schema: herdrSupervisorStateSchema, OperationID: "run_fixture", Status: RuntimeStateRunning, SupervisorPID: 100, ChildPID: 101}
+		state := herdrSupervisorState{Schema: herdrSupervisorStateSchema, NodeID: herdrTestNodeID, OperationID: "run_fixture", Status: RuntimeStateRunning, SupervisorPID: 100, ChildPID: 101}
 		if err := writeJSONAtomic(filepath.Join(runner.root, "state.json"), state); err != nil {
 			return herdr.CommandResult{}, err
 		}
@@ -79,11 +86,11 @@ func (runner *fixtureHerdrRunner) snapshot() []byte {
 	if !runner.surface || runner.closed {
 		return []byte(`{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":{"version":"0.8.0","protocol":19,"workspaces":[],"tabs":[],"panes":[],"layouts":[],"agents":[]}}}`)
 	}
-	return []byte(`{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":{"version":"0.8.0","protocol":19,"workspaces":[{"workspace_id":"` + runner.workspace + `","label":"crewfold-run_fixture"}],"tabs":[{"tab_id":"` + runner.tab + `","workspace_id":"` + runner.workspace + `"}],"panes":[{"pane_id":"` + runner.paneID + `","terminal_id":"` + runner.terminal + `","workspace_id":"` + runner.workspace + `","tab_id":"` + runner.tab + `"}],"layouts":[],"agents":[]}}}`)
+	return []byte(`{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":{"version":"0.8.0","protocol":19,"workspaces":[{"workspace_id":"` + runner.workspace + `","label":"` + herdrWorkspaceLabel(herdrTestNodeID, "run_fixture") + `"}],"tabs":[{"tab_id":"` + runner.tab + `","workspace_id":"` + runner.workspace + `"}],"panes":[{"pane_id":"` + runner.paneID + `","terminal_id":"` + runner.terminal + `","workspace_id":"` + runner.workspace + `","tab_id":"` + runner.tab + `"}],"layouts":[],"agents":[]}}}`)
 }
 
 func (runner *fixtureHerdrRunner) workspaceCreated() []byte {
-	return []byte(`{"id":"cli:request","result":{"type":"workspace_created","workspace":{"workspace_id":"` + runner.workspace + `","label":"crewfold-run_fixture"},"tab":{"tab_id":"` + runner.tab + `","workspace_id":"` + runner.workspace + `"},"root_pane":{"pane_id":"` + runner.paneID + `","terminal_id":"` + runner.terminal + `","workspace_id":"` + runner.workspace + `","tab_id":"` + runner.tab + `"}}}`)
+	return []byte(`{"id":"cli:request","result":{"type":"workspace_created","workspace":{"workspace_id":"` + runner.workspace + `","label":"` + herdrWorkspaceLabel(herdrTestNodeID, "run_fixture") + `"},"tab":{"tab_id":"` + runner.tab + `","workspace_id":"` + runner.workspace + `"},"root_pane":{"pane_id":"` + runner.paneID + `","terminal_id":"` + runner.terminal + `","workspace_id":"` + runner.workspace + `","tab_id":"` + runner.tab + `"}}}`)
 }
 
 func TestHerdrRuntimeLaunchReconcileMovePromptAndClosedPane(t *testing.T) {
@@ -91,7 +98,7 @@ func TestHerdrRuntimeLaunchReconcileMovePromptAndClosedPane(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "herdr")
 	runDirectory := filepath.Join(stateRoot, "run_fixture")
 	runner := newFixtureHerdrRunner(runDirectory)
-	runtime := NewHerdrRuntime(HerdrRuntimeOptions{
+	runtime := newTestHerdrRuntime(HerdrRuntimeOptions{
 		StateRoot: stateRoot, HerdrExecutable: "/fixture/herdr", CrewfoldExecutable: os.Args[0],
 		CommandRunner: runner, StartupTimeout: time.Second,
 	})
@@ -107,14 +114,14 @@ func TestHerdrRuntimeLaunchReconcileMovePromptAndClosedPane(t *testing.T) {
 	runner.mu.Lock()
 	runner.workspace, runner.tab, runner.paneID = "w2", "w2:t3", "w2:p7"
 	runner.mu.Unlock()
-	restarted := NewHerdrRuntime(HerdrRuntimeOptions{
+	restarted := newTestHerdrRuntime(HerdrRuntimeOptions{
 		StateRoot: stateRoot, HerdrExecutable: "/fixture/herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner,
 	})
 	reconciled, err := restarted.Reconcile(context.Background(), "run_fixture", binding.RuntimeHandle)
 	if err != nil {
 		t.Fatalf("Reconcile(moved) error = %v", err)
 	}
-	movedHandle, err := decodeHerdrHandle("run_fixture", reconciled.RuntimeHandle)
+	movedHandle, err := decodeHerdrHandle(herdrTestNodeID, "run_fixture", reconciled.RuntimeHandle)
 	if err != nil || movedHandle.TerminalID != "term-runtime" || movedHandle.PaneID != "w2:p7" {
 		t.Fatalf("moved handle = %#v, %v", movedHandle, err)
 	}
@@ -126,7 +133,7 @@ func TestHerdrRuntimeLaunchReconcileMovePromptAndClosedPane(t *testing.T) {
 		t.Fatalf("Attach() = %#v, %v", attachment, err)
 	}
 
-	if err := writeJSONAtomic(filepath.Join(runDirectory, "state.json"), herdrSupervisorState{Schema: herdrSupervisorStateSchema, OperationID: "run_fixture", Status: RuntimeStateExited, ExitKnown: true}); err != nil {
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "state.json"), herdrSupervisorState{Schema: herdrSupervisorStateSchema, NodeID: herdrTestNodeID, OperationID: "run_fixture", Status: RuntimeStateExited, ExitKnown: true}); err != nil {
 		t.Fatal(err)
 	}
 	runner.mu.Lock()
@@ -143,7 +150,7 @@ func TestHerdrRuntimeRejectsIncompatibleSchemaBeforeCreatingSurface(t *testing.T
 	stateRoot := filepath.Join(t.TempDir(), "herdr")
 	runner := newFixtureHerdrRunner(filepath.Join(stateRoot, "run_fixture"))
 	runner.incompatibleSchema = true
-	runtime := NewHerdrRuntime(HerdrRuntimeOptions{StateRoot: stateRoot, HerdrExecutable: "herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner})
+	runtime := newTestHerdrRuntime(HerdrRuntimeOptions{StateRoot: stateRoot, HerdrExecutable: "herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner})
 	_, err := runtime.Launch(context.Background(), "run_fixture", domain.RunPlacement{CheckoutPath: checkout}, LaunchSpec{Command: &CommandSpec{Executable: "/bin/sh", Arguments: []string{"-c", "exit 0"}}})
 	var startError *StartError
 	if !errors.As(err, &startError) || !strings.Contains(err.Error(), "install a compatible Herdr release") {
@@ -169,12 +176,12 @@ func TestHerdrRuntimeOnlyCompletesAfterProviderExitWhilePaneExists(t *testing.T)
 	}
 	runner := newFixtureHerdrRunner(runDirectory)
 	runner.surface = true
-	handle := herdrRuntimeHandle{Schema: herdrHandleSchema, OperationID: "run_fixture", WorkspaceID: "w1", TabID: "w1:t1", PaneID: "w1:p1", TerminalID: "term-runtime"}
+	handle := herdrRuntimeHandle{Schema: herdrHandleSchema, NodeID: herdrTestNodeID, OperationID: "run_fixture", WorkspaceID: "w1", TabID: "w1:t1", PaneID: "w1:p1", TerminalID: "term-runtime"}
 	rawHandle, _ := encodeHerdrHandle(handle)
-	if err := writeJSONAtomic(filepath.Join(runDirectory, "state.json"), herdrSupervisorState{Schema: herdrSupervisorStateSchema, OperationID: "run_fixture", Status: RuntimeStateExited, ExitKnown: true, ExitCode: 0}); err != nil {
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "state.json"), herdrSupervisorState{Schema: herdrSupervisorStateSchema, NodeID: herdrTestNodeID, OperationID: "run_fixture", Status: RuntimeStateExited, ExitKnown: true, ExitCode: 0}); err != nil {
 		t.Fatal(err)
 	}
-	runtime := NewHerdrRuntime(HerdrRuntimeOptions{StateRoot: stateRoot, HerdrExecutable: "herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner})
+	runtime := newTestHerdrRuntime(HerdrRuntimeOptions{StateRoot: stateRoot, HerdrExecutable: "herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner})
 	snapshot, err := runtime.Inspect(context.Background(), "run_fixture", rawHandle)
 	if err != nil || !snapshot.CompletionReady || snapshot.State != RuntimeStateExited || snapshot.Stdout.Text != "fixture output\n" {
 		t.Fatalf("Inspect(exited) = %#v, %v", snapshot, err)
@@ -193,12 +200,12 @@ func TestHerdrRuntimeStopClosesOnlyItsStableTerminalAfterGraceExpires(t *testing
 	}
 	runner := newFixtureHerdrRunner(runDirectory)
 	runner.surface = true
-	handle := herdrRuntimeHandle{Schema: herdrHandleSchema, OperationID: "run_fixture", WorkspaceID: "w1", TabID: "w1:t1", PaneID: "w1:p1", TerminalID: "term-runtime"}
+	handle := herdrRuntimeHandle{Schema: herdrHandleSchema, NodeID: herdrTestNodeID, OperationID: "run_fixture", WorkspaceID: "w1", TabID: "w1:t1", PaneID: "w1:p1", TerminalID: "term-runtime"}
 	rawHandle, _ := encodeHerdrHandle(handle)
-	if err := writeJSONAtomic(filepath.Join(runDirectory, "state.json"), herdrSupervisorState{Schema: herdrSupervisorStateSchema, OperationID: "run_fixture", Status: RuntimeStateRunning}); err != nil {
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "state.json"), herdrSupervisorState{Schema: herdrSupervisorStateSchema, NodeID: herdrTestNodeID, OperationID: "run_fixture", Status: RuntimeStateRunning}); err != nil {
 		t.Fatal(err)
 	}
-	runtime := NewHerdrRuntime(HerdrRuntimeOptions{StateRoot: stateRoot, HerdrExecutable: "herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner, PollInterval: time.Millisecond})
+	runtime := newTestHerdrRuntime(HerdrRuntimeOptions{StateRoot: stateRoot, HerdrExecutable: "herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner, PollInterval: time.Millisecond})
 	result, err := runtime.Stop(context.Background(), "run_fixture", rawHandle, StopSpec{GracePeriod: time.Millisecond})
 	if err != nil || !result.Forced || !strings.Contains(result.Diagnostic, "closed") {
 		t.Fatalf("Stop() = %#v, %v", result, err)
@@ -216,13 +223,13 @@ func TestHerdrRuntimeClassifiesServerRestartAsRetryableUnavailable(t *testing.T)
 	if err := os.Mkdir(runDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	handle := herdrRuntimeHandle{Schema: herdrHandleSchema, OperationID: "run_fixture", WorkspaceID: "w1", TabID: "w1:t1", PaneID: "w1:p1", TerminalID: "term-runtime"}
+	handle := herdrRuntimeHandle{Schema: herdrHandleSchema, NodeID: herdrTestNodeID, OperationID: "run_fixture", WorkspaceID: "w1", TabID: "w1:t1", PaneID: "w1:p1", TerminalID: "term-runtime"}
 	rawHandle, _ := encodeHerdrHandle(handle)
-	if err := writeJSONAtomic(filepath.Join(runDirectory, "state.json"), herdrSupervisorState{Schema: herdrSupervisorStateSchema, OperationID: "run_fixture", Status: RuntimeStateRunning}); err != nil {
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "state.json"), herdrSupervisorState{Schema: herdrSupervisorStateSchema, NodeID: herdrTestNodeID, OperationID: "run_fixture", Status: RuntimeStateRunning}); err != nil {
 		t.Fatal(err)
 	}
 	runner := &singleHerdrResultRunner{result: herdr.CommandResult{ExitCode: 1, Stderr: []byte(`{"error":{"code":"server_not_running","message":"session is restarting"}}`)}}
-	runtime := NewHerdrRuntime(HerdrRuntimeOptions{StateRoot: stateRoot, HerdrExecutable: "herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner})
+	runtime := newTestHerdrRuntime(HerdrRuntimeOptions{StateRoot: stateRoot, HerdrExecutable: "herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner})
 	_, err := runtime.Inspect(context.Background(), "run_fixture", rawHandle)
 	var unavailable *RuntimeUnavailableError
 	if !errors.As(err, &unavailable) {
@@ -241,7 +248,7 @@ func (runner *singleHerdrResultRunner) Run(context.Context, string, []string, ma
 func TestHerdrPaneSupervisorPersistsExitWithoutClaimingProviderCompletion(t *testing.T) {
 	runDirectory := t.TempDir()
 	spec := herdrSupervisorSpec{
-		Schema: herdrSupervisorSpecSchema, OperationID: "run_supervisor", Executable: "/bin/sh",
+		Schema: herdrSupervisorSpecSchema, NodeID: herdrTestNodeID, OperationID: "run_supervisor", Executable: "/bin/sh",
 		Arguments: []string{"-c", "exit 7"}, Environment: []string{"PATH=/usr/bin:/bin"}, WorkingDirectory: runDirectory,
 	}
 	if err := writeJSONAtomic(filepath.Join(runDirectory, "launch.json"), spec); err != nil {
@@ -261,7 +268,7 @@ func TestHerdrRuntimeLaunchSpecKeepsSettledTerminalAttachable(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "herdr")
 	runDirectory := filepath.Join(stateRoot, "run_fixture")
 	runner := newFixtureHerdrRunner(runDirectory)
-	runtime := NewHerdrRuntime(HerdrRuntimeOptions{StateRoot: stateRoot, HerdrExecutable: "herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner})
+	runtime := newTestHerdrRuntime(HerdrRuntimeOptions{StateRoot: stateRoot, HerdrExecutable: "herdr", CrewfoldExecutable: os.Args[0], CommandRunner: runner})
 	if _, err := runtime.Launch(context.Background(), "run_fixture", domain.RunPlacement{CheckoutPath: checkout}, LaunchSpec{Command: &CommandSpec{Executable: "/bin/sh", Arguments: []string{"-c", "exit 0"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -272,12 +279,22 @@ func TestHerdrRuntimeLaunchSpecKeepsSettledTerminalAttachable(t *testing.T) {
 }
 
 func TestHerdrHandleRejectsCrossRunReuse(t *testing.T) {
-	raw, err := encodeHerdrHandle(herdrRuntimeHandle{Schema: herdrHandleSchema, OperationID: "run_one", WorkspaceID: "w1", TabID: "t1", PaneID: "p1", TerminalID: "term"})
+	raw, err := encodeHerdrHandle(herdrRuntimeHandle{Schema: herdrHandleSchema, NodeID: herdrTestNodeID, OperationID: "run_one", WorkspaceID: "w1", TabID: "t1", PaneID: "p1", TerminalID: "term"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := decodeHerdrHandle("run_two", raw); err == nil {
+	if _, err := decodeHerdrHandle(herdrTestNodeID, "run_two", raw); err == nil {
 		t.Fatal("decodeHerdrHandle(cross-run) error = nil")
+	}
+}
+
+func TestHerdrHandleRejectsForeignNodeBeforeRuntimeControl(t *testing.T) {
+	raw, err := encodeHerdrHandle(herdrRuntimeHandle{Schema: herdrHandleSchema, NodeID: herdrTestNodeID, OperationID: "run_one", WorkspaceID: "w1", TabID: "t1", PaneID: "p1", TerminalID: "term"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeHerdrHandle("22222222222222222222222222222222", "run_one", raw); err == nil {
+		t.Fatal("decodeHerdrHandle(foreign node) error = nil")
 	}
 }
 
