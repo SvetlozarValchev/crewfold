@@ -1274,9 +1274,10 @@ from the daemon's canonical APIs.
    bootstrap and bounded owner session. Render health, connection state, current
    workspace/project selection, and canonical read-only records first.
 3. **Browser onboarding.** Create/open the first workspace, choose an existing Git
-   repository, register the project/checkout, diagnose Codex or Claude, choose
-   direct by default or optional Herdr, and freeze an initial concurrency/cost/
-   scope policy. The browser never receives provider credentials.
+   repository, register the project/checkout, diagnose Codex or Claude, preflight
+   live Herdr as the normal interactive runtime, and freeze an initial
+   concurrency/cost/scope policy. Direct remains an explicit advanced CI/headless
+   fallback. The browser never receives provider credentials.
 4. **Durable command workbench.** Add owner conversations, turns, frozen typed
    operation graphs, policy evaluations, approval links, execution states, and
    exact effect receipts. Queries append no domain effect. An explicit act turn
@@ -1292,16 +1293,18 @@ from the daemon's canonical APIs.
 6. **Agent inspector.** Present canonical task/run/context/message/claim/check/
    evidence/history state, bounded Git status/diff observations, budget/capacity,
    direct logs, and controls. Add a short-lived run-bound WebSocket terminal grant
-   for a current live interactive runtime. Herdr is optional; absence removes only
-   the terminal capability.
+   for a current live interactive runtime. Herdr is the normal runtime and is
+   managed as a companion user service when installed; Direct remains available
+   for an explicitly headless workflow.
 7. **Understanding surfaces.** Bring the exact M18/M19 Briefing, Work, Decisions,
    Checks, Coordination, and Activity facts into the browser without client-side
    reclassification. Add portfolio/project navigation, inbox, evidence drill-down,
    visible stale/reconnect state, and progressive responsive layouts.
 8. **Hardening and browser-only acceptance.** Prove restart, idempotent replay,
    browser security, hostile text, bounded transport/rendering, accessibility,
-   personal-100 scale, provider-free onboarding/execution, recorded subscription
-   authentication, optional Herdr, and every prior gate.
+   personal-100 scale, provider-free onboarding/execution through the explicit
+   Direct fallback, recorded subscription authentication, Herdr-first interactive
+   operation, and every prior gate.
 
 **Deliverables**
 
@@ -1358,7 +1361,8 @@ is operable and understandable through the browser without CLI composition. An
 explicit owner instruction executes permitted work with exact durable receipts;
 gated work stops before its first unauthorized effect. Browser/daemon restart
 preserves the conversation and canonical work, agent inspection remains honest,
-Herdr is optional, Codex subscription authentication needs no API key, M20 scale
+Herdr is the normal interactive runtime, Direct remains the advanced headless
+fallback, Codex subscription authentication needs no API key, M20 scale
 and recovery claims remain true, and every previous scenario passes. No hosted,
 remote, multi-user, push/deploy/publication, public-package, or compatibility path
 is introduced.

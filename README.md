@@ -26,7 +26,9 @@ React interface for repository onboarding, query/plan/act conversation, reviewed
 plan launch, work and crew inspection, inbox and decisions, evidence, activity,
 briefings, health, bounded Git/log views, and separately authorized live terminal
 access. The CLI remains the typed automation/recovery/administration surface; the
-TUI is an operational fallback; Herdr is an optional interactive runtime host.
+TUI is an operational fallback; Herdr is the normal interactive runtime host,
+managed as a companion user service when installed. Direct execution remains an
+explicit advanced fallback for CI and genuinely headless environments.
 The OSS release candidate follows as M22. The current binary provides a
 foreground local daemon, an owner-only Unix socket, and durable workspace,
 project, repository, checkout, agent, objective, task, dependency, assignment,

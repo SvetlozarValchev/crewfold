@@ -48,6 +48,7 @@ async function waitFor(expression, label, timeout = 15000) {
 
 await command("Runtime.enable");
 await waitFor("document.body.innerText.includes('Bring your repository into the workbench.')", "onboarding");
+await waitFor("document.body.innerText.includes('Herdr interactive runtime') && document.querySelector('.advanced-runtime select')?.value === 'herdr'", "Herdr-first onboarding default");
 
 const onboarding = `(() => {
   const set = (element, value) => {
@@ -79,7 +80,7 @@ await evaluate(`(() => {
   area.form.requestSubmit();
   return true;
 })()`);
-await waitFor("document.body.innerText.includes('Committed four receipted effects')", "receipted owner act", 20000);
+await waitFor("document.body.innerText.includes('Committed four receipted effects and requested the selected agent launch')", "receipted owner act", 20000);
 await waitFor("document.body.innerText.includes('builder')", "created crew");
 
 await evaluate(`(() => {

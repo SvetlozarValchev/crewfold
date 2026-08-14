@@ -625,6 +625,154 @@ func (runtime *m21TerminalRuntime) Attach(context.Context, string, string) (exec
 	return execution.AttachSpec{Executable: "/bin/sh", Arguments: []string{"-c", `printf 'terminal-ready\n'; IFS= read -r line; printf 'terminal-echo:%s\n' "$line"; sleep 1`}}, nil
 }
 
+type m21ReadinessRuntime struct {
+	*execution.FakeRuntime
+	readyErr error
+}
+
+func (runtime *m21ReadinessRuntime) Name() string { return "herdr" }
+func (runtime *m21ReadinessRuntime) CheckReady(context.Context) error {
+	return runtime.readyErr
+}
+
+func TestM21HerdrOnboardingRequiresLiveHostBeforeCanonicalMutation(t *testing.T) {
+	t.Parallel()
+
+	runtimeDriver := &m21ReadinessRuntime{FakeRuntime: execution.NewFakeRuntime(), readyErr: errors.New("server_not_running")}
+	config := testConfig(t)
+	config.GitInspector = m21WorkbenchInspector{}
+	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"herdr": runtimeDriver}
+	running := startTestServer(t, config)
+	api := localapi.NewClient(running.config.SocketPath)
+	bootstrap, err := api.WebBootstrap(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(bootstrap.URL)
+	token := strings.TrimPrefix(parsed.Fragment, "bootstrap=")
+	parsed.Fragment = ""
+	origin := strings.TrimSuffix(parsed.String(), "/")
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	var session struct {
+		APIBase string `json:"api_base"`
+		CSRF    string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(exchangeWorkbenchBootstrap(t, client, origin, token, origin), &session); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"repository_path": filepath.Join(t.TempDir(), "signal-garden"), "workspace": "personal", "project": "signal-garden",
+		"agent": "builder", "provider": "fixture-mcp", "runtime": "herdr", "write_mode": "shared",
+	})
+	call := func() (int, []byte) {
+		request, _ := http.NewRequest(http.MethodPost, origin+session.APIBase+"/onboarding", bytes.NewReader(body))
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Crewfold-CSRF", session.CSRF)
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		raw, _ := io.ReadAll(response.Body)
+		return response.StatusCode, raw
+	}
+	status, raw := call()
+	if status != http.StatusConflict || !bytes.Contains(raw, []byte("Herdr interactive runtime is not ready")) {
+		t.Fatalf("unavailable Herdr onboarding = %d: %s", status, raw)
+	}
+	workspaces, err := api.WorkspaceList(context.Background(), localapi.WorkspaceListParams{PageParams: localapi.PageParams{Limit: 10}})
+	if err != nil || len(workspaces.Workspaces) != 0 {
+		t.Fatalf("failed preflight changed canonical workspaces = %#v, %v", workspaces, err)
+	}
+	runtimeDriver.readyErr = nil
+	status, raw = call()
+	if status != http.StatusOK {
+		t.Fatalf("ready Herdr onboarding = %d: %s", status, raw)
+	}
+}
+
+func TestM21WorkbenchRetriesOneExactStartFailedRunAfterPreflight(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t)
+	config.GitInspector = m21WorkbenchInspector{}
+	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"fake": execution.NewFakeRuntime()}
+	config.ProviderAdapters = map[string]execution.ProviderAdapter{"fake": execution.FakeProvider{}}
+	running := startTestServer(t, config)
+	api := localapi.NewClient(running.config.SocketPath)
+	workspace, err := api.WorkspaceInit(context.Background(), "personal", "web-retry-workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := api.ProjectAdd(context.Background(), workspace.Workspace.ID, "signal-garden", filepath.Join(t.TempDir(), "signal-garden"), domain.WriteModeShared, "web-retry-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := api.AgentCreate(context.Background(), localapi.AgentCreateParams{Workspace: workspace.Workspace.ID, Name: "builder", Role: "implementation", Provider: "fake", Runtime: "fake", MaxConcurrency: 2, IdempotencyKey: "web-retry-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := createAssignedRunWorkerTask(t, api, project.Project.ID, agent.Agent.ID, "web retry")
+	failed, err := api.RunStart(context.Background(), localapi.RunStartParams{
+		Workspace: workspace.Workspace.ID, Task: task.Detail.Task.ID, Runtime: "fake", Provider: "fake",
+		Scenario:             domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "web-retry-failure", StartFailure: "fixture refused to start"},
+		ExpectedTaskRevision: task.Detail.Task.Revision, IdempotencyKey: "web-retry-first",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRunStatus(t, api, failed.Detail.Run.ID, domain.RunStartFailed)
+
+	bootstrap, err := api.WebBootstrap(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(bootstrap.URL)
+	token := strings.TrimPrefix(parsed.Fragment, "bootstrap=")
+	parsed.Fragment = ""
+	origin := strings.TrimSuffix(parsed.String(), "/")
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	var session struct {
+		APIBase string `json:"api_base"`
+		CSRF    string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(exchangeWorkbenchBootstrap(t, client, origin, token, origin), &session); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"workspace": workspace.Workspace.ID, "run": failed.Detail.Run.ID, "idempotency_key": "web-retry-second"})
+	request, _ := http.NewRequest(http.MethodPost, origin+session.APIBase+"/retry-run", bytes.NewReader(body))
+	request.Header.Set("Origin", origin)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Crewfold-CSRF", session.CSRF)
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	raw, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("retry status = %d: %s", response.StatusCode, raw)
+	}
+	if err := protocolschema.ValidateJSON("local/v1/run-mutation.result.schema.json", raw); err != nil {
+		t.Fatalf("retry response schema = %v: %s", err, raw)
+	}
+	var result localapi.RunMutationResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Detail.Run.ID == failed.Detail.Run.ID || result.Detail.Run.TaskID != task.Detail.Task.ID {
+		t.Fatalf("retry result = %#v", result.Detail.Run)
+	}
+	waitForRunStatus(t, api, result.Detail.Run.ID, domain.RunCompleted)
+	runs, err := api.RunList(context.Background(), localapi.RunListParams{Workspace: workspace.Workspace.ID, Task: task.Detail.Task.ID, PageParams: localapi.PageParams{Limit: 10}})
+	if err != nil || len(runs.Runs) != 2 {
+		t.Fatalf("retry run list = %#v, %v", runs, err)
+	}
+}
+
 func TestM21WorkbenchShellIsEmbeddedAndSecurityHeadersAreExact(t *testing.T) {
 	t.Parallel()
 

@@ -117,7 +117,8 @@ onboarding, intent, planning, execution, dependency graphs, mailboxes, context,
 agent inspection, decisions, evidence, and briefings. It calls canonical daemon
 APIs and is embedded in the Go binary. CLI remains complete for automation,
 recovery, diagnosis, and advanced administration; the TUI remains an operational
-and SSH fallback; Herdr is optional interactive runtime infrastructure.
+and SSH fallback; Herdr is the normal companion interactive runtime, while Direct
+is retained as an explicit advanced CI/headless fallback.
 
 ## Not in the MVP stack
 

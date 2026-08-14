@@ -19,7 +19,9 @@ The accepted contract is
 [ADR-0020](../docs/decisions/0020-local-web-workbench.md). The workbench will
 consume canonical daemon APIs and will not become a second source of truth. CLI
 and TUI remain secondary automation, recovery, and terminal-operation surfaces;
-Herdr remains an optional interactive runtime host.
+Herdr is the normal interactive runtime host and is preflighted before setup or
+launch effects. Direct remains an explicit advanced fallback for CI and genuinely
+headless environments.
 
 ## Product mock
 

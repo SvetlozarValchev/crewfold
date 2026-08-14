@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -52,7 +53,15 @@ func (a *App) runServiceCommand(ctx context.Context, mode outputMode, args []str
 	if err != nil {
 		return a.writeFailure(mode, internalFailure("resolve Crewfold executable", err))
 	}
-	manager := service.Manager{Paths: paths, Executable: executable, Run: a.runService}
+	herdrExecutable := ""
+	if a.lookPath != nil {
+		if candidate, findErr := a.lookPath("herdr"); findErr == nil {
+			if absolute, absoluteErr := filepath.Abs(candidate); absoluteErr == nil {
+				herdrExecutable = filepath.Clean(absolute)
+			}
+		}
+	}
+	manager := service.Manager{Paths: paths, Executable: executable, HerdrExecutable: herdrExecutable, Run: a.runService}
 	var result service.Result
 	switch args[0] {
 	case "install":

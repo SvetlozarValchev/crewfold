@@ -324,6 +324,8 @@ func (w *workbenchServer) handleSessionAPI(response http.ResponseWriter, request
 		w.handleWorkbenchTerminalGrant(response, request, session)
 	case "terminal":
 		w.handleWorkbenchTerminal(response, request, session)
+	case "retry-run":
+		w.handleWorkbenchRunRetry(response, request, session)
 	default:
 		http.NotFound(response, request)
 	}

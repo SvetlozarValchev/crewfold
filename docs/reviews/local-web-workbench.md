@@ -20,8 +20,9 @@ read decisions, evidence, activity, health, and a bounded project briefing.
 An act response is not decorative chat: it executes a closed typed operation graph
 and records exact durable effect receipts. A plan remains inert until its reviewed
 revision is launched. Stale canonical state disables unsafe browser controls.
-Herdr remains optional and supplies only the live terminal; Crewfold's database,
-events, receipts, reports, and evidence remain canonical truth.
+Herdr supplies the normal interactive runtime and live terminal; Crewfold's
+database, events, receipts, reports, and evidence remain canonical truth. Direct
+remains an explicit advanced CI/headless fallback.
 
 - Public scenario: `test/scenarios/web-workbench-shell/run.sh`
 - Exact command: `./test/scenarios/web-workbench-shell/run.sh`
@@ -31,9 +32,9 @@ events, receipts, reports, and evidence remain canonical truth.
 
 | Area | Accepted behavior |
 | --- | --- |
-| Service/open | Private XDG paths, idempotent user-service lifecycle, one-time fragment bootstrap, and no model call during installation/open |
+| Service/open | Private XDG paths, idempotent Crewfold plus installed-Herdr companion user services, one-time fragment bootstrap, and no model call during installation/open |
 | Browser security | Exact IPv4 loopback Host/Origin, HttpOnly SameSite session, in-memory CSRF, CSP/no-frame policy, strict bounded RPC, and SSE used only to invalidate canonical reads |
-| Onboarding | Browser-only workspace/project/checkout/provider/runtime setup against an existing committed Git repository; Direct is the default and Herdr is optional |
+| Onboarding | Browser-only workspace/project/checkout/provider/runtime setup against an existing committed Git repository; live Herdr is the interactive default and Direct is the explicit advanced CI/headless fallback |
 | Conversation | Bounded durable query/plan/act turns with one frozen current operation grammar, canonical hashes, replay-safe idempotency, and no prose-derived authority |
 | Planning | Task/objective text, priority, enabled agent, and fixed token/time limits are editable before launch; revision and event high-water must still match |
 | Execution | Objective, task, assignment, and run effects use existing Store mutations and retain exact method/request/response/event receipts |

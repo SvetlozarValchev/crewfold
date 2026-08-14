@@ -171,19 +171,25 @@ explicit optional provider configuration for owners who choose usage-based API
 billing. Parallelism remains subject to Crewfold capacity/budget policy and the
 provider's current usage limits.
 
-### Runtime drivers remain optional and replaceable
+### Herdr is the normal interactive runtime; drivers remain replaceable
 
-Direct/headless execution is the default. Herdr remains the preferred optional
-interactive runtime because it supplies persistent PTYs, stable terminal IDs,
-native attachment, pane output, prompt, interrupt, stop, and reconciliation. It
-is not the workbench, database, or source of task truth, and a user does not need
-to understand or install it for ordinary headless work.
+Herdr is the normal workbench runtime because it supplies persistent PTYs, stable
+terminal IDs, native attachment, pane output, prompt, interrupt, stop, and
+reconciliation. When Herdr is installed, `crewfold service install` manages it as
+a companion user service, and browser onboarding and launch retry prove that its
+live server is ready before committing setup or launch effects. It is not the
+workbench, database, or source of task truth.
+
+Direct/headless execution remains an explicit advanced fallback for CI,
+provider-free acceptance, and environments that deliberately do not need an
+interactive terminal. It is not the normal browser default. A future tmux,
+container, or remote runtime can implement the same capability without changing
+the workbench domain model.
 
 The web agent inspector shows canonical task/run/context/message/check/evidence
 state for every runtime. Direct runs expose bounded current or archived logs.
 When a current live runtime advertises an interactive terminal, the inspector may
-open a separately authorized stream. A future tmux, container, or remote runtime
-can implement the same capability without changing the workbench domain model.
+open a separately authorized stream.
 
 ### Agent inspection shows observation, not private reasoning
 
@@ -227,8 +233,8 @@ of project truth.
   conversation-to-typed-command and receipt model.
 - Browser security, service lifecycle, terminal proxying, and frontend scale are
   new first-class fault boundaries and require executable acceptance tests.
-- Herdr stays valuable without becoming mandatory or user-facing configuration
-  for headless work.
+- Herdr becomes the managed interactive default without becoming a second control
+  plane; explicit headless work can still select Direct.
 - Existing M19 and M20 reviews remain historical evidence. References there to
   “M21 packaging” describe the then-current numbering; public OSS readiness is
   now M22.
@@ -253,7 +259,7 @@ of project truth.
   scope, budget, external-effect, ambiguity, or authority boundaries.
 - Require an OpenAI API key for Codex: the installed Codex CLI already supports
   subscription authentication and is the current provider boundary.
-- Make Herdr mandatory: headless direct runs are sufficient for ordinary work and
-  the runtime interface is deliberately replaceable.
+- Remove Direct entirely: CI and deliberately headless operation still need a
+  bounded noninteractive runtime, and the runtime interface remains replaceable.
 - Display hidden reasoning or infer truth from terminal prose: Crewfold governs
   observable, provenance-linked facts rather than manufacturing introspection.

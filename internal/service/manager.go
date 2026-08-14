@@ -15,16 +15,20 @@ import (
 	"crewfold/internal/appdirs"
 )
 
-const UnitName = "crewfold.service"
+const (
+	UnitName      = "crewfold.service"
+	HerdrUnitName = "crewfold-herdr.service"
+)
 
 // Runner invokes one process and returns its bounded combined output.
 type Runner func(context.Context, string, ...string) ([]byte, error)
 
 // Manager owns one exact systemd user-service definition.
 type Manager struct {
-	Paths      appdirs.Paths
-	Executable string
-	Run        Runner
+	Paths           appdirs.Paths
+	Executable      string
+	HerdrExecutable string
+	Run             Runner
 }
 
 // Result is the stable human-facing service lifecycle result.
@@ -50,8 +54,21 @@ func (m Manager) Install(ctx context.Context) (Result, error) {
 	if err := writeUnitAtomic(m.Paths.UnitPath, []byte(m.unit())); err != nil {
 		return Result{}, fmt.Errorf("publish Crewfold user service: %w", err)
 	}
+	if m.HerdrExecutable != "" {
+		if err := writeUnitAtomic(m.herdrUnitPath(), []byte(m.herdrUnit())); err != nil {
+			return Result{}, fmt.Errorf("publish Crewfold Herdr runtime service: %w", err)
+		}
+	}
 	if err := m.run(ctx, "daemon-reload"); err != nil {
 		return Result{}, err
+	}
+	if m.HerdrExecutable != "" {
+		if err := m.run(ctx, "enable", HerdrUnitName); err != nil {
+			return Result{}, err
+		}
+		if err := m.run(ctx, "restart", HerdrUnitName); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := m.run(ctx, "enable", UnitName); err != nil {
 		return Result{}, err
@@ -121,6 +138,9 @@ func (m Manager) validate() error {
 	if !filepath.IsAbs(m.Executable) || filepath.Clean(m.Executable) != m.Executable || containsUnsafeServiceText(m.Executable) {
 		return errors.New("service executable must be a canonical absolute path")
 	}
+	if m.HerdrExecutable != "" && (!filepath.IsAbs(m.HerdrExecutable) || filepath.Clean(m.HerdrExecutable) != m.HerdrExecutable || containsUnsafeServiceText(m.HerdrExecutable)) {
+		return errors.New("Herdr service executable must be a canonical absolute path")
+	}
 	for name, value := range map[string]string{
 		"data directory": m.Paths.DataDir,
 		"socket path":    m.Paths.SocketPath,
@@ -176,9 +196,14 @@ func safeCommandDetail(value string, maximum int) string {
 }
 
 func (m Manager) unit() string {
+	dependency := ""
+	if m.HerdrExecutable != "" {
+		dependency = "Wants=" + HerdrUnitName + "\nAfter=" + HerdrUnitName + "\n"
+	}
 	return `[Unit]
 Description=Crewfold local agent control plane
 After=default.target
+` + dependency + `
 
 [Service]
 Type=simple
@@ -189,6 +214,30 @@ UMask=0077
 NoNewPrivileges=true
 RuntimeDirectory=crewfold
 RuntimeDirectoryMode=0700
+
+[Install]
+WantedBy=default.target
+`
+}
+
+func (m Manager) herdrUnitPath() string {
+	return filepath.Join(filepath.Dir(m.Paths.UnitPath), HerdrUnitName)
+}
+
+func (m Manager) herdrUnit() string {
+	return `[Unit]
+Description=Herdr interactive runtime host for Crewfold
+After=default.target
+Before=` + UnitName + `
+PartOf=` + UnitName + `
+
+[Service]
+Type=simple
+ExecStart=` + systemdQuote(m.HerdrExecutable) + ` server
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+NoNewPrivileges=true
 
 [Install]
 WantedBy=default.target

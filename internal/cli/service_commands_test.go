@@ -43,6 +43,7 @@ func TestM21ServiceInstallUsesPrivateDefaultsAndMachineContract(t *testing.T) {
 	app, stdout, stderr := newTestApp()
 	app.resolveAppDirs = func() (appdirs.Paths, error) { return paths, nil }
 	app.executablePath = func() (string, error) { return filepath.Join(root, "bin", "crewfold"), nil }
+	app.lookPath = func(string) (string, error) { return "", errors.New("not installed") }
 	var commands []string
 	app.runService = func(_ context.Context, name string, arguments ...string) ([]byte, error) {
 		commands = append(commands, name+" "+strings.Join(arguments, " "))

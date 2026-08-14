@@ -93,6 +93,10 @@ func (runtime *HerdrRuntime) Probe(ctx context.Context) herdr.ProbeReport {
 	return runtime.client.Probe(ctx)
 }
 
+func (runtime *HerdrRuntime) CheckReady(ctx context.Context) error {
+	return runtime.Probe(ctx).Error()
+}
+
 func (runtime *HerdrRuntime) Launch(ctx context.Context, operationID string, placement domain.RunPlacement, launch LaunchSpec) (RuntimeBinding, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()

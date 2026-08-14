@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"crewfold/internal/domain"
@@ -203,11 +204,22 @@ func (s *server) preflightOwnerTurn(ctx context.Context, detail domain.OwnerTurn
 	if !selected.Enabled {
 		return &store.Error{Code: store.CodeAgentNotFound, Message: "owner turn selected an agent that is no longer enabled"}
 	}
-	if _, exists := s.providers[selected.Provider]; !exists {
+	provider, exists := s.providers[selected.Provider]
+	if !exists {
 		return &store.Error{Code: store.CodeAdapterUnavailable, Message: "selected agent provider is not registered"}
 	}
-	if _, exists := s.runtimes[selected.Runtime]; !exists {
+	runtimeDriver, exists := s.runtimes[selected.Runtime]
+	if !exists {
 		return &store.Error{Code: store.CodeAdapterUnavailable, Message: "selected agent runtime is not registered"}
+	}
+	if err := preflightWorkbenchRuntime(ctx, selected.Runtime, runtimeDriver); err != nil {
+		return err
+	}
+	probeContext, cancel := context.WithTimeout(ctx, 15*time.Second)
+	_, probeErr := diagnoseWorkbenchProvider(probeContext, provider)
+	cancel()
+	if probeErr != nil {
+		return &store.Error{Code: store.CodeAdapterUnavailable, Message: probeErr.Error()}
 	}
 	inspection, err := s.store.InspectProject(ctx, workspace, project)
 	if err != nil {
@@ -311,7 +323,7 @@ func (s *server) executeOwnerTurn(ctx context.Context, detail domain.OwnerTurnDe
 			if err != nil {
 				return detail, err
 			}
-			scenario := domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "owner-workbench", Acceptance: domain.AcceptanceRule{RequiredEvidence: []string{"task checks and diff inspected"}}, Steps: []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "Owner-directed work completed", Evidence: []string{"task checks and diff inspected"}, Handoff: "Completed the owner-directed work and reported its exact evidence."}}}
+			scenario := ownerWorkbenchScenario()
 			command := store.CreateRunCommand{WorkspaceIdentifier: workspace, TaskID: taskID, CheckoutIdentifier: checkoutID, Runtime: agent.Runtime, Provider: agent.Provider, Scenario: scenario, ExpectedTaskRevision: task.Task.Revision, IdempotencyKey: key, CorrelationID: correlation}
 			result, err := s.store.CreateRun(ctx, command)
 			if err != nil {
@@ -325,7 +337,11 @@ func (s *server) executeOwnerTurn(ctx context.Context, detail domain.OwnerTurnDe
 			return detail, &store.Error{Code: store.CodeOwnerTurnConflict, Message: "owner plan contains an unsupported operation"}
 		}
 	}
-	return s.store.FinishOwnerTurn(ctx, workspace, detail.Turn.ID, "Committed the objective, created and assigned its first task, and started the selected agent. The run inspector now shows the exact execution state and receipts.")
+	return s.store.FinishOwnerTurn(ctx, workspace, detail.Turn.ID, "Committed the objective, created and assigned its first task, and requested the selected agent launch. The run inspector shows the exact asynchronous execution state and receipts.")
+}
+
+func ownerWorkbenchScenario() domain.FakeScenario {
+	return domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "owner-workbench", Acceptance: domain.AcceptanceRule{RequiredEvidence: []string{"task checks and diff inspected"}}, Steps: []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "Owner-directed work completed", Evidence: []string{"task checks and diff inspected"}, Handoff: "Completed the owner-directed work and reported its exact evidence."}}}
 }
 
 func ownerSelectedAgent(ctx context.Context, storage *store.Store, workspace string, payload map[string]any) (domain.AgentDefinition, error) {

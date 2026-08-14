@@ -63,6 +63,7 @@ type App struct {
 	resolveAppDirs  func() (appdirs.Paths, error)
 	runService      service.Runner
 	openURL         func(context.Context, string) error
+	lookPath        func(string) (string, error)
 }
 
 type daemonClient interface {
@@ -212,6 +213,7 @@ func New(stdout, stderr io.Writer, info buildinfo.Info) *App {
 			command.Stderr = io.Discard
 			return command.Run()
 		},
+		lookPath: exec.LookPath,
 		newClient: func(socketPath string) daemonClient {
 			return localapi.NewClient(socketPath)
 		},

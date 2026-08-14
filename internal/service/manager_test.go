@@ -82,6 +82,64 @@ func TestInstallWritesPrivateExactUnitAndStartsIt(t *testing.T) {
 	}
 }
 
+func TestInstallMakesInstalledHerdrTheCompanionRuntimeService(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runtimeRoot, err := os.MkdirTemp("", "cf-svc-herdr-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(runtimeRoot) })
+	paths, err := appdirs.Resolve(filepath.Join(root, "home"), func(name string) string {
+		switch name {
+		case "XDG_STATE_HOME":
+			return filepath.Join(root, "state")
+		case "XDG_CONFIG_HOME":
+			return filepath.Join(root, "config")
+		case "XDG_RUNTIME_DIR":
+			return runtimeRoot
+		default:
+			return ""
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	manager := Manager{
+		Paths: paths, Executable: filepath.Join(root, "bin", "crewfold"), HerdrExecutable: filepath.Join(root, "bin", "herdr"),
+		Run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(arguments, " "))
+			return nil, nil
+		},
+	}
+	if _, err := manager.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	crewfoldUnit, err := os.ReadFile(paths.UnitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(crewfoldUnit), "Wants="+HerdrUnitName) || !strings.Contains(string(crewfoldUnit), "After="+HerdrUnitName) {
+		t.Fatalf("Crewfold unit lacks Herdr dependency:\n%s", crewfoldUnit)
+	}
+	herdrPath := filepath.Join(filepath.Dir(paths.UnitPath), HerdrUnitName)
+	herdrUnit, err := os.ReadFile(herdrPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(herdrUnit), `ExecStart="`+filepath.Join(root, "bin", "herdr")+`" server`) {
+		t.Fatalf("Herdr unit = %s", herdrUnit)
+	}
+	if !strings.Contains(string(herdrUnit), "Before="+UnitName) || !strings.Contains(string(herdrUnit), "PartOf="+UnitName) {
+		t.Fatalf("Herdr unit is not lifecycle-bound to Crewfold:\n%s", herdrUnit)
+	}
+	if len(calls) != 5 || !strings.Contains(calls[1], "enable "+HerdrUnitName) || !strings.Contains(calls[2], "restart "+HerdrUnitName) || !strings.Contains(calls[3], "enable "+UnitName) || !strings.Contains(calls[4], "restart "+UnitName) {
+		t.Fatalf("systemctl calls = %#v", calls)
+	}
+}
+
 func TestInstallRefusesSymlinkedUnitWithoutChangingTarget(t *testing.T) {
 	t.Parallel()
 

@@ -95,6 +95,13 @@ type RuntimeLaunchPreparer interface {
 	PrepareLaunch(context.Context, string, domain.RunPlacement, LaunchSpec) (RuntimeLaunchPreparation, error)
 }
 
+// RuntimeReadinessProbe is implemented by runtimes whose external host must be
+// live before Crewfold records an onboarding choice or owner-requested retry.
+// The probe is read-only and must not create a runtime surface.
+type RuntimeReadinessProbe interface {
+	CheckReady(context.Context) error
+}
+
 type StopSpec struct {
 	GracePeriod time.Duration
 }

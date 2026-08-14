@@ -299,7 +299,8 @@ M21 is complete at implementation commit
 [passed review](reviews/local-web-workbench.md) records the local service and
 browser-security boundary, repository onboarding, durable owner conversation and
 receipts, editable reviewed plans, automatic execution, canonical inspection,
-optional Herdr terminal access, and the real-browser public scenario.
+Herdr-first interactive terminal access with an explicit Direct headless fallback,
+and the real-browser public scenario.
 
 M20 is complete at implementation commit
 `359522d8aa58a18a7d1151584a8f9bc48b4bfc56`; its

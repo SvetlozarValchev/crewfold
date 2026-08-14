@@ -83,8 +83,13 @@ func (w *workbenchServer) handleWorkbenchOnboarding(response http.ResponseWriter
 		w.writeStoreError(response, &store.Error{Code: store.CodeAdapterUnavailable, Message: "selected provider is not registered"})
 		return
 	}
-	if _, exists := w.daemon.runtimes[params.Runtime]; !exists {
+	runtimeDriver, exists := w.daemon.runtimes[params.Runtime]
+	if !exists {
 		w.writeStoreError(response, &store.Error{Code: store.CodeAdapterUnavailable, Message: "selected runtime is not registered"})
+		return
+	}
+	if err := preflightWorkbenchRuntime(request.Context(), params.Runtime, runtimeDriver); err != nil {
+		w.writeStoreError(response, err)
 		return
 	}
 	probeContext, cancel := context.WithTimeout(request.Context(), 15*time.Second)
@@ -126,6 +131,22 @@ func (w *workbenchServer) handleWorkbenchOnboarding(response http.ResponseWriter
 		"workspace": workspace.Workspace, "project": project.Project, "checkout": project.Checkout, "agent": agent.Value,
 		"provider_diagnosis": diagnosis, "repository": map[string]any{"branch": observation.Branch, "dirty": observation.Dirty, "dirty_path_count": len(observation.DirtyPaths)},
 	})
+}
+
+func preflightWorkbenchRuntime(ctx context.Context, name string, runtimeDriver execution.RuntimeDriver) error {
+	if name != "herdr" {
+		return nil
+	}
+	probe, ok := runtimeDriver.(execution.RuntimeReadinessProbe)
+	if !ok {
+		return &store.Error{Code: store.CodeAdapterUnavailable, Message: "selected Herdr runtime cannot prove its live host"}
+	}
+	probeContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := probe.CheckReady(probeContext); err != nil {
+		return &store.Error{Code: store.CodeAdapterUnavailable, Message: "Herdr interactive runtime is not ready: " + err.Error() + "; run `crewfold service install` to start its companion service, then retry"}
+	}
+	return nil
 }
 
 func diagnoseWorkbenchProvider(ctx context.Context, provider execution.ProviderAdapter) (workbenchProviderDiagnosis, error) {
