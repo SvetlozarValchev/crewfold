@@ -189,10 +189,10 @@ do [ -n "$revision" ] || fail 'a required portable revision ID is missing'; done
 
 bundle_one="$scenario_root/bundle-one"
 bundle_two="$scenario_root/bundle-two"
-"$binary" events list --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/source-events-before-export.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/source-events-before-export.json"
 "$binary" knowledge export "$bundle_one" --workspace personal --project demo --socket "$active_socket" --output json >"$scenario_root/export-one.json"
 "$binary" knowledge export "$bundle_two" --workspace personal --project demo --socket "$active_socket" --output json >"$scenario_root/export-two.json"
-"$binary" events list --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/source-events-after-export.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/source-events-after-export.json"
 cmp "$scenario_root/source-events-before-export.json" "$scenario_root/source-events-after-export.json" || fail 'portable export appended an event'
 content_digest=$(extract_content_digest "$scenario_root/export-one.json")
 [ ${#content_digest} -eq 64 ] || fail 'export did not return a full content digest'
@@ -274,7 +274,6 @@ if cmp -s "$bundle_one/manifest.json" "$changed_bundle/manifest.json"; then fail
 stop_daemon source-final
 
 start_daemon "$target_data" "$target_socket"
-"$binary" events list --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/target-events-empty.json"
 stop_daemon target-before-missing-index
 GOTOOLCHAIN=local GOPROXY=off "$go_runner" run "$tamper_source" "$target_data/crewfold.db"
 start_daemon "$target_data" "$target_socket"
@@ -283,8 +282,6 @@ assert_contains "$scenario_root/target-index-missing.err" 'workspace_not_found' 
 GOTOOLCHAIN=local GOPROXY=off "$go_runner" run "$tamper_source" "$target_data/crewfold.db" write-counts >"$scenario_root/counts-before-missing-scope.txt"
 assert_error knowledge_import_scope_conflict "$scenario_root/missing-scope.err" \
   "$binary" knowledge import "$bundle_one" --workspace personal --project demo --expected-content-sha256 "$content_digest" --idempotency-key portable-missing-scope --socket "$active_socket" --output json
-"$binary" events list --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/target-events-after-missing-scope.json"
-cmp "$scenario_root/target-events-empty.json" "$scenario_root/target-events-after-missing-scope.json" || fail 'rejected import into absent scope appended an event'
 GOTOOLCHAIN=local GOPROXY=off "$go_runner" run "$tamper_source" "$target_data/crewfold.db" write-counts >"$scenario_root/counts-after-missing-scope.txt"
 cmp "$scenario_root/counts-before-missing-scope.txt" "$scenario_root/counts-after-missing-scope.txt" || fail 'rejected import into absent scope changed durable state'
 "$binary" knowledge import "$bundle_one" --workspace personal --project demo --expected-content-sha256 "$content_digest" \
@@ -339,7 +336,7 @@ target_export="$scenario_root/target-export"
 cmp "$bundle_one/manifest.json" "$target_export/manifest.json" || fail 'immediate re-export changed canonical manifest bytes'
 cmp "$bundle_one/knowledge.md" "$target_export/knowledge.md" || fail 'immediate re-export changed Markdown bytes'
 
-"$binary" events list --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-before-replay.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-before-replay.json"
 assert_occurrences "$scenario_root/events-before-replay.json" '"type":"knowledge.imported"' 14 'import emitted the wrong number of revision attestations'
 assert_occurrences "$scenario_root/events-before-replay.json" '"type":"contradiction.imported"' 4 'import emitted the wrong number of contradiction attestations'
 assert_occurrences "$scenario_root/events-before-replay.json" '"type":"knowledge.import_completed"' 1 'import emitted the wrong number of completion attestations'
@@ -353,10 +350,10 @@ assert_contains "$scenario_root/import-replay.json" '"status":"already_present"'
 assert_contains "$scenario_root/import-new-key.json" '"status":"already_present"' 'new-key exact replay was not recognized'
 assert_contains "$scenario_root/import-replay.json" '"created":{"workspaces":0,"projects":0,"task_scope_anchors":0}' 'same-key replay repeated scope creation'
 assert_contains "$scenario_root/import-new-key.json" '"created":{"workspaces":0,"projects":0,"task_scope_anchors":0}' 'new-key replay repeated scope creation'
-"$binary" events list --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-after-replay.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-after-replay.json"
 cmp "$scenario_root/events-before-replay.json" "$scenario_root/events-after-replay.json" || fail 'exact import replay appended an event'
 
-"$binary" events list --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-before-invalid-imports.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-before-invalid-imports.json"
 GOTOOLCHAIN=local GOPROXY=off "$go_runner" run "$tamper_source" "$target_data/crewfold.db" write-counts >"$scenario_root/counts-before-invalid-imports.txt"
 assert_error idempotency_conflict "$scenario_root/reused-key-changed-request.err" \
   "$binary" knowledge import "$bundle_one" --workspace personal --project demo --expected-content-sha256 "$content_digest" --idempotency-key portable-import --socket "$active_socket" --output json
@@ -385,7 +382,7 @@ assert_error invalid_knowledge_bundle_path "$scenario_root/symlink.err" \
   "$binary" knowledge import "$scenario_root/bundle-link" --workspace personal --project demo --expected-content-sha256 "$content_digest" --idempotency-key portable-link --socket "$active_socket" --output json
 assert_error knowledge_import_conflict "$scenario_root/nonempty-target.err" \
   "$binary" knowledge import "$changed_bundle" --workspace personal --project demo --expected-content-sha256 "$changed_digest" --idempotency-key portable-changed-import --socket "$active_socket" --output json
-"$binary" events list --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-after-invalid-imports.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-after-invalid-imports.json"
 cmp "$scenario_root/events-before-invalid-imports.json" "$scenario_root/events-after-invalid-imports.json" || fail 'rejected portable imports appended an event'
 GOTOOLCHAIN=local GOPROXY=off "$go_runner" run "$tamper_source" "$target_data/crewfold.db" write-counts >"$scenario_root/counts-after-invalid-imports.txt"
 cmp "$scenario_root/counts-before-invalid-imports.txt" "$scenario_root/counts-after-invalid-imports.txt" || fail 'rejected portable imports changed durable canonical/audit state'
@@ -405,11 +402,11 @@ create_task "$scenario_root/target-context-task.json" 'Consume imported broad kn
 target_task=$(extract_id task "$scenario_root/target-context-task.json")
 "$binary" task assign "$target_task" portable-context --workspace personal --lease-seconds 600 --expected-revision 1 \
   --socket "$active_socket" --idempotency-key portable-target-assign --output json >"$scenario_root/target-assigned.json"
-"$binary" events list --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-before-context.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-before-context.json"
 assert_error knowledge_conflict "$scenario_root/context-conflict.err" \
   "$binary" context build "$target_task" --workspace personal --agent portable-context --expected-task-revision 2 \
   --include "$broad_revision" --socket "$active_socket" --idempotency-key portable-target-context --output json
-"$binary" events list --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-after-context.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$active_socket" --output json >"$scenario_root/events-after-context.json"
 cmp "$scenario_root/events-before-context.json" "$scenario_root/events-after-context.json" || fail 'imported dispute context failure appended an event'
 
 stop_daemon target-restart

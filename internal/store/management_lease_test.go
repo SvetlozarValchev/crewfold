@@ -66,7 +66,7 @@ func TestReservedRunsRetainExpiredAssignmentAndClaims(t *testing.T) {
 			if assignmentStatus != domain.AssignmentActive || claimStatus != domain.ClaimActive {
 				t.Fatalf("reserved %s released authority: assignment=%q claim=%q", targetStatus, assignmentStatus, claimStatus)
 			}
-			detail, err := storage.TaskDetail(context.Background(), workspace.ID, assigned.Task.ID, "inspect-reserved-"+targetStatus)
+			detail, err := storage.TaskDetail(context.Background(), workspace.ID, assigned.Task.ID)
 			if err != nil {
 				t.Fatalf("TaskDetail(%s) = %v", targetStatus, err)
 			}

@@ -109,7 +109,7 @@ then
   exit 1
 fi
 
-"$binary" events list --after 0 --limit 200 --socket "$socket_path" --output json >"$scenario_root/events.json"
+"$binary" events list --workspace personal --after 0 --limit 200 --socket "$socket_path" --output json >"$scenario_root/events.json"
 grep -Fq '"type":"run.tool_called"' "$scenario_root/events.json"
 grep -Fq '"type":"run.report_received"' "$scenario_root/events.json"
 

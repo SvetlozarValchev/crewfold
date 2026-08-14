@@ -360,14 +360,14 @@ wait_run_message "$main_run" 'live context sequence consumed' "$scenario_root/ma
 wait_run_message "$wrong_run" 'wrong task remained isolated' "$scenario_root/wrong-show.json"
 "$binary" context refresh "$main_run" --workspace personal --socket "$socket_path" --idempotency-key live-context-refresh-one --output json >"$scenario_root/refresh-created-replay.json"
 cmp "$scenario_root/refresh-created.json" "$scenario_root/refresh-created-replay.json"
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events-before-noop.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events-before-noop.json"
 scan_before_noop=$(sed -n 's/.*"scanned_through_event_sequence":\([0-9][0-9]*\).*/\1/p' "$scenario_root/acked-three.json" | sed -n '1p')
 if [ -z "$scan_before_noop" ]
 then
   printf 'acknowledged delta chain omitted its inspected cursor\n' >&2
   exit 1
 fi
-"$binary" events list --after "$scan_before_noop" --limit 1000 --socket "$socket_path" --output json >"$scenario_root/noop-gap-events.json"
+"$binary" events list --workspace personal --after "$scan_before_noop" --limit 1000 --socket "$socket_path" --output json >"$scenario_root/noop-gap-events.json"
 grep -Fq '"type":"run.progress_reported"' "$scenario_root/noop-gap-events.json"
 if grep -Eq '"type":"(message\.sent|knowledge\.(accepted|marked_stale|superseded|imported)|contradiction\.(confirmed|dismissed|resolved|imported)|thread\.(created|participant_added))"' "$scenario_root/noop-gap-events.json" ||
   grep -Fq '"entity":{"type":"task"' "$scenario_root/noop-gap-events.json" ||
@@ -390,7 +390,7 @@ then
   printf 'no-op refresh created an empty delta\n' >&2
   exit 1
 fi
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events-after-noop.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events-after-noop.json"
 cmp "$scenario_root/events-before-noop.json" "$scenario_root/events-after-noop.json"
 
 "$binary" context delta list "$main_run" --workspace personal --after-sequence 0 --limit 2 --socket "$socket_path" --output json >"$scenario_root/deltas-page-one.json"
@@ -400,7 +400,7 @@ grep -Fq '"next_sequence":2' "$scenario_root/deltas-page-one.json"
 grep -Fq '"delta_count":3' "$scenario_root/deltas-final.json"
 grep -Fq '"last_acknowledged_sequence":3' "$scenario_root/deltas-final.json"
 
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events-final.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events-final.json"
 for event_link in "$created_event_one:$delta_one" "$created_event_two:$(extract_id cdelta "$scenario_root/refresh-two.json")" "$created_event_three:$(extract_id cdelta "$scenario_root/refresh-three.json")"
 do
   event_sequence=${event_link%%:*}

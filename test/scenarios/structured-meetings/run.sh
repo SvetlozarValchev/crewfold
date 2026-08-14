@@ -172,7 +172,7 @@ sed -n '/"proposal"/,$p' "$scenario_root/takeover-wrapper.json" | sed '1s/  "pro
 grep -Fq '"status":"concluded"' "$scenario_root/stalled-takeover.json"
 grep -Fq '"type":"meeting_mutation"' "$scenario_root/stalled-takeover.json"
 
-"$binary" events list --after 0 --limit 500 --socket "$socket_path" --output json >"$scenario_root/events.json"
+"$binary" events list --workspace personal --after 0 --limit 500 --socket "$socket_path" --output json >"$scenario_root/events.json"
 grep -Fq '"type":"meeting.created"' "$scenario_root/events.json"
 grep -Fq '"type":"meeting.concluded"' "$scenario_root/events.json"
 grep -Fq '"type":"meeting.human_takeover"' "$scenario_root/events.json"

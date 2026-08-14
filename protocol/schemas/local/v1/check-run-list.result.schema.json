@@ -1,10 +1,13 @@
 {
   "$schema":"https://json-schema.org/draft/2020-12/schema",
   "$id":"urn:crewfold:schema:local-api:check-run-list-result:v1",
-  "type":"object","additionalProperties":false,"required":["schema","type","runs"],
+  "type":"object","additionalProperties":false,"required":["schema","type","runs","next_cursor","has_more","total"],
   "properties":{
     "schema":{"const":"urn:crewfold:schema:local-api:check-run-list-result:v1"},
     "type":{"const":"check_run_list"},
-    "runs":{"type":"array","maxItems":100,"items":{"$ref":"../../domain/v1/check-run-list-item.schema.json"}}
+    "runs":{"type":"array","maxItems":200,"items":{"$ref":"../../domain/v1/check-run-list-item.schema.json"}},
+    "next_cursor":{"$ref":"operator-page.schema.json#/$defs/nextCursor"},
+    "has_more":{"$ref":"operator-page.schema.json#/$defs/hasMore"},
+    "total":{"$ref":"operator-page.schema.json#/$defs/total"}
   }
 }

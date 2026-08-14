@@ -209,7 +209,7 @@ func supervisorCursorForTest(t *testing.T, storage *Store, workspaceID string) i
 	return cursor
 }
 
-func TestKnownSupervisorJournalEventUnion(t *testing.T) {
+func TestKnownCanonicalEventTypeUnion(t *testing.T) {
 	for _, eventType := range []string{
 		"workspace.created", "task.completed", "manager.proposal_accepted", "supervisor.scan_completed",
 		"check.definition_created", "check.definition_retired", "check.requirement_created", "check.requirement_retired",
@@ -220,12 +220,12 @@ func TestKnownSupervisorJournalEventUnion(t *testing.T) {
 		"outcome.commitment_created", "outcome.assessment_proposed", "outcome.assessment_accepted",
 		"outcome.assessment_rejected", "outcome.assessment_superseded", "owner_checkpoint.created",
 	} {
-		if !knownSupervisorJournalEvent(eventType) {
+		if !domain.KnownEventType(eventType) {
 			t.Fatalf("known event %q was rejected", eventType)
 		}
 	}
 	for _, eventType := range []string{"", "task.safety_contract_changed", "supervisor.policy_widened"} {
-		if knownSupervisorJournalEvent(eventType) {
+		if domain.KnownEventType(eventType) {
 			t.Fatalf("unknown event %q was accepted", eventType)
 		}
 	}

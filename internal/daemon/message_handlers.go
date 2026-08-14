@@ -32,11 +32,15 @@ func (s *server) handleInboxList(request localapi.Request) localapi.Response {
 	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Agent) == "" {
 		return invalidParamsResponse(request, "inbox.list requires workspace and agent and accepts a limit from 1 to 50")
 	}
-	items, err := s.store.Inbox(context.Background(), params.Workspace, params.Agent, params.Limit)
+	agent, err := s.store.Agent(context.Background(), params.Workspace, params.Agent)
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.InboxListResult{Schema: localapi.InboxListSchema, Type: "inbox", Agent: params.Agent, Items: items})
+	items, err := s.store.Inbox(context.Background(), agent.WorkspaceID, agent.ID, params.Limit)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.InboxListResult{Schema: localapi.InboxListSchema, Type: "inbox", Agent: agent.ID, Items: items})
 }
 
 func (s *server) handleThreadCreate(request localapi.Request) localapi.Response {

@@ -2292,61 +2292,6 @@ func (q *Queries) ListCheckRouteIDs(ctx context.Context, arg ListCheckRouteIDsPa
 	return items, nil
 }
 
-const listCheckRunIDs = `-- name: ListCheckRunIDs :many
-SELECT run.id FROM check_runs run LEFT JOIN check_results result ON result.check_run_id=run.id
-WHERE run.workspace_id=?1
- AND (CAST(?2 AS TEXT)='' OR run.project_id=?2)
- AND (CAST(?3 AS TEXT)='' OR run.task_id=?3)
- AND (CAST(?4 AS TEXT)='' OR run.requirement_id=?4)
- AND (CAST(?5 AS TEXT)='' OR run.definition_id=?5)
- AND (CAST(?6 AS TEXT)='' OR run.status=?6)
- AND (CAST(?7 AS TEXT)='' OR result.outcome=?7)
-ORDER BY run.created_at DESC,run.id DESC LIMIT ?8
-`
-
-type ListCheckRunIDsParams struct {
-	WorkspaceID   string `json:"workspace_id"`
-	ProjectID     string `json:"project_id"`
-	TaskID        string `json:"task_id"`
-	RequirementID string `json:"requirement_id"`
-	DefinitionID  string `json:"definition_id"`
-	Status        string `json:"status"`
-	Outcome       string `json:"outcome"`
-	ResultLimit   int64  `json:"result_limit"`
-}
-
-func (q *Queries) ListCheckRunIDs(ctx context.Context, arg ListCheckRunIDsParams) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listCheckRunIDs,
-		arg.WorkspaceID,
-		arg.ProjectID,
-		arg.TaskID,
-		arg.RequirementID,
-		arg.DefinitionID,
-		arg.Status,
-		arg.Outcome,
-		arg.ResultLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listCheckWatchCandidates = `-- name: ListCheckWatchCandidates :many
 SELECT result.id AS check_result_id, freshness.revision AS freshness_revision,
  repository.id AS repository_id, repository.revision AS repository_revision,

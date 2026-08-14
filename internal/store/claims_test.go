@@ -33,7 +33,7 @@ func TestClaimsPersistDeterministicOverlapsAndPolicyResponses(t *testing.T) {
 	if len(second.Overlaps) != 1 || second.Overlaps[0].Severity != domain.OverlapSeverityCritical || second.Overlaps[0].PolicyResponse != domain.ClaimPolicyNotify || second.Overlaps[0].Witness != "src/contact/cache.go" || len(second.Overlaps[0].Explanation) != 4 {
 		t.Fatalf("second claim overlaps = %#v", second.Overlaps)
 	}
-	inspected, err := storage.Overlap(context.Background(), workspace.ID, second.Overlaps[0].ID, "inspect-overlap")
+	inspected, err := storage.Overlap(context.Background(), workspace.ID, second.Overlaps[0].ID)
 	if err != nil || inspected.ID != second.Overlaps[0].ID {
 		t.Fatalf("Overlap() = %#v, %v", inspected, err)
 	}
@@ -47,7 +47,8 @@ func TestClaimsPersistDeterministicOverlapsAndPolicyResponses(t *testing.T) {
 	if ErrorCode(err) != CodeClaimConflict {
 		t.Fatalf("AddClaim(deny_new) error = %v, code = %q", err, ErrorCode(err))
 	}
-	claims, err := storage.ListClaims(context.Background(), workspace.ID, project.ID, domain.ClaimActive, "list-active-claims")
+	claimPage, err := storage.ListClaims(context.Background(), ListClaimsQuery{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, Status: domain.ClaimActive})
+	claims := claimPage.Claims
 	if err != nil || len(claims) != 2 {
 		t.Fatalf("ListClaims() = %#v, %v", claims, err)
 	}
@@ -121,11 +122,13 @@ func TestClaimScanDetectsDriftGapWithoutRewritingScope(t *testing.T) {
 	if err != nil || !second.ObservationGap || second.DriftsOpened != 1 {
 		t.Fatalf("restart scan = %#v, %v", second, err)
 	}
-	drifts, err := storage.ListClaimDrifts(context.Background(), workspace.ID, domain.DriftOpen)
+	driftPage, err := storage.ListClaimDrifts(context.Background(), ListClaimDriftsQuery{WorkspaceIdentifier: workspace.ID, Status: domain.DriftOpen})
+	drifts := driftPage.Drifts
 	if err != nil || len(drifts) != 1 || drifts[0].Path != "docs/outside.md" || !drifts[0].ObservationGap || drifts[0].ClaimID != claim.Claim.ID {
 		t.Fatalf("ListClaimDrifts(open) = %#v, %v", drifts, err)
 	}
-	claims, err := storage.ListClaims(context.Background(), workspace.ID, project.ID, domain.ClaimActive, "verify-declared-scope")
+	claimPage, err := storage.ListClaims(context.Background(), ListClaimsQuery{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, Status: domain.ClaimActive})
+	claims := claimPage.Claims
 	if err != nil || len(claims) != 1 || claims[0].Target != "src/**" {
 		t.Fatalf("claim scope after drift = %#v, %v", claims, err)
 	}
@@ -172,7 +175,11 @@ func TestClaimLeaseExpiresAfterStoreRestartWithControlledClock(t *testing.T) {
 		t.Fatalf("Open(after restart) error = %v", err)
 	}
 	t.Cleanup(func() { _ = storage.Close() })
-	claims, err := storage.ListClaims(context.Background(), workspace.ID, project.ID, domain.ClaimExpired, "reconcile-after-restart")
+	if _, err := storage.ReconcileExpiredClaims(context.Background(), workspace.ID, "reconcile-after-restart"); err != nil {
+		t.Fatalf("ReconcileExpiredClaims() error = %v", err)
+	}
+	claimPage, err := storage.ListClaims(context.Background(), ListClaimsQuery{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, Status: domain.ClaimExpired})
+	claims := claimPage.Claims
 	if err != nil || len(claims) != 1 || claims[0].ID != added.Claim.ID || claims[0].Revision != 2 {
 		t.Fatalf("expired claims = %#v, %v", claims, err)
 	}

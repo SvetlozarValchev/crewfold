@@ -156,7 +156,7 @@ then
   exit 1
 fi
 
-"$binary" events list --after 0 --limit 400 --socket "$socket_path" --output json >"$scenario_root/events.json"
+"$binary" events list --workspace personal --after 0 --limit 400 --socket "$socket_path" --output json >"$scenario_root/events.json"
 grep -Fq '"type":"claim.added"' "$scenario_root/events.json"
 grep -Fq '"type":"overlap.opened"' "$scenario_root/events.json"
 grep -Fq '"type":"claim.drift_opened"' "$scenario_root/events.json"

@@ -449,7 +449,7 @@ then
   exit 1
 fi
 
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events.json"
 grep -Fq '"type":"check.run_runtime_observed"' "$scenario_root/events.json"
 grep -Fq '"type":"check.result_recorded"' "$scenario_root/events.json"
 grep -Fq '"type":"check.freshness_stale"' "$scenario_root/events.json"

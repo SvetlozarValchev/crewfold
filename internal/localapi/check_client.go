@@ -174,9 +174,14 @@ func (c *Client) CheckRun(ctx context.Context, params CheckRunParams) (CheckRunM
 	return result, err
 }
 
-func (c *Client) CheckList(ctx context.Context, params CheckQueryParams) (CheckRunListResult, error) {
+func (c *Client) CheckList(ctx context.Context, params CheckListParams) (CheckRunListResult, error) {
+	workspaceID, projectID, err := c.resolveOperatorScope(ctx, params.Workspace, params.Project)
+	if err != nil {
+		return CheckRunListResult{}, err
+	}
+	params.Workspace, params.Project = workspaceID, projectID
 	var result CheckRunListResult
-	err := c.callParamsStrict(ctx, MethodCheckList, params, &result)
+	err = c.callParamsStrict(ctx, MethodCheckList, params, &result)
 	return result, err
 }
 

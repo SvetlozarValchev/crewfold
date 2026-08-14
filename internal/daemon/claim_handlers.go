@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"crewfold/internal/domain"
@@ -16,6 +17,22 @@ func (s *server) handleClaimAdd(request localapi.Request) localapi.Response {
 	}
 	if params.LeaseSeconds < 1 || params.LeaseSeconds > int64((30*24*time.Hour)/time.Second) {
 		return invalidParamsResponse(request, "claim.add lease_seconds must be between 1 and 2592000")
+	}
+	command := store.AddClaimCommand{
+		WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, TaskID: params.Task,
+		CheckoutIdentifier: params.Checkout, Kind: params.Kind, Target: params.Target, Mode: params.Mode,
+		ConflictPolicy: params.ConflictPolicy, LeaseDuration: time.Duration(params.LeaseSeconds) * time.Second,
+		IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
+	}
+	// Serialize the replay check with Git observation and claim commit. The data
+	// directory admits only one daemon, so this closes both lost-response and
+	// concurrent duplicate-request windows without broadening Store authority.
+	s.claimAddMu.Lock()
+	defer s.claimAddMu.Unlock()
+	if replay, found, err := s.store.ReplayAddClaim(context.Background(), command); err != nil {
+		return storeErrorResponse(request, err)
+	} else if found {
+		return claimMutationResponse(request, replay)
 	}
 	var baselineObservation *domain.CheckoutObservation
 	if params.Kind == domain.ClaimKindPath {
@@ -46,16 +63,10 @@ func (s *server) handleClaimAdd(request localapi.Request) localapi.Response {
 			if _, err := s.store.ApplyCheckoutObservations(context.Background(), params.Workspace, params.Project, boundedCorrelation(request.ID, "baseline"), map[string]domain.CheckoutObservation{selected.ID: observation}); err != nil {
 				return storeErrorResponse(request, err)
 			}
-			params.Checkout = selected.ID
 			baselineObservation = &observation
 		}
 	}
-	result, err := s.store.AddClaim(context.Background(), store.AddClaimCommand{
-		WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, TaskID: params.Task,
-		CheckoutIdentifier: params.Checkout, Kind: params.Kind, Target: params.Target, Mode: params.Mode,
-		ConflictPolicy: params.ConflictPolicy, LeaseDuration: time.Duration(params.LeaseSeconds) * time.Second,
-		IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
-	})
+	result, err := s.store.AddClaim(context.Background(), command)
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
@@ -67,6 +78,10 @@ func (s *server) handleClaimAdd(request localapi.Request) localapi.Response {
 			s.config.Logger.Warn("initial claim watcher scan failed", "component", "claim_watcher", "claim_id", result.Claim.ID, "error", err)
 		}
 	}
+	return claimMutationResponse(request, result)
+}
+
+func claimMutationResponse(request localapi.Request, result store.ClaimMutationResult) localapi.Response {
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ClaimMutationResult{
 		Schema: localapi.ClaimMutationSchema, Type: "claim_mutation", Claim: result.Claim,
 		Overlaps: result.Overlaps, Warnings: result.Warnings, EventSequence: result.EventSequence,
@@ -82,15 +97,15 @@ func boundedCorrelation(base, suffix string) string {
 }
 
 func (s *server) handleClaimList(request localapi.Request) localapi.Response {
-	var params localapi.ClaimQueryParams
+	var params localapi.ClaimListParams
 	if err := decodeParams(request.Params, &params); err != nil {
 		return invalidParamsResponse(request, "claim.list requires workspace and optional project/status")
 	}
-	claims, err := s.store.ListClaims(context.Background(), params.Workspace, params.Project, params.Status, request.ID)
+	page, err := s.store.ListClaims(context.Background(), store.ListClaimsQuery{WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, Status: params.Status, Cursor: params.Cursor, Limit: params.Limit})
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ClaimListResult{Schema: localapi.ClaimListSchema, Type: "claim_list", Claims: claims})
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ClaimListResult{Schema: localapi.ClaimListSchema, Type: "claim_list", Claims: page.Claims, PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total}})
 }
 
 func (s *server) handleClaimRelease(request localapi.Request) localapi.Response {
@@ -112,23 +127,23 @@ func (s *server) handleClaimRelease(request localapi.Request) localapi.Response 
 }
 
 func (s *server) handleOverlapList(request localapi.Request) localapi.Response {
-	var params localapi.OverlapQueryParams
+	var params localapi.OverlapListParams
 	if err := decodeParams(request.Params, &params); err != nil {
 		return invalidParamsResponse(request, "overlap.list requires workspace and optional project/status")
 	}
-	overlaps, err := s.store.ListOverlaps(context.Background(), params.Workspace, params.Project, params.Status, request.ID)
+	page, err := s.store.ListOverlaps(context.Background(), store.ListOverlapsQuery{WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, Status: params.Status, Cursor: params.Cursor, Limit: params.Limit})
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.OverlapListResult{Schema: localapi.OverlapListSchema, Type: "overlap_list", Overlaps: overlaps})
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.OverlapListResult{Schema: localapi.OverlapListSchema, Type: "overlap_list", Overlaps: page.Overlaps, PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total}})
 }
 
 func (s *server) handleOverlapInspect(request localapi.Request) localapi.Response {
-	var params localapi.OverlapQueryParams
-	if err := decodeParams(request.Params, &params); err != nil {
+	var params localapi.OverlapInspectParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || !validCanonicalEntityID(params.Overlap, "overlap_") {
 		return invalidParamsResponse(request, "overlap.inspect requires workspace and overlap")
 	}
-	overlap, err := s.store.Overlap(context.Background(), params.Workspace, params.Overlap, request.ID)
+	overlap, err := s.store.Overlap(context.Background(), params.Workspace, params.Overlap)
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
@@ -136,8 +151,8 @@ func (s *server) handleOverlapInspect(request localapi.Request) localapi.Respons
 }
 
 func (s *server) handleOverlapScan(request localapi.Request) localapi.Response {
-	var params localapi.OverlapQueryParams
-	if err := decodeParams(request.Params, &params); err != nil {
+	var params localapi.OverlapScanParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || params.Project != "" && strings.TrimSpace(params.Project) == "" {
 		return invalidParamsResponse(request, "overlap.scan requires workspace and optional project")
 	}
 	workspace, err := s.store.Workspace(context.Background(), params.Workspace)
@@ -157,13 +172,13 @@ func (s *server) handleOverlapScan(request localapi.Request) localapi.Response {
 }
 
 func (s *server) handleDriftList(request localapi.Request) localapi.Response {
-	var params localapi.DriftQueryParams
+	var params localapi.DriftListParams
 	if err := decodeParams(request.Params, &params); err != nil {
 		return invalidParamsResponse(request, "drift.list requires workspace and optional status")
 	}
-	drifts, err := s.store.ListClaimDrifts(context.Background(), params.Workspace, params.Status)
+	page, err := s.store.ListClaimDrifts(context.Background(), store.ListClaimDriftsQuery{WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, Status: params.Status, Cursor: params.Cursor, Limit: params.Limit})
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.DriftListResult{Schema: localapi.DriftListSchema, Type: "drift_list", Drifts: drifts})
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.DriftListResult{Schema: localapi.DriftListSchema, Type: "drift_list", Drifts: page.Drifts, PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total}})
 }

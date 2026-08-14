@@ -19,6 +19,7 @@ import (
 	"crewfold/internal/execution"
 	"crewfold/internal/herdr"
 	"crewfold/internal/localapi"
+	"crewfold/internal/tui"
 )
 
 const (
@@ -49,6 +50,7 @@ type App struct {
 	probeCodex     func(context.Context, string, string) execution.CodexProbeReport
 	probeClaude    func(context.Context, string, string) execution.ClaudeProbeReport
 	runInteractive func(context.Context, localapi.RunAttachResult) error
+	runTUI         func(context.Context, tui.Config) error
 }
 
 type daemonClient interface {
@@ -67,15 +69,15 @@ type daemonClient interface {
 	AgentCreate(context.Context, localapi.AgentCreateParams) (localapi.AgentMutationResult, error)
 	AgentUpdate(context.Context, localapi.AgentUpdateParams) (localapi.AgentMutationResult, error)
 	AgentShow(context.Context, string, string) (localapi.AgentShowResult, error)
-	AgentList(context.Context, string) (localapi.AgentListResult, error)
+	AgentList(context.Context, localapi.AgentListParams) (localapi.AgentListResult, error)
 	ObjectiveCreate(context.Context, localapi.ObjectiveCreateParams) (localapi.ObjectiveMutationResult, error)
 	ObjectiveUpdate(context.Context, localapi.ObjectiveUpdateParams) (localapi.ObjectiveMutationResult, error)
 	ObjectiveShow(context.Context, string, string) (localapi.ObjectiveShowResult, error)
-	ObjectiveList(context.Context, string, string) (localapi.ObjectiveListResult, error)
+	ObjectiveList(context.Context, localapi.ObjectiveListParams) (localapi.ObjectiveListResult, error)
 	TaskCreate(context.Context, localapi.TaskCreateParams) (localapi.TaskMutationResult, error)
 	TaskUpdate(context.Context, localapi.TaskUpdateParams) (localapi.TaskMutationResult, error)
 	TaskShow(context.Context, string, string) (localapi.TaskShowResult, error)
-	TaskList(context.Context, string, string, bool) (localapi.TaskListResult, error)
+	TaskList(context.Context, localapi.TaskListParams) (localapi.TaskListResult, error)
 	TaskDepend(context.Context, localapi.TaskDependencyParams) (localapi.TaskMutationResult, error)
 	TaskAssign(context.Context, localapi.TaskAssignParams) (localapi.TaskMutationResult, error)
 	TaskTransition(context.Context, localapi.TaskTransitionParams) (localapi.TaskMutationResult, error)
@@ -114,21 +116,21 @@ type daemonClient interface {
 	ThreadShow(context.Context, string, string) (localapi.ThreadShowResult, error)
 	RunStart(context.Context, localapi.RunStartParams) (localapi.RunMutationResult, error)
 	RunShow(context.Context, string, string) (localapi.RunShowResult, error)
-	RunList(context.Context, string, string, string) (localapi.RunListResult, error)
+	RunList(context.Context, localapi.RunListParams) (localapi.RunListResult, error)
 	RunResume(context.Context, localapi.RunResumeParams) (localapi.RunMutationResult, error)
 	RunStop(context.Context, localapi.RunStopParams) (localapi.RunMutationResult, error)
 	RunLogs(context.Context, string, string, int) (localapi.RunLogsResult, error)
 	RunPrompt(context.Context, string, string, string) (localapi.RunControlResult, error)
 	RunInterrupt(context.Context, string, string) (localapi.RunControlResult, error)
-	RunAttach(context.Context, string, string, bool) (localapi.RunAttachResult, error)
+	RunAttach(context.Context, string, string) (localapi.RunAttachResult, error)
 	CoordinationStatus(context.Context, string) (localapi.CoordinationStatusResult, error)
 	ClaimAdd(context.Context, localapi.ClaimAddParams) (localapi.ClaimMutationResult, error)
-	ClaimList(context.Context, string, string, string) (localapi.ClaimListResult, error)
+	ClaimList(context.Context, localapi.ClaimListParams) (localapi.ClaimListResult, error)
 	ClaimRelease(context.Context, localapi.ClaimReleaseParams) (localapi.ClaimMutationResult, error)
-	OverlapList(context.Context, string, string, string) (localapi.OverlapListResult, error)
+	OverlapList(context.Context, localapi.OverlapListParams) (localapi.OverlapListResult, error)
 	OverlapInspect(context.Context, string, string) (localapi.OverlapInspectResult, error)
 	OverlapScan(context.Context, string, string) (localapi.OverlapScanResult, error)
-	DriftList(context.Context, string, string) (localapi.DriftListResult, error)
+	DriftList(context.Context, localapi.DriftListParams) (localapi.DriftListResult, error)
 	MeetingCreate(context.Context, localapi.MeetingCreateParams) (localapi.MeetingMutationResult, error)
 	MeetingRun(context.Context, localapi.MeetingRunParams) (localapi.MeetingMutationResult, error)
 	MeetingInspect(context.Context, string, string) (localapi.MeetingInspectResult, error)
@@ -153,11 +155,11 @@ type daemonClient interface {
 	SupervisorActionList(context.Context, localapi.SupervisorActionQueryParams) (localapi.SupervisorActionListResult, error)
 	SupervisorActionShow(context.Context, string, string) (localapi.SupervisorActionShowResult, error)
 	SupervisorExplain(context.Context, localapi.SupervisorExplainParams) (localapi.SupervisorExplanationResult, error)
-	ApprovalList(context.Context, localapi.ApprovalQueryParams) (localapi.ApprovalListResult, error)
+	ApprovalList(context.Context, localapi.ApprovalListParams) (localapi.ApprovalListResult, error)
 	ApprovalInspect(context.Context, string, string) (localapi.ApprovalShowResult, error)
 	ApprovalAllow(context.Context, localapi.ApprovalDecisionParams) (localapi.ApprovalMutationResult, error)
 	ApprovalDeny(context.Context, localapi.ApprovalDecisionParams) (localapi.ApprovalMutationResult, error)
-	EventsList(context.Context, int64, int) (localapi.EventsListResult, error)
+	EventsList(context.Context, localapi.EventsListParams) (localapi.EventsListResult, error)
 }
 
 // New constructs a command runner with no process-global output dependencies.
@@ -178,6 +180,7 @@ func New(stdout, stderr io.Writer, info buildinfo.Info) *App {
 			return execution.NewClaudeProbe(executable, configDir, nil).Run(ctx)
 		},
 		runInteractive: runAttachedProcess,
+		runTUI:         tui.Run,
 		newClient: func(socketPath string) daemonClient {
 			return localapi.NewClient(socketPath)
 		},
@@ -191,6 +194,9 @@ func (a *App) Run(args []string) int {
 
 // RunContext executes one command with cancellation for long-running operations.
 func (a *App) RunContext(ctx context.Context, args []string) int {
+	if uiInvocation(args) && containsOutputOption(args) {
+		return a.writeFailure(outputText, usageFailure("crewfold ui does not support --output", "remove --output; the operator UI owns the terminal"))
+	}
 	mode, args, failure := extractOutputMode(args)
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
@@ -266,6 +272,8 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runCheckpoint(ctx, mode, args[1:])
 	case "briefing":
 		return a.runBriefing(ctx, mode, args[1:])
+	case "ui":
+		return a.runUICommand(ctx, mode, args[1:])
 	case "events":
 		return a.runEvents(ctx, mode, args[1:])
 	default:
@@ -276,6 +284,61 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 			hint:     "run 'crewfold help' to list available commands",
 		})
 	}
+}
+
+func (a *App) runUICommand(ctx context.Context, mode outputMode, args []string) int {
+	if len(args) == 1 && isHelp(args[0]) {
+		fmt.Fprint(a.stdout, uiHelp)
+		return ExitOK
+	}
+	options, failure := parseOptions(args, "socket", "workspace", "project", "color")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	if options["project"] != "" && options["workspace"] == "" {
+		return a.writeFailure(mode, usageFailure("--project requires --workspace", "select the containing workspace explicitly"))
+	}
+	color := tui.ColorMode(options["color"])
+	if color == "" {
+		color = tui.ColorAuto
+	}
+	if color != tui.ColorAuto && color != tui.ColorNever {
+		return a.writeFailure(mode, usageFailure(fmt.Sprintf("unsupported UI color mode %q", color), "use --color auto or --color never"))
+	}
+	err := a.runTUI(ctx, tui.Config{
+		SocketPath: options["socket"],
+		Workspace:  options["workspace"],
+		Project:    options["project"],
+		Color:      color,
+	})
+	if err != nil {
+		return a.writeFailure(mode, commandFailure{exitCode: ExitFailure, code: "ui_failed", message: fmt.Sprintf("operator UI failed: %v", err), hint: "verify the terminal and daemon socket, then retry 'crewfold ui'"})
+	}
+	return ExitOK
+}
+
+func containsOutputOption(args []string) bool {
+	for _, argument := range args {
+		if argument == "--output" || strings.HasPrefix(argument, "--output=") {
+			return true
+		}
+	}
+	return false
+}
+
+func uiInvocation(args []string) bool {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if argument == "--output" {
+			index++
+			continue
+		}
+		if strings.HasPrefix(argument, "--output=") {
+			continue
+		}
+		return argument == "ui"
+	}
+	return false
 }
 
 func (a *App) runProject(ctx context.Context, mode outputMode, args []string) int {
@@ -587,11 +650,15 @@ func (a *App) runEvents(ctx context.Context, mode outputMode, args []string) int
 		fmt.Fprint(a.stdout, eventsListHelp)
 		return ExitOK
 	}
-	options, failure := parseOptions(args[1:], "socket", "after", "limit")
+	options, failure := parseOptions(args[1:], "socket", "workspace", "after", "cursor", "limit")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
 	socketPath, failure := requiredOption(options, "socket")
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	workspace, failure := requiredOption(options, "workspace")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -607,12 +674,14 @@ func (a *App) runEvents(ctx context.Context, mode outputMode, args []string) int
 	if value := options["limit"]; value != "" {
 		parsed, err := strconv.Atoi(value)
 		if err != nil || parsed < 1 || parsed > 1000 {
-			return a.writeFailure(mode, usageFailure("--limit must be an integer from 1 to 1000", "omit --limit to use 100"))
+			return a.writeFailure(mode, usageFailure("--limit must be an integer from 1 to 1000", "omit --limit to use 50"))
 		}
 		limit = parsed
 	}
 
-	result, err := a.newClient(socketPath).EventsList(ctx, after, limit)
+	result, err := a.newClient(socketPath).EventsList(ctx, localapi.EventsListParams{
+		Workspace: workspace, After: after, PageParams: localapi.PageParams{Cursor: options["cursor"], Limit: limit},
+	})
 	if err != nil {
 		return a.writeClientFailure(mode, "list events", err)
 	}
@@ -621,13 +690,15 @@ func (a *App) runEvents(ctx context.Context, mode outputMode, args []string) int
 			return a.writeFailure(outputText, internalFailure("write event list output", err))
 		}
 	} else if len(result.Events) == 0 {
-		fmt.Fprintf(a.stdout, "no events after sequence %d\n", result.After)
+		fmt.Fprintf(a.stdout, "no events after sequence %d (high water %d)\n", after, result.HighWater)
 	} else {
 		for _, event := range result.Events {
 			fmt.Fprintf(a.stdout, "%d\t%s\t%s\trevision %d\n", event.Sequence, event.Type, event.Entity.ID, event.Entity.Revision)
 		}
-		fmt.Fprintf(a.stdout, "next_after: %d\n", result.NextAfter)
-		fmt.Fprintf(a.stdout, "has_more: %t\n", result.HasMore)
+	}
+	if mode == outputText {
+		fmt.Fprintf(a.stdout, "high_water: %d\n", result.HighWater)
+		writePageMetadata(a.stdout, result.PageResult, len(result.Events))
 	}
 	return ExitOK
 }
@@ -1572,6 +1643,7 @@ Commands:
   outcome        Record and decide explicit deliverable assessments
   checkpoint     Freeze immutable owner event cursors
   briefing       Inspect bounded evidence-backed management projections
+	ui             Operate the crew from one terminal dashboard
   events         Inspect the durable event journal
   help [command] Show command help
 
@@ -1582,6 +1654,14 @@ Global options:
 This build coordinates provider-neutral agents, objectives, tasks, dependencies,
 leases, durable mail, deterministic fake runs, and bounded direct fixture
 subprocesses. It does not mutate source repositories.
+`
+
+const uiHelp = `Usage:
+  crewfold ui [--socket <path>] [--workspace <name-or-id>] [--project <name-or-id>] [--color auto|never]
+
+Open the keyboard-driven operator dashboard. It reads and mutates only through
+the canonical local API. It never starts or stops the daemon. If no daemon can
+be reached, the dashboard shows exact setup and retry guidance.
 `
 
 const versionHelp = `Usage:
@@ -1716,16 +1796,17 @@ const checkoutListHelp = `Usage:
 `
 
 const eventsHelp = `Usage:
-  crewfold events list --socket <path> --after <sequence> [--limit <count>]
+	crewfold events list --workspace <name-or-id> --socket <path> --after <sequence> [--cursor <cursor>] [--limit <count>]
 
 Inspect events in ascending local sequence order.
 `
 
 const eventsListHelp = `Usage:
-  crewfold events list --socket <path> --after <sequence> [--limit <count>] [--output text|json]
+	crewfold events list --workspace <name-or-id> --socket <path> --after <sequence> [--cursor <cursor>] [--limit <count>] [--output text|json]
 
-Return events strictly after the supplied resumable cursor. The default limit is
-100 and the maximum is 1000.
+Return exact-workspace events strictly after the supplied sequence and no later
+than the atomically captured high water. The default limit is 50 and the maximum
+is 1000; use next_cursor to continue the same snapshot.
 `
 
 const helpHelp = `Usage:

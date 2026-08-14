@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"os/exec"
@@ -678,6 +679,7 @@ func TestDirectRunWorkerSupervisesCompletionCrashTimeoutOutputAndForcedStop(t *t
 		if failed.Detail.Run.FailureCode != "process_exited" {
 			t.Fatalf("crashed direct run = %#v", failed.Detail.Run)
 		}
+		assertM19RunWorkerFailureProvenance(t, config.DataDir, failed.Detail)
 	})
 
 	t.Run("timeout", func(t *testing.T) {
@@ -715,6 +717,65 @@ func TestDirectRunWorkerSupervisesCompletionCrashTimeoutOutputAndForcedStop(t *t
 	}
 	if err := running.wait(); err != nil {
 		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func assertM19RunWorkerFailureProvenance(t *testing.T, dataDir string, detail domain.RunDetail) {
+	t.Helper()
+	database, err := sql.Open("sqlite3", filepath.Join(dataDir, "crewfold.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var runUpdatedBy, taskUpdatedBy, assignmentStatus, assignmentUpdatedBy string
+	if err := database.QueryRow(`SELECT updated_by FROM runs WHERE id = ?`, detail.Run.ID).Scan(&runUpdatedBy); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT updated_by FROM tasks WHERE id = ?`, detail.Task.ID).Scan(&taskUpdatedBy); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT status, updated_by FROM task_assignments WHERE id = ?`, detail.Run.AssignmentID).Scan(&assignmentStatus, &assignmentUpdatedBy); err != nil {
+		t.Fatal(err)
+	}
+	if runUpdatedBy != "subsystem:run-worker" || taskUpdatedBy != "subsystem:run-worker" || assignmentStatus != "released" || assignmentUpdatedBy != "subsystem:run-worker" {
+		t.Fatalf("real worker failure projections = run:%q task:%q assignment:%q/%q, want subsystem:run-worker and released assignment",
+			runUpdatedBy, taskUpdatedBy, assignmentStatus, assignmentUpdatedBy)
+	}
+	wantEvents := map[string]int{
+		"run.starting": 1,
+		"run.started":  1,
+		"task.started": 1,
+		"run.failed":   1,
+		"task.failed":  1,
+	}
+	rows, err := database.Query(`
+SELECT type, actor_id, actor_type
+FROM events
+WHERE (entity_id = ? AND type IN ('run.starting','run.started','run.failed'))
+   OR (entity_id = ? AND type IN ('task.started','task.failed'))
+ORDER BY sequence`, detail.Run.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := make(map[string]int)
+	for rows.Next() {
+		var eventType, actorID, actorType string
+		if err := rows.Scan(&eventType, &actorID, &actorType); err != nil {
+			t.Fatal(err)
+		}
+		if actorID != "subsystem:run-worker" || actorType != domain.EventActorSubsystem {
+			t.Fatalf("real worker event %q actor = %q/%q, want subsystem:run-worker/subsystem", eventType, actorID, actorType)
+		}
+		got[eventType]++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for eventType, count := range wantEvents {
+		if got[eventType] != count {
+			t.Errorf("real worker event %q count = %d, want %d (all=%#v)", eventType, got[eventType], count, got)
+		}
 	}
 }
 

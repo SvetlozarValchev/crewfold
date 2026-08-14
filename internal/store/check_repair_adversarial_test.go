@@ -95,7 +95,7 @@ func newCheckRepairAdversarialFixtureWithSourceBudget(t *testing.T, sourceBudget
 	if result.Result == nil || result.CurrentFreshness == nil || result.CurrentFreshness.Status != domain.CheckFreshnessFresh {
 		t.Fatalf("failed repair source = %#v", result)
 	}
-	currentTask, err := authority.storage.TaskDetail(context.Background(), authority.workspace.ID, authority.task.Task.ID, "read-current-repair-source-task")
+	currentTask, err := authority.storage.TaskDetail(context.Background(), authority.workspace.ID, authority.task.Task.ID)
 	if err != nil {
 		t.Fatalf("TaskDetail(current repair source) error = %v", err)
 	}

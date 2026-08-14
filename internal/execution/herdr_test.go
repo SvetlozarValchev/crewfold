@@ -121,8 +121,8 @@ func TestHerdrRuntimeLaunchReconcileMovePromptAndClosedPane(t *testing.T) {
 	if err := restarted.Prompt(context.Background(), "run_fixture", binding.RuntimeHandle, "wake now"); err != nil {
 		t.Fatalf("Prompt(after move) error = %v", err)
 	}
-	attachment, err := restarted.Attach(context.Background(), "run_fixture", binding.RuntimeHandle, true)
-	if err != nil || strings.Join(attachment.Arguments, " ") != "terminal attach term-runtime --takeover" {
+	attachment, err := restarted.Attach(context.Background(), "run_fixture", binding.RuntimeHandle)
+	if err != nil || strings.Join(attachment.Arguments, " ") != "terminal attach term-runtime" {
 		t.Fatalf("Attach() = %#v, %v", attachment, err)
 	}
 

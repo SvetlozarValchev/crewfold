@@ -115,7 +115,7 @@ func TestMCPRejectsCrossRunAndStoppedCapability(t *testing.T) {
 	if !errors.As(err, &stoppedError) || stoppedError.Data == nil || stoppedError.Data.Code != "denied_by_policy" {
 		t.Fatalf("CallTool(stopped capability) error = %#v, want denied_by_policy", err)
 	}
-	events, err := owner.EventsList(context.Background(), 0, 200)
+	events, err := owner.EventsList(context.Background(), localapi.EventsListParams{Workspace: "personal", After: 0, PageParams: localapi.PageParams{Limit: 200}})
 	if err != nil {
 		t.Fatalf("EventsList() error = %v", err)
 	}

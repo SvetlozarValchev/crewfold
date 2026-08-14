@@ -188,7 +188,7 @@ func TestAcceptedDeliveryBriefingPreservesIndependentReviewTrust(t *testing.T) {
 	if targetRun.Handoff == nil {
 		t.Fatal("completed target did not retain its self-report handoff")
 	}
-	completedTarget, err := storage.TaskDetail(context.Background(), fixture.base.workspace.ID, target.Task.ID, key+"-target-current")
+	completedTarget, err := storage.TaskDetail(context.Background(), fixture.base.workspace.ID, target.Task.ID)
 	if err != nil || completedTarget.Task.Status != domain.TaskCompleted {
 		t.Fatalf("TaskDetail(completed target) = %#v, %v", completedTarget, err)
 	}

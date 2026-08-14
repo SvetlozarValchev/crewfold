@@ -119,17 +119,6 @@ SELECT * FROM check_jobs WHERE check_run_id=sqlc.arg(check_run_id);
 -- name: GetCheckLaunchReceiptByRun :one
 SELECT * FROM check_launch_receipts WHERE check_run_id=sqlc.arg(check_run_id);
 
--- name: ListCheckRunIDs :many
-SELECT run.id FROM check_runs run LEFT JOIN check_results result ON result.check_run_id=run.id
-WHERE run.workspace_id=sqlc.arg(workspace_id)
- AND (CAST(sqlc.arg(project_id) AS TEXT)='' OR run.project_id=sqlc.arg(project_id))
- AND (CAST(sqlc.arg(task_id) AS TEXT)='' OR run.task_id=sqlc.arg(task_id))
- AND (CAST(sqlc.arg(requirement_id) AS TEXT)='' OR run.requirement_id=sqlc.arg(requirement_id))
- AND (CAST(sqlc.arg(definition_id) AS TEXT)='' OR run.definition_id=sqlc.arg(definition_id))
- AND (CAST(sqlc.arg(status) AS TEXT)='' OR run.status=sqlc.arg(status))
- AND (CAST(sqlc.arg(outcome) AS TEXT)='' OR result.outcome=sqlc.arg(outcome))
-ORDER BY run.created_at DESC,run.id DESC LIMIT sqlc.arg(result_limit);
-
 -- name: ListCheckWatchScopes :many
 SELECT project.workspace_id, workspace.name AS workspace_name, project.id AS project_id, project.name AS project_name
 FROM projects project

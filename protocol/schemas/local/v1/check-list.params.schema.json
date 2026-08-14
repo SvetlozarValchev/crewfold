@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:check-list-params:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace"],
+  "properties": {
+    "workspace": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "project": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "task": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "requirement": {"type": "string", "pattern": "^checkreq_[0-9a-f]{32}$"},
+    "definition": {"type": "string", "pattern": "^checkdef_[0-9a-f]{32}$"},
+    "status": {"enum": ["requested", "starting", "running", "finished"]},
+    "outcome": {"enum": ["passed", "failed", "timed_out", "start_failed", "unknown"]},
+    "cursor": {"$ref": "operator-page.schema.json#/$defs/cursor"},
+    "limit": {"$ref": "operator-page.schema.json#/$defs/limit"}
+  }
+}

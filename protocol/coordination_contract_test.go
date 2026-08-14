@@ -81,6 +81,20 @@ func TestCoordinationMethodNamesRemainProviderNeutral(t *testing.T) {
 	}
 }
 
+func TestRunListPublishesBoundedSummaryShape(t *testing.T) {
+	t.Parallel()
+	document := readContextSchema(t, "schemas/local/v1/run-list.result.schema.json")
+	properties := document["properties"].(map[string]any)
+	runs := properties["runs"].(map[string]any)
+	if runs["maxItems"] != float64(200) {
+		t.Fatalf("run list maxItems = %v, want 200", runs["maxItems"])
+	}
+	items := runs["items"].(map[string]any)
+	if items["$ref"] != "../../domain/v1/run-summary.schema.json" {
+		t.Fatalf("run list item reference = %v", items["$ref"])
+	}
+}
+
 func contains(value, fragment string) bool {
 	for index := 0; index+len(fragment) <= len(value); index++ {
 		if value[index:index+len(fragment)] == fragment {

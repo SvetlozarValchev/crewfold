@@ -375,15 +375,12 @@ func (runtime *HerdrRuntime) Interrupt(ctx context.Context, operationID, rawHand
 	return nil
 }
 
-func (runtime *HerdrRuntime) Attach(_ context.Context, operationID, rawHandle string, takeover bool) (AttachSpec, error) {
+func (runtime *HerdrRuntime) Attach(_ context.Context, operationID, rawHandle string) (AttachSpec, error) {
 	handle, err := decodeHerdrHandle(operationID, rawHandle)
 	if err != nil {
 		return AttachSpec{}, err
 	}
 	arguments := []string{"terminal", "attach", handle.TerminalID}
-	if takeover {
-		arguments = append(arguments, "--takeover")
-	}
 	environment := map[string]string{}
 	if runtime.client.Session() != "" {
 		environment["HERDR_SESSION"] = runtime.client.Session()

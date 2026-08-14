@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 
 	"crewfold/internal/localapi"
 	"crewfold/internal/store"
@@ -248,20 +249,21 @@ func (s *server) handleSupervisorExplain(request localapi.Request) localapi.Resp
 }
 
 func (s *server) handleApprovalList(request localapi.Request) localapi.Response {
-	var params localapi.ApprovalQueryParams
-	if err := decodeParams(request.Params, &params); err != nil {
+	var params localapi.ApprovalListParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" ||
+		!validApprovalListStatus(params.Status) || params.Action != "" && !validCanonicalEntityID(params.Action, "saction_") {
 		return invalidParamsResponse(request, "approval.list requires workspace and bounded filters")
 	}
-	values, err := s.store.ApprovalRequests(context.Background(), store.ListApprovalRequestsQuery{WorkspaceIdentifier: params.Workspace, Status: params.Status, ActionID: params.Action, Limit: params.Limit})
+	page, err := s.store.ApprovalRequests(context.Background(), store.ListApprovalRequestsQuery{WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, Status: params.Status, ActionID: params.Action, Cursor: params.Cursor, Limit: params.Limit})
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ApprovalListResult{Schema: localapi.ApprovalListSchema, Type: "approval_list", Approvals: values})
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ApprovalListResult{Schema: localapi.ApprovalListSchema, Type: "approval_list", Approvals: page.Approvals, PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total}})
 }
 
 func (s *server) handleApprovalInspect(request localapi.Request) localapi.Response {
 	var params localapi.ApprovalQueryParams
-	if err := decodeParams(request.Params, &params); err != nil {
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || !validCanonicalEntityID(params.Approval, "appr_") {
 		return invalidParamsResponse(request, "approval.inspect requires workspace and approval")
 	}
 	value, err := s.store.ApprovalRequest(context.Background(), params.Workspace, params.Approval)
@@ -273,7 +275,7 @@ func (s *server) handleApprovalInspect(request localapi.Request) localapi.Respon
 
 func (s *server) handleApprovalDecision(request localapi.Request, allow bool) localapi.Response {
 	var params localapi.ApprovalDecisionParams
-	if err := decodeParams(request.Params, &params); err != nil {
+	if err := decodeParams(request.Params, &params); err != nil || params.DecisionNote != strings.TrimSpace(params.DecisionNote) {
 		return invalidParamsResponse(request, "approval decision requires workspace, approval, expected_revision, and idempotency_key")
 	}
 	command := store.DecideApprovalCommand{WorkspaceIdentifier: params.Workspace, ApprovalRequestID: params.Approval, ExpectedRevision: params.ExpectedRevision, DecisionNote: params.DecisionNote, IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID}

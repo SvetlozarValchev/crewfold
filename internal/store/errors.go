@@ -114,6 +114,8 @@ const (
 	CodeManagementBriefingNotFound    = "management_briefing_not_found"
 	CodeBriefingClaimNotFound         = "briefing_claim_not_found"
 	CodeUnsupportedOutcomeEvent       = "unsupported_outcome_event"
+	CodeUnsupportedOperatorEvent      = "unsupported_operator_event"
+	CodeInvalidCursor                 = "invalid_cursor"
 	CodeRetrievalDegraded             = "retrieval_degraded"
 	CodeIdempotencyConflict           = "idempotency_conflict"
 	CodeStorageFailed                 = "storage_failed"

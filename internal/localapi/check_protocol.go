@@ -205,15 +205,19 @@ type CheckRunParams struct {
 }
 
 type CheckQueryParams struct {
+	Workspace string `json:"workspace"`
+	CheckRun  string `json:"check_run"`
+}
+
+type CheckListParams struct {
 	Workspace   string `json:"workspace"`
-	CheckRun    string `json:"check_run,omitempty"`
 	Project     string `json:"project,omitempty"`
 	Task        string `json:"task,omitempty"`
 	Requirement string `json:"requirement,omitempty"`
 	Definition  string `json:"definition,omitempty"`
 	Status      string `json:"status,omitempty"`
 	Outcome     string `json:"outcome,omitempty"`
-	Limit       int    `json:"limit,omitempty"`
+	PageParams
 }
 
 type CheckLogsParams struct {
@@ -334,6 +338,7 @@ type CheckRunListResult struct {
 	Schema string                    `json:"schema"`
 	Type   string                    `json:"type"`
 	Runs   []domain.CheckRunListItem `json:"runs"`
+	PageResult
 }
 
 type CheckInspectResult struct {

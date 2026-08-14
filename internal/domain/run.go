@@ -211,6 +211,29 @@ type Run struct {
 	Placement       RunPlacement `json:"placement"`
 }
 
+// RunSummary is the bounded collection representation used by operator views.
+// Full timeline, task, agent, checkout, and handoff records remain available
+// through run.show.
+type RunSummary struct {
+	ID              string `json:"id"`
+	WorkspaceID     string `json:"workspace_id"`
+	ProjectID       string `json:"project_id"`
+	TaskID          string `json:"task_id"`
+	AgentID         string `json:"agent_id"`
+	Runtime         string `json:"runtime"`
+	Provider        string `json:"provider"`
+	Status          string `json:"status"`
+	CanAttach       bool   `json:"can_attach"`
+	BlockedQuestion string `json:"blocked_question,omitempty"`
+	ResultSummary   string `json:"result_summary,omitempty"`
+	FailureCode     string `json:"failure_code,omitempty"`
+	Revision        int64  `json:"revision"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
+	StartedAt       string `json:"started_at,omitempty"`
+	FinishedAt      string `json:"finished_at,omitempty"`
+}
+
 type RunTimelineEntry struct {
 	Sequence   int64    `json:"sequence"`
 	RunID      string   `json:"run_id"`

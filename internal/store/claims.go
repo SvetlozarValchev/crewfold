@@ -14,17 +14,19 @@ import (
 )
 
 const (
-	claimAddedEvent    = "claim.added"
-	claimReleasedEvent = "claim.released"
-	claimExpiredEvent  = "claim.expired"
-	overlapOpenedEvent = "overlap.opened"
-	overlapClosedEvent = "overlap.resolved"
-	driftOpenedEvent   = "claim.drift_opened"
-	driftClosedEvent   = "claim.drift_resolved"
-	maximumClaimLease  = 30 * 24 * time.Hour
+	claimAddedEvent     = "claim.added"
+	claimReleasedEvent  = "claim.released"
+	claimExpiredEvent   = "claim.expired"
+	overlapOpenedEvent  = "overlap.opened"
+	overlapClosedEvent  = "overlap.resolved"
+	driftOpenedEvent    = "claim.drift_opened"
+	driftClosedEvent    = "claim.drift_resolved"
+	maximumClaimLease   = 30 * 24 * time.Hour
+	leaseActorID        = "subsystem:lease"
+	claimWatcherActorID = "subsystem:claim-watcher"
 )
 
-func (s *Store) AddClaim(ctx context.Context, command AddClaimCommand) (ClaimMutationResult, error) {
+func canonicalAddClaimCommand(command AddClaimCommand) (AddClaimCommand, error) {
 	command.WorkspaceIdentifier = strings.TrimSpace(command.WorkspaceIdentifier)
 	command.ProjectIdentifier = strings.TrimSpace(command.ProjectIdentifier)
 	command.TaskID = strings.TrimSpace(command.TaskID)
@@ -42,18 +44,61 @@ func (s *Store) AddClaim(ctx context.Context, command AddClaimCommand) (ClaimMut
 	}
 	target, err := domain.NormalizeClaimTarget(command.Kind, command.Target)
 	if command.WorkspaceIdentifier == "" || command.ProjectIdentifier == "" || command.TaskID == "" || err != nil || !domain.ValidClaimMode(command.Mode) || !domain.ValidClaimPolicy(command.ConflictPolicy) {
-		return ClaimMutationResult{}, &Error{Code: CodeInvalidClaim, Message: "claim requires workspace, project, task, a valid kind/target, mode, and conflict policy"}
+		return AddClaimCommand{}, &Error{Code: CodeInvalidClaim, Message: "claim requires workspace, project, task, a valid kind/target, mode, and conflict policy"}
 	}
 	command.Target = target
 	if command.LeaseDuration < time.Second || command.LeaseDuration > maximumClaimLease {
-		return ClaimMutationResult{}, &Error{Code: CodeInvalidClaim, Message: "claim lease must be between one second and 30 days"}
+		return AddClaimCommand{}, &Error{Code: CodeInvalidClaim, Message: "claim lease must be between one second and 30 days"}
 	}
 	if err := validateMutationMetadata(command.IdempotencyKey, command.CorrelationID, CodeInvalidClaim); err != nil {
+		return AddClaimCommand{}, err
+	}
+	return command, nil
+}
+
+func claimAddRequestHash(command AddClaimCommand) (string, error) {
+	return hashCommand("claim.add", map[string]any{
+		"workspace": command.WorkspaceIdentifier, "project": command.ProjectIdentifier, "task": command.TaskID,
+		"checkout": command.CheckoutIdentifier, "kind": command.Kind, "target": command.Target, "mode": command.Mode,
+		"conflict_policy": command.ConflictPolicy, "lease_duration": command.LeaseDuration,
+	})
+}
+
+// ReplayAddClaim performs only canonical request and receipt validation. The
+// daemon calls it before observing Git so an exact lost-response replay cannot
+// append an unrelated checkout observation ahead of the frozen claim receipt.
+func (s *Store) ReplayAddClaim(ctx context.Context, command AddClaimCommand) (ClaimMutationResult, bool, error) {
+	command, err := canonicalAddClaimCommand(command)
+	if err != nil {
+		return ClaimMutationResult{}, false, err
+	}
+	requestHash, err := claimAddRequestHash(command)
+	if err != nil {
+		return ClaimMutationResult{}, false, storageFailure("hash claim addition", err)
+	}
+	var replay ClaimMutationResult
+	found, err := s.lookupIdempotencyBeforeEffects(ctx, command.IdempotencyKey, "claim.add", requestHash, &replay)
+	if found {
+		replay.Replayed = true
+	}
+	return replay, found, err
+}
+
+func (s *Store) AddClaim(ctx context.Context, command AddClaimCommand) (ClaimMutationResult, error) {
+	command, err := canonicalAddClaimCommand(command)
+	if err != nil {
 		return ClaimMutationResult{}, err
 	}
-	requestHash, err := hashCommand("claim.add", command)
+	requestHash, err := claimAddRequestHash(command)
 	if err != nil {
 		return ClaimMutationResult{}, storageFailure("hash claim addition", err)
+	}
+	var replay ClaimMutationResult
+	if found, err := s.lookupIdempotencyBeforeEffects(ctx, command.IdempotencyKey, "claim.add", requestHash, &replay); err != nil {
+		return ClaimMutationResult{}, err
+	} else if found {
+		replay.Replayed = true
+		return replay, nil
 	}
 	if _, err := s.ReconcileExpiredClaims(ctx, command.WorkspaceIdentifier, derivedCorrelationID(command.CorrelationID, "lease")); err != nil {
 		return ClaimMutationResult{}, err
@@ -64,7 +109,6 @@ func (s *Store) AddClaim(ctx context.Context, command AddClaimCommand) (ClaimMut
 		return ClaimMutationResult{}, storageFailure("begin claim addition", err)
 	}
 	defer tx.Rollback()
-	var replay ClaimMutationResult
 	if found, err := lookupIdempotency(ctx, tx, command.IdempotencyKey, "claim.add", requestHash, &replay); err != nil {
 		return ClaimMutationResult{}, err
 	} else if found {
@@ -191,9 +235,18 @@ func (s *Store) ReleaseClaim(ctx context.Context, command ReleaseClaimCommand) (
 	if err := validateMutationMetadata(command.IdempotencyKey, command.CorrelationID, CodeInvalidClaim); err != nil {
 		return ClaimMutationResult{}, err
 	}
-	requestHash, err := hashCommand("claim.release", command)
+	requestHash, err := hashCommand("claim.release", map[string]any{
+		"workspace": command.WorkspaceIdentifier, "claim": command.ClaimID, "expected_revision": command.ExpectedRevision,
+	})
 	if err != nil {
 		return ClaimMutationResult{}, storageFailure("hash claim release", err)
+	}
+	var replay ClaimMutationResult
+	if found, err := s.lookupIdempotencyBeforeEffects(ctx, command.IdempotencyKey, "claim.release", requestHash, &replay); err != nil {
+		return ClaimMutationResult{}, err
+	} else if found {
+		replay.Replayed = true
+		return replay, nil
 	}
 	if _, err := s.ReconcileExpiredClaims(ctx, command.WorkspaceIdentifier, derivedCorrelationID(command.CorrelationID, "lease")); err != nil {
 		return ClaimMutationResult{}, err
@@ -203,7 +256,6 @@ func (s *Store) ReleaseClaim(ctx context.Context, command ReleaseClaimCommand) (
 		return ClaimMutationResult{}, storageFailure("begin claim release", err)
 	}
 	defer tx.Rollback()
-	var replay ClaimMutationResult
 	if found, err := lookupIdempotency(ctx, tx, command.IdempotencyKey, "claim.release", requestHash, &replay); err != nil {
 		return ClaimMutationResult{}, err
 	} else if found {
@@ -299,90 +351,21 @@ ORDER BY crewfold_timestamp_key(lease_expires_at), id`, workspaceID, now)
 	for _, claim := range claims {
 		claim.Status = domain.ClaimExpired
 		claim.Revision++
-		if _, err := tx.ExecContext(ctx, "UPDATE work_claims SET status = 'expired', revision = ?, updated_at = ?, updated_by = ? WHERE id = ? AND status = 'active'", claim.Revision, now, localOwnerActorID, claim.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE work_claims SET status = 'expired', revision = ?, updated_at = ?, updated_by = ? WHERE id = ? AND status = 'active'", claim.Revision, now, leaseActorID, claim.ID); err != nil {
 			return 0, storageFailure("expire claim", err)
 		}
-		sequence, err = appendEvent(ctx, tx, workspaceID, "claim", claim.ID, claim.Revision, claimExpiredEvent, correlationID, now, map[string]any{"status": claim.Status, "lease_expires_at": claim.LeaseExpiresAt})
+		sequence, err = appendEventForActor(ctx, tx, workspaceID, "claim", claim.ID, claim.Revision, claimExpiredEvent, correlationID, now, leaseActorID, domain.EventActorSubsystem, map[string]any{"status": claim.Status, "lease_expires_at": claim.LeaseExpiresAt})
 		if err != nil {
 			return 0, err
 		}
-		if _, sequence, err = resolveClaimOverlaps(ctx, tx, workspaceID, claim.ID, "claim lease expired", correlationID, now, sequence); err != nil {
+		if _, sequence, err = resolveClaimOverlapsForActor(ctx, tx, workspaceID, claim.ID, "claim lease expired", correlationID, now, sequence, leaseActorID, domain.EventActorSubsystem); err != nil {
 			return 0, err
 		}
 	}
 	return len(claims), nil
 }
 
-func (s *Store) ListClaims(ctx context.Context, workspaceIdentifier, projectIdentifier, status, correlationID string) ([]domain.WorkClaim, error) {
-	if _, err := s.ReconcileExpiredClaims(ctx, workspaceIdentifier, correlationID); err != nil {
-		return nil, err
-	}
-	workspace, err := s.Workspace(ctx, strings.TrimSpace(workspaceIdentifier))
-	if err != nil {
-		return nil, err
-	}
-	query := claimSelect + " WHERE workspace_id = ?"
-	arguments := []any{workspace.ID}
-	if projectIdentifier != "" {
-		project, err := queryProject(ctx, s.db, workspace.ID, strings.TrimSpace(projectIdentifier))
-		if err != nil {
-			return nil, err
-		}
-		query += " AND project_id = ?"
-		arguments = append(arguments, project.ID)
-	}
-	if status != "" {
-		if status != domain.ClaimActive && status != domain.ClaimExpired && status != domain.ClaimReleased {
-			return nil, &Error{Code: CodeInvalidClaim, Message: "claim status must be active, expired, or released"}
-		}
-		query += " AND status = ?"
-		arguments = append(arguments, status)
-	}
-	query += " ORDER BY created_at, id"
-	rows, err := s.db.QueryContext(ctx, query, arguments...)
-	if err != nil {
-		return nil, storageFailure("list claims", err)
-	}
-	return scanClaims(rows)
-}
-
-func (s *Store) ListOverlaps(ctx context.Context, workspaceIdentifier, projectIdentifier, status, correlationID string) ([]domain.WorkOverlap, error) {
-	if _, err := s.ReconcileExpiredClaims(ctx, workspaceIdentifier, correlationID); err != nil {
-		return nil, err
-	}
-	workspace, err := s.Workspace(ctx, strings.TrimSpace(workspaceIdentifier))
-	if err != nil {
-		return nil, err
-	}
-	query := overlapSelect + " WHERE workspace_id = ?"
-	arguments := []any{workspace.ID}
-	if projectIdentifier != "" {
-		project, err := queryProject(ctx, s.db, workspace.ID, strings.TrimSpace(projectIdentifier))
-		if err != nil {
-			return nil, err
-		}
-		query += " AND project_id = ?"
-		arguments = append(arguments, project.ID)
-	}
-	if status != "" {
-		if status != domain.OverlapOpen && status != domain.OverlapResolved {
-			return nil, &Error{Code: CodeInvalidClaim, Message: "overlap status must be open or resolved"}
-		}
-		query += " AND status = ?"
-		arguments = append(arguments, status)
-	}
-	query += " ORDER BY detected_at, id"
-	rows, err := s.db.QueryContext(ctx, query, arguments...)
-	if err != nil {
-		return nil, storageFailure("list overlaps", err)
-	}
-	return scanOverlaps(rows)
-}
-
-func (s *Store) Overlap(ctx context.Context, workspaceIdentifier, overlapID, correlationID string) (domain.WorkOverlap, error) {
-	if _, err := s.ReconcileExpiredClaims(ctx, workspaceIdentifier, correlationID); err != nil {
-		return domain.WorkOverlap{}, err
-	}
+func (s *Store) Overlap(ctx context.Context, workspaceIdentifier, overlapID string) (domain.WorkOverlap, error) {
 	workspace, err := s.Workspace(ctx, strings.TrimSpace(workspaceIdentifier))
 	if err != nil {
 		return domain.WorkOverlap{}, err
@@ -437,6 +420,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, 1)`,
 }
 
 func resolveClaimOverlaps(ctx context.Context, tx *sql.Tx, workspaceID, claimID, reason, correlationID, now string, sequence int64) ([]domain.WorkOverlap, int64, error) {
+	return resolveClaimOverlapsForActor(ctx, tx, workspaceID, claimID, reason, correlationID, now, sequence, localOwnerActorID, domain.EventActorHuman)
+}
+
+func resolveClaimOverlapsForActor(ctx context.Context, tx *sql.Tx, workspaceID, claimID, reason, correlationID, now string, sequence int64, actorID, actorType string) ([]domain.WorkOverlap, int64, error) {
 	rows, err := tx.QueryContext(ctx, overlapSelect+" WHERE workspace_id = ? AND status = 'open' AND (claim_low_id = ? OR claim_high_id = ?) ORDER BY id", workspaceID, claimID, claimID)
 	if err != nil {
 		return nil, sequence, storageFailure("list claim overlaps", err)
@@ -457,7 +444,7 @@ func resolveClaimOverlaps(ctx context.Context, tx *sql.Tx, workspaceID, claimID,
 		if _, err := tx.ExecContext(ctx, "DELETE FROM task_coordination_holds WHERE overlap_id = ?", overlap.ID); err != nil {
 			return nil, sequence, storageFailure("release task coordination holds", err)
 		}
-		sequence, err = appendEvent(ctx, tx, workspaceID, "overlap", overlap.ID, overlap.Revision, overlapClosedEvent, correlationID, now, map[string]any{"status": overlap.Status, "reason": reason})
+		sequence, err = appendEventForActor(ctx, tx, workspaceID, "overlap", overlap.ID, overlap.Revision, overlapClosedEvent, correlationID, now, actorID, actorType, map[string]any{"status": overlap.Status, "reason": reason})
 		if err != nil {
 			return nil, sequence, err
 		}
@@ -499,10 +486,10 @@ WHERE c.id = ?`, command.CheckoutID).Scan(&workspaceID, &projectID, &checkoutRev
 		checkoutRevision++
 		if _, err := tx.ExecContext(ctx, `
 UPDATE checkouts SET head_commit = ?, dirty = ?, dirty_paths_json = ?, revision = ?, observed_at = ?, updated_at = ?, updated_by = ? WHERE id = ?`,
-			command.HeadCommit, len(dirtyPaths) != 0, dirtyPathsJSON, checkoutRevision, now, now, localOwnerActorID, command.CheckoutID); err != nil {
+			command.HeadCommit, len(dirtyPaths) != 0, dirtyPathsJSON, checkoutRevision, now, now, claimWatcherActorID, command.CheckoutID); err != nil {
 			return domain.CheckoutClaimScan{}, storageFailure("update claim scan checkout", err)
 		}
-		if _, err := appendEvent(ctx, tx, workspaceID, "checkout", command.CheckoutID, checkoutRevision, checkoutObserved, command.CorrelationID, now, map[string]any{"head_commit": command.HeadCommit, "dirty_paths": dirtyPaths, "claim_scan": true}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, workspaceID, "checkout", command.CheckoutID, checkoutRevision, checkoutObserved, command.CorrelationID, now, claimWatcherActorID, domain.EventActorSubsystem, map[string]any{"head_commit": command.HeadCommit, "dirty_paths": dirtyPaths, "claim_scan": true}); err != nil {
 			return domain.CheckoutClaimScan{}, err
 		}
 	}
@@ -567,7 +554,7 @@ UPDATE checkouts SET head_commit = ?, dirty = ?, dirty_paths_json = ?, revision 
 			return domain.CheckoutClaimScan{}, storageFailure("resolve claim drift", err)
 		}
 		resolved++
-		if _, err := appendEvent(ctx, tx, workspaceID, "claim_drift", drift.ID, drift.Revision+1, driftClosedEvent, command.CorrelationID, now, map[string]any{"path": drift.Path, "status": domain.DriftResolved}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, workspaceID, "claim_drift", drift.ID, drift.Revision+1, driftClosedEvent, command.CorrelationID, now, claimWatcherActorID, domain.EventActorSubsystem, map[string]any{"path": drift.Path, "status": domain.DriftResolved}); err != nil {
 			return domain.CheckoutClaimScan{}, err
 		}
 	}
@@ -602,7 +589,7 @@ UPDATE claim_drifts SET claim_id = ?, head_commit = ?, observation_gap = observa
 			return domain.CheckoutClaimScan{}, storageFailure("open claim drift", err)
 		}
 		opened++
-		if _, err := appendEvent(ctx, tx, workspaceID, "claim_drift", driftID, revision, driftOpenedEvent, command.CorrelationID, now, map[string]any{"claim_id": claim.ID, "task_id": claim.TaskID, "checkout_id": command.CheckoutID, "path": path, "observation_gap": observationGap}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, workspaceID, "claim_drift", driftID, revision, driftOpenedEvent, command.CorrelationID, now, claimWatcherActorID, domain.EventActorSubsystem, map[string]any{"claim_id": claim.ID, "task_id": claim.TaskID, "checkout_id": command.CheckoutID, "path": path, "observation_gap": observationGap}); err != nil {
 			return domain.CheckoutClaimScan{}, err
 		}
 	}
@@ -638,28 +625,6 @@ ORDER BY c.workspace_id, c.project_id, c.checkout_id`)
 		result = append(result, target)
 	}
 	return result, rows.Err()
-}
-
-func (s *Store) ListClaimDrifts(ctx context.Context, workspaceIdentifier, status string) ([]domain.ClaimDrift, error) {
-	workspace, err := s.Workspace(ctx, strings.TrimSpace(workspaceIdentifier))
-	if err != nil {
-		return nil, err
-	}
-	query := driftSelect + " WHERE workspace_id = ?"
-	arguments := []any{workspace.ID}
-	if status != "" {
-		if status != domain.DriftOpen && status != domain.DriftResolved {
-			return nil, &Error{Code: CodeInvalidClaim, Message: "drift status must be open or resolved"}
-		}
-		query += " AND status = ?"
-		arguments = append(arguments, status)
-	}
-	query += " ORDER BY first_observed_at, id"
-	rows, err := s.db.QueryContext(ctx, query, arguments...)
-	if err != nil {
-		return nil, storageFailure("list claim drift", err)
-	}
-	return scanDrifts(rows)
 }
 
 func selectClaimCheckout(ctx context.Context, tx *sql.Tx, projectID, identifier string, required bool) (*domain.Checkout, error) {
@@ -829,6 +794,22 @@ SELECT id, workspace_id, project_id, claim_id, task_id, checkout_id, path,
        COALESCE(head_commit, ''), observation_gap, status, first_observed_at, last_observed_at,
        COALESCE(resolved_at, ''), revision
 FROM claim_drifts`
+
+func queryDrift(ctx context.Context, database queryRower, workspaceID, driftID string) (domain.ClaimDrift, error) {
+	var drift domain.ClaimDrift
+	err := database.QueryRowContext(ctx, driftSelect+" WHERE workspace_id = ? AND id = ?", workspaceID, driftID).Scan(
+		&drift.ID, &drift.WorkspaceID, &drift.ProjectID, &drift.ClaimID, &drift.TaskID,
+		&drift.CheckoutID, &drift.Path, &drift.HeadCommit, &drift.ObservationGap, &drift.Status,
+		&drift.FirstObservedAt, &drift.LastObservedAt, &drift.ResolvedAt, &drift.Revision,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ClaimDrift{}, &Error{Code: CodeClaimNotFound, Message: fmt.Sprintf("claim drift %q was not found", driftID)}
+	}
+	if err != nil {
+		return domain.ClaimDrift{}, storageFailure("query claim drift", err)
+	}
+	return drift, nil
+}
 
 func scanDrifts(rows *sql.Rows) ([]domain.ClaimDrift, error) {
 	defer rows.Close()

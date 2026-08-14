@@ -472,7 +472,7 @@ authority_record=$(record_with_id "$scenario_root/derived-show.json" kauth "$aut
 [ "$(json_string_field "$authority_record" revision_id)" = "$first_revision" ] || fail 'authority check points at a different knowledge revision'
 [ "$(json_number_field "$authority_record" event_sequence)" = "$auto_knowledge_sequence" ] || fail 'authority check and automatic acceptance point at different knowledge events'
 
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events.json"
 assert_count "$scenario_root/events.json" '"type":"knowledge.proposed"' 12 'oversized source or retry created an unexpected knowledge proposal fact'
 assert_count "$scenario_root/events.json" '"type":"curator.derived"' 11 'derivation event count is not exact'
 assert_count "$scenario_root/events.json" '"type":"curator.auto_accepted"' 11 'automatic acceptance event count is not exact'

@@ -709,7 +709,7 @@ func (a *App) runApproval(ctx context.Context, mode outputMode, args []string) i
 }
 
 func (a *App) runApprovalList(ctx context.Context, mode outputMode, args []string) int {
-	options, failure := parseOptions(args, "workspace", "status", "action", "limit", "socket")
+	options, failure := parseOptions(args, "workspace", "project", "status", "action", "cursor", "limit", "socket")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -717,11 +717,11 @@ func (a *App) runApprovalList(ctx context.Context, mode outputMode, args []strin
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	limit, failure := optionalIntOption(options, "limit", 0, 100)
+	limit, failure := optionalIntOption(options, "limit", 1, 200)
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	result, err := a.newClient(socket).ApprovalList(ctx, localapi.ApprovalQueryParams{Workspace: workspace, Status: options["status"], Action: options["action"], Limit: int(limit)})
+	result, err := a.newClient(socket).ApprovalList(ctx, localapi.ApprovalListParams{Workspace: workspace, Project: options["project"], Status: options["status"], Action: options["action"], PageParams: localapi.PageParams{Cursor: options["cursor"], Limit: int(limit)}})
 	if err != nil {
 		return a.writeClientFailure(mode, "list approvals", err)
 	}
@@ -731,6 +731,7 @@ func (a *App) runApprovalList(ctx context.Context, mode outputMode, args []strin
 	for _, approval := range result.Approvals {
 		fmt.Fprintf(a.stdout, "%s\t%s\t%s\trevision %d\n", approval.ID, approval.Status, approval.ActionID, approval.Revision)
 	}
+	writePageMetadata(a.stdout, result.PageResult, len(result.Approvals))
 	return ExitOK
 }
 
@@ -775,7 +776,7 @@ func (a *App) runApprovalDecision(ctx context.Context, mode outputMode, args []s
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	params := localapi.ApprovalDecisionParams{Workspace: workspace, Approval: approval, ExpectedRevision: revision, DecisionNote: decisionNote, IdempotencyKey: options["idempotency-key"]}
+	params := localapi.ApprovalDecisionParams{Workspace: workspace, Approval: approval, ExpectedRevision: revision, DecisionNote: strings.TrimSpace(decisionNote), IdempotencyKey: options["idempotency-key"]}
 	client := a.newClient(socket)
 	var result localapi.ApprovalMutationResult
 	var err error
@@ -903,7 +904,7 @@ retry is bounded and cooled down; reassignment always enters the owner approval 
 `
 
 const approvalHelp = `Usage:
-  crewfold approval list --workspace <scope> --socket <path> [filters]
+  crewfold approval list --workspace <scope> [--project <project>] [--status <status>] [--action <id>] [--cursor <cursor>] [--limit <1..200>] --socket <path>
   crewfold approval inspect <approval-id> --workspace <scope> --socket <path>
   crewfold approval allow <approval-id> --workspace <scope> --expected-revision <n> --decision-note <text> --socket <path>
   crewfold approval deny <approval-id> --workspace <scope> --expected-revision <n> --decision-note <text> --socket <path>

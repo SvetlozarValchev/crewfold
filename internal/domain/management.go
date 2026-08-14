@@ -359,6 +359,7 @@ type SupervisorAction struct {
 type ApprovalRequest struct {
 	ID                     string `json:"id"`
 	WorkspaceID            string `json:"workspace_id"`
+	ProjectID              string `json:"project_id,omitempty"`
 	ActionID               string `json:"action_id"`
 	Status                 string `json:"status"`
 	DecisionNote           string `json:"decision_note,omitempty"`

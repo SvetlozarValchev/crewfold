@@ -144,7 +144,7 @@ func TestCheckRepairDecisionIsAClosedImmutableOwnerFact(t *testing.T) {
 		t.Fatalf("check repair decision creator = %v", properties["created_by"])
 	}
 	note := properties["note"].(map[string]any)
-	if note["maxLength"] != float64(4096) || note["pattern"] != `^[^\u0000]*$` {
+	if note["maxLength"] != float64(4096) || note["pattern"] != `^[^\x00]*$` {
 		t.Fatalf("check repair decision note bound = %#v", note)
 	}
 	if !strings.Contains(note["description"].(string), "4096 bytes") {
@@ -152,7 +152,7 @@ func TestCheckRepairDecisionIsAClosedImmutableOwnerFact(t *testing.T) {
 	}
 	params := readContextSchema(t, "schemas/local/v1/check-repair-decision.params.schema.json")
 	decisionNote := params["properties"].(map[string]any)["decision_note"].(map[string]any)
-	if decisionNote["maxLength"] != float64(4096) || decisionNote["pattern"] != `^[^\u0000]*$` ||
+	if decisionNote["maxLength"] != float64(4096) || decisionNote["pattern"] != `^[^\x00]*$` ||
 		!strings.Contains(decisionNote["description"].(string), "4096 encoded bytes") {
 		t.Fatalf("check repair decision input note bound = %#v", decisionNote)
 	}
@@ -188,7 +188,7 @@ func TestCheckRepairProposalRequiresExactGrantedRunProvenance(t *testing.T) {
 	}
 	for name, bytes := range map[string]float64{"rationale": 4096, "repair_task_title": 256, "repair_task_description": 4096} {
 		property := properties[name].(map[string]any)
-		if property["maxLength"] != bytes || property["pattern"] != `^[^\u0000]*$` || !strings.Contains(property["description"].(string), strconv.Itoa(int(bytes))+" encoded bytes") {
+		if property["maxLength"] != bytes || property["pattern"] != `^[^\x00]*$` || !strings.Contains(property["description"].(string), strconv.Itoa(int(bytes))+" encoded bytes") {
 			t.Errorf("check repair proposal %s byte contract = %#v", name, property)
 		}
 	}
@@ -242,18 +242,7 @@ func assertCheckSchemaFields(t *testing.T, path string, value any) {
 	properties := document["properties"].(map[string]any)
 	required := contractStringSlice(document["required"])
 	sort.Strings(required)
-	typeOf := reflect.TypeOf(value)
-	wantProperties, wantRequired := make([]string, 0, typeOf.NumField()), make([]string, 0, typeOf.NumField())
-	for index := 0; index < typeOf.NumField(); index++ {
-		parts := strings.Split(typeOf.Field(index).Tag.Get("json"), ",")
-		if parts[0] == "" || parts[0] == "-" {
-			continue
-		}
-		wantProperties = append(wantProperties, parts[0])
-		if len(parts) == 1 || parts[1] != "omitempty" {
-			wantRequired = append(wantRequired, parts[0])
-		}
-	}
+	wantProperties, wantRequired := checkJSONFields(reflect.TypeOf(value))
 	gotProperties := make([]string, 0, len(properties))
 	for name := range properties {
 		gotProperties = append(gotProperties, name)
@@ -267,6 +256,29 @@ func assertCheckSchemaFields(t *testing.T, path string, value any) {
 	if !reflect.DeepEqual(required, wantRequired) {
 		t.Errorf("%s required = %v, want non-omitempty Go fields %v", path, required, wantRequired)
 	}
+}
+
+func checkJSONFields(typeOf reflect.Type) ([]string, []string) {
+	properties, required := []string{}, []string{}
+	for index := 0; index < typeOf.NumField(); index++ {
+		field := typeOf.Field(index)
+		tag := field.Tag.Get("json")
+		if field.Anonymous && tag == "" && field.Type.Kind() == reflect.Struct {
+			embeddedProperties, embeddedRequired := checkJSONFields(field.Type)
+			properties = append(properties, embeddedProperties...)
+			required = append(required, embeddedRequired...)
+			continue
+		}
+		parts := strings.Split(tag, ",")
+		if parts[0] == "" || parts[0] == "-" {
+			continue
+		}
+		properties = append(properties, parts[0])
+		if len(parts) == 1 || parts[1] != "omitempty" {
+			required = append(required, parts[0])
+		}
+	}
+	return properties, required
 }
 
 func TestCheckInputsExcludeCallerSelectedAuthorityProcessAndDescriptiveFields(t *testing.T) {
@@ -515,8 +527,8 @@ func TestCheckRunSelectorsUseExactEntityIdentifiers(t *testing.T) {
 	if run["checkout"].(map[string]any)["pattern"] != `^co_[0-9a-f]{32}$` {
 		t.Errorf("check.run checkout selector = %v", run["checkout"])
 	}
-	query := readContextSchema(t, "schemas/local/v1/check-query.params.schema.json")["properties"].(map[string]any)
-	if query["definition"].(map[string]any)["pattern"] != `^checkdef_[0-9a-f]{32}$` {
-		t.Errorf("check.list definition selector = %v", query["definition"])
+	list := readContextSchema(t, "schemas/local/v1/check-list.params.schema.json")["properties"].(map[string]any)
+	if list["definition"].(map[string]any)["pattern"] != `^checkdef_[0-9a-f]{32}$` {
+		t.Errorf("check.list definition selector = %v", list["definition"])
 	}
 }

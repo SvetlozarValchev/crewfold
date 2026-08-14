@@ -102,8 +102,11 @@ func TestEveryCheckClientRejectsWrongResultDiscriminator(t *testing.T) {
 			_, err := c.CheckPolicyConfigure(context.Background(), CheckPolicyConfigureParams{})
 			return err
 		},
-		MethodCheckRun:  func(c *Client) error { _, err := c.CheckRun(context.Background(), CheckRunParams{}); return err },
-		MethodCheckList: func(c *Client) error { _, err := c.CheckList(context.Background(), CheckQueryParams{}); return err },
+		MethodCheckRun: func(c *Client) error { _, err := c.CheckRun(context.Background(), CheckRunParams{}); return err },
+		MethodCheckList: func(c *Client) error {
+			_, err := c.CheckList(context.Background(), CheckListParams{Workspace: "ws_00000000000000000000000000000000"})
+			return err
+		},
 		MethodCheckInspect: func(c *Client) error {
 			_, err := c.CheckInspect(context.Background(), "personal", "checkrun")
 			return err

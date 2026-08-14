@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 
 	"crewfold/internal/localapi"
 	"crewfold/internal/store"
@@ -33,7 +34,7 @@ func (s *server) handleAgentUpdate(request localapi.Request) localapi.Response {
 
 func (s *server) handleAgentShow(request localapi.Request) localapi.Response {
 	var params localapi.AgentQueryParams
-	if err := decodeParams(request.Params, &params); err != nil {
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Agent) == "" {
 		return invalidParamsResponse(request, "agent.show requires workspace and agent")
 	}
 	agent, err := s.store.Agent(context.Background(), params.Workspace, params.Agent)
@@ -44,15 +45,15 @@ func (s *server) handleAgentShow(request localapi.Request) localapi.Response {
 }
 
 func (s *server) handleAgentList(request localapi.Request) localapi.Response {
-	var params localapi.AgentQueryParams
+	var params localapi.AgentListParams
 	if err := decodeParams(request.Params, &params); err != nil {
 		return invalidParamsResponse(request, "agent.list requires workspace")
 	}
-	agents, err := s.store.Agents(context.Background(), params.Workspace)
+	page, err := s.store.ListAgents(context.Background(), store.ListAgentsQuery{WorkspaceIdentifier: params.Workspace, Cursor: params.Cursor, Limit: params.Limit})
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.AgentListResult{Schema: localapi.AgentListSchema, Type: "agent_list", Agents: agents})
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.AgentListResult{Schema: localapi.AgentListSchema, Type: "agent_list", Agents: page.Agents, PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total}})
 }
 
 func (s *server) handleObjectiveCreate(request localapi.Request) localapi.Response {
@@ -81,7 +82,7 @@ func (s *server) handleObjectiveUpdate(request localapi.Request) localapi.Respon
 
 func (s *server) handleObjectiveShow(request localapi.Request) localapi.Response {
 	var params localapi.ObjectiveQueryParams
-	if err := decodeParams(request.Params, &params); err != nil {
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || !validCanonicalEntityID(params.Objective, "obj_") {
 		return invalidParamsResponse(request, "objective.show requires workspace and objective")
 	}
 	objective, err := s.store.Objective(context.Background(), params.Workspace, params.Objective)
@@ -92,15 +93,15 @@ func (s *server) handleObjectiveShow(request localapi.Request) localapi.Response
 }
 
 func (s *server) handleObjectiveList(request localapi.Request) localapi.Response {
-	var params localapi.ObjectiveQueryParams
+	var params localapi.ObjectiveListParams
 	if err := decodeParams(request.Params, &params); err != nil {
 		return invalidParamsResponse(request, "objective.list requires workspace and project")
 	}
-	objectives, err := s.store.Objectives(context.Background(), params.Workspace, params.Project)
+	page, err := s.store.ListObjectives(context.Background(), store.ListObjectivesQuery{WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, Cursor: params.Cursor, Limit: params.Limit})
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ObjectiveListResult{Schema: localapi.ObjectiveListSchema, Type: "objective_list", Objectives: objectives})
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ObjectiveListResult{Schema: localapi.ObjectiveListSchema, Type: "objective_list", Objectives: page.Objectives, PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total}})
 }
 
 func (s *server) handleTaskCreate(request localapi.Request) localapi.Response {
@@ -129,10 +130,10 @@ func (s *server) handleTaskUpdate(request localapi.Request) localapi.Response {
 
 func (s *server) handleTaskShow(request localapi.Request) localapi.Response {
 	var params localapi.TaskQueryParams
-	if err := decodeParams(request.Params, &params); err != nil {
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || !validCanonicalEntityID(params.Task, "task_") {
 		return invalidParamsResponse(request, "task.show requires workspace and task")
 	}
-	detail, err := s.store.TaskDetail(context.Background(), params.Workspace, params.Task, request.ID)
+	detail, err := s.store.TaskDetail(context.Background(), params.Workspace, params.Task)
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
@@ -140,15 +141,15 @@ func (s *server) handleTaskShow(request localapi.Request) localapi.Response {
 }
 
 func (s *server) handleTaskList(request localapi.Request) localapi.Response {
-	var params localapi.TaskQueryParams
+	var params localapi.TaskListParams
 	if err := decodeParams(request.Params, &params); err != nil {
 		return invalidParamsResponse(request, "task.list requires workspace and optional project/ready_only")
 	}
-	tasks, err := s.store.Tasks(context.Background(), params.Workspace, params.Project, request.ID, params.ReadyOnly)
+	page, err := s.store.ListTasks(context.Background(), store.ListTasksQuery{WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, ReadyOnly: params.ReadyOnly, Cursor: params.Cursor, Limit: params.Limit})
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.TaskListResult{Schema: localapi.TaskListSchema, Type: "task_list", Tasks: tasks})
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.TaskListResult{Schema: localapi.TaskListSchema, Type: "task_list", Tasks: page.Tasks, PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total}})
 }
 
 func (s *server) handleTaskDepend(request localapi.Request) localapi.Response {
@@ -192,7 +193,7 @@ func (s *server) handleCoordinationStatus(request localapi.Request) localapi.Res
 	if err := decodeParams(request.Params, &params); err != nil {
 		return invalidParamsResponse(request, "coordination.status requires workspace")
 	}
-	status, err := s.store.CoordinationStatus(context.Background(), params.Workspace, request.ID)
+	status, err := s.store.CoordinationStatus(context.Background(), params.Workspace)
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}

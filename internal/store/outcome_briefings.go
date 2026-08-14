@@ -165,7 +165,7 @@ func (s *Store) advanceOutcomeProjector(ctx context.Context, workspaceID string,
 	}
 }
 
-func knownOutcomeProjectorEvent(value string) bool { return knownSupervisorJournalEvent(value) }
+func knownOutcomeProjectorEvent(value string) bool { return domain.KnownEventType(value) }
 
 func (s *Store) materializeManagementBriefing(ctx context.Context, workspaceID string, scope domain.BriefingScope, checkpointID string, sinceSequence, cutoff int64, projection outcomeProjection, evaluatedAt string) (domain.ManagementBriefing, error) {
 	var result domain.ManagementBriefing

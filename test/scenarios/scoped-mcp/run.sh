@@ -135,7 +135,7 @@ grep -Fq '"status":"completed"' "$scenario_root/final.json"
 grep -Fq '"step_cursor":2' "$scenario_root/final.json"
 grep -Fq 'Review the immutable briefing' "$scenario_root/final.json"
 
-"$binary" events list --after 0 --limit 200 --socket "$socket_path" --output json >"$scenario_root/events.json"
+"$binary" events list --workspace personal --after 0 --limit 200 --socket "$socket_path" --output json >"$scenario_root/events.json"
 grep -Fq '"type":"run.tool_denied"' "$scenario_root/events.json"
 grep -Fq '"type":"run.artifact_published"' "$scenario_root/events.json"
 report_count=$(grep -o '"type":"run.report_received"' "$scenario_root/events.json" | wc -l)

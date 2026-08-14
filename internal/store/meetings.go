@@ -21,7 +21,8 @@ const (
 	meetingStalledEvent   = "meeting.stalled"
 	meetingConcludedEvent = "meeting.concluded"
 	meetingTakeoverEvent  = "meeting.human_takeover"
-	meetingActorType      = "agent"
+	meetingActionActorID  = "subsystem:meeting"
+	meetingActorType      = domain.EventActorSubsystem
 	maximumMeetingTimeout = 7 * 24 * time.Hour
 )
 
@@ -66,6 +67,12 @@ func (s *Store) CreateMeeting(ctx context.Context, command CreateMeetingCommand)
 	if err != nil {
 		return MeetingMutationResult{}, storageFailure("hash meeting creation", err)
 	}
+	var replay MeetingMutationResult
+	if found, err := s.lookupIdempotencyBeforeEffects(ctx, command.IdempotencyKey, "meeting.create", requestHash, &replay); err != nil {
+		return MeetingMutationResult{}, err
+	} else if found {
+		return replay, nil
+	}
 	if _, err := s.ReconcileExpiredClaims(ctx, command.WorkspaceIdentifier, derivedCorrelationID(command.CorrelationID, "claims")); err != nil {
 		return MeetingMutationResult{}, err
 	}
@@ -74,7 +81,6 @@ func (s *Store) CreateMeeting(ctx context.Context, command CreateMeetingCommand)
 		return MeetingMutationResult{}, storageFailure("begin meeting creation", err)
 	}
 	defer tx.Rollback()
-	var replay MeetingMutationResult
 	if found, err := lookupIdempotency(ctx, tx, command.IdempotencyKey, "meeting.create", requestHash, &replay); err != nil {
 		return MeetingMutationResult{}, err
 	} else if found {
@@ -260,6 +266,12 @@ func (s *Store) RunMeeting(ctx context.Context, command RunMeetingCommand) (Meet
 	if err != nil {
 		return MeetingMutationResult{}, storageFailure("hash meeting run", err)
 	}
+	var replay MeetingMutationResult
+	if found, err := s.lookupIdempotencyBeforeEffects(ctx, command.IdempotencyKey, "meeting.run", requestHash, &replay); err != nil {
+		return MeetingMutationResult{}, err
+	} else if found {
+		return replay, nil
+	}
 	if _, err := s.ReconcileExpiredClaims(ctx, command.WorkspaceIdentifier, derivedCorrelationID(command.CorrelationID, "claims")); err != nil {
 		return MeetingMutationResult{}, err
 	}
@@ -268,7 +280,6 @@ func (s *Store) RunMeeting(ctx context.Context, command RunMeetingCommand) (Meet
 		return MeetingMutationResult{}, storageFailure("begin meeting run", err)
 	}
 	defer tx.Rollback()
-	var replay MeetingMutationResult
 	if found, err := lookupIdempotency(ctx, tx, command.IdempotencyKey, "meeting.run", requestHash, &replay); err != nil {
 		return MeetingMutationResult{}, err
 	} else if found {
@@ -407,6 +418,12 @@ func (s *Store) AcceptMeeting(ctx context.Context, command AcceptMeetingCommand)
 	if err != nil {
 		return MeetingMutationResult{}, storageFailure("hash meeting acceptance", err)
 	}
+	var replay MeetingMutationResult
+	if found, err := s.lookupIdempotencyBeforeEffects(ctx, command.IdempotencyKey, "meeting.accept", requestHash, &replay); err != nil {
+		return MeetingMutationResult{}, err
+	} else if found {
+		return replay, nil
+	}
 	if _, err := s.ReconcileExpiredClaims(ctx, command.WorkspaceIdentifier, derivedCorrelationID(command.CorrelationID, "claims")); err != nil {
 		return MeetingMutationResult{}, err
 	}
@@ -415,7 +432,6 @@ func (s *Store) AcceptMeeting(ctx context.Context, command AcceptMeetingCommand)
 		return MeetingMutationResult{}, storageFailure("begin meeting acceptance", err)
 	}
 	defer tx.Rollback()
-	var replay MeetingMutationResult
 	if found, err := lookupIdempotency(ctx, tx, command.IdempotencyKey, "meeting.accept", requestHash, &replay); err != nil {
 		return MeetingMutationResult{}, err
 	} else if found {
@@ -459,6 +475,12 @@ func (s *Store) TakeoverMeeting(ctx context.Context, command TakeoverMeetingComm
 	if err != nil {
 		return MeetingMutationResult{}, storageFailure("hash meeting takeover", err)
 	}
+	var replay MeetingMutationResult
+	if found, err := s.lookupIdempotencyBeforeEffects(ctx, command.IdempotencyKey, "meeting.takeover", requestHash, &replay); err != nil {
+		return MeetingMutationResult{}, err
+	} else if found {
+		return replay, nil
+	}
 	if _, err := s.ReconcileExpiredClaims(ctx, command.WorkspaceIdentifier, derivedCorrelationID(command.CorrelationID, "claims")); err != nil {
 		return MeetingMutationResult{}, err
 	}
@@ -467,7 +489,6 @@ func (s *Store) TakeoverMeeting(ctx context.Context, command TakeoverMeetingComm
 		return MeetingMutationResult{}, storageFailure("begin meeting takeover", err)
 	}
 	defer tx.Rollback()
-	var replay MeetingMutationResult
 	if found, err := lookupIdempotency(ctx, tx, command.IdempotencyKey, "meeting.takeover", requestHash, &replay); err != nil {
 		return MeetingMutationResult{}, err
 	} else if found {

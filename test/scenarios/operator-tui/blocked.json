@@ -1,0 +1,25 @@
+{
+  "schema": "urn:crewfold:schema:fixture:fake-run-scenario:v1",
+  "name": "greenfield-choice-then-complete",
+  "acceptance": {
+    "required_evidence": ["tests_passed"]
+  },
+  "steps": [
+    {
+      "kind": "blocked",
+      "message": "Which gameplay loop should we implement first?",
+      "evidence": ["product_choice_needed"]
+    },
+    {
+      "kind": "progress",
+      "message": "owner direction applied",
+      "evidence": ["direction_received"]
+    },
+    {
+      "kind": "completion",
+      "message": "selected gameplay loop implemented",
+      "evidence": ["tests_passed"],
+      "handoff": "Review the new gameplay loop and its passing test evidence."
+    }
+  ]
+}

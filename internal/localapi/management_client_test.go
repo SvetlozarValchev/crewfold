@@ -109,7 +109,7 @@ func TestManagementClientsRejectWrongResultDiscriminators(t *testing.T) {
 			return err
 		},
 		MethodSupervisorActionShow: func(client *Client) error {
-			_, err := client.SupervisorActionShow(context.Background(), "personal", "saction_exact")
+			_, err := client.SupervisorActionShow(context.Background(), "ws_00000000000000000000000000000000", "saction_exact")
 			return err
 		},
 		MethodSupervisorExplain: func(client *Client) error {
@@ -117,7 +117,7 @@ func TestManagementClientsRejectWrongResultDiscriminators(t *testing.T) {
 			return err
 		},
 		MethodApprovalList: func(client *Client) error {
-			_, err := client.ApprovalList(context.Background(), ApprovalQueryParams{})
+			_, err := client.ApprovalList(context.Background(), ApprovalListParams{Workspace: "ws_00000000000000000000000000000000"})
 			return err
 		},
 		MethodApprovalInspect: func(client *Client) error {
@@ -125,11 +125,11 @@ func TestManagementClientsRejectWrongResultDiscriminators(t *testing.T) {
 			return err
 		},
 		MethodApprovalAllow: func(client *Client) error {
-			_, err := client.ApprovalAllow(context.Background(), ApprovalDecisionParams{})
+			_, err := client.ApprovalAllow(context.Background(), ApprovalDecisionParams{Workspace: "ws_00000000000000000000000000000000"})
 			return err
 		},
 		MethodApprovalDeny: func(client *Client) error {
-			_, err := client.ApprovalDeny(context.Background(), ApprovalDecisionParams{})
+			_, err := client.ApprovalDeny(context.Background(), ApprovalDecisionParams{Workspace: "ws_00000000000000000000000000000000"})
 			return err
 		},
 	}

@@ -174,58 +174,6 @@ func (s *Store) Workspace(ctx context.Context, identifier string) (Workspace, er
 	return Workspace{}, storageFailure("query workspace by name", err)
 }
 
-func (s *Store) Events(ctx context.Context, after int64, limit int) ([]Event, error) {
-	if after < 0 {
-		return nil, &Error{Code: CodeStorageFailed, Message: "event cursor must be zero or greater"}
-	}
-	if limit <= 0 || limit > 1001 {
-		return nil, &Error{Code: CodeStorageFailed, Message: "event limit must be between 1 and 1001"}
-	}
-	rows, err := s.db.QueryContext(ctx, `
-SELECT event_id, sequence, type, schema_version, occurred_at, recorded_at,
-       actor_id, actor_type, workspace_id, entity_type, entity_id,
-       entity_revision, correlation_id, COALESCE(causation_id, ''), data_json
-FROM events
-WHERE sequence > ?
-ORDER BY sequence
-LIMIT ?`, after, limit)
-	if err != nil {
-		return nil, storageFailure("list events", err)
-	}
-	defer rows.Close()
-
-	events := make([]Event, 0)
-	for rows.Next() {
-		var event Event
-		var data string
-		if err := rows.Scan(
-			&event.EventID,
-			&event.Sequence,
-			&event.Type,
-			&event.SchemaVersion,
-			&event.OccurredAt,
-			&event.RecordedAt,
-			&event.Actor.ActorID,
-			&event.Actor.ActorType,
-			&event.WorkspaceID,
-			&event.Entity.Type,
-			&event.Entity.ID,
-			&event.Entity.Revision,
-			&event.CorrelationID,
-			&event.CausationID,
-			&data,
-		); err != nil {
-			return nil, storageFailure("scan event", err)
-		}
-		event.Data = json.RawMessage(data)
-		events = append(events, event)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, storageFailure("iterate events", err)
-	}
-	return events, nil
-}
-
 func lookupIdempotency(ctx context.Context, transaction *sql.Tx, key, command, requestHash string, target any) (bool, error) {
 	var storedCommand, storedHash, response string
 	err := transaction.QueryRowContext(ctx,
@@ -248,6 +196,19 @@ func lookupIdempotency(ctx context.Context, transaction *sql.Tx, key, command, r
 		return false, storageFailure("decode idempotent response", err)
 	}
 	return true, nil
+}
+
+// lookupIdempotencyBeforeEffects gives an exact replay precedence over any
+// time-driven reconciliation that a fresh mutation performs. The mutation
+// still repeats the lookup in its write transaction after reconciliation to
+// close races with another caller using the same key.
+func (s *Store) lookupIdempotencyBeforeEffects(ctx context.Context, key, command, requestHash string, target any) (bool, error) {
+	transaction, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return false, storageFailure("begin idempotency replay lookup", err)
+	}
+	defer transaction.Rollback()
+	return lookupIdempotency(ctx, transaction, key, command, requestHash, target)
 }
 
 type rowScanner interface {

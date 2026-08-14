@@ -170,7 +170,7 @@ func registerSQLiteExtensions(connection *sqlite3.Conn) error {
 	if err := registerSQLiteTimestampKey(connection); err != nil {
 		return err
 	}
-	if err := registerSQLiteSupervisorEventKnown(connection); err != nil {
+	if err := registerSQLiteEventClassifiers(connection); err != nil {
 		return err
 	}
 	return registerSQLiteUTF8Valid(connection)

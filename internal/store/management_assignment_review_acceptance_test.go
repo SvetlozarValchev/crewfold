@@ -56,7 +56,7 @@ func TestManagerAssignmentProposalRequiresReadyUnassignedTargetWithoutOpenIntent
 			name: "open intent target",
 			setup: func(t *testing.T, fixture assignmentReviewValidationFixture, target domain.TaskDetail) domain.TaskDetail {
 				fixture.acceptAssignment(t, target.Task, fixture.base.target.ID, "assignment-validation-open-intent-seed")
-				stored, err := fixture.storage.TaskDetail(context.Background(), fixture.base.workspace.ID, target.Task.ID, "inspect-open-intent-target")
+				stored, err := fixture.storage.TaskDetail(context.Background(), fixture.base.workspace.ID, target.Task.ID)
 				if err != nil {
 					t.Fatalf("TaskDetail(open intent assignment target) = %v", err)
 				}
@@ -141,7 +141,7 @@ func TestManagerReviewProposalRequiresIndependentExactReviewer(t *testing.T) {
 			issueCode: "reviewer_not_independent",
 			setup: func(t *testing.T, fixture assignmentReviewValidationFixture, target domain.TaskDetail) domain.TaskDetail {
 				fixture.acceptAssignment(t, target.Task, fixture.base.target.ID, "review-validation-open-intent-seed")
-				stored, err := fixture.storage.TaskDetail(context.Background(), fixture.base.workspace.ID, target.Task.ID, "inspect-review-open-intent-target")
+				stored, err := fixture.storage.TaskDetail(context.Background(), fixture.base.workspace.ID, target.Task.ID)
 				if err != nil {
 					t.Fatalf("TaskDetail(review open-intent target) = %v", err)
 				}

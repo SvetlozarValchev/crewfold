@@ -475,11 +475,23 @@ func TestRunInteractiveControlsUseProviderNeutralRuntimeAPI(t *testing.T) {
 		attached = value
 		return nil
 	}
-	if exit := app.Run([]string{"run", "attach", client.runAttach.RunID, "--takeover", "--workspace", "personal", "--socket", "/tmp/crewfold.sock"}); exit != ExitOK || stderr.Len() != 0 {
+	if exit := app.Run([]string{"run", "attach", client.runAttach.RunID, "--workspace", "personal", "--socket", "/tmp/crewfold.sock"}); exit != ExitOK || stderr.Len() != 0 {
 		t.Fatalf("Run(attach) exit=%d stderr=%q", exit, stderr.String())
 	}
-	if attached.Executable != "/opt/herdr" || !client.runAttachTakeover {
-		t.Fatalf("attach result=%#v takeover=%t", attached, client.runAttachTakeover)
+	if attached.Executable != "/opt/herdr" || client.runControlWorkspace != "personal" || client.runControlRun != client.runAttach.RunID {
+		t.Fatalf("attach result=%#v workspace=%q run=%q", attached, client.runControlWorkspace, client.runControlRun)
+	}
+}
+
+func TestRunAttachRejectsRemovedTakeoverOption(t *testing.T) {
+	t.Parallel()
+	app, _, stderr := newTestApp()
+	exit := app.Run([]string{
+		"run", "attach", "run_00000000000000000000000000000001", "--takeover",
+		"--workspace", "personal", "--socket", "/tmp/crewfold.sock",
+	})
+	if exit != ExitUsage || !strings.Contains(stderr.String(), "unknown option --takeover") {
+		t.Fatalf("Run(removed attach takeover) exit=%d stderr=%q", exit, stderr.String())
 	}
 }
 
@@ -796,15 +808,17 @@ func TestWorkspaceCommandsUseExplicitSocketAndStructuredResults(t *testing.T) {
 			},
 		},
 		"events list": {
-			args:       []string{"events", "list", "--socket", "/tmp/workspace.sock", "--after", "7", "--limit", "25", "--output=json"},
+			args:       []string{"events", "list", "--workspace", "personal", "--socket", "/tmp/workspace.sock", "--after", "7", "--limit", "25", "--output=json"},
 			wantSchema: localapi.EventsListSchema,
 			configure: func(client *fakeDaemonClient) {
 				client.eventsList = localapi.EventsListResult{
 					Schema:    localapi.EventsListSchema,
 					Type:      "event_list",
-					After:     7,
-					NextAfter: 7,
+					HighWater: 7,
 					Events:    []domain.Event{},
+					PageResult: localapi.PageResult{
+						Total: 0,
+					},
 				}
 			},
 			assert: func(t *testing.T, client *fakeDaemonClient) {
@@ -1142,7 +1156,6 @@ type fakeDaemonClient struct {
 	runControlWorkspace       string
 	runControlRun             string
 	runPromptText             string
-	runAttachTakeover         bool
 	coordination              localapi.CoordinationStatusResult
 	messageSend               localapi.MessageSendResult
 	inboxList                 localapi.InboxListResult
@@ -1282,7 +1295,7 @@ func (client *fakeDaemonClient) AgentShow(context.Context, string, string) (loca
 	return client.agentShow, nil
 }
 
-func (client *fakeDaemonClient) AgentList(context.Context, string) (localapi.AgentListResult, error) {
+func (client *fakeDaemonClient) AgentList(context.Context, localapi.AgentListParams) (localapi.AgentListResult, error) {
 	return client.agentList, nil
 }
 
@@ -1299,7 +1312,7 @@ func (client *fakeDaemonClient) ObjectiveShow(context.Context, string, string) (
 	return client.objectiveShow, nil
 }
 
-func (client *fakeDaemonClient) ObjectiveList(context.Context, string, string) (localapi.ObjectiveListResult, error) {
+func (client *fakeDaemonClient) ObjectiveList(context.Context, localapi.ObjectiveListParams) (localapi.ObjectiveListResult, error) {
 	return client.objectiveList, nil
 }
 
@@ -1316,7 +1329,7 @@ func (client *fakeDaemonClient) TaskShow(context.Context, string, string) (local
 	return client.taskShow, nil
 }
 
-func (client *fakeDaemonClient) TaskList(context.Context, string, string, bool) (localapi.TaskListResult, error) {
+func (client *fakeDaemonClient) TaskList(context.Context, localapi.TaskListParams) (localapi.TaskListResult, error) {
 	return client.taskList, nil
 }
 
@@ -1501,7 +1514,7 @@ func (client *fakeDaemonClient) RunShow(context.Context, string, string) (locala
 	return client.runShow, nil
 }
 
-func (client *fakeDaemonClient) RunList(context.Context, string, string, string) (localapi.RunListResult, error) {
+func (client *fakeDaemonClient) RunList(context.Context, localapi.RunListParams) (localapi.RunListResult, error) {
 	return client.runList, nil
 }
 
@@ -1532,8 +1545,8 @@ func (client *fakeDaemonClient) RunInterrupt(_ context.Context, workspace, run s
 	return client.runControl, nil
 }
 
-func (client *fakeDaemonClient) RunAttach(_ context.Context, workspace, run string, takeover bool) (localapi.RunAttachResult, error) {
-	client.runControlWorkspace, client.runControlRun, client.runAttachTakeover = workspace, run, takeover
+func (client *fakeDaemonClient) RunAttach(_ context.Context, workspace, run string) (localapi.RunAttachResult, error) {
+	client.runControlWorkspace, client.runControlRun = workspace, run
 	return client.runAttach, nil
 }
 
@@ -1546,7 +1559,7 @@ func (client *fakeDaemonClient) ClaimAdd(context.Context, localapi.ClaimAddParam
 	return localapi.ClaimMutationResult{}, nil
 }
 
-func (client *fakeDaemonClient) ClaimList(context.Context, string, string, string) (localapi.ClaimListResult, error) {
+func (client *fakeDaemonClient) ClaimList(context.Context, localapi.ClaimListParams) (localapi.ClaimListResult, error) {
 	return localapi.ClaimListResult{}, nil
 }
 
@@ -1554,7 +1567,7 @@ func (client *fakeDaemonClient) ClaimRelease(context.Context, localapi.ClaimRele
 	return localapi.ClaimMutationResult{}, nil
 }
 
-func (client *fakeDaemonClient) OverlapList(context.Context, string, string, string) (localapi.OverlapListResult, error) {
+func (client *fakeDaemonClient) OverlapList(context.Context, localapi.OverlapListParams) (localapi.OverlapListResult, error) {
 	return localapi.OverlapListResult{}, nil
 }
 
@@ -1566,7 +1579,7 @@ func (client *fakeDaemonClient) OverlapScan(context.Context, string, string) (lo
 	return localapi.OverlapScanResult{}, nil
 }
 
-func (client *fakeDaemonClient) DriftList(context.Context, string, string) (localapi.DriftListResult, error) {
+func (client *fakeDaemonClient) DriftList(context.Context, localapi.DriftListParams) (localapi.DriftListResult, error) {
 	return localapi.DriftListResult{}, nil
 }
 
@@ -1666,7 +1679,7 @@ func (client *fakeDaemonClient) SupervisorExplain(context.Context, localapi.Supe
 	return localapi.SupervisorExplanationResult{}, nil
 }
 
-func (client *fakeDaemonClient) ApprovalList(context.Context, localapi.ApprovalQueryParams) (localapi.ApprovalListResult, error) {
+func (client *fakeDaemonClient) ApprovalList(context.Context, localapi.ApprovalListParams) (localapi.ApprovalListResult, error) {
 	return localapi.ApprovalListResult{}, nil
 }
 
@@ -1682,9 +1695,9 @@ func (client *fakeDaemonClient) ApprovalDeny(context.Context, localapi.ApprovalD
 	return localapi.ApprovalMutationResult{}, nil
 }
 
-func (client *fakeDaemonClient) EventsList(_ context.Context, after int64, limit int) (localapi.EventsListResult, error) {
-	client.eventsAfter = after
-	client.eventsLimit = limit
+func (client *fakeDaemonClient) EventsList(_ context.Context, params localapi.EventsListParams) (localapi.EventsListResult, error) {
+	client.eventsAfter = params.After
+	client.eventsLimit = params.Limit
 	return client.eventsList, client.eventsListErr
 }
 

@@ -246,9 +246,6 @@ func (s *server) handleBriefingExplain(request localapi.Request) localapi.Respon
 }
 
 func decodeOutcomeParams(data json.RawMessage, target any) error {
-	if err := rejectDuplicateCheckJSONFields(data); err != nil {
-		return err
-	}
 	return decodeParams(data, target)
 }
 

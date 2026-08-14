@@ -84,14 +84,33 @@ func (c *Client) CheckpointList(ctx context.Context, params CheckpointQueryParam
 }
 
 func (c *Client) BriefingShow(ctx context.Context, params BriefingShowParams) (BriefingShowResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, params.Workspace)
+	if err != nil {
+		return BriefingShowResult{}, err
+	}
+	params.Workspace = workspaceID
+	switch params.ScopeType {
+	case "workspace":
+		params.ScopeIdentifier, err = c.resolveOperatorWorkspace(ctx, params.ScopeIdentifier)
+	case "project":
+		params.ScopeIdentifier, err = c.resolveOperatorProject(ctx, workspaceID, params.ScopeIdentifier)
+	}
+	if err != nil {
+		return BriefingShowResult{}, err
+	}
 	var result BriefingShowResult
-	err := c.callParamsStrict(ctx, MethodBriefingShow, params, &result)
+	err = c.callParamsStrict(ctx, MethodBriefingShow, params, &result)
 	return result, validateOutcomeResult(err, MethodBriefingShow, result.Schema, result.Type, BriefingShowSchema, "management_briefing")
 }
 
 func (c *Client) BriefingExplain(ctx context.Context, params BriefingExplainParams) (BriefingExplainResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, params.Workspace)
+	if err != nil {
+		return BriefingExplainResult{}, err
+	}
+	params.Workspace = workspaceID
 	var result BriefingExplainResult
-	err := c.callParamsStrict(ctx, MethodBriefingExplain, params, &result)
+	err = c.callParamsStrict(ctx, MethodBriefingExplain, params, &result)
 	return result, validateOutcomeResult(err, MethodBriefingExplain, result.Schema, result.Type, BriefingExplainSchema, "briefing_claim_explanation")
 }
 

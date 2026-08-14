@@ -96,19 +96,7 @@ func (a *App) runAttach(ctx context.Context, mode outputMode, args []string) int
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	takeover := false
-	normalized := make([]string, 0, len(optionArgs))
-	for _, argument := range optionArgs {
-		if argument == "--takeover" {
-			if takeover {
-				return a.writeFailure(mode, usageFailure("--takeover may be specified only once", "remove the duplicate option"))
-			}
-			takeover = true
-			continue
-		}
-		normalized = append(normalized, argument)
-	}
-	options, failure := parseOptions(normalized, "workspace", "socket")
+	options, failure := parseOptions(optionArgs, "workspace", "socket")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -116,7 +104,7 @@ func (a *App) runAttach(ctx context.Context, mode outputMode, args []string) int
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	attachment, err := a.newClient(socket).RunAttach(ctx, workspace, runID, takeover)
+	attachment, err := a.newClient(socket).RunAttach(ctx, workspace, runID)
 	if err != nil {
 		return a.writeClientFailure(mode, "prepare run attach", err)
 	}
@@ -288,7 +276,7 @@ func (a *App) runShow(ctx context.Context, mode outputMode, args []string) int {
 }
 
 func (a *App) runList(ctx context.Context, mode outputMode, args []string) int {
-	options, failure := parseOptions(args, "workspace", "task", "status", "socket")
+	options, failure := parseOptions(args, "workspace", "project", "task", "status", "cursor", "limit", "socket")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -296,7 +284,11 @@ func (a *App) runList(ctx context.Context, mode outputMode, args []string) int {
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	result, err := a.newClient(socket).RunList(ctx, workspace, options["task"], options["status"])
+	limit, failure := optionalIntOption(options, "limit", 1, 200)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).RunList(ctx, localapi.RunListParams{Workspace: workspace, Project: options["project"], Task: options["task"], Status: options["status"], PageParams: localapi.PageParams{Cursor: options["cursor"], Limit: int(limit)}})
 	if err != nil {
 		return a.writeClientFailure(mode, "list runs", err)
 	}
@@ -305,9 +297,10 @@ func (a *App) runList(ctx context.Context, mode outputMode, args []string) int {
 			return a.writeFailure(outputText, internalFailure("write run list", err))
 		}
 	} else {
-		for _, detail := range result.Runs {
-			fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\tstep=%d\n", detail.Run.ID, detail.Run.Status, detail.Run.TaskID, detail.Run.AgentID, detail.Run.StepCursor)
+		for _, run := range result.Runs {
+			fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\trevision %d\n", run.ID, run.Status, run.TaskID, run.AgentID, run.Revision)
 		}
+		writePageMetadata(a.stdout, result.PageResult, len(result.Runs))
 	}
 	return ExitOK
 }
@@ -430,14 +423,14 @@ func writeRunText(a *App, detail domain.RunDetail) {
 const runHelp = `Usage:
   crewfold run start <task-id> --workspace <scope> --runtime <runtime> --provider <provider> --scenario <file> --expected-task-revision <n> --socket <path> [--checkout <id>] [--context <id>] [--check-watch-grant <id> --expected-check-watch-grant-revision <n>]
   crewfold run show <id> --workspace <scope> --socket <path>
-  crewfold run list --workspace <scope> [--task <id>] [--status <status>] --socket <path>
+  crewfold run list --workspace <scope> [--project <project>] [--task <id>] [--status <status>] [--cursor <cursor>] [--limit <1..200>] --socket <path>
   crewfold run watch <id> --workspace <scope> --socket <path> [--wait-seconds <n>]
   crewfold run resume <id> --workspace <scope> --expected-revision <n> --socket <path>
   crewfold run stop <id> --graceful --workspace <scope> --expected-revision <n> --socket <path> [--grace-millis <n>]
   crewfold run logs <id> --workspace <scope> --socket <path> [--tail <lines>]
   crewfold run prompt <id> --text <prompt> --workspace <scope> --socket <path>
   crewfold run interrupt <id> --workspace <scope> --socket <path>
-  crewfold run attach <id> --workspace <scope> --socket <path> [--takeover]
+  crewfold run attach <id> --workspace <scope> --socket <path>
 
 The fake runtime exercises durable domain behavior without a process. The direct
 runtime supervises a bounded local subprocess. The Herdr runtime hosts a fixture

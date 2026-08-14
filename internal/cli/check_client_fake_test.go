@@ -77,7 +77,7 @@ func (*fakeDaemonClient) CheckRun(context.Context, localapi.CheckRunParams) (loc
 	return localapi.CheckRunMutationResult{}, nil
 }
 
-func (*fakeDaemonClient) CheckList(context.Context, localapi.CheckQueryParams) (localapi.CheckRunListResult, error) {
+func (*fakeDaemonClient) CheckList(context.Context, localapi.CheckListParams) (localapi.CheckRunListResult, error) {
 	return localapi.CheckRunListResult{}, nil
 }
 

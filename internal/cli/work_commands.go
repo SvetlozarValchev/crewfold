@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -141,7 +142,7 @@ func (a *App) runAgentShow(ctx context.Context, mode outputMode, args []string) 
 }
 
 func (a *App) runAgentList(ctx context.Context, mode outputMode, args []string) int {
-	options, failure := parseOptions(args, "workspace", "socket")
+	options, failure := parseOptions(args, "workspace", "cursor", "limit", "socket")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -149,7 +150,11 @@ func (a *App) runAgentList(ctx context.Context, mode outputMode, args []string) 
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	result, err := a.newClient(socket).AgentList(ctx, workspace)
+	limit, failure := optionalIntOption(options, "limit", 1, 200)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).AgentList(ctx, localapi.AgentListParams{Workspace: workspace, PageParams: localapi.PageParams{Cursor: options["cursor"], Limit: int(limit)}})
 	if err != nil {
 		return a.writeClientFailure(mode, "list agents", err)
 	}
@@ -161,6 +166,7 @@ func (a *App) runAgentList(ctx context.Context, mode outputMode, args []string) 
 		for _, agent := range result.Agents {
 			fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\tenabled=%t\n", agent.ID, agent.Name, agent.Role, agent.Provider, agent.Enabled)
 		}
+		writePageMetadata(a.stdout, result.PageResult, len(result.Agents))
 	}
 	return ExitOK
 }
@@ -279,7 +285,7 @@ func (a *App) runObjectiveShow(ctx context.Context, mode outputMode, args []stri
 }
 
 func (a *App) runObjectiveList(ctx context.Context, mode outputMode, args []string) int {
-	options, failure := parseOptions(args, "workspace", "project", "socket")
+	options, failure := parseOptions(args, "workspace", "project", "cursor", "limit", "socket")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -287,11 +293,11 @@ func (a *App) runObjectiveList(ctx context.Context, mode outputMode, args []stri
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	project, failure := requiredOption(options, "project")
+	limit, failure := optionalIntOption(options, "limit", 1, 200)
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	result, err := a.newClient(socket).ObjectiveList(ctx, workspace, project)
+	result, err := a.newClient(socket).ObjectiveList(ctx, localapi.ObjectiveListParams{Workspace: workspace, Project: options["project"], PageParams: localapi.PageParams{Cursor: options["cursor"], Limit: int(limit)}})
 	if err != nil {
 		return a.writeClientFailure(mode, "list objectives", err)
 	}
@@ -303,6 +309,7 @@ func (a *App) runObjectiveList(ctx context.Context, mode outputMode, args []stri
 		for _, objective := range result.Objectives {
 			fmt.Fprintf(a.stdout, "%s\t%s\t%s\trevision %d\n", objective.ID, objective.Title, objective.Status, objective.Revision)
 		}
+		writePageMetadata(a.stdout, result.PageResult, len(result.Objectives))
 	}
 	return ExitOK
 }
@@ -440,7 +447,7 @@ func (a *App) runTaskShow(ctx context.Context, mode outputMode, args []string) i
 }
 
 func (a *App) runTaskList(ctx context.Context, mode outputMode, args []string) int {
-	options, failure := parseOptions(args, "workspace", "project", "ready", "socket")
+	options, failure := parseOptions(args, "workspace", "project", "ready", "cursor", "limit", "socket")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -455,7 +462,11 @@ func (a *App) runTaskList(ctx context.Context, mode outputMode, args []string) i
 			return a.writeFailure(mode, *failure)
 		}
 	}
-	result, err := a.newClient(socket).TaskList(ctx, workspace, options["project"], ready)
+	limit, failure := optionalIntOption(options, "limit", 1, 200)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).TaskList(ctx, localapi.TaskListParams{Workspace: workspace, Project: options["project"], ReadyOnly: ready, PageParams: localapi.PageParams{Cursor: options["cursor"], Limit: int(limit)}})
 	if err != nil {
 		return a.writeClientFailure(mode, "list tasks", err)
 	}
@@ -467,8 +478,13 @@ func (a *App) runTaskList(ctx context.Context, mode outputMode, args []string) i
 		for _, detail := range result.Tasks {
 			fmt.Fprintf(a.stdout, "%s\t%s\t%s\tready=%t\t%s\n", detail.Task.ID, detail.Task.Status, detail.Task.Title, detail.Readiness.Ready, detail.Readiness.Reason)
 		}
+		writePageMetadata(a.stdout, result.PageResult, len(result.Tasks))
 	}
 	return ExitOK
+}
+
+func writePageMetadata(writer io.Writer, page localapi.PageResult, shown int) {
+	fmt.Fprintf(writer, "page: shown=%d total=%d has_more=%t next_cursor=%s\n", shown, page.Total, page.HasMore, page.NextCursor)
 }
 
 func (a *App) runTaskDepend(ctx context.Context, mode outputMode, args []string) int {
@@ -733,7 +749,7 @@ const agentHelp = `Usage:
   crewfold agent create <name> --workspace <scope> --role <role> --provider <provider> --socket <path>
   crewfold agent update <name-or-id> --workspace <scope> --expected-revision <n> [fields] --socket <path>
   crewfold agent show <name-or-id> --workspace <scope> --socket <path>
-  crewfold agent list --workspace <scope> --socket <path>
+  crewfold agent list --workspace <scope> [--cursor <cursor>] [--limit <1..200>] --socket <path>
 
 Agent definitions are durable role/configuration records. These commands never
 launch a provider or runtime process.
@@ -743,7 +759,7 @@ const objectiveHelp = `Usage:
   crewfold objective create <title> --workspace <scope> --project <project> --socket <path> [budget options]
   crewfold objective update <id> --workspace <scope> --expected-revision <n> [fields] --socket <path>
   crewfold objective show <id> --workspace <scope> --socket <path>
-  crewfold objective list --workspace <scope> --project <project> --socket <path>
+  crewfold objective list --workspace <scope> [--project <project>] [--cursor <cursor>] [--limit <1..200>] --socket <path>
 `
 
 const taskHelp = `Usage:
@@ -753,7 +769,7 @@ const taskHelp = `Usage:
   crewfold task assign <id> <agent> --lease-seconds <n> --workspace <scope> --expected-revision <n> --socket <path>
   crewfold task start|block|unblock|cancel <id> --workspace <scope> --expected-revision <n> --socket <path>
   crewfold task show <id> --workspace <scope> --socket <path>
-  crewfold task list --workspace <scope> [--project <project>] [--ready true] --socket <path>
+  crewfold task list --workspace <scope> [--project <project>] [--ready true] [--cursor <cursor>] [--limit <1..200>] --socket <path>
   crewfold task timeline <id> --workspace <scope> --socket <path>
 
 Every mutation uses an expected revision and an optional stable idempotency key.

@@ -104,7 +104,7 @@ func TestRunScopedMCPReportsContradictionButCannotConfirmIt(t *testing.T) {
 	if err != nil || shown.Detail.Contradiction.Status != domain.KnowledgeContradictionProposed || len(shown.Detail.AuthorityChecks) != 0 {
 		t.Fatalf("contradiction after MCP confirm denial = %#v, %v", shown, err)
 	}
-	events, err := owner.EventsList(context.Background(), 0, 500)
+	events, err := owner.EventsList(context.Background(), localapi.EventsListParams{Workspace: "personal", After: 0, PageParams: localapi.PageParams{Limit: 500}})
 	if err != nil {
 		t.Fatalf("EventsList() error = %v", err)
 	}

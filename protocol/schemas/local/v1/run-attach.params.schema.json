@@ -6,8 +6,7 @@
   "additionalProperties": false,
   "required": ["workspace", "run"],
   "properties": {
-    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
-    "run": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
-    "takeover": {"type": "boolean"}
+    "workspace": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "run": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"}
   }
 }

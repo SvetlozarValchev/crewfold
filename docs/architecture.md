@@ -124,9 +124,9 @@ special back door by which terminal text can mutate task or knowledge state.
 
 ### Local API
 
-Provides commands, queries, and subscriptions over a user-owned Unix socket. The
-wire contract is versioned and described by JSON Schema. A loopback TCP listener
-is not enabled by default.
+Provides commands, bounded queries, and resumable event pages over a user-owned
+Unix socket. The wire contract is versioned and described by JSON Schema. A
+loopback TCP listener is not enabled by default.
 
 The API supports:
 
@@ -135,6 +135,26 @@ The API supports:
 - event cursors for watch/resume;
 - actor identity on every command;
 - machine-readable errors and human-readable explanations.
+
+### Operator TUI
+
+The existing binary embeds one Bubble Tea model behind `crewfold ui`. It uses the
+concrete current local-API client; it has no SQLite access, client abstraction,
+alternate renderer, compatibility frontend, or browser fallback. Its pure View
+renders the last successfully applied canonical snapshot. Asynchronous commands
+return typed messages to the one reducer and carry a load generation so a late
+response cannot overwrite a newer scope or refresh.
+
+Bootstrap captures a workspace journal high-water before bounded canonical reads.
+Later event envelopes only invalidate records. Candidate cursor state becomes
+applied only after the invalidated canonical records refresh; a daemon rewind
+discards the client cache and starts a full bootstrap. While disconnected, cached
+records are visibly stale and mutation controls are unavailable.
+
+All external text is bounded and sanitized before terminal layout. Confirmed
+interventions use the same expected-revision and idempotency contracts as CLI
+commands. Attach is the only transition into the runtime terminal: Bubble Tea
+suspends while the exact `RunAttach` argv executes, then restores and catches up.
 
 ### MCP server
 

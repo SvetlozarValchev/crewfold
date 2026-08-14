@@ -3,10 +3,12 @@ package store
 import (
 	"sync/atomic"
 
+	"crewfold/internal/domain"
+
 	"github.com/ncruces/go-sqlite3"
 )
 
-const sqliteSupervisorEventKnownFunction = "crewfold_supervisor_event_known"
+const sqliteCanonicalEventKnownFunction = "crewfold_event_type_known"
 
 const sqliteCheckEventKnownFunction = "crewfold_check_watch_event_known"
 
@@ -30,12 +32,12 @@ func registerSQLiteSupervisorActionSealActive(connection *sqlite3.Conn, active *
 	)
 }
 
-// registerSQLiteSupervisorEventKnown exposes the same closed event union used
-// by the supervisor reader to schema triggers. This prevents a direct cursor
-// update from skipping an event that the current binary cannot classify.
-func registerSQLiteSupervisorEventKnown(connection *sqlite3.Conn) error {
+// registerSQLiteEventClassifiers exposes the current closed event union to
+// indexed operator reads and schema triggers. Consumers cannot skip an event
+// that the current binary cannot classify.
+func registerSQLiteEventClassifiers(connection *sqlite3.Conn) error {
 	if err := connection.CreateFunction(
-		sqliteSupervisorEventKnownFunction,
+		sqliteCanonicalEventKnownFunction,
 		1,
 		sqlite3.DETERMINISTIC|sqlite3.INNOCUOUS,
 		func(ctx sqlite3.Context, arguments ...sqlite3.Value) {
@@ -43,7 +45,7 @@ func registerSQLiteSupervisorEventKnown(connection *sqlite3.Conn) error {
 				ctx.ResultInt(0)
 				return
 			}
-			if knownSupervisorJournalEvent(arguments[0].Text()) {
+			if domain.KnownEventType(arguments[0].Text()) {
 				ctx.ResultInt(1)
 				return
 			}

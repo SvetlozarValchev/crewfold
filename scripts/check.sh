@@ -100,6 +100,9 @@ printf 'Owner-reviewed outcomes and bounded management briefings acceptance\n'
 printf 'Herdr runtime black-box acceptance\n'
 "$repo_root/test/scenarios/herdr-runtime/run.sh"
 
+printf 'Provider-free operator TUI black-box acceptance\n'
+"$repo_root/test/scenarios/operator-tui/run.sh"
+
 printf 'Codex provider black-box acceptance\n'
 "$repo_root/test/scenarios/codex-provider/run.sh"
 

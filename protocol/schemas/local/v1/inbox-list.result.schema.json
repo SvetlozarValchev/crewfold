@@ -7,7 +7,7 @@
   "properties": {
     "schema": {"const": "urn:crewfold:schema:local-api:inbox-list-result:v1"},
     "type": {"const": "inbox"},
-    "agent": {"type": "string", "minLength": 1},
+    "agent": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
     "items": {"type": "array", "maxItems": 50, "items": {"$ref": "../../domain/v1/inbox-item.schema.json"}}
   }
 }

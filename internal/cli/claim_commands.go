@@ -77,7 +77,7 @@ func (a *App) runClaimAdd(ctx context.Context, mode outputMode, args []string) i
 }
 
 func (a *App) runClaimList(ctx context.Context, mode outputMode, args []string) int {
-	options, failure := parseOptions(args, "workspace", "project", "status", "socket")
+	options, failure := parseOptions(args, "workspace", "project", "status", "cursor", "limit", "socket")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -85,7 +85,11 @@ func (a *App) runClaimList(ctx context.Context, mode outputMode, args []string) 
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	result, err := a.newClient(socket).ClaimList(ctx, workspace, options["project"], options["status"])
+	limit, failure := optionalIntOption(options, "limit", 1, 200)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).ClaimList(ctx, localapi.ClaimListParams{Workspace: workspace, Project: options["project"], Status: options["status"], PageParams: localapi.PageParams{Cursor: options["cursor"], Limit: int(limit)}})
 	if err != nil {
 		return a.writeClientFailure(mode, "list claims", err)
 	}
@@ -97,6 +101,7 @@ func (a *App) runClaimList(ctx context.Context, mode outputMode, args []string) 
 		for _, claim := range result.Claims {
 			fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\t%s\t%s\tlease=%s\n", claim.ID, claim.TaskID, claim.Kind, claim.Mode, claim.Status, claim.Target, claim.LeaseExpiresAt)
 		}
+		writePageMetadata(a.stdout, result.PageResult, len(result.Claims))
 	}
 	return ExitOK
 }
@@ -152,7 +157,7 @@ func (a *App) runOverlap(ctx context.Context, mode outputMode, args []string) in
 	}
 	switch args[0] {
 	case "list":
-		options, failure := parseOptions(args[1:], "workspace", "project", "status", "socket")
+		options, failure := parseOptions(args[1:], "workspace", "project", "status", "cursor", "limit", "socket")
 		if failure != nil {
 			return a.writeFailure(mode, *failure)
 		}
@@ -160,7 +165,11 @@ func (a *App) runOverlap(ctx context.Context, mode outputMode, args []string) in
 		if failure != nil {
 			return a.writeFailure(mode, *failure)
 		}
-		result, err := a.newClient(socket).OverlapList(ctx, workspace, options["project"], options["status"])
+		limit, failure := optionalIntOption(options, "limit", 1, 200)
+		if failure != nil {
+			return a.writeFailure(mode, *failure)
+		}
+		result, err := a.newClient(socket).OverlapList(ctx, localapi.OverlapListParams{Workspace: workspace, Project: options["project"], Status: options["status"], PageParams: localapi.PageParams{Cursor: options["cursor"], Limit: int(limit)}})
 		if err != nil {
 			return a.writeClientFailure(mode, "list overlaps", err)
 		}
@@ -172,6 +181,7 @@ func (a *App) runOverlap(ctx context.Context, mode outputMode, args []string) in
 			for _, overlap := range result.Overlaps {
 				fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\t%s\n", overlap.ID, overlap.Status, overlap.Severity, overlap.PolicyResponse, overlap.Witness)
 			}
+			writePageMetadata(a.stdout, result.PageResult, len(result.Overlaps))
 		}
 		return ExitOK
 	case "inspect":
@@ -241,7 +251,7 @@ func (a *App) runDrift(ctx context.Context, mode outputMode, args []string) int 
 	if len(args) == 0 || args[0] != "list" {
 		return a.writeFailure(mode, usageFailure("drift requires the list subcommand", "run 'crewfold help drift' for usage"))
 	}
-	options, failure := parseOptions(args[1:], "workspace", "status", "socket")
+	options, failure := parseOptions(args[1:], "workspace", "project", "status", "cursor", "limit", "socket")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -249,7 +259,11 @@ func (a *App) runDrift(ctx context.Context, mode outputMode, args []string) int 
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	result, err := a.newClient(socket).DriftList(ctx, workspace, options["status"])
+	limit, failure := optionalIntOption(options, "limit", 1, 200)
+	if failure != nil {
+		return a.writeFailure(mode, *failure)
+	}
+	result, err := a.newClient(socket).DriftList(ctx, localapi.DriftListParams{Workspace: workspace, Project: options["project"], Status: options["status"], PageParams: localapi.PageParams{Cursor: options["cursor"], Limit: int(limit)}})
 	if err != nil {
 		return a.writeClientFailure(mode, "list claim drift", err)
 	}
@@ -261,6 +275,7 @@ func (a *App) runDrift(ctx context.Context, mode outputMode, args []string) int 
 		for _, drift := range result.Drifts {
 			fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\tgap=%t\n", drift.ID, drift.Status, drift.TaskID, drift.Path, drift.ObservationGap)
 		}
+		writePageMetadata(a.stdout, result.PageResult, len(result.Drifts))
 	}
 	return ExitOK
 }
@@ -269,7 +284,7 @@ const claimHelp = `Usage:
   crewfold claim add <task-id> --workspace <scope> --project <project> --write <glob> --lease <duration> --socket <path> [options]
   crewfold claim add <task-id> --workspace <scope> --project <project> --component <name> --lease <duration> --socket <path> [options]
   crewfold claim add <task-id> --workspace <scope> --project <project> --operation <name> --lease <duration> --socket <path> [options]
-  crewfold claim list --workspace <scope> [--project <project>] [--status active|expired|released] --socket <path>
+  crewfold claim list --workspace <scope> [--project <project>] [--status active|expired|released] [--cursor <cursor>] [--limit <1..200>] --socket <path>
   crewfold claim release <claim-id> --workspace <scope> --expected-revision <n> --socket <path>
 
 Path claims accept repository-relative literals, *, ?, and whole-segment **.
@@ -280,7 +295,7 @@ they do not provide filesystem isolation.
 `
 
 const overlapHelp = `Usage:
-  crewfold overlap list --workspace <scope> [--project <project>] [--status open|resolved] --socket <path>
+  crewfold overlap list --workspace <scope> [--project <project>] [--status open|resolved] [--cursor <cursor>] [--limit <1..200>] --socket <path>
   crewfold overlap inspect <overlap-id> --workspace <scope> --socket <path>
   crewfold overlap scan --workspace <scope> [--project <project>] --socket <path>
 
@@ -289,7 +304,7 @@ intersection witness. Scan performs a bounded read-only Git observation.
 `
 
 const driftHelp = `Usage:
-  crewfold drift list --workspace <scope> [--status open|resolved] --socket <path>
+  crewfold drift list --workspace <scope> [--project <project>] [--status open|resolved] [--cursor <cursor>] [--limit <1..200>] --socket <path>
 
 Drift records observed dirty paths outside a task's declared path claims. It is
 evidence, not an automatic rewrite of the task's declaration.

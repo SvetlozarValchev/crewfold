@@ -64,6 +64,8 @@ type Config struct {
 	ClaimScanInterval         time.Duration
 	DisableSupervisor         bool
 	SupervisorScanInterval    time.Duration
+	DisableLeaseReconciler    bool
+	LeaseReconcileInterval    time.Duration
 	defaultProviders          bool
 }
 
@@ -87,6 +89,7 @@ type server struct {
 	providers      map[string]execution.ProviderAdapter
 	capabilities   *runCapabilityManager
 	claimWatcherID string
+	claimAddMu     sync.Mutex
 	checkWatchMu   sync.Mutex
 	checkWatchPass atomic.Uint64
 	// Only the check-watch worker accesses this scope keyset cursor.
@@ -95,6 +98,10 @@ type server struct {
 	// Only the supervisor worker goroutine accesses this keyset cursor. It
 	// bounds each daemon tick while rotating across every enabled workspace.
 	supervisorWorkspaceCursor string
+	leaseReconcilePass        atomic.Uint64
+	leaseReconcileCursor      string
+	leaseReconcileCtx         context.Context
+	leaseReconcileCancel      context.CancelFunc
 }
 
 // Run owns the daemon lifecycle until the context is cancelled or system.stop is
@@ -188,21 +195,25 @@ func Run(ctx context.Context, config Config) error {
 		return &StartupError{Code: CodeSocketUnavailable, Message: "inspect local API socket", Cause: err}
 	}
 
+	leaseReconcileCtx, leaseReconcileCancel := context.WithCancel(ctx)
 	instance := &server{
-		config:         resolved,
-		listener:       listener,
-		socketInfo:     socketInfo,
-		startedAt:      time.Now().UTC(),
-		stopCh:         make(chan struct{}),
-		connections:    make(map[net.Conn]struct{}),
-		store:          storage,
-		gitInspector:   resolved.GitInspector,
-		runtimes:       resolved.RuntimeDrivers,
-		checkRuntime:   resolved.CheckRuntimeDriver,
-		providers:      resolved.ProviderAdapters,
-		capabilities:   capabilities,
-		claimWatcherID: fmt.Sprintf("watcher-%d-%d", os.Getpid(), time.Now().UTC().UnixNano()),
+		config:               resolved,
+		listener:             listener,
+		socketInfo:           socketInfo,
+		startedAt:            time.Now().UTC(),
+		stopCh:               make(chan struct{}),
+		connections:          make(map[net.Conn]struct{}),
+		store:                storage,
+		gitInspector:         resolved.GitInspector,
+		runtimes:             resolved.RuntimeDrivers,
+		checkRuntime:         resolved.CheckRuntimeDriver,
+		providers:            resolved.ProviderAdapters,
+		capabilities:         capabilities,
+		claimWatcherID:       fmt.Sprintf("watcher-%d-%d", os.Getpid(), time.Now().UTC().UnixNano()),
+		leaseReconcileCtx:    leaseReconcileCtx,
+		leaseReconcileCancel: leaseReconcileCancel,
 	}
+	defer leaseReconcileCancel()
 	defer instance.cleanupSocket()
 	instance.startRunWorker()
 	instance.startCheckWorker()
@@ -210,6 +221,7 @@ func Run(ctx context.Context, config Config) error {
 	instance.processMessageWakeJobs()
 	instance.startClaimWatcher()
 	instance.startSupervisor()
+	instance.startLeaseReconciler()
 
 	resolved.Logger.Info("daemon started",
 		"component", "daemon",
@@ -274,6 +286,12 @@ func resolveConfig(config Config) (Config, error) {
 	}
 	if config.SupervisorScanInterval < 20*time.Millisecond && !config.DisableSupervisor {
 		return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "supervisor scan interval must be at least 20ms"}
+	}
+	if config.LeaseReconcileInterval == 0 {
+		config.LeaseReconcileInterval = 2 * time.Second
+	}
+	if config.LeaseReconcileInterval < 20*time.Millisecond && !config.DisableLeaseReconciler {
+		return Config{}, &StartupError{Code: CodeInvalidConfiguration, Message: "lease reconciliation interval must be at least 20ms"}
 	}
 	if config.RuntimeDrivers == nil {
 		fakeRuntime := execution.NewFakeRuntime()
@@ -487,16 +505,16 @@ func (s *server) handleConnection(connection net.Conn) {
 			continue
 		}
 		var request localapi.Request
-		if err := json.Unmarshal(line, &request); err != nil {
-			response := localapi.ErrorResponse("", 0, &localapi.APIError{
+		if err := decodeLocalAPIRequest(line, &request); err != nil {
+			response := localapi.ErrorResponse(request.ID, request.Protocol, &localapi.APIError{
 				Code:      "invalid_request",
-				Message:   "request is not valid JSON",
+				Message:   "request violates the current local API envelope",
 				Retryable: false,
 			})
 			_ = encoder.Encode(response)
 			s.config.Logger.Warn("request rejected",
 				"component", "local_api",
-				"request_id", "",
+				"request_id", request.ID,
 				"error_code", "invalid_request",
 			)
 			continue
@@ -556,6 +574,9 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 	if request.Protocol < localapi.MinProtocol || request.Protocol > localapi.MaxProtocol {
 		return localapi.ErrorResponse(request.ID, request.Protocol, protocolMismatch()), false
 	}
+	if err := validateOperatorRequestParams(request); err != nil {
+		return invalidParamsResponse(request, err.Error()), false
+	}
 
 	switch request.Method {
 	case localapi.MethodStatus:
@@ -583,10 +604,16 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleWorkspaceInit(request), false
 	case localapi.MethodWorkspaceShow:
 		return s.handleWorkspaceShow(request), false
+	case localapi.MethodWorkspaceList:
+		return s.handleWorkspaceList(request), false
 	case localapi.MethodProjectAdd:
 		return s.handleProjectAdd(request), false
+	case localapi.MethodProjectShow:
+		return s.handleProjectShow(request), false
 	case localapi.MethodProjectInspect:
 		return s.handleProjectInspect(request), false
+	case localapi.MethodProjectList:
+		return s.handleProjectList(request), false
 	case localapi.MethodCheckoutAdd:
 		return s.handleCheckoutAdd(request), false
 	case localapi.MethodCheckoutList:
@@ -733,6 +760,8 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleMeetingAccept(request), false
 	case localapi.MethodMeetingTakeover:
 		return s.handleMeetingTakeover(request), false
+	case localapi.MethodMeetingList:
+		return s.handleMeetingList(request), false
 	case localapi.MethodManagerGrantCreate:
 		return s.handleManagerGrantCreate(request), false
 	case localapi.MethodManagerGrantRevoke:
@@ -857,6 +886,8 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleBriefingExplain(request), false
 	case localapi.MethodEventsList:
 		return s.handleEventsList(request), false
+	case localapi.MethodEventsTimeline:
+		return s.handleEventsTimeline(request), false
 	default:
 		return localapi.ErrorResponse(request.ID, request.Protocol, &localapi.APIError{
 			Code:      "method_not_found",
@@ -918,6 +949,38 @@ func (s *server) handleWorkspaceShow(request localapi.Request) localapi.Response
 		Schema:    localapi.WorkspaceShowSchema,
 		Type:      "workspace",
 		Workspace: workspace,
+	})
+}
+
+func (s *server) handleWorkspaceList(request localapi.Request) localapi.Response {
+	var params localapi.WorkspaceListParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "workspace.list accepts optional cursor and limit")
+	}
+	page, err := s.store.ListWorkspaces(context.Background(), store.ListWorkspacesQuery{Cursor: params.Cursor, Limit: params.Limit})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.WorkspaceListResult{
+		Schema: localapi.WorkspaceListSchema, Type: "workspace_list", Workspaces: page.Workspaces,
+		PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total},
+	})
+}
+
+func (s *server) handleProjectList(request localapi.Request) localapi.Response {
+	var params localapi.ProjectListParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" {
+		return invalidParamsResponse(request, "project.list requires workspace and accepts optional cursor and limit")
+	}
+	page, err := s.store.ListProjects(context.Background(), store.ListProjectsQuery{
+		WorkspaceIdentifier: params.Workspace, Cursor: params.Cursor, Limit: params.Limit,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ProjectListResult{
+		Schema: localapi.ProjectListSchema, Type: "project_list", Projects: page.Projects,
+		PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total},
 	})
 }
 
@@ -1017,40 +1080,59 @@ func (s *server) handleProjectInspect(request localapi.Request) localapi.Respons
 	})
 }
 
-func (s *server) handleEventsList(request localapi.Request) localapi.Response {
-	var params localapi.EventsListParams
-	if err := decodeParams(request.Params, &params); err != nil || params.After == nil || *params.After < 0 || (params.Limit != nil && (*params.Limit < 1 || *params.Limit > 1000)) {
-		return invalidParamsResponse(request, "events.list requires after >= 0 and limit between 1 and 1000 when supplied")
+func (s *server) handleProjectShow(request localapi.Request) localapi.Response {
+	var params localapi.ProjectShowParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Project) == "" {
+		return invalidParamsResponse(request, "project.show requires workspace and project")
 	}
-	limit := 100
-	if params.Limit != nil {
-		limit = *params.Limit
-	}
-	events, err := s.store.Events(context.Background(), *params.After, limit+1)
+	project, err := s.store.Project(context.Background(), params.Workspace, params.Project)
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	hasMore := len(events) > limit
-	if hasMore {
-		events = events[:limit]
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ProjectShowResult{Schema: localapi.ProjectShowSchema, Type: "project", Project: project})
+}
+
+func (s *server) handleEventsList(request localapi.Request) localapi.Response {
+	var params localapi.EventsListParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || params.After < 0 {
+		return invalidParamsResponse(request, "events.list requires workspace and after >= 0 and accepts optional cursor and limit")
 	}
-	nextAfter := *params.After
-	if len(events) > 0 {
-		nextAfter = events[len(events)-1].Sequence
+	page, err := s.store.ListEvents(context.Background(), store.ListEventsQuery{
+		WorkspaceIdentifier: params.Workspace, After: params.After, Cursor: params.Cursor, Limit: params.Limit,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
 	}
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.EventsListResult{
-		Schema:    localapi.EventsListSchema,
-		Type:      "event_list",
-		After:     *params.After,
-		NextAfter: nextAfter,
-		HasMore:   hasMore,
-		Events:    events,
+		Schema: localapi.EventsListSchema, Type: "event_list", WorkspaceID: page.WorkspaceID, HighWater: page.HighWater, Events: page.Events,
+		PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total},
+	})
+}
+
+func (s *server) handleEventsTimeline(request localapi.Request) localapi.Response {
+	var params localapi.EventsTimelineParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.EntityType) == "" || strings.TrimSpace(params.EntityID) == "" {
+		return invalidParamsResponse(request, "events.timeline requires workspace, entity_type, and entity_id and accepts optional cursor and limit")
+	}
+	page, err := s.store.EventTimeline(context.Background(), store.EventTimelineQuery{
+		WorkspaceIdentifier: params.Workspace, EntityType: params.EntityType, EntityID: params.EntityID,
+		Cursor: params.Cursor, Limit: params.Limit,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.EventsTimelineResult{
+		Schema: localapi.EventsTimelineSchema, Type: "event_timeline", WorkspaceID: page.WorkspaceID, HighWater: page.HighWater, Events: page.Events,
+		PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total},
 	})
 }
 
 func decodeParams(data json.RawMessage, target any) error {
 	if len(data) == 0 {
 		return errors.New("params are required")
+	}
+	if err := rejectDuplicateJSONFields(data); err != nil {
+		return err
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
@@ -1093,7 +1175,14 @@ func gitErrorResponse(request localapi.Request, err error) localapi.Response {
 
 func (s *server) handleHello(request localapi.Request) localapi.Response {
 	var params localapi.HelloParams
-	if err := json.Unmarshal(request.Params, &params); err != nil || params.MinProtocol <= 0 || params.MaxProtocol < params.MinProtocol {
+	if request.Protocol != 0 {
+		return localapi.ErrorResponse(request.ID, 0, &localapi.APIError{
+			Code:      "invalid_request",
+			Message:   "hello must not declare a selected protocol",
+			Retryable: false,
+		})
+	}
+	if err := decodeParams(request.Params, &params); err != nil || params.MinProtocol <= 0 || params.MaxProtocol < params.MinProtocol {
 		return localapi.ErrorResponse(request.ID, 0, &localapi.APIError{
 			Code:      "invalid_request",
 			Message:   "hello requires a valid min_protocol and max_protocol range",
@@ -1131,6 +1220,9 @@ func (s *server) requestStop(reason string) {
 	s.stopOnce.Do(func() {
 		s.shutdown.Store(true)
 		s.config.Logger.Info("daemon shutdown requested", "component", "daemon", "reason", reason)
+		if s.leaseReconcileCancel != nil {
+			s.leaseReconcileCancel()
+		}
 		close(s.stopCh)
 	})
 }

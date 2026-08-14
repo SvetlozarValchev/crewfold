@@ -198,7 +198,7 @@ else
   grep -Fq 'runtime wake-up is unavailable' "$scenario_root/thread.json"
 fi
 
-"$binary" events list --after 0 --limit 400 --socket "$socket_path" --output json >"$scenario_root/events.json"
+"$binary" events list --workspace personal --after 0 --limit 400 --socket "$socket_path" --output json >"$scenario_root/events.json"
 sent_count=$(grep -o '"type":"message.sent"' "$scenario_root/events.json" | wc -l)
 if [ "$sent_count" -ne 2 ]
 then

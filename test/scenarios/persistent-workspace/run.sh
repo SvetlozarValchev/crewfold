@@ -116,10 +116,13 @@ then
   exit 1
 fi
 
-"$binary" events list --socket "$socket_path" --after 0 --output json >"$temp_dir/events.json"
+"$binary" events list --workspace personal --socket "$socket_path" --after 0 --output json >"$temp_dir/events.json"
 grep -Fq '"schema":"urn:crewfold:schema:local-api:events-list-result:v1"' "$temp_dir/events.json"
-grep -Fq '"next_after":1' "$temp_dir/events.json"
+grep -Fq '"workspace_id":"'"$workspace_id"'"' "$temp_dir/events.json"
+grep -Fq '"high_water":1' "$temp_dir/events.json"
+grep -Fq '"next_cursor":""' "$temp_dir/events.json"
 grep -Fq '"has_more":false' "$temp_dir/events.json"
+grep -Fq '"total":1' "$temp_dir/events.json"
 grep -Fq '"type":"workspace.created"' "$temp_dir/events.json"
 event_count=$(grep -o '"event_id":"evt_[0-9a-f]*"' "$temp_dir/events.json" | wc -l)
 if [ "$event_count" -ne 1 ]
@@ -128,7 +131,7 @@ then
   exit 1
 fi
 
-"$binary" events list --socket "$socket_path" --after 1 --output json >"$temp_dir/events-after.json"
+"$binary" events list --workspace personal --socket "$socket_path" --after 1 --output json >"$temp_dir/events-after.json"
 grep -Fq '"events":[]' "$temp_dir/events-after.json"
 
 stop_daemon
@@ -141,7 +144,7 @@ cmp "$temp_dir/show-before.json" "$temp_dir/show-after.json"
   --idempotency-key initialize-personal \
   --output json >"$temp_dir/replay-after-restart.json"
 cmp "$temp_dir/init.json" "$temp_dir/replay-after-restart.json"
-"$binary" events list --socket "$socket_path" --after 0 --output json >"$temp_dir/events-after-restart.json"
+"$binary" events list --workspace personal --socket "$socket_path" --after 0 --output json >"$temp_dir/events-after-restart.json"
 cmp "$temp_dir/events.json" "$temp_dir/events-after-restart.json"
 
 stop_daemon

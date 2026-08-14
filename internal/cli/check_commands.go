@@ -28,7 +28,7 @@ type checkDaemonClient interface {
 	CheckPolicyShow(context.Context, string, string) (localapi.CheckPolicyShowResult, error)
 	CheckPolicyConfigure(context.Context, localapi.CheckPolicyConfigureParams) (localapi.CheckPolicyMutationResult, error)
 	CheckRun(context.Context, localapi.CheckRunParams) (localapi.CheckRunMutationResult, error)
-	CheckList(context.Context, localapi.CheckQueryParams) (localapi.CheckRunListResult, error)
+	CheckList(context.Context, localapi.CheckListParams) (localapi.CheckRunListResult, error)
 	CheckInspect(context.Context, string, string) (localapi.CheckInspectResult, error)
 	CheckLogs(context.Context, string, string) (localapi.CheckLogsResult, error)
 	CheckWatch(context.Context, localapi.CheckWatchParams) (localapi.CheckWatchResult, error)
@@ -756,7 +756,7 @@ func (a *App) runCheckRun(ctx context.Context, mode outputMode, args []string) i
 }
 
 func (a *App) runCheckList(ctx context.Context, mode outputMode, args []string) int {
-	options, failure := parseOptions(args, "workspace", "project", "task", "requirement", "definition", "status", "outcome", "limit", "socket")
+	options, failure := parseOptions(args, "workspace", "project", "task", "requirement", "definition", "status", "outcome", "cursor", "limit", "socket")
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
@@ -764,12 +764,12 @@ func (a *App) runCheckList(ctx context.Context, mode outputMode, args []string) 
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
-	limit, failure := optionalIntOption(options, "limit", 1, 100)
+	limit, failure := optionalIntOption(options, "limit", 1, 200)
 	if failure != nil {
 		return a.writeFailure(mode, *failure)
 	}
 	client := a.checkClient(socket)
-	result, err := client.CheckList(ctx, localapi.CheckQueryParams{Workspace: workspace, Project: options["project"], Task: options["task"], Requirement: options["requirement"], Definition: options["definition"], Status: options["status"], Outcome: options["outcome"], Limit: int(limit)})
+	result, err := client.CheckList(ctx, localapi.CheckListParams{Workspace: workspace, Project: options["project"], Task: options["task"], Requirement: options["requirement"], Definition: options["definition"], Status: options["status"], Outcome: options["outcome"], PageParams: localapi.PageParams{Cursor: options["cursor"], Limit: int(limit)}})
 	if err != nil {
 		return a.writeClientFailure(mode, "list check runs", err)
 	}
@@ -783,6 +783,7 @@ func (a *App) runCheckList(ctx context.Context, mode outputMode, args []string) 
 		}
 		fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\t%s\trevision %d\n", item.Run.ID, item.Run.Status, item.Outcome, freshness, item.RequirementState, item.Run.Revision)
 	}
+	writePageMetadata(a.stdout, result.PageResult, len(result.Runs))
 	return ExitOK
 }
 
@@ -1066,7 +1067,7 @@ const checkHelp = `Usage:
   crewfold check policy show --workspace <scope> --project <id> --socket <path>
   crewfold check policy configure --workspace <scope> --project <id> --repair-proposals <enabled|disabled> [--repair-profile <id> --repair-profile-revision <n>] --max-open-repairs <n> --expected-revision <n> --socket <path>
   crewfold check run <definition> --task <id> --workspace <scope> [--checkout <id>] [--expected-requirement-revision <n>] [--expected-definition-content-revision <n>] [--expected-checkout-revision <n>] --socket <path>
-  crewfold check list --workspace <scope> --socket <path> [filters]
+  crewfold check list --workspace <scope> [filters] [--cursor <cursor>] [--limit <1..200>] --socket <path>
   crewfold check inspect <check-run-id> --workspace <scope> --socket <path>
   crewfold check logs <check-run-id> --workspace <scope> --socket <path>
   crewfold check watch --workspace <scope> --project <id> --socket <path> [--cursor <cursor>] [--limit <1..100>]

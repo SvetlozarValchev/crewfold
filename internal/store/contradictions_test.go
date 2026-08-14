@@ -651,10 +651,7 @@ func TestKnowledgeSupersessionOrdersResolutionBeforeSuccessorAcceptance(t *testi
 		detail.Contradiction.ResolutionReason != ContradictionResolutionParticipantSuperseded {
 		t.Fatalf("superseded contradiction = %#v, %v", detail.Contradiction, err)
 	}
-	events, err := storage.Events(context.Background(), 0, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	events := testWorkspaceEvents(t, storage, workspace.ID, 0, 1000)
 	var supersededSequence, resolutionSequence, acceptedSequence int64
 	for _, event := range events {
 		switch {
@@ -684,10 +681,7 @@ func TestKnowledgeContradictionEventPayloadCarriesDeltaSnapshot(t *testing.T) {
 	right := acceptedContradictionKnowledge(t, storage, workspace.ID, task.Task.ID, "event-right", "right", "right", "")
 	opened := openContradiction(t, storage, workspace.ID, left.Revision.ID, right.Revision.ID, "event-payload")
 
-	events, err := storage.Events(context.Background(), 0, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	events := testWorkspaceEvents(t, storage, workspace.ID, 0, 1000)
 	for _, event := range events {
 		if event.Entity.ID != opened.ID || (event.Type != contradictionDetectedEvent && event.Type != contradictionConfirmedEvent) {
 			continue

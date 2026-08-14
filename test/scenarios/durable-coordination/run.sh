@@ -147,7 +147,7 @@ grep -Fq '"tasks_cancelled":1' "$temp_dir/status-before.json"
 "$binary" agent list --workspace personal --socket "$socket_path" --output json >"$temp_dir/agents-before.json"
 "$binary" objective list --workspace personal --project demo --socket "$socket_path" --output json >"$temp_dir/objectives-before.json"
 "$binary" task list --workspace personal --project demo --socket "$socket_path" --output json >"$temp_dir/tasks-before.json"
-"$binary" events list --after 0 --limit 100 --socket "$socket_path" --output json >"$temp_dir/events-before.json"
+"$binary" events list --workspace personal --after 0 --limit 100 --socket "$socket_path" --output json >"$temp_dir/events-before.json"
 
 stop_daemon
 start_daemon
@@ -155,7 +155,7 @@ start_daemon
 "$binary" agent list --workspace personal --socket "$socket_path" --output json >"$temp_dir/agents-after.json"
 "$binary" objective list --workspace personal --project demo --socket "$socket_path" --output json >"$temp_dir/objectives-after.json"
 "$binary" task list --workspace personal --project demo --socket "$socket_path" --output json >"$temp_dir/tasks-after.json"
-"$binary" events list --after 0 --limit 100 --socket "$socket_path" --output json >"$temp_dir/events-after.json"
+"$binary" events list --workspace personal --after 0 --limit 100 --socket "$socket_path" --output json >"$temp_dir/events-after.json"
 cmp "$temp_dir/status-before.json" "$temp_dir/status-after.json"
 cmp "$temp_dir/agents-before.json" "$temp_dir/agents-after.json"
 cmp "$temp_dir/objectives-before.json" "$temp_dir/objectives-after.json"

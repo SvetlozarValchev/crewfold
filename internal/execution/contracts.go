@@ -139,7 +139,7 @@ type RuntimeInterrupter interface {
 }
 
 type RuntimeAttacher interface {
-	Attach(context.Context, string, string, bool) (AttachSpec, error)
+	Attach(context.Context, string, string) (AttachSpec, error)
 }
 
 // ProviderAdapter prepares a provider for a runtime and normalizes its reports.

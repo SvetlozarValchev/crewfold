@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"crewfold/internal/domain"
 )
 
 const maximumSupervisorJournalEvents = 1000
@@ -51,7 +53,7 @@ ORDER BY sequence LIMIT ?`, workspaceID, result.From, result.Cutoff, maximumSupe
 		if err := rows.Scan(&sequence, &eventType); err != nil {
 			return result, storageFailure("scan supervisor journal", err)
 		}
-		if !knownSupervisorJournalEvent(eventType) {
+		if !domain.KnownEventType(eventType) {
 			return result, &Error{
 				Code:    CodeUnsupportedSupervisorEvent,
 				Message: fmt.Sprintf("supervisor stopped before unsupported workspace event %q at sequence %d", eventType, sequence),
@@ -66,66 +68,11 @@ ORDER BY sequence LIMIT ?`, workspaceID, result.From, result.Cutoff, maximumSupe
 	return result, nil
 }
 
-// This is intentionally a closed union. A binary that does not understand a
-// newly introduced workspace fact must not silently advance automation beyond
-// it. Command names and test-only types do not belong here: these are only the
-// immutable event facts emitted by every supported current-schema Store path.
-func knownSupervisorJournalEvent(value string) bool {
-	switch value {
-	case
-		"workspace.created",
-		"project.registered", "repository.registered", "checkout.registered", "checkout.git_observed",
-		"agent.created", "agent.updated", "objective.created", "objective.updated",
-		"task.created", "task.updated", "task.dependency_added", "task.assigned", "task.assignment_expired",
-		"task.started", "task.blocked", "task.readied", "task.cancelled", "task.completion_proposed",
-		"task.changes_requested", "task.completed", "task.failed", "task.handoff_recorded", "task.run_stopped",
-		"task.reassigned", "task.role_designated", "task.claim_requirement_created",
-		"run.requested", "run.starting", "run.started", "run.runtime_observed", "run.progress_reported",
-		"run.blocked", "run.completion_proposed", "run.completed", "run.start_failed", "run.failed",
-		"run.resumed", "run.stop_requested", "run.stopped", "run.lost", "run.report_received",
-		"run.artifact_published", "run.tool_called", "run.tool_denied",
-		"claim.added", "claim.released", "claim.expired", "claim.drift_opened", "claim.drift_resolved",
-		"overlap.opened", "overlap.resolved",
-		"thread.created", "thread.participant_added", "message.sent", "message.delivered", "message.read",
-		"message.acknowledged", "message.wake_succeeded", "message.wake_failed",
-		"meeting.created", "meeting.positions_collected", "meeting.resolution_proposed", "meeting.stalled",
-		"meeting.concluded", "meeting.human_takeover",
-		"knowledge.proposed", "knowledge.accepted", "knowledge.rejected", "knowledge.marked_stale",
-		"knowledge.superseded", "knowledge.acceptance_denied", "knowledge.rejection_denied",
-		"knowledge.stale_denied", "knowledge.imported", "knowledge.import_completed",
-		"contradiction.detected", "contradiction.confirmed", "contradiction.dismissed",
-		"contradiction.resolved", "contradiction.confirm_denied", "contradiction.dismiss_denied",
-		"contradiction.imported",
-		"curator.rule_configured", "curator.derived", "curator.auto_accepted",
-		"context.packet_built", "context_delta.built", "context_delta.acknowledged",
-		"context_delta.rebase_required",
-		"manager.grant_created", "manager.grant_revoked", "manager.launch_profile_created",
-		"manager.launch_profile_retired", "manager.proposal_submitted", "manager.proposal_accepted",
-		"manager.proposal_rejected", "manager.proposal_stale",
-		"supervisor.policy_configured", "supervisor.intent_created", "supervisor.intent_satisfied",
-		"supervisor.intent_failed", "supervisor.intent_cancelled", "supervisor.action_recorded",
-		"supervisor.action_applied", "supervisor.scan_completed",
-		"approval.requested", "approval.granted", "approval.denied", "approval.consumed", "approval.expired",
-		"check.definition_created", "check.definition_retired", "check.requirement_created", "check.requirement_retired",
-		"check.grant_created", "check.grant_revoked", "check.policy_configured", "check.route_created", "check.route_retired",
-		"check.run_requested", "check.run_starting", "check.run_runtime_observed", "check.run_started", "check.run_finished", "check.result_recorded",
-		"check.freshness_observed", "check.freshness_stale",
-		"check.notification_queued", "check.notification_unroutable",
-		"check.repair_proposed", "check.repair_accepted", "check.repair_rejected", "check.repair_stale",
-		"check.watch_completed",
-		"outcome.commitment_created", "outcome.assessment_proposed", "outcome.assessment_accepted",
-		"outcome.assessment_rejected", "outcome.assessment_superseded", "owner_checkpoint.created":
-		return true
-	default:
-		return false
-	}
-}
-
 // The M17 check watcher crosses the same workspace journal as the supervisor.
 // Keeping a separately named classifier makes its raw cursor proof explicit
 // while preserving one closed fact vocabulary for a given schema binary.
 func knownCheckWatchJournalEvent(value string) bool {
-	return knownSupervisorJournalEvent(value)
+	return domain.KnownEventType(value)
 }
 
 func advanceSupervisorJournalCursor(ctx context.Context, tx *sql.Tx, workspaceID string, through int64, now string) error {

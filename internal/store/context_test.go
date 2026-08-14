@@ -895,6 +895,10 @@ func TestContextPacketBindingReportsArtifactsAndScopeAreDurable(t *testing.T) {
 	if err != nil || replayErr != nil || artifact.ID == "" || artifactReplay.ID != artifact.ID || artifact.ContentHash == "" {
 		t.Fatalf("PublishRunArtifact() = %#v, %v; replay = %#v, %v", artifact, err, artifactReplay, replayErr)
 	}
+	toolCall, err := storage.RecordRunToolCall(context.Background(), starting.ID, "m19-authenticated-tool-call", "knowledge.search", "engine-loop", "allowed", "")
+	if err != nil || toolCall.RunID != starting.ID || toolCall.Outcome != "allowed" {
+		t.Fatalf("RecordRunToolCall() = %#v, %v", toolCall, err)
+	}
 	active, err := storage.MarkRunStarted(context.Background(), starting.ID, "runtime", "provider", "worker-started-scoped")
 	if err != nil || active.Run.Status != domain.RunActive {
 		t.Fatalf("MarkRunStarted() = %#v, %v", active, err)
@@ -913,6 +917,81 @@ func TestContextPacketBindingReportsArtifactsAndScopeAreDurable(t *testing.T) {
 	}
 	if _, found, err := storage.NextPendingRunReport(context.Background(), active.Run.ID); err != nil || found {
 		t.Fatalf("NextPendingRunReport(after apply) found = %t, error = %v", found, err)
+	}
+	completionCommand := CreateRunReportCommand{
+		RunID: active.Run.ID, Kind: domain.ObservationCompletion, Message: "authenticated completion",
+		Evidence: []string{"tests_passed"}, Handoff: "review authenticated work",
+		Payload: map[string]any{"complete": true}, IdempotencyKey: "scoped-completion",
+	}
+	completionReport, err := storage.SubmitRunReport(context.Background(), completionCommand)
+	if err != nil {
+		t.Fatalf("SubmitRunReport(completion) error = %v", err)
+	}
+	pendingCompletion, found, err := storage.NextPendingRunReport(context.Background(), active.Run.ID)
+	if err != nil || !found || pendingCompletion.ID != completionReport.ID {
+		t.Fatalf("NextPendingRunReport(completion) = %#v, %t, %v", pendingCompletion, found, err)
+	}
+	completed, err := storage.ApplyQueuedRunReport(context.Background(), active.Run.ID, pendingCompletion.ID, true, nil, "worker-apply-authenticated-completion")
+	if err != nil || completed.Run.Status != domain.RunCompleted || completed.Task.Status != domain.TaskCompleted || completed.Handoff == nil {
+		t.Fatalf("ApplyQueuedRunReport(completion) = %#v, %v", completed, err)
+	}
+	assertRunAgentProvenance(t, storage, completed)
+}
+
+func assertRunAgentProvenance(t *testing.T, storage *Store, detail domain.RunDetail) {
+	t.Helper()
+	var runUpdatedBy, taskUpdatedBy, assignmentStatus, assignmentUpdatedBy, handoffCreatedBy string
+	if err := storage.db.QueryRow(`SELECT updated_by FROM runs WHERE id = ?`, detail.Run.ID).Scan(&runUpdatedBy); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.db.QueryRow(`SELECT updated_by FROM tasks WHERE id = ?`, detail.Task.ID).Scan(&taskUpdatedBy); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.db.QueryRow(`SELECT status, updated_by FROM task_assignments WHERE id = ?`, detail.Run.AssignmentID).Scan(&assignmentStatus, &assignmentUpdatedBy); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.db.QueryRow(`SELECT created_by FROM run_handoffs WHERE run_id = ?`, detail.Run.ID).Scan(&handoffCreatedBy); err != nil {
+		t.Fatal(err)
+	}
+	if runUpdatedBy != detail.Run.ID || taskUpdatedBy != detail.Run.ID || assignmentStatus != "released" || assignmentUpdatedBy != detail.Run.ID || handoffCreatedBy != detail.Run.ID {
+		t.Fatalf("authenticated run projections = run:%q task:%q assignment:%q/%q handoff:%q, want exact run actor %q and released assignment",
+			runUpdatedBy, taskUpdatedBy, assignmentStatus, assignmentUpdatedBy, handoffCreatedBy, detail.Run.ID)
+	}
+
+	wantEvents := map[string]int{
+		"run.report_received":      2,
+		"run.artifact_published":   1,
+		"run.tool_called":          1,
+		"run.progress_reported":    1,
+		"run.completion_proposed":  1,
+		"task.completion_proposed": 1,
+		"task.handoff_recorded":    1,
+		"task.completed":           1,
+		"run.completed":            1,
+	}
+	rows, err := storage.db.Query(`SELECT type, actor_type FROM events WHERE actor_id = ? ORDER BY sequence`, detail.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := make(map[string]int)
+	for rows.Next() {
+		var eventType, actorType string
+		if err := rows.Scan(&eventType, &actorType); err != nil {
+			t.Fatal(err)
+		}
+		if actorType != domain.EventActorAgentRun {
+			t.Fatalf("run-authenticated event %q actor type = %q, want agent_run", eventType, actorType)
+		}
+		got[eventType]++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for eventType, count := range wantEvents {
+		if got[eventType] != count {
+			t.Errorf("run-authenticated event %q count = %d, want %d (all=%#v)", eventType, got[eventType], count, got)
+		}
 	}
 }
 

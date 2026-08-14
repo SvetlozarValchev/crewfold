@@ -80,9 +80,9 @@ func TestProjectAndAdjacentCheckoutRegistrationShareRepositoryButNotCheckout(t *
 	if ErrorCode(err) != CodeCheckoutExists {
 		t.Fatalf("AddCheckout(duplicate path) error = %v, code = %q", err, ErrorCode(err))
 	}
-	events, err := storage.Events(context.Background(), 0, 100)
-	if err != nil || len(events) != 5 {
-		t.Fatalf("events after duplicate = %d, %v, want 5", len(events), err)
+	events := testWorkspaceEvents(t, storage, workspace.Workspace.ID, 0, 100)
+	if len(events) != 5 {
+		t.Fatalf("events after duplicate = %d, want 5", len(events))
 	}
 }
 
@@ -133,9 +133,9 @@ func TestUnavailableObservationPreservesCheckoutIdentityAndLastKnownGitState(t *
 	if again.Checkouts[0].Revision != checkout.Revision {
 		t.Fatalf("unchanged observation revision = %d, want %d", again.Checkouts[0].Revision, checkout.Revision)
 	}
-	events, err := storage.Events(context.Background(), 0, 100)
-	if err != nil || len(events) != 5 {
-		t.Fatalf("events after idempotent observation = %d, %v, want 5", len(events), err)
+	events := testWorkspaceEvents(t, storage, workspace.Workspace.ID, 0, 100)
+	if len(events) != 5 {
+		t.Fatalf("events after idempotent observation = %d, want 5", len(events))
 	}
 }
 

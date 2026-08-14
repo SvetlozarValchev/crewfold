@@ -1,12 +1,8 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
 	"strings"
 
 	"crewfold/internal/localapi"
@@ -256,20 +252,25 @@ func (s *server) handleCheckRun(request localapi.Request) localapi.Response {
 }
 
 func (s *server) handleCheckList(request localapi.Request) localapi.Response {
-	var params localapi.CheckQueryParams
-	if err := decodeCheckParams(request.Params, &params); err != nil || params.CheckRun != "" || params.Limit < 0 || params.Limit > 100 {
+	var params localapi.CheckListParams
+	if err := decodeCheckParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" ||
+		params.Limit < 0 || params.Limit > store.MaximumReadPageLimit ||
+		params.Task != "" && !validCanonicalEntityID(params.Task, "task_") ||
+		params.Requirement != "" && !validCanonicalEntityID(params.Requirement, "checkreq_") ||
+		params.Definition != "" && !validCanonicalEntityID(params.Definition, "checkdef_") ||
+		!validCheckListStatus(params.Status) || !validCheckListOutcome(params.Outcome) {
 		return invalidParamsResponse(request, "check.list requires workspace and bounded project, task, requirement, definition, status, outcome, and limit filters")
 	}
-	values, err := s.store.CheckRuns(context.Background(), store.ListCheckRunsQuery{WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, TaskID: params.Task, RequirementID: params.Requirement, DefinitionID: params.Definition, Status: params.Status, Outcome: params.Outcome, Limit: params.Limit})
+	page, err := s.store.CheckRuns(context.Background(), store.ListCheckRunsQuery{WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, TaskID: params.Task, RequirementID: params.Requirement, DefinitionID: params.Definition, Status: params.Status, Outcome: params.Outcome, Cursor: params.Cursor, Limit: params.Limit})
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.CheckRunListResult{Schema: localapi.CheckRunListSchema, Type: "check_run_list", Runs: values})
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.CheckRunListResult{Schema: localapi.CheckRunListSchema, Type: "check_run_list", Runs: page.Runs, PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total}})
 }
 
 func (s *server) handleCheckInspect(request localapi.Request) localapi.Response {
 	var params localapi.CheckQueryParams
-	if err := decodeCheckParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.CheckRun) == "" || params.Project != "" || params.Task != "" || params.Requirement != "" || params.Definition != "" || params.Status != "" || params.Outcome != "" || params.Limit != 0 {
+	if err := decodeCheckParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || !validCanonicalEntityID(params.CheckRun, "checkrun_") {
 		return invalidParamsResponse(request, "check.inspect requires only workspace and check_run")
 	}
 	value, err := s.store.CheckRunDetail(context.Background(), params.Workspace, params.CheckRun)
@@ -350,77 +351,5 @@ func (s *server) handleCheckRepairDecision(request localapi.Request, accept bool
 }
 
 func decodeCheckParams(data json.RawMessage, target any) error {
-	if err := rejectDuplicateCheckJSONFields(data); err != nil {
-		return err
-	}
 	return decodeParams(data, target)
-}
-
-func rejectDuplicateCheckJSONFields(data []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := scanCheckJSONValue(decoder); err != nil {
-		return err
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("params contain more than one value")
-		}
-		return err
-	}
-	return nil
-}
-
-func scanCheckJSONValue(decoder *json.Decoder) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	delimiter, ok := token.(json.Delim)
-	if !ok {
-		return nil
-	}
-	switch delimiter {
-	case '{':
-		seen := map[string]struct{}{}
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return errors.New("object member name is not a string")
-			}
-			if _, duplicate := seen[key]; duplicate {
-				return fmt.Errorf("duplicate JSON field %q", key)
-			}
-			seen[key] = struct{}{}
-			if err := scanCheckJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-		closing, err := decoder.Token()
-		if err != nil {
-			return err
-		}
-		if closing != json.Delim('}') {
-			return errors.New("object is not closed")
-		}
-	case '[':
-		for decoder.More() {
-			if err := scanCheckJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-		closing, err := decoder.Token()
-		if err != nil {
-			return err
-		}
-		if closing != json.Delim(']') {
-			return errors.New("array is not closed")
-		}
-	default:
-		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
-	}
-	return nil
 }

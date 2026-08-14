@@ -61,11 +61,14 @@ func TestOutcomeClientsRejectWrongResultDiscriminators(t *testing.T) {
 			return err
 		}, CheckpointListSchema, "checkpoint_list"},
 		MethodBriefingShow: {func(client *Client) error {
-			_, err := client.BriefingShow(context.Background(), BriefingShowParams{})
+			_, err := client.BriefingShow(context.Background(), BriefingShowParams{
+				Workspace: "ws_00000000000000000000000000000000", ScopeType: domain.OwnerCheckpointWorkspace,
+				ScopeIdentifier: "ws_00000000000000000000000000000000",
+			})
 			return err
 		}, BriefingShowSchema, "management_briefing"},
 		MethodBriefingExplain: {func(client *Client) error {
-			_, err := client.BriefingExplain(context.Background(), BriefingExplainParams{})
+			_, err := client.BriefingExplain(context.Background(), BriefingExplainParams{Workspace: "ws_00000000000000000000000000000000"})
 			return err
 		}, BriefingExplainSchema, "briefing_claim_explanation"},
 	}
@@ -130,11 +133,19 @@ func TestBriefingShowClientHasNoCallerSelectedHistoricCursor(t *testing.T) {
 	t.Parallel()
 	request := captureCuratorRequest(t, MethodBriefingShow, func(client *Client) error {
 		_, err := client.BriefingShow(context.Background(), BriefingShowParams{
-			Workspace: "personal", ScopeType: domain.OwnerCheckpointProject,
-			ScopeIdentifier: "demo", SinceCheckpoint: "outcpnt_exact",
+			Workspace: "ws_" + strings.Repeat("b", 32), ScopeType: domain.OwnerCheckpointProject,
+			ScopeIdentifier: "prj_" + strings.Repeat("c", 32), SinceCheckpoint: "outcpnt_exact",
 		})
 		return err
-	}, BriefingShowResult{Schema: BriefingShowSchema, Type: "management_briefing"})
+	}, BriefingShowResult{Schema: BriefingShowSchema, Type: "management_briefing", Briefing: domain.ManagementBriefing{
+		ID: "briefing_" + strings.Repeat("a", 32), Revision: 1,
+		Scope: domain.BriefingScope{
+			Type: domain.OwnerCheckpointProject, WorkspaceID: "ws_" + strings.Repeat("b", 32), ProjectID: "prj_" + strings.Repeat("c", 32),
+		},
+		EvaluatedAt: "2026-08-14T12:00:00Z", CaughtUp: true,
+		Claims: []domain.BriefingClaim{}, Omitted: []domain.BriefingOmission{},
+		ContentSHA256: strings.Repeat("d", 64), ByteSize: 1,
+	}})
 	encoded := string(request.Params)
 	if !strings.Contains(encoded, `"since_checkpoint":"outcpnt_exact"`) {
 		t.Fatalf("request=%s", encoded)

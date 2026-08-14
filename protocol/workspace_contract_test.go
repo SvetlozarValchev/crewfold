@@ -16,7 +16,11 @@ func TestWorkspaceResultSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 		"schemas/local/v1/database-status.result.schema.json": localapi.DatabaseStatusSchema,
 		"schemas/local/v1/workspace-init.result.schema.json":  localapi.WorkspaceInitSchema,
 		"schemas/local/v1/workspace-show.result.schema.json":  localapi.WorkspaceShowSchema,
+		"schemas/local/v1/workspace-list.result.schema.json":  localapi.WorkspaceListSchema,
+		"schemas/local/v1/project-show.result.schema.json":    localapi.ProjectShowSchema,
+		"schemas/local/v1/project-list.result.schema.json":    localapi.ProjectListSchema,
 		"schemas/local/v1/events-list.result.schema.json":     localapi.EventsListSchema,
+		"schemas/local/v1/events-timeline.result.schema.json": localapi.EventsTimelineSchema,
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil {

@@ -49,15 +49,18 @@ func TestAgentObjectiveAndTaskDefinitionsAreIdempotentAndQueryable(t *testing.T)
 		t.Fatalf("created task = %#v, want ready", task.Detail)
 	}
 
-	agents, err := storage.Agents(context.Background(), workspace.Name)
+	agentPage, err := storage.ListAgents(context.Background(), ListAgentsQuery{WorkspaceIdentifier: workspace.Name})
+	agents := agentPage.Agents
 	if err != nil || len(agents) != 1 || agents[0].ID != agent.Value.ID {
 		t.Fatalf("Agents() = %#v, %v", agents, err)
 	}
-	objectives, err := storage.Objectives(context.Background(), workspace.ID, project.Name)
+	objectivePage, err := storage.ListObjectives(context.Background(), ListObjectivesQuery{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.Name})
+	objectives := objectivePage.Objectives
 	if err != nil || len(objectives) != 1 || objectives[0].ID != objective.Value.ID {
 		t.Fatalf("Objectives() = %#v, %v", objectives, err)
 	}
-	tasks, err := storage.Tasks(context.Background(), workspace.ID, project.ID, "request-list", true)
+	taskPage, err := storage.ListTasks(context.Background(), ListTasksQuery{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, ReadyOnly: true})
+	tasks := taskPage.Tasks
 	if err != nil || len(tasks) != 1 || tasks[0].Task.ID != task.Detail.Task.ID {
 		t.Fatalf("Tasks(ready) = %#v, %v", tasks, err)
 	}
@@ -121,7 +124,8 @@ func TestTaskDependenciesRejectCyclesAndExplainReadiness(t *testing.T) {
 	if ErrorCode(err) != CodeDependencyCycle {
 		t.Fatalf("AddTaskDependency(cycle) error = %v, code = %q", err, ErrorCode(err))
 	}
-	ready, err := storage.Tasks(context.Background(), workspace.ID, project.ID, "request-ready", true)
+	readyPage, err := storage.ListTasks(context.Background(), ListTasksQuery{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, ReadyOnly: true})
+	ready := readyPage.Tasks
 	if err != nil || len(ready) != 1 || ready[0].Task.ID != first.Task.ID {
 		t.Fatalf("Tasks(ready) = %#v, %v, want only foundation", ready, err)
 	}
@@ -173,10 +177,7 @@ func TestInvalidTaskTransitionsLeaveStateAndEventsUnchanged(t *testing.T) {
 	storage := openTestStore(t, t.TempDir(), Options{})
 	workspace, project := initializeWorkTestProject(t, storage)
 	task := createWorkTestTask(t, storage, workspace.ID, project.ID, "state validation", "task-state-validation")
-	eventsBefore, err := storage.Events(context.Background(), 0, 100)
-	if err != nil {
-		t.Fatalf("Events(before) error = %v", err)
-	}
+	eventsBefore := testWorkspaceEvents(t, storage, workspace.ID, 0, 100)
 	for _, attempt := range []struct {
 		action string
 		reason string
@@ -191,13 +192,13 @@ func TestInvalidTaskTransitionsLeaveStateAndEventsUnchanged(t *testing.T) {
 			t.Errorf("TransitionTask(%q) error = %v, code = %q, want %q", attempt.action, mutationErr, ErrorCode(mutationErr), CodeInvalidTransition)
 		}
 	}
-	detail, err := storage.TaskDetail(context.Background(), workspace.ID, task.Task.ID, "request-show-unchanged")
+	detail, err := storage.TaskDetail(context.Background(), workspace.ID, task.Task.ID)
 	if err != nil || detail.Task.Status != domain.TaskReady || detail.Task.Revision != 1 {
 		t.Fatalf("TaskDetail(after invalid transitions) = %#v, %v", detail, err)
 	}
-	eventsAfter, err := storage.Events(context.Background(), 0, 100)
-	if err != nil || len(eventsAfter) != len(eventsBefore) {
-		t.Fatalf("events after invalid transitions = %#v, %v; before = %#v", eventsAfter, err, eventsBefore)
+	eventsAfter := testWorkspaceEvents(t, storage, workspace.ID, 0, 100)
+	if len(eventsAfter) != len(eventsBefore) {
+		t.Fatalf("events after invalid transitions = %#v; before = %#v", eventsAfter, eventsBefore)
 	}
 }
 
@@ -218,7 +219,7 @@ func TestAssignmentExpiryUsesControlledClockAndRetainsHistory(t *testing.T) {
 	if err != nil || count != 1 {
 		t.Fatalf("ReconcileExpiredAssignments() = %d, %v", count, err)
 	}
-	detail, err := storage.TaskDetail(context.Background(), workspace.ID, task.Task.ID, "request-show")
+	detail, err := storage.TaskDetail(context.Background(), workspace.ID, task.Task.ID)
 	if err != nil || detail.Task.Status != domain.TaskReady || detail.Task.Revision != 3 || detail.Assignment != nil {
 		t.Fatalf("TaskDetail(after expiry) = %#v, %v", detail, err)
 	}
@@ -246,7 +247,11 @@ func TestBlockedTaskStaysBlockedWhenItsAssignmentExpires(t *testing.T) {
 	}
 	blocked := transitionWorkTestTask(t, storage, workspace.ID, task.Task.ID, "block", "waiting for input", assigned.Detail.Task.Revision)
 	now = now.Add(61 * time.Second)
-	detail, err := storage.TaskDetail(context.Background(), workspace.ID, task.Task.ID, "request-expire-blocked")
+	count, err := storage.ReconcileExpiredAssignments(context.Background(), workspace.ID, "request-blocked-expire")
+	if err != nil || count != 1 {
+		t.Fatalf("ReconcileExpiredAssignments() = %d, %v", count, err)
+	}
+	detail, err := storage.TaskDetail(context.Background(), workspace.ID, task.Task.ID)
 	if err != nil || detail.Task.Status != domain.TaskBlocked || detail.Task.Revision != blocked.Task.Revision+1 || detail.Assignment != nil {
 		t.Fatalf("TaskDetail(blocked after expiry) = %#v, %v", detail, err)
 	}
@@ -288,7 +293,7 @@ func TestConcurrentTaskUpdatesProduceOneRevisionConflict(t *testing.T) {
 	if successes != 1 || conflicts != 1 {
 		t.Fatalf("concurrent results: successes=%d conflicts=%d errors=%v", successes, conflicts, errorsByCall)
 	}
-	detail, err := storage.TaskDetail(context.Background(), workspace.ID, task.Task.ID, "request-final")
+	detail, err := storage.TaskDetail(context.Background(), workspace.ID, task.Task.ID)
 	if err != nil || detail.Task.Revision != 2 || detail.Task.Status != domain.TaskBlocked {
 		t.Fatalf("final task = %#v, %v", detail, err)
 	}

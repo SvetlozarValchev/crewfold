@@ -4,10 +4,13 @@
   "title": "Crewfold local API overlap list result v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "type", "overlaps"],
+  "required": ["schema", "type", "overlaps", "next_cursor", "has_more", "total"],
   "properties": {
     "schema": {"const": "urn:crewfold:schema:local-api:overlap-list-result:v1"},
     "type": {"const": "overlap_list"},
-    "overlaps": {"type": "array", "items": {"$ref": "../../domain/v1/work-overlap.schema.json"}}
+    "overlaps": {"type": "array", "maxItems": 200, "items": {"$ref": "../../domain/v1/work-overlap.schema.json"}},
+    "next_cursor": {"$ref": "operator-page.schema.json#/$defs/nextCursor"},
+    "has_more": {"$ref": "operator-page.schema.json#/$defs/hasMore"},
+    "total": {"$ref": "operator-page.schema.json#/$defs/total"}
   }
 }

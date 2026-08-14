@@ -250,6 +250,21 @@ func (s *Store) InspectProject(ctx context.Context, workspaceIdentifier, project
 	return ProjectInspection{Project: project, Repositories: repositories, Checkouts: checkouts}, nil
 }
 
+// Project resolves an exact project by ID or name without inspecting checkout
+// state or emitting observation events.
+func (s *Store) Project(ctx context.Context, workspaceIdentifier, projectIdentifier string) (domain.Project, error) {
+	transaction, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return domain.Project{}, storageFailure("begin project lookup", err)
+	}
+	defer transaction.Rollback()
+	workspace, err := workspaceInTransaction(ctx, transaction, workspaceIdentifier)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	return queryProject(ctx, transaction, workspace.ID, projectIdentifier)
+}
+
 func (s *Store) ApplyCheckoutObservations(ctx context.Context, workspaceIdentifier, projectIdentifier, correlationID string, observations map[string]domain.CheckoutObservation) (ProjectInspection, error) {
 	inspection, err := s.InspectProject(ctx, workspaceIdentifier, projectIdentifier)
 	if err != nil {
@@ -594,6 +609,9 @@ func appendEvent(ctx context.Context, transaction *sql.Tx, workspaceID, entityTy
 }
 
 func appendEventForActor(ctx context.Context, transaction *sql.Tx, workspaceID, entityType, entityID string, revision int64, eventType, correlationID, now, actorID, actorType string, data any) (int64, error) {
+	if strings.TrimSpace(actorID) == "" || !domain.ValidEventActorType(actorType) {
+		return 0, storageFailure("append "+eventType+" event", errors.New("event actor is outside the canonical actor taxonomy"))
+	}
 	eventID, err := randomID("evt_")
 	if err != nil {
 		return 0, storageFailure("generate event id", err)
@@ -601,6 +619,21 @@ func appendEventForActor(ctx context.Context, transaction *sql.Tx, workspaceID, 
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		return 0, storageFailure("encode event data", err)
+	}
+	if !domain.ValidEvent(domain.Event{
+		EventID:       eventID,
+		Sequence:      1,
+		Type:          eventType,
+		SchemaVersion: 1,
+		OccurredAt:    now,
+		RecordedAt:    now,
+		Actor:         domain.EventActor{ActorID: actorID, ActorType: actorType},
+		WorkspaceID:   workspaceID,
+		Entity:        domain.EventEntity{Type: entityType, ID: entityID, Revision: revision},
+		CorrelationID: correlationID,
+		Data:          dataJSON,
+	}) {
+		return 0, storageFailure("append "+eventType+" event", errors.New("event envelope is outside the canonical event contract"))
 	}
 	inserted, err := transaction.ExecContext(ctx, `
 INSERT INTO events(

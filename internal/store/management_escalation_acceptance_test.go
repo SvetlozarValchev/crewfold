@@ -699,7 +699,7 @@ func (fixture escalationAcceptanceFixture) assertAllowedTarget(t *testing.T, tar
 		}
 		assertManagementRowCount(t, fixture.storage, 1, `SELECT COUNT(*) FROM events WHERE entity_id=? AND type='run.stop_requested' AND json_extract(data_json,'$.supervisor_action_id')=?`, target.runID, action.ID)
 	case domain.ProposalResponseRetryTask, domain.ProposalResponseReassignTask:
-		detail, err := fixture.storage.TaskDetail(context.Background(), fixture.base.workspace.ID, target.taskID, "inspect-allowed-"+target.request.Response)
+		detail, err := fixture.storage.TaskDetail(context.Background(), fixture.base.workspace.ID, target.taskID)
 		if err != nil || detail.Task.Status != domain.TaskReady || detail.Task.AssignmentID != "" || detail.Task.AssignedAgentID != "" || detail.Task.Revision != target.request.ExpectedRevision+1 {
 			t.Fatalf("allowed %s target = %#v, %v", target.request.Response, detail, err)
 		}
@@ -755,7 +755,7 @@ func (fixture escalationAcceptanceFixture) targetFingerprint(t *testing.T, targe
 	if target.runID != "" && target.request.Response != domain.ProposalResponseRetryTask {
 		return runFingerprint(t, fixture.storage, target.runID)
 	}
-	detail, err := fixture.storage.TaskDetail(context.Background(), fixture.base.workspace.ID, target.taskID, "fingerprint-escalation-target")
+	detail, err := fixture.storage.TaskDetail(context.Background(), fixture.base.workspace.ID, target.taskID)
 	if err != nil {
 		t.Fatalf("fingerprint escalation task %s = %v", target.taskID, err)
 	}

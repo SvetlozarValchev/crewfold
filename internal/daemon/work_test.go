@@ -27,6 +27,7 @@ func TestCoordinationThroughLocalAPIPersistsAcrossRestart(t *testing.T) {
 	clockNanos.Store(baseTime.UnixNano())
 	config := testConfig(t)
 	config.StoreOptions.Clock = func() time.Time { return time.Unix(0, clockNanos.Load()).UTC() }
+	config.LeaseReconcileInterval = 20 * time.Millisecond
 
 	first := startTestServer(t, config)
 	client := localapi.NewClient(config.SocketPath)
@@ -73,7 +74,7 @@ func TestCoordinationThroughLocalAPIPersistsAcrossRestart(t *testing.T) {
 	if _, err := client.TaskDepend(context.Background(), localapi.TaskDependencyParams{Workspace: "personal", Task: lifecycle.Detail.Task.ID, DependsOn: dependent.Detail.Task.ID, ExpectedRevision: lifecycle.Detail.Task.Revision, IdempotencyKey: "coordination-cycle"}); localAPIErrorCode(err) != store.CodeDependencyCycle {
 		t.Fatalf("TaskDepend(cycle) error = %v, code = %q", err, localAPIErrorCode(err))
 	}
-	ready, err := client.TaskList(context.Background(), "personal", "demo", true)
+	ready, err := client.TaskList(context.Background(), localapi.TaskListParams{Workspace: "personal", Project: "demo", ReadyOnly: true})
 	if err != nil {
 		t.Fatalf("TaskList(ready) error = %v", err)
 	}
@@ -112,9 +113,20 @@ func TestCoordinationThroughLocalAPIPersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("TaskAssign(expiring) error = %v", err)
 	}
 	clockNanos.Store(baseTime.Add(61 * time.Second).UnixNano())
-	expired, err := client.TaskShow(context.Background(), "personal", expiring.Detail.Task.ID)
-	if err != nil {
-		t.Fatalf("TaskShow(expired) error = %v", err)
+	var expired localapi.TaskShowResult
+	deadline := time.Now().Add(2*config.LeaseReconcileInterval + time.Second)
+	for {
+		expired, err = client.TaskShow(context.Background(), "personal", expiring.Detail.Task.ID)
+		if err != nil {
+			t.Fatalf("TaskShow(expired) error = %v", err)
+		}
+		if expired.Detail.Assignment == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("lease reconciler did not expire task before %s", deadline)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if expired.Detail.Task.Status != domain.TaskReady || expired.Detail.Assignment != nil || expired.Detail.Task.Revision != expiring.Detail.Task.Revision+1 {
 		t.Fatalf("expired task = %#v, want ready with retained revision history and no active assignment", expired.Detail)
@@ -154,10 +166,10 @@ func TestCoordinationThroughLocalAPIPersistsAcrossRestart(t *testing.T) {
 	if status.Status.AgentsRegistered != 1 || status.Status.TasksRegistered != 4 || status.Status.TasksCancelled != 1 || status.Status.TasksReady != 2 {
 		t.Fatalf("CoordinationStatus() = %#v, want one agent and four classified tasks", status.Status)
 	}
-	agentsBefore, _ := client.AgentList(context.Background(), "personal")
-	objectivesBefore, _ := client.ObjectiveList(context.Background(), "personal", project.Project.ID)
-	tasksBefore, _ := client.TaskList(context.Background(), "personal", project.Project.ID, false)
-	eventsBefore, err := client.EventsList(context.Background(), 0, 100)
+	agentsBefore, _ := client.AgentList(context.Background(), localapi.AgentListParams{Workspace: "personal"})
+	objectivesBefore, _ := client.ObjectiveList(context.Background(), localapi.ObjectiveListParams{Workspace: "personal", Project: project.Project.ID})
+	tasksBefore, _ := client.TaskList(context.Background(), localapi.TaskListParams{Workspace: "personal", Project: project.Project.ID})
+	eventsBefore, err := client.EventsList(context.Background(), localapi.EventsListParams{Workspace: "personal", After: 0, PageParams: localapi.PageParams{Limit: 100}})
 	if err != nil || len(eventsBefore.Events) < 15 {
 		t.Fatalf("EventsList() = %#v, %v, want complete coordination history", eventsBefore, err)
 	}
@@ -171,19 +183,19 @@ func TestCoordinationThroughLocalAPIPersistsAcrossRestart(t *testing.T) {
 
 	second := startTestServer(t, config)
 	restarted := localapi.NewClient(config.SocketPath)
-	agentsAfter, err := restarted.AgentList(context.Background(), "personal")
+	agentsAfter, err := restarted.AgentList(context.Background(), localapi.AgentListParams{Workspace: "personal"})
 	if err != nil || !reflect.DeepEqual(agentsAfter, agentsBefore) {
 		t.Fatalf("AgentList(after restart) = %#v, %v; want %#v", agentsAfter, err, agentsBefore)
 	}
-	objectivesAfter, err := restarted.ObjectiveList(context.Background(), "personal", project.Project.ID)
+	objectivesAfter, err := restarted.ObjectiveList(context.Background(), localapi.ObjectiveListParams{Workspace: "personal", Project: project.Project.ID})
 	if err != nil || !reflect.DeepEqual(objectivesAfter, objectivesBefore) {
 		t.Fatalf("ObjectiveList(after restart) = %#v, %v; want %#v", objectivesAfter, err, objectivesBefore)
 	}
-	tasksAfter, err := restarted.TaskList(context.Background(), "personal", project.Project.ID, false)
+	tasksAfter, err := restarted.TaskList(context.Background(), localapi.TaskListParams{Workspace: "personal", Project: project.Project.ID})
 	if err != nil || !reflect.DeepEqual(tasksAfter, tasksBefore) {
 		t.Fatalf("TaskList(after restart) = %#v, %v; want %#v", tasksAfter, err, tasksBefore)
 	}
-	eventsAfter, err := restarted.EventsList(context.Background(), 0, 100)
+	eventsAfter, err := restarted.EventsList(context.Background(), localapi.EventsListParams{Workspace: "personal", After: 0, PageParams: localapi.PageParams{Limit: 100}})
 	if err != nil || !reflect.DeepEqual(eventsAfter, eventsBefore) {
 		t.Fatalf("EventsList(after restart) changed: before=%#v after=%#v err=%v", eventsBefore, eventsAfter, err)
 	}

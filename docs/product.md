@@ -134,6 +134,16 @@ duplicates, contradictions, risks, and unknowns; and identifies decisions that
 need the owner. The owner can approve the next work, intervene, or drill into the
 supporting records without reading each session.
 
+### 9. Operate from one control panel
+
+The owner launches `crewfold ui` and navigates Overview, Briefing, Work,
+Decisions, Checks, Coordination, and Activity without polling terminal panes.
+Every summary drills into the exact canonical records that produced it. The
+dashboard remains read-only until the owner opens an explicit action review and
+confirms the displayed target, revision, and consequence. Attaching suspends the
+dashboard and enters the selected Herdr terminal; exiting it returns to the same
+durable Crewfold selection and catches up from the applied event cursor.
+
 ## Functional requirements
 
 ### Projects and checkouts
@@ -216,6 +226,22 @@ supporting records without reading each session.
 - Link summaries and decisions to evidence.
 - Explain why an agent received each item in a context packet.
 - Permit export without provider-private session internals.
+
+### Operator interface
+
+- Provide one keyboard-complete Go-native terminal dashboard in the existing
+  binary; do not require a browser or separate frontend service.
+- Consume canonical local-API records and M18 briefing claims unchanged. Event
+  envelopes invalidate records but never become an alternate fact projection.
+- Preserve stable-ID selection and visibly stale cached state across reconnect;
+  disable interventions until canonical synchronization succeeds.
+- Render valid bounded UTF-8 after removing terminal controls and bidirectional
+  formatting controls from every external string.
+- Preserve state, severity, focus, and selection as text under `NO_COLOR`.
+- Submit mutations only after an exact review and through the normal typed,
+  expected-revision, idempotent API.
+- Attach through the exact shell-free `RunAttach` argv and never display attach
+  environment values or opaque runtime/provider handles.
 
 ## Quality attributes
 

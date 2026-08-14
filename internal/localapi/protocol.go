@@ -20,8 +20,11 @@ const (
 	MethodDatabaseStatus        = "database.status"
 	MethodWorkspaceInit         = "workspace.init"
 	MethodWorkspaceShow         = "workspace.show"
+	MethodWorkspaceList         = "workspace.list"
 	MethodProjectAdd            = "project.add"
+	MethodProjectShow           = "project.show"
 	MethodProjectInspect        = "project.inspect"
+	MethodProjectList           = "project.list"
 	MethodCheckoutAdd           = "checkout.add"
 	MethodCheckoutList          = "checkout.list"
 	MethodAgentCreate           = "agent.create"
@@ -95,15 +98,20 @@ const (
 	MethodMeetingInspect        = "meeting.inspect"
 	MethodMeetingAccept         = "meeting.accept"
 	MethodMeetingTakeover       = "meeting.takeover"
+	MethodMeetingList           = "meeting.list"
 	MethodEventsList            = "events.list"
+	MethodEventsTimeline        = "events.timeline"
 
 	StatusSchema                    = "urn:crewfold:schema:local-api:status-result:v1"
 	StopSchema                      = "urn:crewfold:schema:local-api:stop-result:v1"
 	DatabaseStatusSchema            = "urn:crewfold:schema:local-api:database-status-result:v1"
 	WorkspaceInitSchema             = "urn:crewfold:schema:local-api:workspace-init-result:v1"
 	WorkspaceShowSchema             = "urn:crewfold:schema:local-api:workspace-show-result:v1"
+	WorkspaceListSchema             = "urn:crewfold:schema:local-api:workspace-list-result:v1"
 	ProjectAddSchema                = "urn:crewfold:schema:local-api:project-add-result:v1"
+	ProjectShowSchema               = "urn:crewfold:schema:local-api:project-show-result:v1"
 	ProjectInspectSchema            = "urn:crewfold:schema:local-api:project-inspect-result:v1"
+	ProjectListSchema               = "urn:crewfold:schema:local-api:project-list-result:v1"
 	CheckoutAddSchema               = "urn:crewfold:schema:local-api:checkout-add-result:v1"
 	CheckoutListSchema              = "urn:crewfold:schema:local-api:checkout-list-result:v1"
 	AgentMutationSchema             = "urn:crewfold:schema:local-api:agent-mutation-result:v1"
@@ -158,7 +166,9 @@ const (
 	DriftListSchema                 = "urn:crewfold:schema:local-api:drift-list-result:v1"
 	MeetingMutationSchema           = "urn:crewfold:schema:local-api:meeting-mutation-result:v1"
 	MeetingInspectSchema            = "urn:crewfold:schema:local-api:meeting-inspect-result:v1"
+	MeetingListSchema               = "urn:crewfold:schema:local-api:meeting-list-result:v1"
 	EventsListSchema                = "urn:crewfold:schema:local-api:events-list-result:v1"
+	EventsTimelineSchema            = "urn:crewfold:schema:local-api:events-timeline-result:v1"
 )
 
 // Request is one newline-delimited local API request. Hello requests omit
@@ -256,6 +266,28 @@ type WorkspaceShowResult struct {
 	Workspace domain.Workspace `json:"workspace"`
 }
 
+type PageParams struct {
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+type PageResult struct {
+	NextCursor string `json:"next_cursor"`
+	HasMore    bool   `json:"has_more"`
+	Total      int64  `json:"total"`
+}
+
+type WorkspaceListParams struct {
+	PageParams
+}
+
+type WorkspaceListResult struct {
+	Schema     string             `json:"schema"`
+	Type       string             `json:"type"`
+	Workspaces []domain.Workspace `json:"workspaces"`
+	PageResult
+}
+
 type ProjectAddParams struct {
 	Workspace      string `json:"workspace"`
 	Name           string `json:"name"`
@@ -278,12 +310,35 @@ type ProjectInspectParams struct {
 	Project   string `json:"project"`
 }
 
+type ProjectShowParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project"`
+}
+
+type ProjectShowResult struct {
+	Schema  string         `json:"schema"`
+	Type    string         `json:"type"`
+	Project domain.Project `json:"project"`
+}
+
 type ProjectInspectResult struct {
 	Schema       string              `json:"schema"`
 	Type         string              `json:"type"`
 	Project      domain.Project      `json:"project"`
 	Repositories []domain.Repository `json:"repositories"`
 	Checkouts    []domain.Checkout   `json:"checkouts"`
+}
+
+type ProjectListParams struct {
+	Workspace string `json:"workspace"`
+	PageParams
+}
+
+type ProjectListResult struct {
+	Schema   string           `json:"schema"`
+	Type     string           `json:"type"`
+	Projects []domain.Project `json:"projects"`
+	PageResult
 }
 
 type CheckoutAddParams struct {
@@ -339,7 +394,12 @@ type AgentUpdateParams struct {
 
 type AgentQueryParams struct {
 	Workspace string `json:"workspace"`
-	Agent     string `json:"agent,omitempty"`
+	Agent     string `json:"agent"`
+}
+
+type AgentListParams struct {
+	Workspace string `json:"workspace"`
+	PageParams
 }
 
 type AgentMutationResult struct {
@@ -359,6 +419,7 @@ type AgentListResult struct {
 	Schema string                   `json:"schema"`
 	Type   string                   `json:"type"`
 	Agents []domain.AgentDefinition `json:"agents"`
+	PageResult
 }
 
 type ObjectiveCreateParams struct {
@@ -381,8 +442,13 @@ type ObjectiveUpdateParams struct {
 
 type ObjectiveQueryParams struct {
 	Workspace string `json:"workspace"`
+	Objective string `json:"objective"`
+}
+
+type ObjectiveListParams struct {
+	Workspace string `json:"workspace"`
 	Project   string `json:"project,omitempty"`
-	Objective string `json:"objective,omitempty"`
+	PageParams
 }
 
 type ObjectiveMutationResult struct {
@@ -402,6 +468,7 @@ type ObjectiveListResult struct {
 	Schema     string             `json:"schema"`
 	Type       string             `json:"type"`
 	Objectives []domain.Objective `json:"objectives"`
+	PageResult
 }
 
 type TaskCreateParams struct {
@@ -428,9 +495,14 @@ type TaskUpdateParams struct {
 
 type TaskQueryParams struct {
 	Workspace string `json:"workspace"`
+	Task      string `json:"task"`
+}
+
+type TaskListParams struct {
+	Workspace string `json:"workspace"`
 	Project   string `json:"project,omitempty"`
-	Task      string `json:"task,omitempty"`
 	ReadyOnly bool   `json:"ready_only,omitempty"`
+	PageParams
 }
 
 type TaskDependencyParams struct {
@@ -476,6 +548,7 @@ type TaskListResult struct {
 	Schema string              `json:"schema"`
 	Type   string              `json:"type"`
 	Tasks  []domain.TaskDetail `json:"tasks"`
+	PageResult
 }
 
 type TaskTimelineParams struct {
@@ -502,10 +575,11 @@ type ClaimAddParams struct {
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
-type ClaimQueryParams struct {
+type ClaimListParams struct {
 	Workspace string `json:"workspace"`
 	Project   string `json:"project,omitempty"`
 	Status    string `json:"status,omitempty"`
+	PageParams
 }
 
 type ClaimReleaseParams struct {
@@ -528,19 +602,31 @@ type ClaimListResult struct {
 	Schema string             `json:"schema"`
 	Type   string             `json:"type"`
 	Claims []domain.WorkClaim `json:"claims"`
+	PageResult
 }
 
-type OverlapQueryParams struct {
+type OverlapInspectParams struct {
+	Workspace string `json:"workspace"`
+	Overlap   string `json:"overlap"`
+}
+
+type OverlapScanParams struct {
 	Workspace string `json:"workspace"`
 	Project   string `json:"project,omitempty"`
-	Overlap   string `json:"overlap,omitempty"`
+}
+
+type OverlapListParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project,omitempty"`
 	Status    string `json:"status,omitempty"`
+	PageParams
 }
 
 type OverlapListResult struct {
 	Schema   string               `json:"schema"`
 	Type     string               `json:"type"`
 	Overlaps []domain.WorkOverlap `json:"overlaps"`
+	PageResult
 }
 
 type OverlapInspectResult struct {
@@ -556,15 +642,18 @@ type OverlapScanResult struct {
 	Issues []string                   `json:"issues"`
 }
 
-type DriftQueryParams struct {
+type DriftListParams struct {
 	Workspace string `json:"workspace"`
+	Project   string `json:"project,omitempty"`
 	Status    string `json:"status,omitempty"`
+	PageParams
 }
 
 type DriftListResult struct {
 	Schema string              `json:"schema"`
 	Type   string              `json:"type"`
 	Drifts []domain.ClaimDrift `json:"drifts"`
+	PageResult
 }
 
 type MeetingCreateParams struct {
@@ -590,6 +679,13 @@ type MeetingRunParams struct {
 type MeetingQueryParams struct {
 	Workspace string `json:"workspace"`
 	Meeting   string `json:"meeting"`
+}
+
+type MeetingListParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project,omitempty"`
+	Status    string `json:"status,omitempty"`
+	PageParams
 }
 
 type MeetingAcceptParams struct {
@@ -620,6 +716,13 @@ type MeetingInspectResult struct {
 	Schema string               `json:"schema"`
 	Type   string               `json:"type"`
 	Detail domain.MeetingDetail `json:"detail"`
+}
+
+type MeetingListResult struct {
+	Schema   string           `json:"schema"`
+	Type     string           `json:"type"`
+	Meetings []domain.Meeting `json:"meetings"`
+	PageResult
 }
 
 type ContextBuildParams struct {
@@ -1048,9 +1151,15 @@ type RunStartParams struct {
 
 type RunQueryParams struct {
 	Workspace string `json:"workspace"`
-	Run       string `json:"run,omitempty"`
+	Run       string `json:"run"`
+}
+
+type RunListParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project,omitempty"`
 	Task      string `json:"task,omitempty"`
 	Status    string `json:"status,omitempty"`
+	PageParams
 }
 
 type RunResumeParams struct {
@@ -1083,7 +1192,6 @@ type RunPromptParams struct {
 type RunAttachParams struct {
 	Workspace string `json:"workspace"`
 	Run       string `json:"run"`
-	Takeover  bool   `json:"takeover,omitempty"`
 }
 
 type RunMutationResult struct {
@@ -1100,9 +1208,10 @@ type RunShowResult struct {
 }
 
 type RunListResult struct {
-	Schema string             `json:"schema"`
-	Type   string             `json:"type"`
-	Runs   []domain.RunDetail `json:"runs"`
+	Schema string              `json:"schema"`
+	Type   string              `json:"type"`
+	Runs   []domain.RunSummary `json:"runs"`
+	PageResult
 }
 
 type RunLogsResult struct {
@@ -1142,17 +1251,34 @@ type CoordinationStatusResult struct {
 }
 
 type EventsListParams struct {
-	After *int64 `json:"after"`
-	Limit *int   `json:"limit,omitempty"`
+	Workspace string `json:"workspace"`
+	After     int64  `json:"after"`
+	PageParams
 }
 
 type EventsListResult struct {
-	Schema    string         `json:"schema"`
-	Type      string         `json:"type"`
-	After     int64          `json:"after"`
-	NextAfter int64          `json:"next_after"`
-	HasMore   bool           `json:"has_more"`
-	Events    []domain.Event `json:"events"`
+	Schema      string         `json:"schema"`
+	Type        string         `json:"type"`
+	WorkspaceID string         `json:"workspace_id"`
+	HighWater   int64          `json:"high_water"`
+	Events      []domain.Event `json:"events"`
+	PageResult
+}
+
+type EventsTimelineParams struct {
+	Workspace  string `json:"workspace"`
+	EntityType string `json:"entity_type"`
+	EntityID   string `json:"entity_id"`
+	PageParams
+}
+
+type EventsTimelineResult struct {
+	Schema      string         `json:"schema"`
+	Type        string         `json:"type"`
+	WorkspaceID string         `json:"workspace_id"`
+	HighWater   int64          `json:"high_water"`
+	Events      []domain.Event `json:"events"`
+	PageResult
 }
 
 // MarshalResult constructs a response without exposing server-only wire types.

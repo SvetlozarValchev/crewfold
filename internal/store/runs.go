@@ -34,6 +34,7 @@ const (
 	taskFailedEvent            = "task.failed"
 	taskHandoffRecorded        = "task.handoff_recorded"
 	taskRunStoppedEvent        = "task.run_stopped"
+	runWorkerActorID           = "subsystem:run-worker"
 	defaultRunCapabilityTTL    = time.Hour
 	maximumRunCapabilityTTL    = 24 * time.Hour
 )
@@ -78,6 +79,12 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	if err != nil {
 		return RunMutationResult{}, storageFailure("hash run start", err)
 	}
+	var replay RunMutationResult
+	if found, err := s.lookupIdempotencyBeforeEffects(ctx, key, "run.start", requestHash, &replay); err != nil {
+		return RunMutationResult{}, err
+	} else if found {
+		return replay, nil
+	}
 	if _, err := s.ReconcileExpiredAssignments(ctx, workspaceIdentifier, correlationID+"-lease"); err != nil {
 		return RunMutationResult{}, err
 	}
@@ -90,7 +97,6 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 		return RunMutationResult{}, storageFailure("begin run start", err)
 	}
 	defer tx.Rollback()
-	var replay RunMutationResult
 	if found, err := lookupIdempotency(ctx, tx, key, "run.start", requestHash, &replay); err != nil {
 		return RunMutationResult{}, err
 	} else if found {
@@ -309,53 +315,6 @@ func (s *Store) RunByID(ctx context.Context, runID string) (domain.Run, error) {
 	return run, nil
 }
 
-func (s *Store) Runs(ctx context.Context, workspaceIdentifier, taskID, status string) ([]domain.RunDetail, error) {
-	status = strings.TrimSpace(status)
-	if status != "" && !validRunStatus(status) {
-		return nil, &Error{Code: CodeInvalidRun, Message: fmt.Sprintf("unsupported run status %q", status)}
-	}
-	workspace, err := s.Workspace(ctx, workspaceIdentifier)
-	if err != nil {
-		return nil, err
-	}
-	arguments := []any{workspace.ID}
-	query := runSelect + " WHERE r.workspace_id = ?"
-	if strings.TrimSpace(taskID) != "" {
-		query += " AND r.task_id = ?"
-		arguments = append(arguments, strings.TrimSpace(taskID))
-	}
-	if status != "" {
-		query += " AND r.status = ?"
-		arguments = append(arguments, status)
-	}
-	query += " ORDER BY r.created_at, r.id"
-	rows, err := s.db.QueryContext(ctx, query, arguments...)
-	if err != nil {
-		return nil, storageFailure("list runs", err)
-	}
-	var runs []domain.Run
-	for rows.Next() {
-		var run domain.Run
-		if err := scanRun(rows, &run); err != nil {
-			_ = rows.Close()
-			return nil, storageFailure("scan run", err)
-		}
-		runs = append(runs, run)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, storageFailure("close run list", err)
-	}
-	result := make([]domain.RunDetail, 0, len(runs))
-	for _, run := range runs {
-		detail, err := runDetail(ctx, s.db, run)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, detail)
-	}
-	return result, nil
-}
-
 func (s *Store) TaskTimeline(ctx context.Context, workspaceIdentifier, taskID string) (domain.TaskTimeline, error) {
 	workspace, err := s.Workspace(ctx, workspaceIdentifier)
 	if err != nil {
@@ -548,7 +507,7 @@ WHERE id=? AND task_id=? AND agent_id=? AND status='active'
 		}
 		run.Status = domain.RunStarting
 		run.Revision++
-		if err := updateRunProjection(ctx, tx, *run, now); err != nil {
+		if err := updateRunProjectionForActor(ctx, tx, *run, now, runWorkerActorID); err != nil {
 			return 0, err
 		}
 		if err := setRunJob(ctx, tx, run.ID, "pending", now); err != nil {
@@ -557,7 +516,7 @@ WHERE id=? AND task_id=? AND agent_id=? AND status='active'
 		if err := appendRunTimeline(ctx, tx, run.ID, runStartingEvent, "runtime launch is starting", nil, now); err != nil {
 			return 0, err
 		}
-		return appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartingEvent, correlationID, now, map[string]any{})
+		return appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartingEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{})
 	})
 }
 
@@ -592,7 +551,7 @@ func (s *Store) MarkRunStarted(ctx context.Context, runID, runtimeHandle, provid
 	run.Status, run.RuntimeHandle, run.ProviderHandle = domain.RunActive, runtimeHandle, providerHandle
 	run.StartedAt = now
 	run.Revision++
-	if err := updateRunProjection(ctx, tx, run, now); err != nil {
+	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
 	}
 	task, err := queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
@@ -603,7 +562,7 @@ func (s *Store) MarkRunStarted(ctx context.Context, runID, runtimeHandle, provid
 		return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "run task is no longer assigned"}
 	}
 	task.Status, task.BlockedReason, task.Revision = domain.TaskActive, "", task.Revision+1
-	if err := updateTaskState(ctx, tx, task, now); err != nil {
+	if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if err := setRunJob(ctx, tx, run.ID, "pending", now); err != nil {
@@ -612,10 +571,10 @@ func (s *Store) MarkRunStarted(ctx context.Context, runID, runtimeHandle, provid
 	if err := appendRunTimeline(ctx, tx, run.ID, runStartedEvent, "runtime and provider are bound", nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartedEvent, correlationID, now, map[string]any{"runtime_handle": runtimeHandle, "provider_handle": providerHandle}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"runtime_handle": runtimeHandle, "provider_handle": providerHandle}); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskStarted, correlationID, now, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskStarted, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
 		return domain.RunDetail{}, err
 	}
 	detail, err := runDetailInTransaction(ctx, tx, run)
@@ -645,13 +604,13 @@ func (s *Store) RecordRunRuntimeBinding(ctx context.Context, runID, runtimeHandl
 		}
 		run.RuntimeHandle = runtimeHandle
 		run.Revision++
-		if err := updateRunProjection(ctx, tx, *run, now); err != nil {
+		if err := updateRunProjectionForActor(ctx, tx, *run, now, runWorkerActorID); err != nil {
 			return 0, err
 		}
 		if err := setRunJob(ctx, tx, run.ID, "pending", now); err != nil {
 			return 0, err
 		}
-		return appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runRuntimeObservedEvent, correlationID, now, map[string]any{"runtime_handle": runtimeHandle})
+		return appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runRuntimeObservedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"runtime_handle": runtimeHandle})
 	})
 }
 
@@ -678,7 +637,7 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 	now := s.nowText()
 	run.Status, run.FailureCode, run.FailureMessage, run.FinishedAt = domain.RunStartFailed, "runtime_start_failed", message, now
 	run.Revision++
-	if err := updateRunProjection(ctx, tx, run, now); err != nil {
+	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if err := setRunJob(ctx, tx, run.ID, "complete", now); err != nil {
@@ -687,7 +646,7 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 	if err := appendRunTimeline(ctx, tx, run.ID, runStartFailedEvent, message, nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartFailedEvent, correlationID, now, map[string]any{"code": run.FailureCode, "message": message}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message}); err != nil {
 		return domain.RunDetail{}, err
 	}
 	// A start failure may keep its accepted intent open only while the current
@@ -799,7 +758,7 @@ func (s *Store) applyRunObservationInTransaction(ctx context.Context, tx *sql.Tx
 		if err := appendRunTimeline(ctx, tx, run.ID, runProgressEvent, observation.Message, observation.Evidence, now); err != nil {
 			return domain.RunDetail{}, err
 		}
-		if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runProgressEvent, correlationID, now, map[string]any{"message": observation.Message, "evidence": observation.Evidence}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runProgressEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"message": observation.Message, "evidence": observation.Evidence}); err != nil {
 			return domain.RunDetail{}, err
 		}
 	case domain.ObservationBlocked:
@@ -813,16 +772,16 @@ func (s *Store) applyRunObservationInTransaction(ctx context.Context, tx *sql.Tx
 			return domain.RunDetail{}, err
 		}
 		task.Status, task.BlockedReason, task.Revision = domain.TaskBlocked, question, task.Revision+1
-		if err := updateTaskState(ctx, tx, task, now); err != nil {
+		if err := updateTaskStateForActor(ctx, tx, task, now, run.ID); err != nil {
 			return domain.RunDetail{}, err
 		}
 		if err := appendRunTimeline(ctx, tx, run.ID, runBlockedEvent, question, observation.Evidence, now); err != nil {
 			return domain.RunDetail{}, err
 		}
-		if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runBlockedEvent, correlationID, now, map[string]any{"question": question}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runBlockedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"question": question}); err != nil {
 			return domain.RunDetail{}, err
 		}
-		if _, err := appendEvent(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskBlocked, correlationID, now, map[string]any{"run_id": run.ID, "reason": question, "status": task.Status}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskBlocked, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"run_id": run.ID, "reason": question, "status": task.Status}); err != nil {
 			return domain.RunDetail{}, err
 		}
 	case domain.ObservationCompletion:
@@ -833,13 +792,13 @@ func (s *Store) applyRunObservationInTransaction(ctx context.Context, tx *sql.Tx
 	default:
 		return domain.RunDetail{}, &Error{Code: CodeInvalidRun, Message: fmt.Sprintf("unsupported observation kind %q", observation.Kind)}
 	}
-	if err := updateRunProjection(ctx, tx, *run, now); err != nil {
+	if err := updateRunProjectionForActor(ctx, tx, *run, now, run.ID); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if run.Status == domain.RunCompleted {
 		// The raw reservation guard must observe the run's definite terminal
 		// projection before its exact assignment can be released.
-		if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'released', revision = revision + 1, updated_at = ?, updated_by = ? WHERE task_id = ? AND status = 'active'", now, localOwnerActorID, run.TaskID); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'released', revision = revision + 1, updated_at = ?, updated_by = ? WHERE task_id = ? AND status = 'active'", now, run.ID, run.TaskID); err != nil {
 			return domain.RunDetail{}, storageFailure("release completed task assignment", err)
 		}
 	}
@@ -873,10 +832,10 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 	if err := appendRunTimeline(ctx, tx, run.ID, runCompletionProposedEvent, summary, observation.Evidence, now); err != nil {
 		return err
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runCompletionProposedEvent, correlationID, now, map[string]any{"summary": summary, "evidence": observation.Evidence}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runCompletionProposedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"summary": summary, "evidence": observation.Evidence}); err != nil {
 		return err
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskCompletionProposed, correlationID, now, map[string]any{"run_id": run.ID, "summary": summary, "evidence": observation.Evidence}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskCompletionProposed, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"run_id": run.ID, "summary": summary, "evidence": observation.Evidence}); err != nil {
 		return err
 	}
 	if accepted {
@@ -889,7 +848,7 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 			return storageFailure("encode handoff evidence", err)
 		}
 		handoffSummary := strings.TrimSpace(observation.Handoff)
-		if _, err := tx.ExecContext(ctx, "INSERT INTO run_handoffs(id, run_id, task_id, summary, evidence_json, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)", handoffID, run.ID, task.ID, handoffSummary, string(evidenceJSON), now, localOwnerActorID); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO run_handoffs(id, run_id, task_id, summary, evidence_json, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)", handoffID, run.ID, task.ID, handoffSummary, string(evidenceJSON), now, run.ID); err != nil {
 			return storageFailure("insert run handoff", err)
 		}
 		run.Status, run.FinishedAt = domain.RunCompleted, now
@@ -901,13 +860,13 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 		if err := appendRunTimeline(ctx, tx, run.ID, runCompletedEvent, summary, observation.Evidence, now); err != nil {
 			return err
 		}
-		if _, err := appendEvent(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskHandoffRecorded, correlationID, now, map[string]any{"run_id": run.ID, "handoff_id": handoffID, "summary": handoffSummary}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskHandoffRecorded, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"run_id": run.ID, "handoff_id": handoffID, "summary": handoffSummary}); err != nil {
 			return err
 		}
-		if _, err := appendEvent(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskCompletedEvent, correlationID, now, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskCompletedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
 			return err
 		}
-		if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runCompletedEvent, correlationID, now, map[string]any{"task_id": task.ID, "handoff_id": handoffID}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runCompletedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"task_id": task.ID, "handoff_id": handoffID}); err != nil {
 			return err
 		}
 	} else {
@@ -920,11 +879,11 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 		if err := appendRunTimeline(ctx, tx, run.ID, taskChangesRequestedEvent, reason, observation.Evidence, now); err != nil {
 			return err
 		}
-		if _, err := appendEvent(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskChangesRequestedEvent, correlationID, now, map[string]any{"run_id": run.ID, "reason": reason, "missing_evidence": missing}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskChangesRequestedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"run_id": run.ID, "reason": reason, "missing_evidence": missing}); err != nil {
 			return err
 		}
 	}
-	return updateTaskState(ctx, tx, task, now)
+	return updateTaskStateForActor(ctx, tx, task, now, run.ID)
 }
 
 func (s *Store) ResumeRun(ctx context.Context, command ResumeRunCommand) (RunMutationResult, error) {
@@ -940,6 +899,12 @@ func (s *Store) ResumeRun(ctx context.Context, command ResumeRunCommand) (RunMut
 	if err != nil {
 		return RunMutationResult{}, storageFailure("hash run resume", err)
 	}
+	var replay RunMutationResult
+	if found, err := s.lookupIdempotencyBeforeEffects(ctx, key, "run.resume", requestHash, &replay); err != nil {
+		return RunMutationResult{}, err
+	} else if found {
+		return replay, nil
+	}
 	if _, err := s.ReconcileExpiredAssignments(ctx, workspaceIdentifier, correlationID+"-lease"); err != nil {
 		return RunMutationResult{}, err
 	}
@@ -948,7 +913,6 @@ func (s *Store) ResumeRun(ctx context.Context, command ResumeRunCommand) (RunMut
 		return RunMutationResult{}, storageFailure("begin run resume", err)
 	}
 	defer tx.Rollback()
-	var replay RunMutationResult
 	if found, err := lookupIdempotency(ctx, tx, key, "run.resume", requestHash, &replay); err != nil {
 		return RunMutationResult{}, err
 	} else if found {
@@ -1104,7 +1068,7 @@ func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, d
 	}
 	now := s.nowText()
 	run.Status, run.StopGraceMillis, run.StopForced, run.ResultSummary, run.FinishedAt, run.Revision = domain.RunStopped, 0, forced, strings.TrimSpace(diagnostic), now, run.Revision+1
-	if err := updateRunProjection(ctx, tx, run, now); err != nil {
+	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
 	}
 	task, err := queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
@@ -1115,7 +1079,7 @@ func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, d
 		return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "stopped run lost its task assignment"}
 	}
 	task.Status, task.BlockedReason, task.Revision = domain.TaskAssigned, "", task.Revision+1
-	if err := updateTaskState(ctx, tx, task, now); err != nil {
+	if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if err := setRunJob(ctx, tx, run.ID, "complete", now); err != nil {
@@ -1128,10 +1092,10 @@ func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, d
 	if err := appendRunTimeline(ctx, tx, run.ID, runStoppedEvent, message, nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStoppedEvent, correlationID, now, map[string]any{"forced": forced, "diagnostic": message}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStoppedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"forced": forced, "diagnostic": message}); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskRunStoppedEvent, correlationID, now, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskRunStoppedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if err := terminalizeSchedulingIntentForRun(ctx, tx, run, message, correlationID, now); err != nil {
@@ -1169,7 +1133,7 @@ func (s *Store) LoseRun(ctx context.Context, runID, message, correlationID strin
 		message = "runtime identity or outcome cannot be trusted"
 	}
 	run.Status, run.FailureCode, run.FailureMessage, run.Revision = domain.RunLost, "runtime_state_unknown", message, run.Revision+1
-	if err := updateRunProjection(ctx, tx, run, now); err != nil {
+	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
 	}
 	task, err := queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
@@ -1177,7 +1141,7 @@ func (s *Store) LoseRun(ctx context.Context, runID, message, correlationID strin
 		return domain.RunDetail{}, err
 	}
 	task.Status, task.BlockedReason, task.Revision = domain.TaskBlocked, message, task.Revision+1
-	if err := updateTaskState(ctx, tx, task, now); err != nil {
+	if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if err := setRunJob(ctx, tx, run.ID, "complete", now); err != nil {
@@ -1186,10 +1150,10 @@ func (s *Store) LoseRun(ctx context.Context, runID, message, correlationID strin
 	if err := appendRunTimeline(ctx, tx, run.ID, runLostEvent, message, nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runLostEvent, correlationID, now, map[string]any{"code": run.FailureCode, "message": message, "capacity_retained": true}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runLostEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message, "capacity_retained": true}); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskBlocked, correlationID, now, map[string]any{"run_id": run.ID, "reason": message, "status": task.Status}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskBlocked, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": message, "status": task.Status}); err != nil {
 		return domain.RunDetail{}, err
 	}
 	detail, err := runDetailInTransaction(ctx, tx, run)
@@ -1237,7 +1201,7 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message, correlationID
 	now := s.nowText()
 	run.Status, run.FailureCode, run.FailureMessage, run.FinishedAt = domain.RunFailed, strings.TrimSpace(code), strings.TrimSpace(message), now
 	run.Revision++
-	if err := updateRunProjection(ctx, tx, run, now); err != nil {
+	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
 	}
 	task, err := queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
@@ -1245,10 +1209,10 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message, correlationID
 		return domain.RunDetail{}, err
 	}
 	task.Status, task.BlockedReason, task.Revision = domain.TaskFailed, run.FailureMessage, task.Revision+1
-	if err := updateTaskState(ctx, tx, task, now); err != nil {
+	if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'released', revision = revision + 1, updated_at = ?, updated_by = ? WHERE task_id = ? AND status = 'active'", now, localOwnerActorID, task.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'released', revision = revision + 1, updated_at = ?, updated_by = ? WHERE task_id = ? AND status = 'active'", now, runWorkerActorID, task.ID); err != nil {
 		return domain.RunDetail{}, storageFailure("release failed run assignment", err)
 	}
 	if err := setRunJob(ctx, tx, run.ID, "complete", now); err != nil {
@@ -1257,10 +1221,10 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message, correlationID
 	if err := appendRunTimeline(ctx, tx, run.ID, runFailedEvent, run.FailureMessage, nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runFailedEvent, correlationID, now, map[string]any{"code": run.FailureCode, "message": run.FailureMessage}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": run.FailureMessage}); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskFailedEvent, correlationID, now, map[string]any{"run_id": run.ID, "reason": run.FailureMessage}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": run.FailureMessage}); err != nil {
 		return domain.RunDetail{}, err
 	}
 	if err := terminalizeSchedulingIntentForRun(ctx, tx, run, run.FailureMessage, correlationID, now); err != nil {
@@ -1513,14 +1477,18 @@ WHERE r.task_id = ? ORDER BY timeline.sequence`, taskID)
 }
 
 func updateRunProjection(ctx context.Context, tx *sql.Tx, run domain.Run, now string) error {
-	run.UpdatedAt, run.UpdatedBy = now, localOwnerActorID
+	return updateRunProjectionForActor(ctx, tx, run, now, localOwnerActorID)
+}
+
+func updateRunProjectionForActor(ctx context.Context, tx *sql.Tx, run domain.Run, now, actorID string) error {
+	run.UpdatedAt, run.UpdatedBy = now, actorID
 	_, err := tx.ExecContext(ctx, `
 UPDATE runs SET status = ?, step_cursor = ?, runtime_handle = NULLIF(?, ''), provider_handle = NULLIF(?, ''),
     blocked_question = NULLIF(?, ''), result_summary = NULLIF(?, ''), failure_code = NULLIF(?, ''),
     failure_message = NULLIF(?, ''), stop_grace_millis = ?, stop_forced = ?, revision = ?, updated_at = ?, started_at = NULLIF(?, ''),
-    finished_at = NULLIF(?, ''), updated_by = ? WHERE id = ?`, run.Status, run.StepCursor,
+	    finished_at = NULLIF(?, ''), updated_by = ? WHERE id = ?`, run.Status, run.StepCursor,
 		run.RuntimeHandle, run.ProviderHandle, run.BlockedQuestion, run.ResultSummary, run.FailureCode,
-		run.FailureMessage, run.StopGraceMillis, run.StopForced, run.Revision, now, run.StartedAt, run.FinishedAt, localOwnerActorID, run.ID)
+		run.FailureMessage, run.StopGraceMillis, run.StopForced, run.Revision, now, run.StartedAt, run.FinishedAt, actorID, run.ID)
 	if err != nil {
 		return storageFailure("update run projection", err)
 	}
@@ -1528,7 +1496,11 @@ UPDATE runs SET status = ?, step_cursor = ?, runtime_handle = NULLIF(?, ''), pro
 }
 
 func updateTaskState(ctx context.Context, tx *sql.Tx, task domain.Task, now string) error {
-	if _, err := tx.ExecContext(ctx, "UPDATE tasks SET status = ?, blocked_reason = NULLIF(?, ''), revision = ?, updated_at = ?, updated_by = ? WHERE id = ?", task.Status, task.BlockedReason, task.Revision, now, localOwnerActorID, task.ID); err != nil {
+	return updateTaskStateForActor(ctx, tx, task, now, localOwnerActorID)
+}
+
+func updateTaskStateForActor(ctx context.Context, tx *sql.Tx, task domain.Task, now, actorID string) error {
+	if _, err := tx.ExecContext(ctx, "UPDATE tasks SET status = ?, blocked_reason = NULLIF(?, ''), revision = ?, updated_at = ?, updated_by = ? WHERE id = ?", task.Status, task.BlockedReason, task.Revision, now, actorID, task.ID); err != nil {
 		return storageFailure("update run task state", err)
 	}
 	return nil

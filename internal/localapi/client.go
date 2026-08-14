@@ -19,7 +19,25 @@ import (
 const (
 	defaultTimeout           = 2 * time.Second
 	portableKnowledgeTimeout = 2 * time.Minute
+	maximumResponseBytes     = 16 * 1024 * 1024
 )
+
+// ErrProtocolMismatch identifies a fatal local API negotiation failure.
+var ErrProtocolMismatch = errors.New("local API protocol mismatch")
+
+// ProtocolMismatchError records a protocol selected outside the client's
+// supported range. It unwraps to ErrProtocolMismatch for errors.Is callers.
+type ProtocolMismatchError struct {
+	Selected  int
+	ClientMin int
+	ClientMax int
+}
+
+func (e *ProtocolMismatchError) Error() string {
+	return fmt.Sprintf("daemon selected unsupported protocol %d; client supports %d through %d", e.Selected, e.ClientMin, e.ClientMax)
+}
+
+func (e *ProtocolMismatchError) Unwrap() error { return ErrProtocolMismatch }
 
 type Client struct {
 	socketPath string
@@ -28,6 +46,16 @@ type Client struct {
 
 func NewClient(socketPath string) *Client {
 	return &Client{socketPath: socketPath, timeout: defaultTimeout}
+}
+
+// WithTimeout returns a concrete client clone with the requested per-call
+// connection deadline. It does not mutate a client that may be shared by the
+// event poller and slower canonical refreshes.
+func (c *Client) WithTimeout(timeout time.Duration) *Client {
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	return &Client{socketPath: c.socketPath, timeout: timeout}
 }
 
 func (c *Client) Hello(ctx context.Context) (HelloResult, error) {
@@ -113,13 +141,17 @@ func (c *Client) WorkspaceInit(ctx context.Context, name, idempotencyKey string)
 }
 
 func (c *Client) WorkspaceShow(ctx context.Context, identifier string) (WorkspaceShowResult, error) {
-	params, err := json.Marshal(WorkspaceShowParams{Identifier: identifier})
-	if err != nil {
-		return WorkspaceShowResult{}, fmt.Errorf("marshal workspace query: %w", err)
-	}
 	var result WorkspaceShowResult
-	if err := c.call(ctx, MethodWorkspaceShow, params, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodWorkspaceShow, WorkspaceShowParams{Identifier: identifier}, &result); err != nil {
 		return WorkspaceShowResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) WorkspaceList(ctx context.Context, params WorkspaceListParams) (WorkspaceListResult, error) {
+	var result WorkspaceListResult
+	if err := c.callParamsStrict(ctx, MethodWorkspaceList, params, &result); err != nil {
+		return WorkspaceListResult{}, err
 	}
 	return result, nil
 }
@@ -147,6 +179,31 @@ func (c *Client) ProjectInspect(ctx context.Context, workspace, project string) 
 	var result ProjectInspectResult
 	if err := c.call(ctx, MethodProjectInspect, params, &result); err != nil {
 		return ProjectInspectResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ProjectShow(ctx context.Context, workspace, project string) (ProjectShowResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, workspace)
+	if err != nil {
+		return ProjectShowResult{}, err
+	}
+	var result ProjectShowResult
+	if err := c.callParamsStrict(ctx, MethodProjectShow, ProjectShowParams{Workspace: workspaceID, Project: project}, &result); err != nil {
+		return ProjectShowResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ProjectList(ctx context.Context, params ProjectListParams) (ProjectListResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, params.Workspace)
+	if err != nil {
+		return ProjectListResult{}, err
+	}
+	params.Workspace = workspaceID
+	var result ProjectListResult
+	if err := c.callParamsStrict(ctx, MethodProjectList, params, &result); err != nil {
+		return ProjectListResult{}, err
 	}
 	return result, nil
 }
@@ -197,16 +254,25 @@ func (c *Client) AgentUpdate(ctx context.Context, paramsValue AgentUpdateParams)
 }
 
 func (c *Client) AgentShow(ctx context.Context, workspace, agent string) (AgentShowResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, workspace)
+	if err != nil {
+		return AgentShowResult{}, err
+	}
 	var result AgentShowResult
-	if err := c.callParams(ctx, MethodAgentShow, AgentQueryParams{Workspace: workspace, Agent: agent}, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodAgentShow, AgentQueryParams{Workspace: workspaceID, Agent: agent}, &result); err != nil {
 		return AgentShowResult{}, err
 	}
 	return result, nil
 }
 
-func (c *Client) AgentList(ctx context.Context, workspace string) (AgentListResult, error) {
+func (c *Client) AgentList(ctx context.Context, params AgentListParams) (AgentListResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, params.Workspace)
+	if err != nil {
+		return AgentListResult{}, err
+	}
+	params.Workspace = workspaceID
 	var result AgentListResult
-	if err := c.callParams(ctx, MethodAgentList, AgentQueryParams{Workspace: workspace}, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodAgentList, params, &result); err != nil {
 		return AgentListResult{}, err
 	}
 	return result, nil
@@ -238,9 +304,14 @@ func (c *Client) ObjectiveShow(ctx context.Context, workspace, objective string)
 	return result, nil
 }
 
-func (c *Client) ObjectiveList(ctx context.Context, workspace, project string) (ObjectiveListResult, error) {
+func (c *Client) ObjectiveList(ctx context.Context, params ObjectiveListParams) (ObjectiveListResult, error) {
+	workspaceID, projectID, err := c.resolveOperatorScope(ctx, params.Workspace, params.Project)
+	if err != nil {
+		return ObjectiveListResult{}, err
+	}
+	params.Workspace, params.Project = workspaceID, projectID
 	var result ObjectiveListResult
-	if err := c.callParams(ctx, MethodObjectiveList, ObjectiveQueryParams{Workspace: workspace, Project: project}, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodObjectiveList, params, &result); err != nil {
 		return ObjectiveListResult{}, err
 	}
 	return result, nil
@@ -272,9 +343,14 @@ func (c *Client) TaskShow(ctx context.Context, workspace, task string) (TaskShow
 	return result, nil
 }
 
-func (c *Client) TaskList(ctx context.Context, workspace, project string, readyOnly bool) (TaskListResult, error) {
+func (c *Client) TaskList(ctx context.Context, params TaskListParams) (TaskListResult, error) {
+	workspaceID, projectID, err := c.resolveOperatorScope(ctx, params.Workspace, params.Project)
+	if err != nil {
+		return TaskListResult{}, err
+	}
+	params.Workspace, params.Project = workspaceID, projectID
 	var result TaskListResult
-	if err := c.callParams(ctx, MethodTaskList, TaskQueryParams{Workspace: workspace, Project: project, ReadyOnly: readyOnly}, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodTaskList, params, &result); err != nil {
 		return TaskListResult{}, err
 	}
 	return result, nil
@@ -610,9 +686,34 @@ func (c *Client) MessageSend(ctx context.Context, paramsValue MessageSendParams)
 }
 
 func (c *Client) InboxList(ctx context.Context, workspace, agent string, limit int) (InboxListResult, error) {
-	var result InboxListResult
-	if err := c.callParams(ctx, MethodInboxList, InboxListParams{Workspace: workspace, Agent: agent, Limit: limit}, &result); err != nil {
+	effectiveLimit := limit
+	if effectiveLimit == 0 {
+		effectiveLimit = 20
+	}
+	if effectiveLimit < 1 || effectiveLimit > 50 {
+		return InboxListResult{}, fmt.Errorf("inbox.list limit must be from 1 to 50")
+	}
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, workspace)
+	if err != nil {
 		return InboxListResult{}, err
+	}
+	agentID, err := c.resolveOperatorAgent(ctx, workspaceID, agent)
+	if err != nil {
+		return InboxListResult{}, err
+	}
+	var result InboxListResult
+	if err := c.callParamsStrict(ctx, MethodInboxList, InboxListParams{Workspace: workspaceID, Agent: agentID, Limit: limit}, &result); err != nil {
+		return InboxListResult{}, err
+	}
+	if result.Schema != InboxListSchema || result.Type != "inbox" || !canonicalAgentIDPattern.MatchString(result.Agent) ||
+		result.Agent != agentID || result.Items == nil || len(result.Items) > effectiveLimit {
+		return InboxListResult{}, fmt.Errorf("decode local API result %s: result violates the requested inbox scope or bound", MethodInboxList)
+	}
+	for _, item := range result.Items {
+		if item.Message.WorkspaceID != workspaceID ||
+			item.Delivery.RecipientAgentID != result.Agent || item.Delivery.MessageID != item.Message.ID {
+			return InboxListResult{}, fmt.Errorf("decode local API result %s: inbox item violates message, recipient, or workspace scope", MethodInboxList)
+		}
 	}
 	return result, nil
 }
@@ -668,27 +769,42 @@ func (c *Client) RunShow(ctx context.Context, workspace, run string) (RunShowRes
 	return result, nil
 }
 
-func (c *Client) RunList(ctx context.Context, workspace, task, status string) (RunListResult, error) {
+func (c *Client) RunList(ctx context.Context, params RunListParams) (RunListResult, error) {
+	workspaceID, projectID, err := c.resolveOperatorScope(ctx, params.Workspace, params.Project)
+	if err != nil {
+		return RunListResult{}, err
+	}
+	params.Workspace, params.Project = workspaceID, projectID
 	var result RunListResult
-	if err := c.callParams(ctx, MethodRunList, RunQueryParams{Workspace: workspace, Task: task, Status: status}, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodRunList, params, &result); err != nil {
 		return RunListResult{}, err
 	}
 	return result, nil
 }
 
 func (c *Client) RunResume(ctx context.Context, paramsValue RunResumeParams) (RunMutationResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, paramsValue.Workspace)
+	if err != nil {
+		return RunMutationResult{}, err
+	}
+	paramsValue.Workspace = workspaceID
 	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
 	var result RunMutationResult
-	if err := c.callParams(ctx, MethodRunResume, paramsValue, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodRunResume, paramsValue, &result); err != nil {
 		return RunMutationResult{}, err
 	}
 	return result, nil
 }
 
 func (c *Client) RunStop(ctx context.Context, paramsValue RunStopParams) (RunMutationResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, paramsValue.Workspace)
+	if err != nil {
+		return RunMutationResult{}, err
+	}
+	paramsValue.Workspace = workspaceID
 	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
 	var result RunMutationResult
-	if err := c.callParams(ctx, MethodRunStop, paramsValue, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodRunStop, paramsValue, &result); err != nil {
 		return RunMutationResult{}, err
 	}
 	return result, nil
@@ -718,9 +834,16 @@ func (c *Client) RunInterrupt(ctx context.Context, workspace, run string) (RunCo
 	return result, nil
 }
 
-func (c *Client) RunAttach(ctx context.Context, workspace, run string, takeover bool) (RunAttachResult, error) {
+func (c *Client) RunAttach(ctx context.Context, workspace, run string) (RunAttachResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, workspace)
+	if err != nil {
+		return RunAttachResult{}, err
+	}
 	var result RunAttachResult
-	if err := c.callParams(ctx, MethodRunAttach, RunAttachParams{Workspace: workspace, Run: run, Takeover: takeover}, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodRunAttach, RunAttachParams{Workspace: workspaceID, Run: run}, &result); err != nil {
+		return RunAttachResult{}, err
+	}
+	if err := ValidateRunAttachResult(result, run); err != nil {
 		return RunAttachResult{}, err
 	}
 	return result, nil
@@ -742,9 +865,14 @@ func (c *Client) ClaimAdd(ctx context.Context, params ClaimAddParams) (ClaimMuta
 	return result, nil
 }
 
-func (c *Client) ClaimList(ctx context.Context, workspace, project, status string) (ClaimListResult, error) {
+func (c *Client) ClaimList(ctx context.Context, params ClaimListParams) (ClaimListResult, error) {
+	workspaceID, projectID, err := c.resolveOperatorScope(ctx, params.Workspace, params.Project)
+	if err != nil {
+		return ClaimListResult{}, err
+	}
+	params.Workspace, params.Project = workspaceID, projectID
 	var result ClaimListResult
-	if err := c.callParams(ctx, MethodClaimList, ClaimQueryParams{Workspace: workspace, Project: project, Status: status}, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodClaimList, params, &result); err != nil {
 		return ClaimListResult{}, err
 	}
 	return result, nil
@@ -758,9 +886,14 @@ func (c *Client) ClaimRelease(ctx context.Context, params ClaimReleaseParams) (C
 	return result, nil
 }
 
-func (c *Client) OverlapList(ctx context.Context, workspace, project, status string) (OverlapListResult, error) {
+func (c *Client) OverlapList(ctx context.Context, params OverlapListParams) (OverlapListResult, error) {
+	workspaceID, projectID, err := c.resolveOperatorScope(ctx, params.Workspace, params.Project)
+	if err != nil {
+		return OverlapListResult{}, err
+	}
+	params.Workspace, params.Project = workspaceID, projectID
 	var result OverlapListResult
-	if err := c.callParams(ctx, MethodOverlapList, OverlapQueryParams{Workspace: workspace, Project: project, Status: status}, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodOverlapList, params, &result); err != nil {
 		return OverlapListResult{}, err
 	}
 	return result, nil
@@ -768,7 +901,7 @@ func (c *Client) OverlapList(ctx context.Context, workspace, project, status str
 
 func (c *Client) OverlapInspect(ctx context.Context, workspace, overlap string) (OverlapInspectResult, error) {
 	var result OverlapInspectResult
-	if err := c.callParams(ctx, MethodOverlapInspect, OverlapQueryParams{Workspace: workspace, Overlap: overlap}, &result); err != nil {
+	if err := c.callParams(ctx, MethodOverlapInspect, OverlapInspectParams{Workspace: workspace, Overlap: overlap}, &result); err != nil {
 		return OverlapInspectResult{}, err
 	}
 	return result, nil
@@ -776,15 +909,20 @@ func (c *Client) OverlapInspect(ctx context.Context, workspace, overlap string) 
 
 func (c *Client) OverlapScan(ctx context.Context, workspace, project string) (OverlapScanResult, error) {
 	var result OverlapScanResult
-	if err := c.callParams(ctx, MethodOverlapScan, OverlapQueryParams{Workspace: workspace, Project: project}, &result); err != nil {
+	if err := c.callParams(ctx, MethodOverlapScan, OverlapScanParams{Workspace: workspace, Project: project}, &result); err != nil {
 		return OverlapScanResult{}, err
 	}
 	return result, nil
 }
 
-func (c *Client) DriftList(ctx context.Context, workspace, status string) (DriftListResult, error) {
+func (c *Client) DriftList(ctx context.Context, params DriftListParams) (DriftListResult, error) {
+	workspaceID, projectID, err := c.resolveOperatorScope(ctx, params.Workspace, params.Project)
+	if err != nil {
+		return DriftListResult{}, err
+	}
+	params.Workspace, params.Project = workspaceID, projectID
 	var result DriftListResult
-	if err := c.callParams(ctx, MethodDriftList, DriftQueryParams{Workspace: workspace, Status: status}, &result); err != nil {
+	if err := c.callParamsStrict(ctx, MethodDriftList, params, &result); err != nil {
 		return DriftListResult{}, err
 	}
 	return result, nil
@@ -816,6 +954,19 @@ func (c *Client) MeetingInspect(ctx context.Context, workspace, meeting string) 
 	return result, nil
 }
 
+func (c *Client) MeetingList(ctx context.Context, params MeetingListParams) (MeetingListResult, error) {
+	workspaceID, projectID, err := c.resolveOperatorScope(ctx, params.Workspace, params.Project)
+	if err != nil {
+		return MeetingListResult{}, err
+	}
+	params.Workspace, params.Project = workspaceID, projectID
+	var result MeetingListResult
+	if err := c.callParamsStrict(ctx, MethodMeetingList, params, &result); err != nil {
+		return MeetingListResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) MeetingAccept(ctx context.Context, params MeetingAcceptParams) (MeetingMutationResult, error) {
 	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
 	var result MeetingMutationResult
@@ -834,18 +985,28 @@ func (c *Client) MeetingTakeover(ctx context.Context, params MeetingTakeoverPara
 	return result, nil
 }
 
-func (c *Client) EventsList(ctx context.Context, after int64, limit int) (EventsListResult, error) {
-	paramsValue := EventsListParams{After: &after}
-	if limit != 0 {
-		paramsValue.Limit = &limit
-	}
-	params, err := json.Marshal(paramsValue)
+func (c *Client) EventsList(ctx context.Context, params EventsListParams) (EventsListResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, params.Workspace)
 	if err != nil {
-		return EventsListResult{}, fmt.Errorf("marshal event query: %w", err)
-	}
-	var result EventsListResult
-	if err := c.call(ctx, MethodEventsList, params, &result); err != nil {
 		return EventsListResult{}, err
+	}
+	params.Workspace = workspaceID
+	var result EventsListResult
+	if err := c.callParamsStrict(ctx, MethodEventsList, params, &result); err != nil {
+		return EventsListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) EventsTimeline(ctx context.Context, params EventsTimelineParams) (EventsTimelineResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, params.Workspace)
+	if err != nil {
+		return EventsTimelineResult{}, err
+	}
+	params.Workspace = workspaceID
+	var result EventsTimelineResult
+	if err := c.callParamsStrict(ctx, MethodEventsTimeline, params, &result); err != nil {
+		return EventsTimelineResult{}, err
 	}
 	return result, nil
 }
@@ -889,7 +1050,10 @@ func (c *Client) callParamsStrict(ctx context.Context, method string, paramsValu
 	if err := validateManagementResultDiscriminator(method, result); err != nil {
 		return err
 	}
-	return validateCheckResultDiscriminator(method, result)
+	if err := validateCheckResultDiscriminator(method, result); err != nil {
+		return err
+	}
+	return validateOperatorReadResult(method, paramsValue, result)
 }
 
 func (c *Client) callParamsStrictWithTimeout(ctx context.Context, timeout time.Duration, method string, paramsValue, result any) error {
@@ -960,15 +1124,25 @@ func negotiate(connection net.Conn) (HelloResult, error) {
 	}
 
 	var result HelloResult
-	if err := roundTrip(connection, Request{
+	if err := roundTripStrict(connection, Request{
 		ID:     requestID(),
 		Method: MethodHello,
 		Params: params,
 	}, &result); err != nil {
+		var apiError *APIError
+		if errors.As(err, &apiError) && apiError.Code == "protocol_mismatch" {
+			return HelloResult{}, fmt.Errorf("%w: %s", ErrProtocolMismatch, apiError.Message)
+		}
 		return HelloResult{}, err
 	}
 	if result.SelectedProtocol < MinProtocol || result.SelectedProtocol > MaxProtocol {
-		return HelloResult{}, fmt.Errorf("daemon selected unsupported protocol %d", result.SelectedProtocol)
+		return HelloResult{}, &ProtocolMismatchError{Selected: result.SelectedProtocol, ClientMin: MinProtocol, ClientMax: MaxProtocol}
+	}
+	if result.Type != "hello" || result.ServerMin < 1 || result.ServerMax < result.ServerMin || result.SelectedProtocol < result.ServerMin || result.SelectedProtocol > result.ServerMax {
+		return HelloResult{}, errors.New("daemon returned a malformed protocol negotiation result")
+	}
+	if result.ServerMax < MinProtocol || result.ServerMin > MaxProtocol {
+		return HelloResult{}, fmt.Errorf("%w: daemon supports %d through %d", ErrProtocolMismatch, result.ServerMin, result.ServerMax)
 	}
 	return result, nil
 }
@@ -986,26 +1160,56 @@ func roundTripDecoded(connection net.Conn, request Request, result any, strict b
 		return fmt.Errorf("write local API request %s: %w", request.ID, err)
 	}
 
-	reader := bufio.NewReader(connection)
+	reader := bufio.NewReader(io.LimitReader(connection, maximumResponseBytes+1))
 	line, err := reader.ReadBytes('\n')
+	if len(line) > maximumResponseBytes {
+		return fmt.Errorf("read local API response %s: response exceeds %d bytes", request.ID, maximumResponseBytes)
+	}
 	if err != nil {
 		return fmt.Errorf("read local API response %s: %w", request.ID, err)
 	}
 
 	var response Response
-	if err := json.Unmarshal(line, &response); err != nil {
+	if strict {
+		if err := rejectDuplicateJSONFields(line); err != nil {
+			return fmt.Errorf("decode local API response %s: %w", request.ID, err)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(line))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&response); err != nil {
+			return fmt.Errorf("decode local API response %s: %w", request.ID, err)
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			if err == nil {
+				return fmt.Errorf("decode local API response %s: response contains more than one value", request.ID)
+			}
+			return fmt.Errorf("decode local API response %s: %w", request.ID, err)
+		}
+	} else if err := json.Unmarshal(line, &response); err != nil {
 		return fmt.Errorf("decode local API response %s: %w", request.ID, err)
 	}
 	if response.ID != request.ID {
 		return fmt.Errorf("local API response id %q does not match request %q", response.ID, request.ID)
 	}
+	hasResult, hasError := len(response.Result) != 0, response.Error != nil
+	if hasResult == hasError {
+		return errors.New("local API response must contain exactly one of result or error")
+	}
+	if request.Method == MethodHello {
+		if hasError && response.Protocol != 0 {
+			return fmt.Errorf("%w: hello error response declared protocol %d", ErrProtocolMismatch, response.Protocol)
+		}
+	} else if response.Protocol != request.Protocol {
+		return fmt.Errorf("%w: response protocol %d does not match negotiated protocol %d", ErrProtocolMismatch, response.Protocol, request.Protocol)
+	}
 	if response.Error != nil {
 		return response.Error
 	}
-	if len(response.Result) == 0 {
-		return errors.New("local API response has neither result nor error")
-	}
 	if strict {
+		if err := rejectDuplicateJSONFields(response.Result); err != nil {
+			return fmt.Errorf("decode local API result %s: %w", request.ID, err)
+		}
 		decoder := json.NewDecoder(bytes.NewReader(response.Result))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(result); err != nil {
@@ -1018,12 +1222,82 @@ func roundTripDecoded(connection net.Conn, request Request, result any, strict b
 			}
 			return fmt.Errorf("decode local API result %s: %w", request.ID, err)
 		}
-		return nil
+		if err := validateStrictOperatorResultWire(request.Method, response.Result); err != nil {
+			return fmt.Errorf("decode local API result %s: %w", request.ID, err)
+		}
+		return validateHelloResultProtocol(request, response, result)
 	}
 	if err := json.Unmarshal(response.Result, result); err != nil {
 		return fmt.Errorf("decode local API result %s: %w", request.ID, err)
 	}
+	return validateHelloResultProtocol(request, response, result)
+}
+
+func validateHelloResultProtocol(request Request, response Response, result any) error {
+	if request.Method != MethodHello {
+		return nil
+	}
+	hello, ok := result.(*HelloResult)
+	if !ok || response.Protocol != hello.SelectedProtocol {
+		return fmt.Errorf("%w: hello response protocol %d differs from selected protocol", ErrProtocolMismatch, response.Protocol)
+	}
 	return nil
+}
+
+func rejectDuplicateJSONFields(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := scanUniqueJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("JSON contains more than one value")
+		}
+		return err
+	}
+	return nil
+}
+
+func scanUniqueJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := map[string]struct{}{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("JSON object key is not a string")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("duplicate JSON field %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := scanUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	default:
+		return errors.New("invalid JSON delimiter")
+	}
+	_, err = decoder.Token()
+	return err
 }
 
 func requestID() string {

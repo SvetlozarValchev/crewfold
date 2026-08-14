@@ -200,7 +200,7 @@ start_daemon
 grep -Fq '"review_state":"superseded"' "$scenario_root/old-after-restart.json"
 grep -Fq '"review_state":"accepted"' "$scenario_root/new-after-restart.json"
 
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events-before-briefing.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events-before-briefing.json"
 "$binary" briefing show --project demo --since "$checkpoint_id" --workspace personal --socket "$socket_path" --output json >"$scenario_root/briefing-since.json"
 grep -Fq "\"checkpoint_id\":\"$checkpoint_id\"" "$scenario_root/briefing-since.json"
 grep -Fq '"kind":"accepted_delivery"' "$scenario_root/briefing-since.json"
@@ -240,7 +240,7 @@ grep -Fq "\"briefing_id\":\"$briefing_id\"" "$scenario_root/explanation.json"
 grep -Fq "\"id\":\"$claim_id\"" "$scenario_root/explanation.json"
 grep -Fq '"provenance":[' "$scenario_root/explanation.json"
 
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events-after-briefing.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events-after-briefing.json"
 if ! cmp -s "$scenario_root/events-before-briefing.json" "$scenario_root/events-after-briefing.json"
 then
   printf 'briefing show/explain appended a fact event\n' >&2

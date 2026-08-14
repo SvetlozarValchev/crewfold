@@ -262,7 +262,7 @@ func checkActorType(source domain.CheckRunSource) string {
 	if source.Type == domain.CheckRunSourceOwner {
 		return localActorType
 	}
-	return "agent"
+	return domain.EventActorAgentRun
 }
 
 func (s *Store) ClaimCheckJob(ctx context.Context, lease time.Duration) (CheckWork, bool, error) {
@@ -983,41 +983,73 @@ func queryCheckEvidence(ctx context.Context, db dbgen.DBTX, result domain.CheckR
 	return buckets, nil
 }
 
-func (s *Store) CheckRuns(ctx context.Context, query ListCheckRunsQuery) ([]domain.CheckRunListItem, error) {
-	workspace, err := s.Workspace(ctx, strings.TrimSpace(query.WorkspaceIdentifier))
+func (s *Store) CheckRuns(ctx context.Context, query ListCheckRunsQuery) (CheckRunPage, error) {
+	limit, err := readPageLimit(query.Limit, MaximumReadPageLimit)
 	if err != nil {
-		return nil, err
+		return CheckRunPage{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return CheckRunPage{}, storageFailure("begin check run page snapshot", err)
+	}
+	defer tx.Rollback()
+	workspace, err := workspaceInTransaction(ctx, tx, strings.TrimSpace(query.WorkspaceIdentifier))
+	if err != nil {
+		return CheckRunPage{}, err
 	}
 	projectID := strings.TrimSpace(query.ProjectIdentifier)
 	if projectID != "" {
-		project, err := queryProject(ctx, s.db, workspace.ID, projectID)
+		project, err := queryProject(ctx, tx, workspace.ID, projectID)
 		if err != nil {
-			return nil, err
+			return CheckRunPage{}, err
 		}
 		projectID = project.ID
 	}
-	ids, err := dbgen.New(s.db).ListCheckRunIDs(ctx, dbgen.ListCheckRunIDsParams{WorkspaceID: workspace.ID, ProjectID: projectID, TaskID: strings.TrimSpace(query.TaskID), RequirementID: strings.TrimSpace(query.RequirementID), DefinitionID: strings.TrimSpace(query.DefinitionID), Status: strings.TrimSpace(query.Status), Outcome: strings.TrimSpace(query.Outcome), ResultLimit: int64(boundedCheckLimit(query.Limit))})
+	taskID := strings.TrimSpace(query.TaskID)
+	requirementID := strings.TrimSpace(query.RequirementID)
+	definitionID := strings.TrimSpace(query.DefinitionID)
+	status := strings.TrimSpace(query.Status)
+	outcome := strings.TrimSpace(query.Outcome)
+	fingerprint := readQueryFingerprint("check.list", workspace.ID, projectID, taskID, requirementID, definitionID, status, outcome)
+	cursor, err := decodeRecordCursor(query.Cursor, fingerprint)
 	if err != nil {
-		return nil, storageFailure("list check runs", err)
+		return CheckRunPage{}, err
 	}
-	result := make([]domain.CheckRunListItem, 0, len(ids))
+	queries := dbgen.New(tx)
+	filter := dbgen.CountOperatorCheckRunsParams{WorkspaceID: workspace.ID, ProjectID: projectID, TaskID: taskID, RequirementID: requirementID, DefinitionID: definitionID, Status: status, Outcome: outcome}
+	total, err := queries.CountOperatorCheckRuns(ctx, filter)
+	if err != nil {
+		return CheckRunPage{}, storageFailure("count check runs", err)
+	}
+	ids, err := queries.ListOperatorCheckRunIDs(ctx, dbgen.ListOperatorCheckRunIDsParams{
+		WorkspaceID: workspace.ID, ProjectID: projectID, TaskID: taskID, RequirementID: requirementID,
+		DefinitionID: definitionID, Status: status, Outcome: outcome, CursorKey: cursor.Key,
+		CursorID: cursor.ID, ResultLimit: int64(limit + 1),
+	})
+	if err != nil {
+		return CheckRunPage{}, storageFailure("list check run ids", err)
+	}
+	hasMore := len(ids) > limit
+	if hasMore {
+		ids = ids[:limit]
+	}
+	values := make([]domain.CheckRunListItem, 0, len(ids))
 	for _, id := range ids {
-		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-		if err != nil {
-			return nil, err
-		}
 		detail, err := checkRunDetailInTransaction(ctx, tx, id)
-		_ = tx.Rollback()
 		if err != nil {
-			return nil, err
+			return CheckRunPage{}, err
 		}
 		item := domain.CheckRunListItem{Run: detail.Run, CurrentFreshness: detail.CurrentFreshness, RequirementState: detail.RequirementState}
 		if detail.Result != nil {
 			item.Outcome = detail.Result.Outcome
 		}
-		result = append(result, item)
+		values = append(values, item)
 	}
-	return result, nil
+	next, err := nextRecordCursor(fingerprint, hasMore, values, func(value domain.CheckRunListItem) (string, string) { return value.Run.CreatedAt, value.Run.ID })
+	if err != nil {
+		return CheckRunPage{}, err
+	}
+	return CheckRunPage{Runs: values, NextCursor: next, HasMore: hasMore, Total: total}, nil
 }
 
 func (s *Store) InspectGrantedCheckResult(ctx context.Context, sourceRunID, checkRunID string) (domain.CheckRunDetail, error) {

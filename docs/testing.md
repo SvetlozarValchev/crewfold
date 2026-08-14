@@ -403,6 +403,42 @@ review provenance, duplicate work, contradictions, omission fairness, and fault
 barriers. Stable IDs and event cursors allow every briefing assertion without
 model-dependent prose.
 
+### Operator TUI fixture
+
+The provider-free `operator-tui` scenario starts a real isolated daemon and the
+built `crewfold ui` client over its owner-only socket. Canonical fixture records
+provide one complete M18 briefing, one attachable recorded Herdr run, and one
+owner intervention. The script drives Briefing and Work through a real 180x40
+monochrome pseudo-terminal; it does not use a static renderer, hidden product
+mode, SQLite query, provider transcript, or model call. Package fixtures cover
+every screen and the urgent-aggregate exact drill-down sets without weakening the
+public script's real terminal boundary.
+
+Package fixtures separately reduce deterministic messages through the real model
+and render empty, normal, disconnected/stale, capped, and large views. Hostile
+strings include invalid UTF-8, CSI/OSC escape attempts, every disallowed C0/C1
+class, bidirectional isolates/overrides, combining/wide characters, and excessive
+length. Cursor fixtures cover exactly 1,000 events, more than 10,000 events,
+duplicates, gaps, nonmonotonic order, unknown kinds, malformed envelopes, daemon
+rewind, response overflow, and timeouts at bootstrap, polling, refresh, action,
+and attach boundaries. A controlled slow/failing section fixture records active
+requests and generation IDs: no more than four non-event reads overlap, newer
+generations discard every stale section result, and the applied cursor waits for
+all sections invalidated through the candidate. A mutation committed midway
+through the controlled batch raises the final event-head fence; that mixed batch
+is never applied or rendered as live.
+
+The scenario compares the complete event page byte-for-byte immediately before
+the UI and after navigation, briefing inspection, and ordinary attach. It then
+kills and restarts the daemon while the same UI remains open, observes stale then
+live state with the same selected run, and confirms one resume that produces
+exactly one `run.resumed` event. Store, client, transport, and reducer fixtures
+separately prove project resolution by exact ID and name is pure, bootstrap and
+manual refresh append no event, and a lost mutation response replays the exact
+frozen request/idempotency key to one committed result. Arbitrary agent role and
+launch-profile purpose strings are authority-looking in those fixtures and have
+no effect on ordering, urgency, action availability, or permission.
+
 ### Manager/supervisor authority fixture
 
 The provider-free `manager-supervisor` scenario uses a fixture grantee with an
@@ -598,6 +634,47 @@ agents plus exactly one current-packet check-watch grant. It runs without provid
 network, or remote CI. A daemon is stopped after the child launches and before
 terminal acknowledgement. Restart must reconcile that exact child and produce one
 result or explicit unknown, never a second execution.
+
+## M19 executable acceptance and security matrix
+
+Every M19 row below is required. Model and renderer rows use deterministic
+messages and controlled dimensions; transport rows use the real daemon socket;
+the public scenario invokes the built binary. Golden snapshots may pin stable
+frames, but structured equality and focused assertions remain authoritative so a
+cosmetic edit cannot hide a changed claim, cursor, or action.
+
+| ID | Adversarial setup | Required observable result |
+| --- | --- | --- |
+| `M19-MODEL-01` | empty, normal, disconnected/stale, capped, and large models | deterministic reduction and pure `View` with no I/O or fact mutation |
+| `M19-LAYOUT-01` | sizes `60x18`, `79x23`, `80x24`, `119x31`, `120x32`, and large | exact one/two/three-pane mode; below `60x18` is one stable too-small message |
+| `M19-NAV-01` | full key map across navigation, records, detail, and modal focus | `Enter` only inspects; `Esc`, quit, cancel, paging, top/bottom, filter, help, action, and refresh are exact |
+| `M19-ROUTE-01` | push beyond 16 routes; reorder/remove selected item; resize/reconnect; duplicate task/claim details with cached and in-flight reads; agent churn | depth stays 16; selection follows stable ID or documented nearest survivor; focus is legal; async caches remain route-owned and bounded; Back preserves or reloads the revealed frame and drops abandoned completions |
+| `M19-BRIEF-01` | render a briefing through API, CLI, and TUI; inspect one material claim | claims/order/sources/classification/omissions/hash/cursor are deeply equal, not re-derived; on-demand explanation exactly preserves claim/provenance/current-source diagnoses |
+| `M19-DRILL-01` | every urgent displayed aggregate | activation yields the exact complete canonical record IDs that produced the count |
+| `M19-TEXT-01` | invalid UTF-8, ESC/OSC, C0/C1, bidi controls, wide/combining and long strings | terminal output is valid, bounded, control-free, directionally safe, and layout-stable |
+| `M19-A11Y-01` | normal color, `--color never`, and nonempty `NO_COLOR` | identical meaning through textual state/severity/focus labels; monochrome output has no styling escapes |
+| `M19-SYNC-01` | bootstrap at captured high-water while newer events arrive | a final event-head fence rejects the mixed batch; event payloads only invalidate; applied cursor advances only after a fenced refresh |
+| `M19-SYNC-02` | exactly 1,000 and more than 10,000 events | bounded 1,000-event pages, ten-page yield, one poll in flight, no starvation or skipped canonical refresh |
+| `M19-SYNC-03` | duplicate envelope/notification, malformed or nonmonotonic envelope, unknown kind | no duplicate notification; bad input fails closed; unknown kind invalidates all canonical views |
+| `M19-SYNC-04` | activity over 200, notifications over 100, list over 600 | exact retention and three-page screen bounds with visible capped/omitted diagnosis |
+| `M19-SYNC-05` | slow/failing sections overlap refresh, reconnect, and a newer generation | at most four non-event reads run concurrently; each result is generation-bound; applied waits for every invalidated section |
+| `M19-SYNC-06` | an event commits between the first section read and the last during bootstrap and refresh | final bounded head validation detects the advanced high-water; mixed section generations are never marked live or applied |
+| `M19-RECON-01` | kill daemon during bootstrap, poll, canonical refresh, and mutation response | connecting/syncing/reconnecting states are honest; stale cache is labeled; mutations disabled; cursor never jumps |
+| `M19-RECON-02` | repeated failure and recovery | delays are 250ms, 500ms, 1s, 2s, 4s, capped at 5s; selection survives when ID remains |
+| `M19-RECON-03` | restarted daemon high-water behind applied cursor | cache is discarded and full bootstrap runs; no backward compatibility replay path |
+| `M19-FATAL-01` | missing workspace or protocol mismatch | stable fatal diagnosis and next action; no stale state presented as live |
+| `M19-BOUND-01` | list limit/cursor/page overflow, response over 16 MiB, hanging ordinary read/poll/briefing/action | defaults/maxima 50/200, cursor 256, event page 1,000, four non-event requests; ordinary 5s, poll 2s, briefing/action 15s deadlines fail closed |
+| `M19-READ-01` | navigate/filter/inspect/explain/help/resize/refresh/reconnect/attach | daemon event high-water is unchanged and no local authority record is written |
+| `M19-READ-02` | start and refresh with `--project` by exact ID and by name while checkout observations differ | project resolution uses a pure bounded list/show read; Git/checkouts are not refreshed and event high-water is unchanged |
+| `M19-ACT-01` | open an available mutation then press every key except `Ctrl+Enter`; inspect a stop grace value; enter a whitespace-padded approval note; approval links a supervisor action | modal shows target ID/revision/consequence; displayed stop grace equals the frozen raw request; the approval note is canonical before freeze and byte-identical on replay; approval review first validates and shows the action condition/typed response/reasons/exact scope and action+approval revisions; no call or event until exact confirmation |
+| `M19-ACT-02` | confirmed action with first response lost, then replayed | same request/key returns one committed result and appends exactly one event/effect |
+| `M19-ACT-03` | stale revision, denied actor, approval-required policy, reconnect, timeout | conflict/denial/approval/degraded/unknown-response diagnoses remain distinct; no optimistic UI fact |
+| `M19-AUTH-01` | authority-looking arbitrary Role/Purpose values and renamed labels | no permission, action, sort, urgency, or target changes; only exact canonical policy matters |
+| `M19-ATTACH-01` | inspect attach result containing executable/argv/env/opaque handle | UI shows no env/handle; exact argv executes without a shell through `tea.ExecProcess` |
+| `M19-ATTACH-02` | resize/events/restart while suspended; attached process exits zero/nonzero | terminal restores, size refreshes, queued invalidations drain, reconnect occurs if needed, dashboard resumes |
+| `M19-RACE-01` | concurrent poll, refresh, reconnect, resize, action, and attach messages | reducer/component suites pass `go test -race`; stale generations cannot overwrite current state |
+| `M19-PROGRAM-01` | real Bubble Tea program with controlled input/output/window size | keyboard-only smoke reaches records, detail, modal cancellation, and clean quit without an interactive host |
+| `M19-PUBLIC-01` | isolated provider-free daemon and `test/scenarios/operator-tui/run.sh` | built dashboard proves parity, read-only navigation, one replay-safe action, attach, kill/reconnect, and no leaked process/socket |
 
 ## Test suite commands
 

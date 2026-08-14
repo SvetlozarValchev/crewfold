@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 var managementResultDiscriminators = map[string][2]string{
@@ -169,8 +170,12 @@ func (c *Client) SupervisorActionList(ctx context.Context, params SupervisorActi
 }
 
 func (c *Client) SupervisorActionShow(ctx context.Context, workspace, action string) (SupervisorActionShowResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, workspace)
+	if err != nil {
+		return SupervisorActionShowResult{}, err
+	}
 	var result SupervisorActionShowResult
-	err := c.callParamsStrict(ctx, MethodSupervisorActionShow, SupervisorActionQueryParams{Workspace: workspace, Action: action}, &result)
+	err = c.callParamsStrict(ctx, MethodSupervisorActionShow, SupervisorActionQueryParams{Workspace: workspaceID, Action: action}, &result)
 	return result, err
 }
 
@@ -180,9 +185,14 @@ func (c *Client) SupervisorExplain(ctx context.Context, params SupervisorExplain
 	return result, err
 }
 
-func (c *Client) ApprovalList(ctx context.Context, params ApprovalQueryParams) (ApprovalListResult, error) {
+func (c *Client) ApprovalList(ctx context.Context, params ApprovalListParams) (ApprovalListResult, error) {
+	workspaceID, projectID, err := c.resolveOperatorScope(ctx, params.Workspace, params.Project)
+	if err != nil {
+		return ApprovalListResult{}, err
+	}
+	params.Workspace, params.Project = workspaceID, projectID
 	var result ApprovalListResult
-	err := c.callParamsStrict(ctx, MethodApprovalList, params, &result)
+	err = c.callParamsStrict(ctx, MethodApprovalList, params, &result)
 	return result, err
 }
 
@@ -193,15 +203,31 @@ func (c *Client) ApprovalInspect(ctx context.Context, workspace, approval string
 }
 
 func (c *Client) ApprovalAllow(ctx context.Context, params ApprovalDecisionParams) (ApprovalMutationResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, params.Workspace)
+	if err != nil {
+		return ApprovalMutationResult{}, err
+	}
+	params.Workspace = workspaceID
+	if params.DecisionNote != strings.TrimSpace(params.DecisionNote) {
+		return ApprovalMutationResult{}, fmt.Errorf("approval decision note must not have leading or trailing whitespace")
+	}
 	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
 	var result ApprovalMutationResult
-	err := c.callParamsStrict(ctx, MethodApprovalAllow, params, &result)
+	err = c.callParamsStrict(ctx, MethodApprovalAllow, params, &result)
 	return result, err
 }
 
 func (c *Client) ApprovalDeny(ctx context.Context, params ApprovalDecisionParams) (ApprovalMutationResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, params.Workspace)
+	if err != nil {
+		return ApprovalMutationResult{}, err
+	}
+	params.Workspace = workspaceID
+	if params.DecisionNote != strings.TrimSpace(params.DecisionNote) {
+		return ApprovalMutationResult{}, fmt.Errorf("approval decision note must not have leading or trailing whitespace")
+	}
 	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
 	var result ApprovalMutationResult
-	err := c.callParamsStrict(ctx, MethodApprovalDeny, params, &result)
+	err = c.callParamsStrict(ctx, MethodApprovalDeny, params, &result)
 	return result, err
 }

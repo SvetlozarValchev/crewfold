@@ -4,7 +4,8 @@ Status: implemented for daemon health, durable workspaces/events, read-only Git
 inspection, provider-neutral agent/objective/task/run coordination, immutable
 context packets, owner-facing durable agent mail, leased claims with deterministic
 overlap/drift inspection, structured overlap-resolution meetings, canonical
-knowledge, and deterministic derived retrieval. Subscriptions arrive later.
+knowledge, and deterministic derived retrieval. Resumable bounded event pages are
+the current live-client contract; there is no separate streaming representation.
 The owner-local surface also exposes the bounded deterministic curator queue,
 rule configuration, explicit processing pass, and exact knowledge-contradiction
 governance, portable project knowledge snapshots, and explicit bounded live
@@ -220,8 +221,8 @@ and runtime are opaque capability/configuration strings; neither selects a core
 code branch or launches a process.
 
 `agent.update` takes `workspace`, an agent ID or name, one or more mutable fields,
-`expected_revision`, and `idempotency_key`. `agent.show` accepts an ID or name;
-`agent.list` returns definitions ordered by name and ID.
+`expected_revision`, and `idempotency_key`. `agent.show` requires an exact ID or
+name selector; `agent.list` returns definitions ordered by name and ID.
 
 ### Objectives
 
@@ -229,8 +230,8 @@ code branch or launches a process.
 object, and `idempotency_key`. A budget has non-negative `token_limit`,
 `cost_cents`, and `time_seconds`; zero means unlimited/not enforced for that
 dimension. `objective.update` atomically replaces supplied title, status, or
-budget fields and requires `expected_revision`. `objective.show` queries by ID;
-`objective.list` scopes results to a project.
+budget fields and requires `expected_revision`. `objective.show` requires an
+exact objective ID; `objective.list` scopes results to a project.
 
 Objective status is `active`, `completed`, or `cancelled`. This layer records the
 owner's coordination intent; it does not launch work or automatically cascade a
@@ -268,8 +269,9 @@ Manual assignment cannot race or replace accepted manager work in
   `start_failed`, and appends one `supervisor.intent_cancelled` fact. A later
   supervisor pass cannot retry that owner-cancelled intent.
 
-`task.show` and `task.list` return task details, dependency edges, any active
-assignment, and derived readiness. `ready_only` filters deterministically by
+`task.show` requires an exact task ID. It and `task.list` return task details,
+dependency edges, any active assignment, and derived readiness. `ready_only`
+filters deterministically by
 priority descending, then creation time and ID. Readiness is false unless status
 is `ready`; an incomplete dependency names its ID and state in the explanation.
 
@@ -376,12 +378,12 @@ selected checkout and cannot be overridden through `run.start`. Environment
 inheritance and stdout/stderr are bounded. Completion waits for the process to
 settle; non-zero exit, timeout, and an untrustworthy process outcome stay distinct.
 
-`run.show` takes `workspace` and run ID. `run.list` accepts optional task and
-status filters. Both return run, current task/agent/checkout projections, the run
-timeline, and an accepted handoff when present. `run.resume` requires the observed
-run revision and resumes a blocked run or an explicitly paused active run from its
-persisted cursor. `task.timeline` returns the task, all its runs, and ordered
-normalized run/timeline facts.
+`run.show` requires `workspace` and an exact run ID. `run.list` accepts optional
+task and status filters. Both return run, current task/agent/checkout projections,
+the run timeline, and an accepted handoff when present. `run.resume` requires the
+observed run revision and resumes a blocked run or an explicitly paused active run
+from its persisted cursor. `task.timeline` returns the task, all its runs, and
+ordered normalized run/timeline facts.
 
 `run.logs` takes `workspace`, run ID, and a line-tail bound. It returns runtime
 state plus independently capped stdout/stderr, captured/omitted byte counts, and
@@ -416,8 +418,11 @@ run-owned artifacts. A body contains 1 through 4096 bytes of valid UTF-8; at mos
 16 unique artifact IDs are accepted. Sending and queuing its recipient commit in
 one transaction.
 
-`inbox.list` takes `workspace`, agent ID/name, and a limit from 1 through 50. It is
-an owner inspection query and does not advance delivery state. `thread.show` takes
+`inbox.list` takes canonical workspace and agent IDs plus a limit from 1 through
+50. The Go client and CLI preserve friendly name selection by resolving it first
+through the exact `workspace.show` and `agent.show` reads; the inbox wire request
+itself is therefore unambiguous even when it is empty. It is an owner inspection
+query and does not advance delivery state. `thread.show` takes
 `workspace` and thread ID and returns its ordered messages and delivery records,
 including acknowledgement and separate wake status/diagnostic.
 
@@ -480,9 +485,11 @@ resolves affected overlaps and removes their holds.
 `claim.release` requires an expected revision and idempotency key. Claim queries,
 claim creation, and run scheduling reconcile expired leases first.
 
-`overlap.list` filters by project and `open|resolved`; `overlap.inspect` returns
+`overlap.list` filters by project and `open|resolved`; `overlap.inspect` requires
+only `workspace` and an exact overlap ID, while `overlap.scan` has a distinct
+closed contract containing `workspace` and an optional project. Inspection returns
 the two claim/task IDs, witness, severity, effective response, scheduling flags,
-and deterministic explanation. `overlap.scan` asks the daemon watcher to inspect
+and deterministic explanation. Scanning asks the daemon watcher to inspect
 active claimed checkouts immediately and returns per-checkout scan facts plus
 bounded issues.
 
@@ -839,13 +846,14 @@ detached from or substituted across proposals. Owner allow revalidates that
 closed target before applying the supported response, while deny/replay has no
 second effect.
 
-`approval.list` filters by status/action and `approval.inspect` returns one exact
-request. `approval.allow` and `approval.deny` require the pending request's
-expected revision, a bounded decision note, and an idempotency key. The result type
-`approval_mutation` returns both approval and bound supervisor action plus event
-sequence. One action has at most one approval; a stale or repeated decision
-returns a conflict rather than applying twice. An allow authorizes only that
-closed action at its frozen revision and never becomes a reusable grant.
+`approval.list` filters by status/action and `approval.inspect` requires an exact
+approval ID and returns that request. `approval.allow` and `approval.deny` require
+the pending request's expected revision, a bounded decision note, and an
+idempotency key. The result type `approval_mutation` returns both approval and
+bound supervisor action plus event sequence. One action has at most one approval;
+a stale or repeated decision returns a conflict rather than applying twice. An
+allow authorizes only that closed action at its frozen revision and never becomes
+a reusable grant.
 
 Stable M16 failures are:
 
@@ -944,7 +952,8 @@ the currently reserved task run's checkout, then the latest task run checkout in
 a stable order, and otherwise rejects the request. The response returns the
 durable requested check run; it does not wait for or predict its result.
 
-`check.inspect` returns the frozen run, definition and requirement revisions,
+`check.inspect` requires an exact check-run ID and returns the frozen run,
+definition and requirement revisions,
 launch receipt, source observations, one optional terminal result, current
 freshness revision and reason, bounded artifact metadata, mechanical evidence,
 all four evidence-class buckets, notification/route failures, repair proposal,
@@ -1098,6 +1107,55 @@ Published parameters and result schemas are the closed files under
 `protocol/schemas/domain/v1/`. There is no outcome MCP method, checkpoint archive
 method, or alternate briefing representation.
 
+## M19 bounded operator reads
+
+M19 keeps protocol 1 and one current record shape. It directly replaces the
+unbounded collection results for agents, objectives, tasks, runs, claims,
+overlaps, and drift; there is no old response alias, version-selection flag, or
+compatibility list method. It adds the missing owner reads:
+
+```text
+workspace.list
+project.show
+project.list
+meeting.list
+events.timeline
+```
+
+Operator collection, event, inbox, briefing, and intervention wire requests use
+canonical workspace/project/agent IDs. `workspace.show`, followed when needed by
+`project.show` or `agent.show`, is the only name-resolution path. The Go client
+performs those pure reads for CLI name selectors before sending an operator
+request, so every returned row and even an empty page can be bound to its exact
+scope without trusting an echoed name.
+
+All ordinary collection requests accept `cursor` and `limit`. The default page
+contains 50 records and the maximum contains 200. Results contain the typed
+record array plus `next_cursor`, `has_more`, and the exact filtered `total`.
+Cursors are opaque, at most 256 bytes, keyset-based, and bound to the exact
+resolved workspace/project and filters. Reusing one under another scope or filter
+returns `invalid_cursor`. A dashboard screen follows no more than three pages, so
+one load retains no more than 600 records and reports when the filtered total is
+larger.
+
+`project.show` takes a canonical workspace ID and resolves one project ID or name
+to its canonical projection only.
+Unlike `project.inspect`, it performs no Git observation, checkout refresh, or
+event append; it is the project-resolution operation used by the TUI.
+
+`run.list` accepts an optional canonical project filter and returns bounded
+`RunSummary` records. Each summary exposes only a derived `can_attach` boolean,
+never the runtime handle or attach environment. The full placement, task, agent,
+checkout, timeline, and handoff graph remains the one `run.show` result rather
+than being duplicated into every list row. Agent role and launch-profile purpose
+fields are descriptive output only; no operator query uses either for authority,
+urgency, ordering, or action availability.
+
+Operator collection reads are pure current-projection reads. Paging, dashboard
+bootstrap, navigation, inspection, and refresh do not reconcile leases or append
+events. Time-driven lease reconciliation is performed independently by the
+daemon, so a read cannot acquire hidden mutation authority.
+
 ### `coordination.status`
 
 Takes `workspace` and returns counts for registered/enabled agents plus
@@ -1107,16 +1165,37 @@ workspace retains the process-health form of `status`.
 
 ### `events.list`
 
-Returns events in ascending local sequence order strictly after a supplied cursor:
+Requires an exact workspace and returns canonical event envelopes in ascending
+sequence order strictly after `after`. The first page atomically captures a
+high-water; an opaque continuation binds the workspace, original lower bound,
+and that exact cutoff:
 
 ```json
-{"id":"req-5","protocol":1,"method":"events.list","params":{"after":0,"limit":100}}
+{"id":"req-5","protocol":1,"method":"events.list","params":{"workspace":"ws_00000000000000000000000000000001","after":0,"limit":1000}}
 ```
 
-The default limit is 100 and the maximum is 1000. `next_after` is the final event
-sequence in the page, or the input cursor for an empty page. `has_more` tells the
-caller to issue another query from `next_after`. A resumable live subscription
-arrives later.
+The default limit is 50 and the maximum is 1000. The result contains the resolved
+canonical `workspace_id`, `high_water`, `events`, `next_cursor`, `has_more`, and
+the exact filtered `total`.
+Every continuation remains at or below the first page's high-water even when new
+events commit concurrently. A continuation whose cutoff is ahead of the current
+journal fails as a rewind instead of silently resuming against another history.
+An envelope invalidates canonical records; clients do not treat its payload as a
+second entity projection.
+
+### `events.timeline`
+
+Takes `workspace`, exact bounded `entity_type`, exact `entity_id`, optional
+`cursor`, and optional `limit`. It captures a high-water and returns that entity's
+events newest-first, with the same ordinary 50/200 page and 256-byte cursor
+bounds. The result repeats the resolved canonical `workspace_id`, and every
+envelope must match it. It is the canonical detail timeline; the TUI does not
+scan or reverse an unbounded workspace journal locally.
+
+The local client rejects a response larger than 16 MiB before JSON decoding.
+Malformed, nonmonotonic, wrong-scope, oversized, and rewound event pagination
+fails closed. The operator TUI polls at 500 milliseconds with one request in
+flight and consumes at most ten 1,000-event pages before yielding.
 
 ## Socket startup safety
 
@@ -1144,6 +1223,7 @@ code when applicable. Logs do not include arbitrary request bodies.
   the explicit placeholder actor `local-owner` of type `human`.
 - Workspace/source registration and durable work coordination are implemented.
   Event cursors, optimistic revisions, leases, and command idempotency are
-  durable; subscriptions and streaming are not implemented.
+  durable; live clients use bounded polling rather than a parallel streaming
+  protocol.
 - Unix sockets are the only supported transport; Windows named pipes are later.
 - Socket permission is a transport boundary, not future agent authorization.

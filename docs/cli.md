@@ -18,9 +18,10 @@ gated live conformance call is pending. Owner-granted manager proposals,
 immutable launch profiles, deterministic supervisor passes, and exact approval
 decisions are also implemented. Owner-created deliverable commitments,
 owner-reviewed outcome assessments, immutable checkpoints, and bounded structured
-management briefings are implemented. It supports text and JSON output. Teams,
-broader/model-assisted knowledge curation, and the operator TUI remain future
-contracts.
+management briefings are implemented. The Go-native operator dashboard is
+launched with `crewfold ui`; ordinary commands continue to support text and JSON
+output. Teams and broader/model-assisted knowledge curation remain outside the
+current product contract.
 
 ## Goals
 
@@ -31,6 +32,39 @@ Mutations return the durable entity and event cursor they created.
 The daemon, workspace, source, agent/task/run, context, message, claim, meeting,
 canonical-knowledge, manager, supervisor, approval, outcome, checkpoint, and
 briefing examples below are implemented.
+
+## Operator dashboard
+
+```sh
+crewfold ui --socket /path/to/crewfold.sock --workspace personal
+crewfold ui --socket /path/to/crewfold.sock --workspace personal \
+  --project world-engine --color never
+```
+
+The full-screen dashboard is the primary interactive control panel. Its exact
+screens are Overview, Briefing, Work, Decisions, Checks, Coordination, and
+Activity. It reads only the canonical owner-local API, follows its applied event
+cursor across reconnects, retains visibly stale state while the daemon is
+unavailable, and disables interventions until canonical refresh succeeds.
+
+Navigation, filtering, inspection, explanations, refresh, and attach are
+read-only. `Enter` only inspects. An owner mutation starts under `a`, then shows
+the exact target ID, expected revision, and consequence; only `Ctrl+Enter` in that
+review dialog submits the typed API command. The ordinary CLI exposes the same
+mutations for scripts and diagnosis.
+
+Herdr is the terminal/process host rather than a second management surface. An
+attach action suspends the dashboard and executes the exact argv returned by the
+run API without a shell. Leaving the attached terminal restores and refreshes the
+dashboard. The M19 dashboard exposes ordinary attach only; it has no takeover
+action.
+
+The dashboard is keyboard-complete. `Tab`/`Shift+Tab` move focus; arrows or
+`j`/`k`, `PgUp`/`PgDn`, and `g`/`G` navigate; `/` filters; `Esc` goes back or
+cancels; `r` refreshes; `?` opens help; and `q` quits outside a modal. `NO_COLOR`
+or `--color never` removes style while retaining textual state, severity, and
+focus labels. `crewfold ui` is interactive and rejects `--output`; automation
+uses the normal structured CLI/API.
 
 ## Daemon and workspace
 
@@ -46,9 +80,7 @@ crewfold doctor --provider claude
 crewfold workspace init personal --socket /path/to/crewfold.sock \
   --idempotency-key initialize-personal
 crewfold workspace show personal --socket /path/to/crewfold.sock
-crewfold events list --socket /path/to/crewfold.sock --after 0
-# Planned:
-crewfold watch
+crewfold events list --workspace personal --socket /path/to/crewfold.sock --after 0
 ```
 
 The current interface retains explicit `--data-dir`/`--socket` paths. Background

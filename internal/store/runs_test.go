@@ -88,8 +88,9 @@ func TestRunLifecyclePersistsPlacementTimelineAcceptanceAndHandoff(t *testing.T)
 	if err != nil || len(timeline.Runs) != 1 || len(timeline.Entries) != 7 {
 		t.Fatalf("TaskTimeline() = %#v, %v", timeline, err)
 	}
-	listed, err := storage.Runs(context.Background(), workspace.ID, assigned.Task.ID, domain.RunCompleted)
-	if err != nil || len(listed) != 1 || listed[0].Run.ID != starting.ID {
+	listedPage, err := storage.ListRuns(context.Background(), ListRunsQuery{WorkspaceIdentifier: workspace.ID, TaskID: assigned.Task.ID, Status: domain.RunCompleted})
+	listed := listedPage.Runs
+	if err != nil || len(listed) != 1 || listed[0].ID != starting.ID {
 		t.Fatalf("Runs() = %#v, %v", listed, err)
 	}
 }
@@ -113,7 +114,7 @@ func TestRunPlacementEnforcesAgentConcurrency(t *testing.T) {
 	if ErrorCode(err) != CodePlacementUnavailable {
 		t.Fatalf("CreateRun(over concurrency) error = %v, code = %q", err, ErrorCode(err))
 	}
-	if _, err := storage.Runs(context.Background(), workspace.ID, "", "unknown"); ErrorCode(err) != CodeInvalidRun {
+	if _, err := storage.ListRuns(context.Background(), ListRunsQuery{WorkspaceIdentifier: workspace.ID, Status: "unknown"}); ErrorCode(err) != CodeInvalidRun {
 		t.Fatalf("Runs(unknown status) error = %v, code = %q", err, ErrorCode(err))
 	}
 }

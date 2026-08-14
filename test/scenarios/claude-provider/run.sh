@@ -145,7 +145,7 @@ context_id=$(sed -n 's/.*"context_packet_id":"\(ctx_[0-9a-f]*\)".*/\1/p' "$scena
 grep -Fq '"section":"transcripts","reason":"raw provider transcripts are not context authority"' "$scenario_root/claude-context.json"
 grep -Fq 'Durable provider handoff' "$scenario_root/claude-context.json"
 
-"$binary" events list --after 0 --limit 500 --socket "$socket_path" --output json >"$scenario_root/events.json"
+"$binary" events list --workspace personal --after 0 --limit 500 --socket "$socket_path" --output json >"$scenario_root/events.json"
 grep -Fq '"type":"message.sent"' "$scenario_root/events.json"
 grep -Fq '"type":"run.tool_called"' "$scenario_root/events.json"
 grep -Fq '"type":"run.report_received"' "$scenario_root/events.json"

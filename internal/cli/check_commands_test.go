@@ -196,7 +196,7 @@ func (c *fakeCheckDaemonClient) CheckRun(_ context.Context, p localapi.CheckRunP
 	c.checkRun = p
 	return c.checkRunMutation, nil
 }
-func (c *fakeCheckDaemonClient) CheckList(context.Context, localapi.CheckQueryParams) (localapi.CheckRunListResult, error) {
+func (c *fakeCheckDaemonClient) CheckList(context.Context, localapi.CheckListParams) (localapi.CheckRunListResult, error) {
 	return localapi.CheckRunListResult{}, nil
 }
 func (c *fakeCheckDaemonClient) CheckInspect(context.Context, string, string) (localapi.CheckInspectResult, error) {

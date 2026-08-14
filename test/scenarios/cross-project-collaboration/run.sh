@@ -273,7 +273,7 @@ grep -Fq '"status":"queued"' "$scenario_root/direct-thread.json"
 grep -Fq '"revisions":[]' "$scenario_root/plug-knowledge.json"
 grep -Fq '"revisions":[]' "$scenario_root/engine-knowledge.json"
 
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events.json"
 grep -Fq '"type":"thread.participant_added"' "$scenario_root/events.json"
 grep -Fq '"origin_project_id"' "$scenario_root/events.json"
 for forbidden_event in 'knowledge.' 'task.dependency_added' 'claim.' 'meeting.'

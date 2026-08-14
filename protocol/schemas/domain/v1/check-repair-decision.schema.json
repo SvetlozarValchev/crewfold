@@ -8,7 +8,7 @@
     "repair_proposal_id":{"type":"string","pattern":"^checkrepair_[0-9a-f]{32}$"},
     "decision":{"enum":["accepted","rejected"]},
     "proposal_revision":{"type":"integer","minimum":1},
-    "note":{"type":"string","maxLength":4096,"pattern":"^[^\\u0000]*$","description":"Canonical UTF-8 without NUL; persistence bounds the encoded value to 4096 bytes."},
+    "note":{"type":"string","maxLength":4096,"pattern":"^[^\\x00]*$","description":"Canonical UTF-8 without NUL; persistence bounds the encoded value to 4096 bytes."},
     "created_at":{"type":"string","format":"date-time"},
     "created_by":{"const":"local-owner"}
   }

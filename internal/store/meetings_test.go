@@ -24,11 +24,12 @@ func TestOwnerMeetingProposalRequiresAcceptanceBeforeSequenceMutatesWork(t *test
 	if err != nil || proposed.Detail.Meeting.Status != domain.MeetingAwaitingApproval || proposed.Detail.Proposal == nil || proposed.Detail.Proposal.Status != domain.MeetingProposalProposed {
 		t.Fatalf("RunMeeting() = %#v, %v", proposed, err)
 	}
-	beforeAcceptance, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.secondTask.Task.ID, "inspect-before-accept")
+	beforeAcceptance, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.secondTask.Task.ID)
 	if err != nil || len(beforeAcceptance.Dependencies) != 0 || beforeAcceptance.Task.Revision != setup.secondTask.Task.Revision {
 		t.Fatalf("task before meeting acceptance = %#v, %v", beforeAcceptance, err)
 	}
-	claims, err := storage.ListClaims(context.Background(), setup.workspace.ID, setup.project.ID, domain.ClaimActive, "claims-before-accept")
+	claimPage, err := storage.ListClaims(context.Background(), ListClaimsQuery{WorkspaceIdentifier: setup.workspace.ID, ProjectIdentifier: setup.project.ID, Status: domain.ClaimActive})
+	claims := claimPage.Claims
 	if err != nil || len(claims) != 2 {
 		t.Fatalf("active claims before acceptance = %#v, %v", claims, err)
 	}
@@ -41,17 +42,39 @@ func TestOwnerMeetingProposalRequiresAcceptanceBeforeSequenceMutatesWork(t *test
 	if err != nil || accepted.Detail.Meeting.Status != domain.MeetingConcluded || accepted.Detail.Proposal == nil || accepted.Detail.Proposal.Status != domain.MeetingProposalAccepted || len(accepted.Detail.Actions) != 1 || accepted.Detail.Actions[0].Status != domain.MeetingActionApplied {
 		t.Fatalf("AcceptMeeting() = %#v, %v", accepted, err)
 	}
-	afterAcceptance, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.secondTask.Task.ID, "inspect-after-accept")
+	afterAcceptance, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.secondTask.Task.ID)
 	if err != nil || len(afterAcceptance.Dependencies) != 1 || afterAcceptance.Dependencies[0].DependsOnTaskID != setup.firstTask.Task.ID || afterAcceptance.Task.Revision != setup.secondTask.Task.Revision+1 {
 		t.Fatalf("task after meeting acceptance = %#v, %v", afterAcceptance, err)
 	}
-	activeClaims, err := storage.ListClaims(context.Background(), setup.workspace.ID, setup.project.ID, domain.ClaimActive, "claims-after-accept")
+	activeClaimPage, err := storage.ListClaims(context.Background(), ListClaimsQuery{WorkspaceIdentifier: setup.workspace.ID, ProjectIdentifier: setup.project.ID, Status: domain.ClaimActive})
+	activeClaims := activeClaimPage.Claims
 	if err != nil || len(activeClaims) != 1 || activeClaims[0].TaskID != setup.firstTask.Task.ID {
 		t.Fatalf("active claims after acceptance = %#v, %v", activeClaims, err)
 	}
-	overlap, err := storage.Overlap(context.Background(), setup.workspace.ID, setup.overlap.ID, "overlap-after-accept")
+	overlap, err := storage.Overlap(context.Background(), setup.workspace.ID, setup.overlap.ID)
 	if err != nil || overlap.Status != domain.OverlapResolved {
 		t.Fatalf("overlap after acceptance = %#v, %v", overlap, err)
+	}
+	timeline, err := storage.EventTimeline(context.Background(), EventTimelineQuery{
+		WorkspaceIdentifier: setup.workspace.ID,
+		EntityType:          "task",
+		EntityID:            setup.secondTask.Task.ID,
+		Limit:               MaximumReadPageLimit,
+	})
+	if err != nil {
+		t.Fatalf("EventTimeline(meeting-mutated task) error = %v", err)
+	}
+	foundAction := false
+	for _, event := range timeline.Events {
+		if event.Type == taskDependencyAdded {
+			foundAction = true
+			if event.Actor.ActorID != meetingActionActorID || event.Actor.ActorType != domain.EventActorSubsystem {
+				t.Fatalf("meeting action actor = %#v, want %q/%q", event.Actor, meetingActionActorID, domain.EventActorSubsystem)
+			}
+		}
+	}
+	if !foundAction {
+		t.Fatal("canonical task timeline omitted the meeting action event")
 	}
 }
 
@@ -149,7 +172,7 @@ func TestBoundedManagerDefersActionOutsideAuthorityWithoutMutation(t *testing.T)
 	if err != nil || result.Detail.Meeting.Status != domain.MeetingAwaitingApproval || result.Detail.Actions[0].Status != domain.MeetingActionPending {
 		t.Fatalf("RunMeeting(outside authority) = %#v, %v", result, err)
 	}
-	task, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.secondTask.Task.ID, "inspect-deferred-manager-task")
+	task, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.secondTask.Task.ID)
 	if err != nil || task.Task.Status != domain.TaskReady || task.Task.Revision != setup.secondTask.Task.Revision {
 		t.Fatalf("task after deferred manager action = %#v, %v", task, err)
 	}
@@ -248,7 +271,8 @@ func TestMeetingSplitReassignAndCancelActionsMutateDurableWork(t *testing.T) {
 		if err != nil || result.Detail.Meeting.Status != domain.MeetingConcluded || len(result.Detail.Actions) != 1 || result.Detail.Actions[0].ResultEntityID == "" {
 			t.Fatalf("RunMeeting(split) = %#v, %v", result, err)
 		}
-		tasks, err := storage.Tasks(context.Background(), setup.workspace.ID, setup.project.ID, "list-after-split", false)
+		taskPage, err := storage.ListTasks(context.Background(), ListTasksQuery{WorkspaceIdentifier: setup.workspace.ID, ProjectIdentifier: setup.project.ID})
+		tasks := taskPage.Tasks
 		if err != nil || len(tasks) != 3 {
 			t.Fatalf("tasks after split = %#v, %v", tasks, err)
 		}
@@ -264,7 +288,7 @@ func TestMeetingSplitReassignAndCancelActionsMutateDurableWork(t *testing.T) {
 		if err != nil || result.Detail.Meeting.Status != domain.MeetingConcluded {
 			t.Fatalf("RunMeeting(reassign) = %#v, %v", result, err)
 		}
-		task, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.firstTask.Task.ID, "inspect-after-reassign")
+		task, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.firstTask.Task.ID)
 		if err != nil || task.Task.Status != domain.TaskAssigned || task.Task.AssignedAgentID != setup.participants[0].ID {
 			t.Fatalf("task after reassign = %#v, %v", task, err)
 		}
@@ -280,11 +304,11 @@ func TestMeetingSplitReassignAndCancelActionsMutateDurableWork(t *testing.T) {
 		if err != nil || result.Detail.Meeting.Status != domain.MeetingConcluded {
 			t.Fatalf("RunMeeting(cancel) = %#v, %v", result, err)
 		}
-		task, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.secondTask.Task.ID, "inspect-after-cancel")
+		task, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.secondTask.Task.ID)
 		if err != nil || task.Task.Status != domain.TaskCancelled {
 			t.Fatalf("task after cancel = %#v, %v", task, err)
 		}
-		overlap, err := storage.Overlap(context.Background(), setup.workspace.ID, setup.overlap.ID, "overlap-after-cancel")
+		overlap, err := storage.Overlap(context.Background(), setup.workspace.ID, setup.overlap.ID)
 		if err != nil || overlap.Status != domain.OverlapResolved {
 			t.Fatalf("overlap after cancel = %#v, %v", overlap, err)
 		}
@@ -344,7 +368,7 @@ func TestMeetingAcceptanceRejectsStaleFrozenTaskWithoutPartialMutation(t *testin
 	if ErrorCode(err) != CodeMeetingStale {
 		t.Fatalf("AcceptMeeting(stale) error = %v, code = %q", err, ErrorCode(err))
 	}
-	second, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.secondTask.Task.ID, "inspect-stale-target")
+	second, err := storage.TaskDetail(context.Background(), setup.workspace.ID, setup.secondTask.Task.ID)
 	if err != nil || len(second.Dependencies) != 0 {
 		t.Fatalf("stale acceptance partially mutated task = %#v, %v", second, err)
 	}

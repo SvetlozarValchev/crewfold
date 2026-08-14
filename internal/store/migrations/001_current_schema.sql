@@ -1617,6 +1617,9 @@ LEFT JOIN knowledge_item_task_scopes binding ON binding.item_id = ki.id;
 CREATE INDEX events_workspace_sequence_idx
     ON events(workspace_id, sequence);
 
+CREATE INDEX events_workspace_entity_sequence_idx
+    ON events(workspace_id, entity_type, entity_id, sequence DESC);
+
 CREATE INDEX projects_workspace_idx ON projects(workspace_id, name);
 
 CREATE INDEX repositories_workspace_idx ON repositories(workspace_id, fingerprint);
@@ -3872,7 +3875,7 @@ BEGIN
 	  OR EXISTS (
 	    SELECT 1 FROM events event WHERE event.workspace_id=OLD.workspace_id
 	      AND event.sequence>OLD.last_event_sequence AND event.sequence<=NEW.last_event_sequence
-	      AND crewfold_supervisor_event_known(event.type) IS NOT 1
+	      AND crewfold_event_type_known(event.type) IS NOT 1
 	  )
       OR NEW.revision <> OLD.revision + 1
       OR crewfold_timestamp_canonical(NEW.updated_at) IS NOT 1
@@ -4840,7 +4843,7 @@ CREATE TRIGGER scheduling_intent_validate_update BEFORE UPDATE ON scheduling_int
           AND ((latest.id=OLD.run_id AND EXISTS(SELECT 1 FROM run_scheduling_receipts initial WHERE initial.run_id=latest.id AND initial.intent_id=OLD.id)) OR EXISTS(SELECT 1 FROM run_retry_receipts source WHERE source.run_id=latest.id AND source.intent_id=OLD.id))
           AND NOT EXISTS(SELECT 1 FROM run_retry_receipts successor WHERE successor.prior_run_id=latest.id)
           AND EXISTS(SELECT 1 FROM events failure WHERE failure.workspace_id=OLD.workspace_id AND failure.entity_type='run' AND failure.entity_id=latest.id AND failure.entity_revision=latest.revision
-            AND failure.type='run.start_failed' AND failure.occurred_at=latest.updated_at AND failure.recorded_at=latest.updated_at AND failure.actor_id='local-owner' AND failure.actor_type='human' AND json_extract(failure.data_json,'$.code')='runtime_start_failed'))))
+            AND failure.type='run.start_failed' AND failure.occurred_at=latest.updated_at AND failure.recorded_at=latest.updated_at AND failure.actor_id='subsystem:run-worker' AND failure.actor_type='subsystem' AND json_extract(failure.data_json,'$.code')='runtime_start_failed'))))
     AND EXISTS(SELECT 1 FROM tasks task JOIN events task_event ON task_event.workspace_id=NEW.workspace_id AND task_event.entity_type='task' AND task_event.entity_id=task.id
       AND task_event.entity_revision=task.revision AND task_event.type='task.cancelled' AND task_event.occurred_at=NEW.updated_at AND task_event.recorded_at=NEW.updated_at
       AND task_event.actor_id='local-owner' AND task_event.actor_type='human' AND json_extract(task_event.data_json,'$.status')='cancelled'

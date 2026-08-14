@@ -4,6 +4,22 @@
 
 package dbgen
 
+type Agent struct {
+	ID             string `json:"id"`
+	WorkspaceID    string `json:"workspace_id"`
+	Name           string `json:"name"`
+	Role           string `json:"role"`
+	Provider       string `json:"provider"`
+	Runtime        string `json:"runtime"`
+	Enabled        int64  `json:"enabled"`
+	MaxConcurrency int64  `json:"max_concurrency"`
+	Revision       int64  `json:"revision"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+	CreatedBy      string `json:"created_by"`
+	UpdatedBy      string `json:"updated_by"`
+}
+
 type CheckArtifact struct {
 	ID            string `json:"id"`
 	CheckResultID string `json:"check_result_id"`
@@ -576,6 +592,22 @@ type MeetingProposal struct {
 	DecisionNote *string `json:"decision_note"`
 }
 
+type Objective struct {
+	ID                string `json:"id"`
+	WorkspaceID       string `json:"workspace_id"`
+	ProjectID         string `json:"project_id"`
+	Title             string `json:"title"`
+	Status            string `json:"status"`
+	BudgetTokens      int64  `json:"budget_tokens"`
+	BudgetCostCents   int64  `json:"budget_cost_cents"`
+	BudgetTimeSeconds int64  `json:"budget_time_seconds"`
+	Revision          int64  `json:"revision"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+	CreatedBy         string `json:"created_by"`
+	UpdatedBy         string `json:"updated_by"`
+}
+
 type OutcomeAssessment struct {
 	ID                     string  `json:"id"`
 	WorkspaceID            string  `json:"workspace_id"`
@@ -714,6 +746,17 @@ type OwnerCheckpoint struct {
 	CreatedBy     string `json:"created_by"`
 }
 
+type Project struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+	Name        string `json:"name"`
+	Revision    int64  `json:"revision"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+	CreatedBy   string `json:"created_by"`
+	UpdatedBy   string `json:"updated_by"`
+}
+
 type Repository struct {
 	ID              string `json:"id"`
 	WorkspaceID     string `json:"workspace_id"`
@@ -781,4 +824,14 @@ type ThreadParticipant struct {
 	Status             string `json:"status"`
 	InvitedAt          string `json:"invited_at"`
 	InvitedBy          string `json:"invited_by"`
+}
+
+type Workspace struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Revision  int64  `json:"revision"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	CreatedBy string `json:"created_by"`
+	UpdatedBy string `json:"updated_by"`
 }

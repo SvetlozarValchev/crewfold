@@ -328,7 +328,7 @@ then
   fail 'Codex terminal sentinel crossed the provider boundary'
 fi
 
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events.json"
 for event_type in knowledge.proposed knowledge.accepted knowledge.marked_stale knowledge.superseded context.packet_built message.sent run.report_received
 do
   grep -Fq "\"type\":\"$event_type\"" "$scenario_root/events.json" || fail "missing durable event $event_type"

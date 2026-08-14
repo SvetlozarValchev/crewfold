@@ -9,7 +9,7 @@
     "project_id":{"type":"string","pattern":"^prj_[0-9a-f]{32}$"},
     "name":{"type":"string","minLength":1,"maxLength":128},
     "executable":{"type":"string","minLength":1,"maxLength":4096},
-    "arguments":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":4096,"pattern":"^[^\\u0000]*$"}},
+    "arguments":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":4096,"pattern":"^[^\\x00]*$"}},
     "working_directory":{"type":"string","maxLength":4096},
     "timeout_millis":{"type":"integer","minimum":100,"maximum":3600000},
     "output_byte_limit":{"type":"integer","minimum":1024,"maximum":1048576},

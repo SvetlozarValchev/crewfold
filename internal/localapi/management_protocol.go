@@ -302,10 +302,15 @@ type SupervisorExplanationResult struct {
 
 type ApprovalQueryParams struct {
 	Workspace string `json:"workspace"`
-	Approval  string `json:"approval,omitempty"`
+	Approval  string `json:"approval"`
+}
+
+type ApprovalListParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project,omitempty"`
 	Status    string `json:"status,omitempty"`
 	Action    string `json:"action,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
+	PageParams
 }
 
 type ApprovalDecisionParams struct {
@@ -334,4 +339,5 @@ type ApprovalListResult struct {
 	Schema    string                   `json:"schema"`
 	Type      string                   `json:"type"`
 	Approvals []domain.ApprovalRequest `json:"approvals"`
+	PageResult
 }

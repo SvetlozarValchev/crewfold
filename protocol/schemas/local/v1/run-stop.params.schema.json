@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["workspace", "run", "expected_revision", "grace_period_millis", "idempotency_key"],
   "properties": {
-    "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
+    "workspace": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
     "run": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
     "expected_revision": {"type": "integer", "minimum": 1},
     "grace_period_millis": {"type": "integer", "minimum": 1, "maximum": 30000},

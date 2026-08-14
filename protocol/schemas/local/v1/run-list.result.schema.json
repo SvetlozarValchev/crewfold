@@ -4,10 +4,13 @@
   "title": "Crewfold local API run list result v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "type", "runs"],
+  "required": ["schema", "type", "runs", "next_cursor", "has_more", "total"],
   "properties": {
     "schema": {"const": "urn:crewfold:schema:local-api:run-list-result:v1"},
     "type": {"const": "run_list"},
-    "runs": {"type": "array", "items": {"$ref": "../../domain/v1/run-detail.schema.json"}}
+    "runs": {"type": "array", "maxItems": 200, "items": {"$ref": "../../domain/v1/run-summary.schema.json"}},
+    "next_cursor": {"$ref": "operator-page.schema.json#/$defs/nextCursor"},
+    "has_more": {"$ref": "operator-page.schema.json#/$defs/hasMore"},
+    "total": {"$ref": "operator-page.schema.json#/$defs/total"}
   }
 }

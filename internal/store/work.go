@@ -189,30 +189,6 @@ func (s *Store) Agent(ctx context.Context, workspaceIdentifier, agentIdentifier 
 	return queryAgent(ctx, s.db, workspace.ID, strings.TrimSpace(agentIdentifier))
 }
 
-func (s *Store) Agents(ctx context.Context, workspaceIdentifier string) ([]domain.AgentDefinition, error) {
-	workspace, err := s.Workspace(ctx, workspaceIdentifier)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, agentSelect+" WHERE workspace_id = ? ORDER BY name, id", workspace.ID)
-	if err != nil {
-		return nil, storageFailure("list agents", err)
-	}
-	defer rows.Close()
-	result := make([]domain.AgentDefinition, 0)
-	for rows.Next() {
-		var agent domain.AgentDefinition
-		if err := scanAgent(rows, &agent); err != nil {
-			return nil, storageFailure("scan agent", err)
-		}
-		result = append(result, agent)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, storageFailure("iterate agents", err)
-	}
-	return result, nil
-}
-
 func (s *Store) CreateObjective(ctx context.Context, command CreateObjectiveCommand) (MutationResult[domain.Objective], error) {
 	workspaceIdentifier := strings.TrimSpace(command.WorkspaceIdentifier)
 	projectIdentifier := strings.TrimSpace(command.ProjectIdentifier)
@@ -347,33 +323,6 @@ func (s *Store) Objective(ctx context.Context, workspaceIdentifier, objectiveID 
 		return domain.Objective{}, err
 	}
 	return queryObjective(ctx, s.db, workspace.ID, strings.TrimSpace(objectiveID))
-}
-
-func (s *Store) Objectives(ctx context.Context, workspaceIdentifier, projectIdentifier string) ([]domain.Objective, error) {
-	workspace, err := s.Workspace(ctx, workspaceIdentifier)
-	if err != nil {
-		return nil, err
-	}
-	project, err := queryProject(ctx, s.db, workspace.ID, strings.TrimSpace(projectIdentifier))
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, `
-SELECT id, workspace_id, project_id, title, status, budget_tokens, budget_cost_cents, budget_time_seconds, revision, created_at, updated_at, created_by, updated_by
-FROM objectives WHERE project_id = ? ORDER BY created_at, id`, project.ID)
-	if err != nil {
-		return nil, storageFailure("list objectives", err)
-	}
-	defer rows.Close()
-	result := make([]domain.Objective, 0)
-	for rows.Next() {
-		var objective domain.Objective
-		if err := rows.Scan(&objective.ID, &objective.WorkspaceID, &objective.ProjectID, &objective.Title, &objective.Status, &objective.Budget.TokenLimit, &objective.Budget.CostCents, &objective.Budget.TimeSeconds, &objective.Revision, &objective.CreatedAt, &objective.UpdatedAt, &objective.CreatedBy, &objective.UpdatedBy); err != nil {
-			return nil, storageFailure("scan objective", err)
-		}
-		result = append(result, objective)
-	}
-	return result, rows.Err()
 }
 
 func (s *Store) CreateTask(ctx context.Context, command CreateTaskCommand) (TaskMutationResult, error) {
@@ -755,7 +704,7 @@ WHERE candidate.status IN ('pending','deferred') OR (
           AND failure.entity_type='run' AND failure.entity_id=latest.id
           AND failure.entity_revision=latest.revision AND failure.type='run.start_failed'
           AND failure.occurred_at=latest.updated_at AND failure.recorded_at=latest.updated_at
-          AND failure.actor_id='local-owner' AND failure.actor_type='human'
+          AND failure.actor_id='subsystem:run-worker' AND failure.actor_type='subsystem'
           AND json_extract(failure.data_json,'$.code')='runtime_start_failed'
       )
   )
@@ -796,12 +745,9 @@ WHERE id=? AND status=? AND revision=?`, reason, nextRevision, now, localOwnerAc
 	return nil
 }
 
-func (s *Store) TaskDetail(ctx context.Context, workspaceIdentifier, taskID, correlationID string) (domain.TaskDetail, error) {
+func (s *Store) TaskDetail(ctx context.Context, workspaceIdentifier, taskID string) (domain.TaskDetail, error) {
 	workspace, err := s.Workspace(ctx, workspaceIdentifier)
 	if err != nil {
-		return domain.TaskDetail{}, err
-	}
-	if _, err := s.ReconcileExpiredAssignments(ctx, workspace.ID, correlationID); err != nil {
 		return domain.TaskDetail{}, err
 	}
 	task, err := queryTask(ctx, s.db, workspace.ID, strings.TrimSpace(taskID))
@@ -809,54 +755,6 @@ func (s *Store) TaskDetail(ctx context.Context, workspaceIdentifier, taskID, cor
 		return domain.TaskDetail{}, err
 	}
 	return taskDetail(ctx, s.db, task)
-}
-
-func (s *Store) Tasks(ctx context.Context, workspaceIdentifier, projectIdentifier, correlationID string, readyOnly bool) ([]domain.TaskDetail, error) {
-	workspace, err := s.Workspace(ctx, workspaceIdentifier)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := s.ReconcileExpiredAssignments(ctx, workspace.ID, correlationID); err != nil {
-		return nil, err
-	}
-	arguments := []any{workspace.ID}
-	query := taskSelect + " WHERE t.workspace_id = ?"
-	if strings.TrimSpace(projectIdentifier) != "" {
-		project, err := queryProject(ctx, s.db, workspace.ID, strings.TrimSpace(projectIdentifier))
-		if err != nil {
-			return nil, err
-		}
-		query += " AND t.project_id = ?"
-		arguments = append(arguments, project.ID)
-	}
-	query += " ORDER BY t.priority DESC, t.created_at, t.id"
-	rows, err := s.db.QueryContext(ctx, query, arguments...)
-	if err != nil {
-		return nil, storageFailure("list tasks", err)
-	}
-	tasks := make([]domain.Task, 0)
-	for rows.Next() {
-		var task domain.Task
-		if err := scanTask(rows, &task); err != nil {
-			_ = rows.Close()
-			return nil, storageFailure("scan task", err)
-		}
-		tasks = append(tasks, task)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, storageFailure("close task list", err)
-	}
-	result := make([]domain.TaskDetail, 0, len(tasks))
-	for _, task := range tasks {
-		detail, err := taskDetail(ctx, s.db, task)
-		if err != nil {
-			return nil, err
-		}
-		if !readyOnly || detail.Readiness.Ready {
-			result = append(result, detail)
-		}
-	}
-	return result, nil
 }
 
 func (s *Store) ReconcileExpiredAssignments(ctx context.Context, workspaceIdentifier, correlationID string) (int, error) {
@@ -912,7 +810,7 @@ ORDER BY crewfold_timestamp_key(a.lease_expires_at), a.id`, workspaceID, now.For
 	}
 	nowText := now.Format(time.RFC3339Nano)
 	for _, value := range values {
-		if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'expired', revision = revision + 1, updated_at = ?, updated_by = ? WHERE id = ? AND status = 'active'", nowText, localOwnerActorID, value.assignmentID); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'expired', revision = revision + 1, updated_at = ?, updated_by = ? WHERE id = ? AND status = 'active'", nowText, leaseActorID, value.assignmentID); err != nil {
 			return 0, storageFailure("expire assignment", err)
 		}
 		task, err := queryTask(ctx, tx, workspaceID, value.taskID)
@@ -923,22 +821,19 @@ ORDER BY crewfold_timestamp_key(a.lease_expires_at), a.id`, workspaceID, now.For
 			task.Status = domain.TaskReady
 		}
 		task.Revision++
-		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET status = ?, revision = ?, updated_at = ?, updated_by = ? WHERE id = ?", task.Status, task.Revision, nowText, localOwnerActorID, task.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET status = ?, revision = ?, updated_at = ?, updated_by = ? WHERE id = ?", task.Status, task.Revision, nowText, leaseActorID, task.ID); err != nil {
 			return 0, storageFailure("update task after assignment expiry", err)
 		}
-		if _, err := appendEvent(ctx, tx, workspaceID, "task", task.ID, task.Revision, taskAssignmentExpired, correlationID, nowText, map[string]any{"assignment_id": value.assignmentID, "status": task.Status}); err != nil {
+		if _, err := appendEventForActor(ctx, tx, workspaceID, "task", task.ID, task.Revision, taskAssignmentExpired, correlationID, nowText, leaseActorID, domain.EventActorSubsystem, map[string]any{"assignment_id": value.assignmentID, "status": task.Status}); err != nil {
 			return 0, err
 		}
 	}
 	return len(values), nil
 }
 
-func (s *Store) CoordinationStatus(ctx context.Context, workspaceIdentifier, correlationID string) (domain.CoordinationStatus, error) {
+func (s *Store) CoordinationStatus(ctx context.Context, workspaceIdentifier string) (domain.CoordinationStatus, error) {
 	workspace, err := s.Workspace(ctx, workspaceIdentifier)
 	if err != nil {
-		return domain.CoordinationStatus{}, err
-	}
-	if _, err := s.ReconcileExpiredAssignments(ctx, workspace.ID, correlationID); err != nil {
 		return domain.CoordinationStatus{}, err
 	}
 	var status domain.CoordinationStatus

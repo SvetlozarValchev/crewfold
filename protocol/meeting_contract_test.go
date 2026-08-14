@@ -13,6 +13,7 @@ func TestMeetingResultSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 	for path, expectedID := range map[string]string{
 		"schemas/local/v1/meeting-mutation.result.schema.json": localapi.MeetingMutationSchema,
 		"schemas/local/v1/meeting-inspect.result.schema.json":  localapi.MeetingInspectSchema,
+		"schemas/local/v1/meeting-list.result.schema.json":     localapi.MeetingListSchema,
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil {

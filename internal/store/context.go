@@ -1611,7 +1611,7 @@ request_hash, status, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?,
 	if _, err := tx.ExecContext(ctx, "UPDATE run_jobs SET status = 'pending', available_at = ?, lease_expires_at = NULL, updated_at = ? WHERE run_id = ? AND status = 'complete'", now, now, run.ID); err != nil {
 		return domain.RunReport{}, storageFailure("wake run for report", err)
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runReportReceivedEvent, "report-"+reportID, now, map[string]any{"report_id": reportID, "kind": kind}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runReportReceivedEvent, "report-"+reportID, now, run.ID, domain.EventActorAgentRun, map[string]any{"report_id": reportID, "kind": kind}); err != nil {
 		return domain.RunReport{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1716,7 +1716,7 @@ request_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, artifactID, ru
 		name, mediaType, command.Content, contentHash, len(command.Content), key, requestHash, now); err != nil {
 		return domain.RunArtifact{}, storageFailure("insert run artifact", err)
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runArtifactPublished, "artifact-"+artifactID, now, map[string]any{"artifact_id": artifactID, "name": name, "content_hash": contentHash, "byte_size": len(command.Content)}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runArtifactPublished, "artifact-"+artifactID, now, run.ID, domain.EventActorAgentRun, map[string]any{"artifact_id": artifactID, "name": name, "content_hash": contentHash, "byte_size": len(command.Content)}); err != nil {
 		return domain.RunArtifact{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1764,7 +1764,7 @@ VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), ?)`, call.ID, call.RunID, c
 	if outcome == "denied" {
 		eventType = runToolDeniedEvent
 	}
-	if _, err := appendEvent(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, eventType, requestID, now, map[string]any{"tool_call_id": call.ID, "method": method, "target_id": targetID, "outcome": outcome, "error_code": errorCode}); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, eventType, requestID, now, run.ID, domain.EventActorAgentRun, map[string]any{"tool_call_id": call.ID, "method": method, "target_id": targetID, "outcome": outcome, "error_code": errorCode}); err != nil {
 		return domain.RunToolCall{}, err
 	}
 	if err := tx.Commit(); err != nil {

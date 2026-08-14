@@ -284,7 +284,7 @@ assert_absent "$scenario_root/open-search.json" "$right_revision" 'task-scoped d
   --socket "$socket_path" --output json >"$scenario_root/open-other-task-search.json"
 assert_absent "$scenario_root/open-other-task-search.json" "$left_revision" 'project-wide participant escaped whole-revision quarantine in another task'
 
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" \
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" \
   --output json >"$scenario_root/events-before-context-conflict.json"
 if "$binary" context build "$context_task" --workspace personal --agent contradiction-worker \
   --expected-task-revision 2 --include "$left_revision" --socket "$socket_path" \
@@ -295,7 +295,7 @@ then
 fi
 assert_contains "$scenario_root/context-conflict.json" '"code":"knowledge_conflict"' 'context conflict returned the wrong stable code'
 assert_contains "$scenario_root/context-conflict.json" "$contradiction_id" 'context conflict omitted the authorized open contradiction ID'
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" \
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" \
   --output json >"$scenario_root/events-after-context-conflict.json"
 cmp "$scenario_root/events-before-context-conflict.json" "$scenario_root/events-after-context-conflict.json" || fail 'failed context build appended a durable event'
 "$binary" context show "$context_before" --workspace personal --socket "$socket_path" \
@@ -336,7 +336,7 @@ assert_contains "$scenario_root/active-after-dismiss.json" '"details":[]' 'defau
   --output json >"$scenario_root/dismissed-list.json"
 assert_contains "$scenario_root/dismissed-list.json" "$contradiction_id" 'dismissed filter omitted the terminal contradiction'
 
-"$binary" events list --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events.json"
+"$binary" events list --workspace personal --after 0 --limit 1000 --socket "$socket_path" --output json >"$scenario_root/events.json"
 assert_count "$scenario_root/events.json" '"type":"contradiction.detected"' 1 'contradiction detection event count is wrong'
 assert_count "$scenario_root/events.json" '"type":"contradiction.confirmed"' 1 'contradiction confirmation event count is wrong'
 assert_count "$scenario_root/events.json" '"type":"contradiction.dismissed"' 1 'contradiction dismissal event count is wrong'

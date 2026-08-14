@@ -21,18 +21,20 @@ until their capability is implemented.
 | SQL access | Pinned `sqlc` generated Go over explicit SQL | Compile-time query types while schema and transaction behavior stay visible |
 | Database schema | One embedded current baseline | Reproducible initialization and simple backups |
 | Local transport | JSON messages over a Unix domain socket | Inspectable, stream-capable, user-local by default |
-| Schema | JSON Schema with generated language types | Versioned contracts for CLI, adapters, SDKs, and fixtures |
+| Schema | Embedded JSON Schema validated by `github.com/santhosh-tekuri/jsonschema/v6`, plus generated language types | One executable current contract catches omitted, null, malformed, and out-of-scope wire data before Go zero values can erase those distinctions |
 | Agent tools | MCP server hosted by the daemon | Common provider-neutral coordination surface |
 | Interactive runtime | Herdr driver | Reuses panes, layouts, sessions, agent detection, attach, and automation |
 | Source control | Installed Git CLI | Matches user Git behavior and supports worktrees without reimplementing Git |
 | Search | SQLite FTS5 | Adequate deterministic retrieval without another service |
-| TUI | Go terminal UI library, likely Bubble Tea | Same deployment unit; good status and inbox experience |
+| TUI | Bubble Tea v2.0.8, Bubbles v2.1.1, Lip Gloss v2.0.6 | One Go-native event loop and renderer in the existing binary |
 | Logging | Structured logs with redaction | Debuggable local operation and future telemetry bridge |
 | Metrics/tracing | Optional OpenTelemetry hooks | Standard observability without requiring a collector |
 
 The SQLite driver and generated query code are checked in for reproducible offline
 builds. `sqlc` is a development-time generator, not a runtime dependency. Its
 version is pinned and source/output drift is checked without network access.
+The current JSON Schema corpus is embedded in the binary and compiled lazily by
+the pinned validator; no schema or validator is fetched at runtime.
 
 ## Why Go for the core
 
@@ -99,7 +101,7 @@ not add a monorepo task runner before multiple build graphs exist.
 ### First
 
 - `crewfold` CLI for commands and scripting;
-- `crewfold watch` or `crewfold ui` terminal dashboard;
+- `crewfold ui` terminal dashboard;
 - Herdr for live panes, layouts, and direct interaction;
 - MCP for agent participation.
 

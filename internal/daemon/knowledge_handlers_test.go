@@ -244,7 +244,7 @@ func TestRunScopedMCPCanProposeButCannotAcceptKnowledge(t *testing.T) {
 	if err != nil || afterDenial.Detail.Revision.ReviewStatus != domain.KnowledgeReviewProposed || len(afterDenial.Detail.AuthorityChecks) != 0 {
 		t.Fatalf("knowledge after MCP acceptance denial = %#v, %v", afterDenial, err)
 	}
-	events, err := owner.EventsList(context.Background(), 0, 200)
+	events, err := owner.EventsList(context.Background(), localapi.EventsListParams{Workspace: "personal", After: 0, PageParams: localapi.PageParams{Limit: 200}})
 	if err != nil {
 		t.Fatalf("EventsList() error = %v", err)
 	}

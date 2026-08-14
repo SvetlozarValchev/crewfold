@@ -53,7 +53,7 @@ RuntimeDriver:
 Optional interactive capabilities:
   Prompt(operation_id, stored_handle, text)
   Interrupt(operation_id, stored_handle)
-  Attach(operation_id, stored_handle, takeover) -> native_attach_spec
+  Attach(operation_id, stored_handle) -> native_attach_spec
 
 ProviderAdapter:
   Name
@@ -148,6 +148,16 @@ Illustrative mapping:
 
 The mapping is configuration, not identity. Moving a pane does not move a task to
 a new project, and a stopped pane does not delete a durable agent definition.
+
+`crewfold ui` does not replace this runtime boundary or manipulate Herdr layout as
+management state. The dashboard reads Crewfold's canonical task/run/outcome facts.
+For an explicit attach, it requests the current run attach specification, suspends
+its Bubble Tea program, and executes Herdr's exact executable/argv without a
+shell. It restores the dashboard and catches up from its Crewfold event cursor
+when the attached process exits. Opaque runtime handles and attach environment
+values are never rendered. The M19 dashboard exposes no takeover path; a future
+TUI takeover requires an optimistic-concurrency-safe, idempotent mutation with a
+durable receipt.
 
 ## Generic terminal provider
 

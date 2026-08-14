@@ -66,6 +66,181 @@ type Workspace = domain.Workspace
 
 type Event = domain.Event
 
+const (
+	DefaultReadPageLimit   = 50
+	MaximumReadPageLimit   = 200
+	MaximumEventPageLimit  = 1000
+	MaximumReadCursorBytes = 256
+)
+
+type ListWorkspacesQuery struct {
+	Cursor string
+	Limit  int
+}
+
+type WorkspacePage struct {
+	Workspaces []domain.Workspace
+	NextCursor string
+	HasMore    bool
+	Total      int64
+}
+
+type ListProjectsQuery struct {
+	WorkspaceIdentifier string
+	Cursor              string
+	Limit               int
+}
+
+type ProjectPage struct {
+	Projects   []domain.Project
+	NextCursor string
+	HasMore    bool
+	Total      int64
+}
+
+type ListAgentsQuery struct {
+	WorkspaceIdentifier string
+	Cursor              string
+	Limit               int
+}
+
+type AgentPage struct {
+	Agents     []domain.AgentDefinition
+	NextCursor string
+	HasMore    bool
+	Total      int64
+}
+
+type ListObjectivesQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	Cursor              string
+	Limit               int
+}
+
+type ObjectivePage struct {
+	Objectives []domain.Objective
+	NextCursor string
+	HasMore    bool
+	Total      int64
+}
+
+type ListTasksQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	ReadyOnly           bool
+	Cursor              string
+	Limit               int
+}
+
+type TaskPage struct {
+	Tasks      []domain.TaskDetail
+	NextCursor string
+	HasMore    bool
+	Total      int64
+}
+
+type ListRunsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	TaskID              string
+	Status              string
+	Cursor              string
+	Limit               int
+}
+
+type RunPage struct {
+	Runs                  []domain.RunSummary
+	RuntimeHandleBoundIDs map[string]bool
+	NextCursor            string
+	HasMore               bool
+	Total                 int64
+}
+
+type ListClaimsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	Status              string
+	Cursor              string
+	Limit               int
+}
+
+type ClaimPage struct {
+	Claims     []domain.WorkClaim
+	NextCursor string
+	HasMore    bool
+	Total      int64
+}
+
+type ListOverlapsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	Status              string
+	Cursor              string
+	Limit               int
+}
+
+type OverlapPage struct {
+	Overlaps   []domain.WorkOverlap
+	NextCursor string
+	HasMore    bool
+	Total      int64
+}
+
+type ListClaimDriftsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	Status              string
+	Cursor              string
+	Limit               int
+}
+
+type DriftPage struct {
+	Drifts     []domain.ClaimDrift
+	NextCursor string
+	HasMore    bool
+	Total      int64
+}
+
+type ListMeetingsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	Status              string
+	Cursor              string
+	Limit               int
+}
+
+type MeetingPage struct {
+	Meetings   []domain.Meeting
+	NextCursor string
+	HasMore    bool
+	Total      int64
+}
+
+type ListEventsQuery struct {
+	WorkspaceIdentifier string
+	After               int64
+	Cursor              string
+	Limit               int
+}
+
+type EventTimelineQuery struct {
+	WorkspaceIdentifier string
+	EntityType          string
+	EntityID            string
+	Cursor              string
+	Limit               int
+}
+
+type EventPage struct {
+	WorkspaceID string
+	HighWater   int64
+	Events      []domain.Event
+	NextCursor  string
+	HasMore     bool
+	Total       int64
+}
+
 type SearchKnowledgeQuery struct {
 	WorkspaceIdentifier string
 	ProjectIdentifier   string
@@ -925,9 +1100,18 @@ type ListSupervisorActionsQuery struct {
 
 type ListApprovalRequestsQuery struct {
 	WorkspaceIdentifier string
+	ProjectIdentifier   string
 	Status              string
 	ActionID            string
+	Cursor              string
 	Limit               int
+}
+
+type ApprovalPage struct {
+	Approvals  []domain.ApprovalRequest
+	NextCursor string
+	HasMore    bool
+	Total      int64
 }
 
 type DecideApprovalCommand struct {
@@ -1118,7 +1302,15 @@ type ListCheckRunsQuery struct {
 	DefinitionID        string
 	Status              string
 	Outcome             string
+	Cursor              string
 	Limit               int
+}
+
+type CheckRunPage struct {
+	Runs       []domain.CheckRunListItem
+	NextCursor string
+	HasMore    bool
+	Total      int64
 }
 
 type CheckWork struct {

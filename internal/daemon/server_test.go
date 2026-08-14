@@ -329,11 +329,11 @@ func TestWorkspaceAndEventsPersistAcrossDaemonRestart(t *testing.T) {
 	if !reflect.DeepEqual(shown.Workspace, created.Workspace) {
 		t.Fatalf("WorkspaceShow() = %#v, want %#v", shown.Workspace, created.Workspace)
 	}
-	events, err := client.EventsList(context.Background(), 0, 100)
+	events, err := client.EventsList(context.Background(), localapi.EventsListParams{Workspace: "personal", After: 0, PageParams: localapi.PageParams{Limit: 100}})
 	if err != nil {
 		t.Fatalf("EventsList() error = %v", err)
 	}
-	if len(events.Events) != 1 || events.Events[0].EventID != created.EventID || events.NextAfter != created.EventSequence || events.HasMore {
+	if len(events.Events) != 1 || events.Events[0].EventID != created.EventID || events.HighWater != created.EventSequence || events.HasMore {
 		t.Fatalf("EventsList() = %#v, want one creation event", events)
 	}
 
@@ -353,7 +353,7 @@ func TestWorkspaceAndEventsPersistAcrossDaemonRestart(t *testing.T) {
 	if !reflect.DeepEqual(restored.Workspace, created.Workspace) {
 		t.Fatalf("restored workspace = %#v, want %#v", restored.Workspace, created.Workspace)
 	}
-	restoredEvents, err := restartedClient.EventsList(context.Background(), 0, 100)
+	restoredEvents, err := restartedClient.EventsList(context.Background(), localapi.EventsListParams{Workspace: "personal", After: 0, PageParams: localapi.PageParams{Limit: 100}})
 	if err != nil || len(restoredEvents.Events) != 1 {
 		t.Fatalf("EventsList(after restart) = %#v, %v, want one event", restoredEvents, err)
 	}
@@ -478,7 +478,7 @@ func TestProjectRegistrationGitFailuresCreateNoPartialRecords(t *testing.T) {
 			if _, err := client.CheckoutList(context.Background(), "personal", "world-engine"); localAPIErrorCode(err) != store.CodeProjectNotFound {
 				t.Fatalf("CheckoutList() error = %v, want project_not_found", err)
 			}
-			events, err := client.EventsList(context.Background(), 0, 100)
+			events, err := client.EventsList(context.Background(), localapi.EventsListParams{Workspace: "personal", After: 0, PageParams: localapi.PageParams{Limit: 100}})
 			if err != nil || len(events.Events) != 1 {
 				t.Fatalf("EventsList() = %#v, %v, want only workspace event", events, err)
 			}
@@ -515,28 +515,29 @@ func TestNonRepositoryRegistrationCreatesNoPartialRecords(t *testing.T) {
 	}
 }
 
-func TestEventPaginationUsesResumableExclusiveCursor(t *testing.T) {
+func TestEventPaginationUsesOpaqueWorkspaceSnapshotCursor(t *testing.T) {
 	t.Parallel()
 
 	running := startTestServer(t, testConfig(t))
 	client := localapi.NewClient(running.config.SocketPath)
-	for _, name := range []string{"alpha", "beta"} {
-		if _, err := client.WorkspaceInit(context.Background(), name, "init-"+name); err != nil {
-			t.Fatalf("WorkspaceInit(%s) error = %v", name, err)
-		}
+	if _, err := client.WorkspaceInit(context.Background(), "alpha", "init-alpha"); err != nil {
+		t.Fatalf("WorkspaceInit(alpha) error = %v", err)
 	}
-	first, err := client.EventsList(context.Background(), 0, 1)
+	if _, err := client.AgentCreate(context.Background(), localapi.AgentCreateParams{Workspace: "alpha", Name: "worker", Role: "arbitrary", Provider: "fixture", Runtime: "fixture", MaxConcurrency: 1, IdempotencyKey: "agent-worker"}); err != nil {
+		t.Fatalf("AgentCreate() error = %v", err)
+	}
+	first, err := client.EventsList(context.Background(), localapi.EventsListParams{Workspace: "alpha", After: 0, PageParams: localapi.PageParams{Limit: 1}})
 	if err != nil {
 		t.Fatalf("EventsList(first) error = %v", err)
 	}
-	if len(first.Events) != 1 || first.NextAfter != 1 || !first.HasMore {
+	if len(first.Events) != 1 || first.Events[0].Sequence != 1 || first.NextCursor == "" || !first.HasMore || first.HighWater != 2 {
 		t.Fatalf("first page = %#v, want sequence 1 and has_more", first)
 	}
-	second, err := client.EventsList(context.Background(), first.NextAfter, 1)
+	second, err := client.EventsList(context.Background(), localapi.EventsListParams{Workspace: "alpha", After: 0, PageParams: localapi.PageParams{Cursor: first.NextCursor, Limit: 1}})
 	if err != nil {
 		t.Fatalf("EventsList(second) error = %v", err)
 	}
-	if len(second.Events) != 1 || second.Events[0].Sequence != 2 || second.NextAfter != 2 || second.HasMore {
+	if len(second.Events) != 1 || second.Events[0].Sequence != 2 || second.NextCursor != "" || second.HasMore || second.HighWater != first.HighWater {
 		t.Fatalf("second page = %#v, want final sequence 2", second)
 	}
 	if _, err := client.Stop(context.Background()); err != nil {
@@ -620,9 +621,9 @@ func TestWorkspaceMutationCrashIsAtomic(t *testing.T) {
 			if _, err := restartedClient.WorkspaceShow(context.Background(), "personal"); localAPIErrorCode(err) != store.CodeWorkspaceNotFound {
 				t.Fatalf("WorkspaceShow(after crash) error = %v, code = %q, want no partial projection", err, localAPIErrorCode(err))
 			}
-			events, err := restartedClient.EventsList(context.Background(), 0, 100)
-			if err != nil || len(events.Events) != 0 {
-				t.Fatalf("EventsList(after crash) = %#v, %v, want no partial event", events, err)
+			workspaces, err := restartedClient.WorkspaceList(context.Background(), localapi.WorkspaceListParams{})
+			if err != nil || len(workspaces.Workspaces) != 0 {
+				t.Fatalf("WorkspaceList(after crash) = %#v, %v, want no partial workspace", workspaces, err)
 			}
 			if _, err := restartedClient.WorkspaceInit(context.Background(), "personal", "crash-key"); err != nil {
 				t.Fatalf("WorkspaceInit(reuse key after crash) error = %v", err)

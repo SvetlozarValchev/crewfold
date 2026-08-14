@@ -227,7 +227,7 @@ SELECT 1 FROM reachable WHERE id = ? LIMIT 1`, beforeID, afterID).Scan(&cycle)
 	if err := queries.TouchMeetingTask(ctx, dbgen.TouchMeetingTaskParams{Revision: after.Revision, UpdatedAt: now, UpdatedBy: detail.Meeting.FacilitatorAgentID, ID: after.ID}); err != nil {
 		return "", 0, storageFailure("update sequenced task", err)
 	}
-	sequence, err := appendEventForActor(ctx, tx, after.WorkspaceID, "task", after.ID, after.Revision, taskDependencyAdded, correlationID, now, detail.Meeting.FacilitatorAgentID, meetingActorType, map[string]any{"depends_on_task_id": beforeID, "source_meeting_id": detail.Meeting.ID})
+	sequence, err := appendEventForActor(ctx, tx, after.WorkspaceID, "task", after.ID, after.Revision, taskDependencyAdded, correlationID, now, meetingActionActorID, meetingActorType, map[string]any{"depends_on_task_id": beforeID, "source_meeting_id": detail.Meeting.ID})
 	if err != nil {
 		return "", 0, err
 	}
@@ -243,11 +243,11 @@ SELECT 1 FROM reachable WHERE id = ? LIMIT 1`, beforeID, afterID).Scan(&cycle)
 		if err := queries.ReleaseMeetingClaim(ctx, dbgen.ReleaseMeetingClaimParams{Status: claim.Status, Revision: claim.Revision, UpdatedAt: now, UpdatedBy: detail.Meeting.FacilitatorAgentID, ID: claim.ID}); err != nil {
 			return "", 0, storageFailure("release sequenced task claim", err)
 		}
-		sequence, err = appendEventForActor(ctx, tx, claim.WorkspaceID, "claim", claim.ID, claim.Revision, claimReleasedEvent, correlationID, now, detail.Meeting.FacilitatorAgentID, meetingActorType, map[string]any{"reason": "sequenced behind overlapping task", "source_meeting_id": detail.Meeting.ID})
+		sequence, err = appendEventForActor(ctx, tx, claim.WorkspaceID, "claim", claim.ID, claim.Revision, claimReleasedEvent, correlationID, now, meetingActionActorID, meetingActorType, map[string]any{"reason": "sequenced behind overlapping task", "source_meeting_id": detail.Meeting.ID})
 		if err != nil {
 			return "", 0, err
 		}
-		_, sequence, err = resolveClaimOverlaps(ctx, tx, claim.WorkspaceID, claim.ID, "meeting sequenced overlapping work", correlationID, now, sequence)
+		_, sequence, err = resolveClaimOverlapsForActor(ctx, tx, claim.WorkspaceID, claim.ID, "meeting sequenced overlapping work", correlationID, now, sequence, meetingActionActorID, meetingActorType)
 		if err != nil {
 			return "", 0, err
 		}
@@ -276,7 +276,7 @@ func (s *Store) applySplitAction(ctx context.Context, tx *sql.Tx, detail domain.
 	}); err != nil {
 		return "", 0, storageFailure("insert split task", err)
 	}
-	sequence, err := appendEventForActor(ctx, tx, source.WorkspaceID, "task", id, 1, taskCreated, correlationID, now, detail.Meeting.FacilitatorAgentID, meetingActorType, map[string]any{"source_task_id": source.ID, "source_meeting_id": detail.Meeting.ID, "title": strings.TrimSpace(title)})
+	sequence, err := appendEventForActor(ctx, tx, source.WorkspaceID, "task", id, 1, taskCreated, correlationID, now, meetingActionActorID, meetingActorType, map[string]any{"source_task_id": source.ID, "source_meeting_id": detail.Meeting.ID, "title": strings.TrimSpace(title)})
 	return id, sequence, err
 }
 
@@ -322,7 +322,7 @@ func (s *Store) applyReassignAction(ctx context.Context, tx *sql.Tx, detail doma
 	if err := queries.SetMeetingTaskAssigned(ctx, dbgen.SetMeetingTaskAssignedParams{Revision: task.Revision, UpdatedAt: now, UpdatedBy: detail.Meeting.FacilitatorAgentID, ID: task.ID}); err != nil {
 		return "", 0, storageFailure("update reassigned task", err)
 	}
-	sequence, err := appendEventForActor(ctx, tx, task.WorkspaceID, "task", task.ID, task.Revision, "task.reassigned", correlationID, now, detail.Meeting.FacilitatorAgentID, meetingActorType, map[string]any{"agent_id": agent.ID, "assignment_id": assignmentID, "source_meeting_id": detail.Meeting.ID})
+	sequence, err := appendEventForActor(ctx, tx, task.WorkspaceID, "task", task.ID, task.Revision, "task.reassigned", correlationID, now, meetingActionActorID, meetingActorType, map[string]any{"agent_id": agent.ID, "assignment_id": assignmentID, "source_meeting_id": detail.Meeting.ID})
 	return assignmentID, sequence, err
 }
 
@@ -346,7 +346,7 @@ func (s *Store) applyDesignationAction(ctx context.Context, tx *sql.Tx, detail d
 	if err := queries.TouchMeetingTask(ctx, dbgen.TouchMeetingTaskParams{Revision: task.Revision, UpdatedAt: now, UpdatedBy: detail.Meeting.FacilitatorAgentID, ID: task.ID}); err != nil {
 		return "", 0, storageFailure("update designated task", err)
 	}
-	sequence, err := appendEventForActor(ctx, tx, task.WorkspaceID, "task", task.ID, task.Revision, "task.role_designated", correlationID, now, detail.Meeting.FacilitatorAgentID, meetingActorType, map[string]any{"agent_id": agent.ID, "role": role, "source_meeting_id": detail.Meeting.ID})
+	sequence, err := appendEventForActor(ctx, tx, task.WorkspaceID, "task", task.ID, task.Revision, "task.role_designated", correlationID, now, meetingActionActorID, meetingActorType, map[string]any{"agent_id": agent.ID, "role": role, "source_meeting_id": detail.Meeting.ID})
 	return task.ID + ":" + agent.ID + ":" + role, sequence, err
 }
 
@@ -374,7 +374,7 @@ func (s *Store) applyCancelAction(ctx context.Context, tx *sql.Tx, detail domain
 	if err := queries.SetMeetingTaskCancelled(ctx, dbgen.SetMeetingTaskCancelledParams{Revision: task.Revision, UpdatedAt: now, UpdatedBy: detail.Meeting.FacilitatorAgentID, ID: task.ID}); err != nil {
 		return "", 0, storageFailure("cancel meeting task", err)
 	}
-	sequence, err := appendEventForActor(ctx, tx, task.WorkspaceID, "task", task.ID, task.Revision, taskCancelled, correlationID, now, detail.Meeting.FacilitatorAgentID, meetingActorType, map[string]any{"source_meeting_id": detail.Meeting.ID})
+	sequence, err := appendEventForActor(ctx, tx, task.WorkspaceID, "task", task.ID, task.Revision, taskCancelled, correlationID, now, meetingActionActorID, meetingActorType, map[string]any{"source_meeting_id": detail.Meeting.ID})
 	if err != nil {
 		return "", 0, err
 	}
@@ -390,11 +390,11 @@ func (s *Store) applyCancelAction(ctx context.Context, tx *sql.Tx, detail domain
 		if err := queries.ReleaseMeetingClaim(ctx, dbgen.ReleaseMeetingClaimParams{Status: claim.Status, Revision: claim.Revision, UpdatedAt: now, UpdatedBy: detail.Meeting.FacilitatorAgentID, ID: claim.ID}); err != nil {
 			return "", 0, storageFailure("release cancelled task claim", err)
 		}
-		sequence, err = appendEventForActor(ctx, tx, claim.WorkspaceID, "claim", claim.ID, claim.Revision, claimReleasedEvent, correlationID, now, detail.Meeting.FacilitatorAgentID, meetingActorType, map[string]any{"reason": "meeting cancelled task", "source_meeting_id": detail.Meeting.ID})
+		sequence, err = appendEventForActor(ctx, tx, claim.WorkspaceID, "claim", claim.ID, claim.Revision, claimReleasedEvent, correlationID, now, meetingActionActorID, meetingActorType, map[string]any{"reason": "meeting cancelled task", "source_meeting_id": detail.Meeting.ID})
 		if err != nil {
 			return "", 0, err
 		}
-		_, sequence, err = resolveClaimOverlaps(ctx, tx, claim.WorkspaceID, claim.ID, "meeting cancelled overlapping work", correlationID, now, sequence)
+		_, sequence, err = resolveClaimOverlapsForActor(ctx, tx, claim.WorkspaceID, claim.ID, "meeting cancelled overlapping work", correlationID, now, sequence, meetingActionActorID, meetingActorType)
 		if err != nil {
 			return "", 0, err
 		}

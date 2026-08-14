@@ -52,6 +52,24 @@ func (s *server) handleMeetingInspect(request localapi.Request) localapi.Respons
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.MeetingInspectResult{Schema: localapi.MeetingInspectSchema, Type: "meeting", Detail: detail})
 }
 
+func (s *server) handleMeetingList(request localapi.Request) localapi.Response {
+	var params localapi.MeetingListParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "meeting.list requires workspace and accepts optional project, status, cursor, and limit")
+	}
+	page, err := s.store.ListMeetings(context.Background(), store.ListMeetingsQuery{
+		WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project,
+		Status: params.Status, Cursor: params.Cursor, Limit: params.Limit,
+	})
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.MeetingListResult{
+		Schema: localapi.MeetingListSchema, Type: "meeting_list", Meetings: page.Meetings,
+		PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total},
+	})
+}
+
 func (s *server) handleMeetingAccept(request localapi.Request) localapi.Response {
 	var params localapi.MeetingAcceptParams
 	if err := decodeParams(request.Params, &params); err != nil {

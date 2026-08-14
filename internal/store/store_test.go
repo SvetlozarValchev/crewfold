@@ -127,10 +127,7 @@ func TestWorkspaceInitIsAtomicIdempotentAndPersistent(t *testing.T) {
 		t.Fatalf("InitWorkspace() = %#v, want revision and sequence 1", first)
 	}
 
-	events, err := storage.Events(context.Background(), 0, 100)
-	if err != nil {
-		t.Fatalf("Events() error = %v", err)
-	}
+	events := testWorkspaceEvents(t, storage, first.Workspace.ID, 0, 100)
 	if len(events) != 1 {
 		t.Fatalf("len(events) = %d, want 1", len(events))
 	}
@@ -242,19 +239,21 @@ func TestEventCursorIsStrictlyAfterAndOrdered(t *testing.T) {
 	t.Parallel()
 
 	storage := openTestStore(t, t.TempDir(), Options{})
+	var beta Workspace
 	for index, name := range []string{"alpha", "beta"} {
-		if _, err := storage.InitWorkspace(context.Background(), InitWorkspaceCommand{
+		result, err := storage.InitWorkspace(context.Background(), InitWorkspaceCommand{
 			Name:           name,
 			IdempotencyKey: "key-" + name,
 			CorrelationID:  "request-" + name,
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("InitWorkspace(%d) error = %v", index, err)
 		}
+		if name == "beta" {
+			beta = result.Workspace
+		}
 	}
-	events, err := storage.Events(context.Background(), 1, 100)
-	if err != nil {
-		t.Fatalf("Events(after 1) error = %v", err)
-	}
+	events := testWorkspaceEvents(t, storage, beta.ID, 1, 100)
 	if len(events) != 1 || events[0].Sequence != 2 || events[0].Data == nil {
 		t.Fatalf("Events(after 1) = %#v, want only sequence 2", events)
 	}
@@ -288,13 +287,19 @@ INSERT INTO events(
           'workspace', 'ws_00000000000000000000000000000000', 1, 'test', '{}')`); err == nil {
 		t.Fatal("event with missing workspace succeeded, want foreign-key rejection")
 	}
-	events, err := storage.Events(context.Background(), 0, 100)
-	if err != nil {
-		t.Fatalf("Events() error = %v", err)
-	}
+	events := testWorkspaceEvents(t, storage, created.Workspace.ID, 0, 100)
 	if len(events) != 1 || events[0].EventID != created.EventID || events[0].Type != workspaceCreated {
 		t.Fatalf("events after rejected mutations = %#v, want original event", events)
 	}
+}
+
+func testWorkspaceEvents(t *testing.T, storage *Store, workspace string, after int64, limit int) []Event {
+	t.Helper()
+	page, err := storage.ListEvents(context.Background(), ListEventsQuery{WorkspaceIdentifier: workspace, After: after, Limit: limit})
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	return page.Events
 }
 
 func TestDatabaseSymlinkAndNewerSchemaAreRefused(t *testing.T) {

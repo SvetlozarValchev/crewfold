@@ -9,7 +9,7 @@
     "schema": {"const": "urn:crewfold:schema:local-api:run-attach-result:v1"},
     "type": {"const": "run_attach"},
     "run_id": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
-    "runtime": {"type": "string", "minLength": 1, "maxLength": 64},
+    "runtime": {"type": "string", "minLength": 1, "maxLength": 128},
     "executable": {"type": "string", "minLength": 1, "maxLength": 4096},
     "arguments": {
       "type": "array",

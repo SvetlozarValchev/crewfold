@@ -3084,11 +3084,11 @@ func scanSchedulingIntent(row rowScanner) (domain.SchedulingIntent, error) {
 	return value, err
 }
 
-const approvalRequestSelect = `SELECT id,workspace_id,action_id,status,COALESCE(decision_note,''),COALESCE(decision_event_sequence,0),expected_action_revision,revision,COALESCE(expires_at,''),created_at,updated_at,COALESCE(decided_at,''),created_by,updated_by,COALESCE(decided_by,'') FROM approval_requests`
+const approvalRequestSelect = `SELECT id,workspace_id,COALESCE((SELECT action.project_id FROM supervisor_actions action WHERE action.id=approval_requests.action_id),''),action_id,status,COALESCE(decision_note,''),COALESCE(decision_event_sequence,0),expected_action_revision,revision,COALESCE(expires_at,''),created_at,updated_at,COALESCE(decided_at,''),created_by,updated_by,COALESCE(decided_by,'') FROM approval_requests`
 
 func scanApprovalRequest(row rowScanner) (domain.ApprovalRequest, error) {
 	var value domain.ApprovalRequest
-	err := row.Scan(&value.ID, &value.WorkspaceID, &value.ActionID, &value.Status, &value.DecisionNote, &value.DecisionEventSequence,
+	err := row.Scan(&value.ID, &value.WorkspaceID, &value.ProjectID, &value.ActionID, &value.Status, &value.DecisionNote, &value.DecisionEventSequence,
 		&value.ExpectedActionRevision, &value.Revision, &value.ExpiresAt, &value.CreatedAt, &value.UpdatedAt, &value.DecidedAt,
 		&value.CreatedBy, &value.UpdatedBy, &value.DecidedBy)
 	return value, err
@@ -3115,39 +3115,60 @@ func (s *Store) ApprovalRequest(ctx context.Context, workspaceIdentifier, approv
 	return queryApprovalRequest(ctx, s.db, workspace.ID, strings.TrimSpace(approvalID))
 }
 
-func (s *Store) ApprovalRequests(ctx context.Context, query ListApprovalRequestsQuery) ([]domain.ApprovalRequest, error) {
-	workspace, err := s.Workspace(ctx, strings.TrimSpace(query.WorkspaceIdentifier))
+func (s *Store) ApprovalRequests(ctx context.Context, query ListApprovalRequestsQuery) (ApprovalPage, error) {
+	limit, err := readPageLimit(query.Limit, MaximumReadPageLimit)
 	if err != nil {
-		return nil, err
+		return ApprovalPage{}, err
 	}
-	statement := approvalRequestSelect + ` WHERE workspace_id=? AND EXISTS (
-SELECT 1 FROM supervisor_actions action JOIN supervisor_action_receipts receipt ON receipt.action_id=action.id
-WHERE action.id=approval_requests.action_id AND receipt.condition_key=action.condition_key)`
-	arguments := []any{workspace.ID}
-	if value := strings.TrimSpace(query.Status); value != "" {
-		statement += ` AND status=?`
-		arguments = append(arguments, value)
-	}
-	if value := strings.TrimSpace(query.ActionID); value != "" {
-		statement += ` AND action_id=?`
-		arguments = append(arguments, value)
-	}
-	statement += ` ORDER BY created_at,id LIMIT ?`
-	arguments = append(arguments, boundedManagementLimit(query.Limit))
-	rows, err := s.db.QueryContext(ctx, statement, arguments...)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, storageFailure("list approval requests", err)
+		return ApprovalPage{}, storageFailure("begin approval page snapshot", err)
 	}
-	defer rows.Close()
-	result := make([]domain.ApprovalRequest, 0)
-	for rows.Next() {
-		value, err := scanApprovalRequest(rows)
+	defer tx.Rollback()
+	workspace, err := workspaceInTransaction(ctx, tx, strings.TrimSpace(query.WorkspaceIdentifier))
+	if err != nil {
+		return ApprovalPage{}, err
+	}
+	projectID, err := resolveOptionalProjectID(ctx, tx, workspace.ID, query.ProjectIdentifier)
+	if err != nil {
+		return ApprovalPage{}, err
+	}
+	status := strings.TrimSpace(query.Status)
+	actionID := strings.TrimSpace(query.ActionID)
+	fingerprint := readQueryFingerprint("approval.list", workspace.ID, projectID, status, actionID)
+	cursor, err := decodeRecordCursor(query.Cursor, fingerprint)
+	if err != nil {
+		return ApprovalPage{}, err
+	}
+	queries := dbgen.New(tx)
+	total, err := queries.CountOperatorApprovals(ctx, dbgen.CountOperatorApprovalsParams{WorkspaceID: workspace.ID, ProjectID: projectID, Status: status, ActionID: actionID})
+	if err != nil {
+		return ApprovalPage{}, storageFailure("count approval requests", err)
+	}
+	ids, err := queries.ListOperatorApprovalIDs(ctx, dbgen.ListOperatorApprovalIDsParams{
+		WorkspaceID: workspace.ID, ProjectID: projectID, Status: status, ActionID: actionID, CursorKey: cursor.Key,
+		CursorID: cursor.ID, ResultLimit: int64(limit + 1),
+	})
+	if err != nil {
+		return ApprovalPage{}, storageFailure("list approval request ids", err)
+	}
+	hasMore := len(ids) > limit
+	if hasMore {
+		ids = ids[:limit]
+	}
+	values := make([]domain.ApprovalRequest, 0, len(ids))
+	for _, id := range ids {
+		value, err := queryApprovalRequest(ctx, tx, workspace.ID, id)
 		if err != nil {
-			return nil, err
+			return ApprovalPage{}, err
 		}
-		result = append(result, value)
+		values = append(values, value)
 	}
-	return result, rows.Err()
+	next, err := nextRecordCursor(fingerprint, hasMore, values, func(value domain.ApprovalRequest) (string, string) { return value.CreatedAt, value.ID })
+	if err != nil {
+		return ApprovalPage{}, err
+	}
+	return ApprovalPage{Approvals: values, NextCursor: next, HasMore: hasMore, Total: total}, nil
 }
 
 func (s *Store) AllowApproval(ctx context.Context, command DecideApprovalCommand) (ApprovalMutationResult, error) {

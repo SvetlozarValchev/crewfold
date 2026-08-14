@@ -4,10 +4,9 @@
   "title": "Crewfold local API objective query parameters v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["workspace"],
+  "required": ["workspace", "objective"],
   "properties": {
     "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
-    "project": {"type": "string", "minLength": 1, "maxLength": 128},
     "objective": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"}
   }
 }

@@ -44,7 +44,7 @@ func (s *server) handleRunStart(request localapi.Request) localapi.Response {
 
 func (s *server) handleRunShow(request localapi.Request) localapi.Response {
 	var params localapi.RunQueryParams
-	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Run) == "" {
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || !validCanonicalEntityID(params.Run, "run_") {
 		return invalidParamsResponse(request, "run.show requires workspace and run")
 	}
 	detail, err := s.store.RunDetail(context.Background(), params.Workspace, params.Run)
@@ -55,15 +55,21 @@ func (s *server) handleRunShow(request localapi.Request) localapi.Response {
 }
 
 func (s *server) handleRunList(request localapi.Request) localapi.Response {
-	var params localapi.RunQueryParams
-	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Run) != "" {
+	var params localapi.RunListParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" ||
+		(params.Task != "" && !validCanonicalEntityID(params.Task, "task_")) {
 		return invalidParamsResponse(request, "run.list requires workspace and accepts optional task and status filters")
 	}
-	runs, err := s.store.Runs(context.Background(), params.Workspace, params.Task, params.Status)
+	page, err := s.store.ListRuns(context.Background(), store.ListRunsQuery{WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, TaskID: params.Task, Status: params.Status, Cursor: params.Cursor, Limit: params.Limit})
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunListResult{Schema: localapi.RunListSchema, Type: "run_list", Runs: runs})
+	for index := range page.Runs {
+		driver, exists := s.runtimes[page.Runs[index].Runtime]
+		_, supportsAttach := driver.(execution.RuntimeAttacher)
+		page.Runs[index].CanAttach = page.RuntimeHandleBoundIDs[page.Runs[index].ID] && exists && supportsAttach
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunListResult{Schema: localapi.RunListSchema, Type: "run_list", Runs: page.Runs, PageResult: localapi.PageResult{NextCursor: page.NextCursor, HasMore: page.HasMore, Total: page.Total}})
 }
 
 func (s *server) handleRunResume(request localapi.Request) localapi.Response {
@@ -145,7 +151,7 @@ func (s *server) handleRunPrompt(request localapi.Request) localapi.Response {
 
 func (s *server) handleRunInterrupt(request localapi.Request) localapi.Response {
 	var params localapi.RunQueryParams
-	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || strings.TrimSpace(params.Run) == "" {
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || !validCanonicalEntityID(params.Run, "run_") {
 		return invalidParamsResponse(request, "run.interrupt requires workspace and run")
 	}
 	detail, driver, err := s.interactiveRun(params.Workspace, params.Run)
@@ -177,11 +183,18 @@ func (s *server) handleRunAttach(request localapi.Request) localapi.Response {
 	if !supported {
 		return storeErrorResponse(request, &store.Error{Code: store.CodeAdapterUnavailable, Message: "run runtime does not support interactive attach"})
 	}
-	spec, err := attacher.Attach(context.Background(), detail.Run.ID, detail.Run.RuntimeHandle, params.Takeover)
+	spec, err := attacher.Attach(context.Background(), detail.Run.ID, detail.Run.RuntimeHandle)
 	if err != nil {
 		return storeErrorResponse(request, &store.Error{Code: store.CodeRuntimeFailed, Message: "prepare runtime attach", Cause: err})
 	}
-	return localapi.MarshalResult(request.ID, request.Protocol, localapi.RunAttachResult{Schema: localapi.RunAttachSchema, Type: "run_attach", RunID: detail.Run.ID, Runtime: detail.Run.Runtime, Executable: spec.Executable, Arguments: spec.Arguments, Environment: spec.Environment})
+	result := localapi.RunAttachResult{
+		Schema: localapi.RunAttachSchema, Type: "run_attach", RunID: detail.Run.ID, Runtime: detail.Run.Runtime,
+		Executable: spec.Executable, Arguments: append([]string{}, spec.Arguments...), Environment: spec.Environment,
+	}
+	if err := localapi.ValidateRunAttachResult(result, detail.Run.ID); err != nil {
+		return storeErrorResponse(request, &store.Error{Code: store.CodeRuntimeFailed, Message: "runtime returned an invalid attach specification", Cause: err})
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, result)
 }
 
 func (s *server) interactiveRun(workspace, runID string) (domain.RunDetail, execution.RuntimeDriver, error) {

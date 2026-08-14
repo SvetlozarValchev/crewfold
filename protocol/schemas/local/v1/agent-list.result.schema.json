@@ -4,10 +4,13 @@
   "title": "Crewfold local API agent list result v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "type", "agents"],
+  "required": ["schema", "type", "agents", "next_cursor", "has_more", "total"],
   "properties": {
     "schema": {"const": "urn:crewfold:schema:local-api:agent-list-result:v1"},
     "type": {"const": "agent_list"},
-    "agents": {"type": "array", "items": {"$ref": "../../domain/v1/agent.schema.json"}}
+    "agents": {"type": "array", "maxItems": 200, "items": {"$ref": "../../domain/v1/agent.schema.json"}},
+    "next_cursor": {"$ref": "operator-page.schema.json#/$defs/nextCursor"},
+    "has_more": {"$ref": "operator-page.schema.json#/$defs/hasMore"},
+    "total": {"$ref": "operator-page.schema.json#/$defs/total"}
   }
 }
