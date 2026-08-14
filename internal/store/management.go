@@ -3091,7 +3091,7 @@ func mustParseManagementTime(value string) time.Time {
 func scanSchedulingIntent(row rowScanner) (domain.SchedulingIntent, error) {
 	var value domain.SchedulingIntent
 	err := row.Scan(&value.ID, &value.WorkspaceID, &value.ProjectID, &value.ObjectiveID, &value.TaskID, &value.AgentID, &value.LaunchProfileID,
-		&value.SourceProposalID, &value.SourceActionID, &value.SourceCheckRepairProposalID, &value.Status, &value.Reason, &value.AssignmentID, &value.RunID,
+		&value.SourceProposalID, &value.SourceActionID, &value.SourceCheckRepairProposalID, &value.SourceOwnerTurnID, &value.SourceOwnerOperationID, &value.Status, &value.Reason, &value.AssignmentID, &value.RunID,
 		&value.SupervisorActionID, &value.Attempts, &value.LastEvaluatedEventSequence, &value.Revision, &value.CreatedAt, &value.UpdatedAt, &value.NextAttemptAt,
 		&value.CreatedBy, &value.UpdatedBy)
 	return value, err
@@ -3904,7 +3904,7 @@ func queryLaunchProfile(ctx context.Context, database queryRower, workspaceID, p
 	return value, err
 }
 
-const schedulingIntentSelect = `SELECT id,workspace_id,project_id,objective_id,task_id,agent_id,launch_profile_id,COALESCE(source_proposal_id,''),COALESCE(source_action_id,''),COALESCE(source_check_repair_proposal_id,''),status,COALESCE(reason,''),COALESCE(assignment_id,''),COALESCE(run_id,''),COALESCE(supervisor_action_id,''),attempts,last_evaluated_event_sequence,revision,created_at,updated_at,COALESCE(next_attempt_at,''),created_by,updated_by FROM scheduling_intents`
+const schedulingIntentSelect = `SELECT id,workspace_id,project_id,objective_id,task_id,agent_id,launch_profile_id,COALESCE(source_proposal_id,''),COALESCE(source_action_id,''),COALESCE(source_check_repair_proposal_id,''),COALESCE(source_owner_turn_id,''),COALESCE(source_owner_operation_id,''),status,COALESCE(reason,''),COALESCE(assignment_id,''),COALESCE(run_id,''),COALESCE(supervisor_action_id,''),attempts,last_evaluated_event_sequence,revision,created_at,updated_at,COALESCE(next_attempt_at,''),created_by,updated_by FROM scheduling_intents`
 
 func querySchedulingIntent(ctx context.Context, database queryRower, workspaceID, intentID string) (domain.SchedulingIntent, error) {
 	value, err := scanSchedulingIntent(database.QueryRowContext(ctx, schedulingIntentSelect+` WHERE workspace_id=? AND id=?`, workspaceID, intentID))

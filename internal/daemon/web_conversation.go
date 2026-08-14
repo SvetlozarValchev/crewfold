@@ -3,6 +3,8 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -33,14 +35,12 @@ type workbenchExecuteRequest struct {
 }
 
 type workbenchPlanEditRequest struct {
-	Workspace        string        `json:"workspace"`
-	TurnID           string        `json:"turn_id"`
-	ExpectedRevision int64         `json:"expected_revision"`
-	Title            string        `json:"title"`
-	Description      string        `json:"description"`
-	Priority         int           `json:"priority"`
-	Budget           domain.Budget `json:"budget"`
-	Agent            string        `json:"agent"`
+	Workspace        string                 `json:"workspace"`
+	TurnID           string                 `json:"turn_id"`
+	ExpectedRevision int64                  `json:"expected_revision"`
+	ObjectiveTitle   string                 `json:"objective_title"`
+	ObjectiveBudget  domain.Budget          `json:"objective_budget"`
+	Tasks            []domain.OwnerPlanTask `json:"tasks"`
 }
 
 func (w *workbenchServer) handleOwnerConversation(response http.ResponseWriter, request *http.Request, _ workbenchSession) {
@@ -61,7 +61,7 @@ func (w *workbenchServer) handleOwnerConversation(response http.ResponseWriter, 
 		return
 	}
 	w.writeJSON(response, http.StatusOK, map[string]any{
-		"schema": "urn:crewfold:schema:web:owner-conversation:v1", "type": "owner_conversation", "conversations": page.Conversations, "turns": page.Turns,
+		"schema": "urn:crewfold:schema:web:owner-conversation:v1", "type": "owner_conversation", "conversations": page.Conversations, "turns": page.Turns, "review": page.Review,
 	})
 }
 
@@ -85,13 +85,48 @@ func (w *workbenchServer) handleOwnerIntent(response http.ResponseWriter, reques
 		w.writeError(response, http.StatusBadRequest, "invalid_request", "owner intent does not match the current contract")
 		return
 	}
-	detail, err := w.daemon.store.PrepareOwnerTurn(request.Context(), store.PrepareOwnerTurnCommand{
+	command := store.PrepareOwnerTurnCommand{
 		WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, ConversationID: params.ConversationID,
 		Instruction: params.Instruction, Kind: params.Mode, IdempotencyKey: params.IdempotencyKey,
-	})
+	}
+	detail, replayed, err := w.daemon.store.OwnerTurnReplay(request.Context(), command)
 	if err != nil {
 		w.writeStoreError(response, err)
 		return
+	}
+	if !replayed {
+		snapshot, snapshotErr := w.daemon.store.BuildOwnerInterpretationSnapshot(request.Context(), params.Workspace, params.Project)
+		if snapshotErr != nil {
+			w.writeStoreError(response, snapshotErr)
+			return
+		}
+		interpreter := w.daemon.ownerInterpreterForProvider(snapshot.Provider)
+		if interpreter == nil {
+			w.writeStoreError(response, &store.Error{Code: store.CodeAdapterUnavailable, Message: "owner manager interpreter is unavailable"})
+			return
+		}
+		digest := sha256.Sum256([]byte("owner-manager:" + params.IdempotencyKey))
+		interpretation, interpretationErr := interpreter.Interpret(request.Context(), execution.OwnerInterpretationRequest{
+			OperationID: "run_" + hex.EncodeToString(digest[:16]), Kind: params.Mode, Instruction: params.Instruction,
+			Provider: snapshot.Provider, CheckoutPath: snapshot.CheckoutPath, CanonicalContext: snapshot.CanonicalContext, EventCut: snapshot.EventSequence,
+		})
+		if interpretationErr != nil {
+			w.writeStoreError(response, &store.Error{Code: store.CodeAdapterUnavailable, Message: "owner manager could not produce a typed result", Cause: interpretationErr})
+			return
+		}
+		citations, citationErr := store.ResolveOwnerCitations(snapshot, interpretation.CitationRefs)
+		if citationErr != nil {
+			w.writeStoreError(response, citationErr)
+			return
+		}
+		command.ExpectedEventSequence = snapshot.EventSequence
+		command.Interpretation = interpretation
+		command.Citations = citations
+		detail, err = w.daemon.store.PrepareOwnerTurn(request.Context(), command)
+		if err != nil {
+			w.writeStoreError(response, err)
+			return
+		}
 	}
 	if detail.Turn.Kind == "act" && detail.Turn.Status == "executing" {
 		if err := w.daemon.preflightOwnerTurn(request.Context(), detail); err != nil {
@@ -163,13 +198,13 @@ func (w *workbenchServer) handleOwnerPlanEdit(response http.ResponseWriter, requ
 	var params workbenchPlanEditRequest
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&params); err != nil || decodeHasTrailingValue(decoder) || strings.TrimSpace(params.Workspace) == "" || !validCanonicalEntityID(params.TurnID, "turn_") || !validCanonicalEntityID(params.Agent, "agent_") {
+	if err := decoder.Decode(&params); err != nil || decodeHasTrailingValue(decoder) || strings.TrimSpace(params.Workspace) == "" || !validCanonicalEntityID(params.TurnID, "turn_") {
 		w.writeError(response, http.StatusBadRequest, "invalid_request", "owner plan edit requires exact current fields")
 		return
 	}
 	detail, err := w.daemon.store.EditOwnerPlan(request.Context(), store.EditOwnerPlanCommand{
 		WorkspaceIdentifier: params.Workspace, TurnID: params.TurnID, ExpectedRevision: params.ExpectedRevision,
-		Title: params.Title, Description: params.Description, Priority: params.Priority, Budget: params.Budget, AgentIdentifier: params.Agent,
+		ObjectiveTitle: params.ObjectiveTitle, ObjectiveBudget: params.ObjectiveBudget, Tasks: params.Tasks,
 	})
 	if err != nil {
 		w.writeStoreError(response, err)
@@ -180,46 +215,49 @@ func (w *workbenchServer) handleOwnerPlanEdit(response http.ResponseWriter, requ
 
 func (s *server) preflightOwnerTurn(ctx context.Context, detail domain.OwnerTurnDetail) error {
 	workspace, project := detail.Conversation.WorkspaceID, detail.Conversation.ProjectID
-	var selected domain.AgentDefinition
+	profiles := make(map[string]domain.LaunchProfile)
 	for _, operation := range detail.Operations {
-		if operation.Type == "assign_task" {
-			identifier := ownerPayloadString(operation.Payload, "agent_id", "")
-			if identifier != "" {
-				value, err := s.store.Agent(ctx, workspace, identifier)
-				if err != nil {
-					return err
-				}
-				selected = value
-			}
-			break
+		if operation.Type != "schedule_task" {
+			continue
 		}
-	}
-	if selected.ID == "" {
-		value, err := firstEnabledAgent(ctx, s.store, workspace)
+		profileID := ownerPayloadString(operation.Payload, "launch_profile_id", "")
+		profile, err := s.store.LaunchProfile(ctx, workspace, profileID)
 		if err != nil {
 			return err
 		}
-		selected = value
+		if profile.ProjectID != project || profile.Status != domain.LaunchProfileActive {
+			return &store.Error{Code: store.CodeInvalidLaunchProfile, Message: "owner turn selected a launch profile that is no longer active in this project"}
+		}
+		profiles[profile.ID] = profile
 	}
-	if !selected.Enabled {
-		return &store.Error{Code: store.CodeAgentNotFound, Message: "owner turn selected an agent that is no longer enabled"}
+	if len(profiles) == 0 {
+		return &store.Error{Code: store.CodeOwnerTurnConflict, Message: "owner turn has no typed scheduling operations"}
 	}
-	provider, exists := s.providers[selected.Provider]
-	if !exists {
-		return &store.Error{Code: store.CodeAdapterUnavailable, Message: "selected agent provider is not registered"}
-	}
-	runtimeDriver, exists := s.runtimes[selected.Runtime]
-	if !exists {
-		return &store.Error{Code: store.CodeAdapterUnavailable, Message: "selected agent runtime is not registered"}
-	}
-	if err := preflightWorkbenchRuntime(ctx, selected.Runtime, runtimeDriver); err != nil {
-		return err
-	}
-	probeContext, cancel := context.WithTimeout(ctx, 15*time.Second)
-	_, probeErr := diagnoseWorkbenchProvider(probeContext, provider)
-	cancel()
-	if probeErr != nil {
-		return &store.Error{Code: store.CodeAdapterUnavailable, Message: probeErr.Error()}
+	for _, profile := range profiles {
+		selected, err := s.store.Agent(ctx, workspace, profile.AgentID)
+		if err != nil {
+			return err
+		}
+		if !selected.Enabled || selected.Revision != profile.AgentRevision || selected.Provider != profile.Provider || selected.Runtime != profile.Runtime {
+			return &store.Error{Code: store.CodeAgentNotFound, Message: "owner turn launch profile no longer matches its enabled agent revision"}
+		}
+		provider, exists := s.providers[selected.Provider]
+		if !exists {
+			return &store.Error{Code: store.CodeAdapterUnavailable, Message: "selected agent provider is not registered"}
+		}
+		runtimeDriver, exists := s.runtimes[selected.Runtime]
+		if !exists {
+			return &store.Error{Code: store.CodeAdapterUnavailable, Message: "selected agent runtime is not registered"}
+		}
+		if err := preflightWorkbenchRuntime(ctx, selected.Runtime, runtimeDriver); err != nil {
+			return err
+		}
+		probeContext, cancel := context.WithTimeout(ctx, 15*time.Second)
+		_, probeErr := diagnoseWorkbenchProvider(probeContext, provider)
+		cancel()
+		if probeErr != nil {
+			return &store.Error{Code: store.CodeAdapterUnavailable, Message: probeErr.Error()}
+		}
 	}
 	inspection, err := s.store.InspectProject(ctx, workspace, project)
 	if err != nil {
@@ -237,14 +275,17 @@ func (s *server) executeOwnerTurn(ctx context.Context, detail domain.OwnerTurnDe
 	workspace := detail.Conversation.WorkspaceID
 	project := detail.Conversation.ProjectID
 	correlation := detail.Turn.ID
-	var objectiveID, taskID string
+	var objectiveID string
+	taskIDs := make(map[string]string)
 	for _, operation := range detail.Operations {
 		if operation.Status == "applied" {
 			switch operation.ResultEntityType {
 			case "objective":
 				objectiveID = operation.ResultEntityID
-			case "task", "assignment":
-				taskID = operation.ResultEntityID
+			case "task":
+				if key := ownerPayloadString(operation.Payload, "task_key", ""); key != "" {
+					taskIDs[key] = operation.ResultEntityID
+				}
 			}
 			continue
 		}
@@ -266,70 +307,51 @@ func (s *server) executeOwnerTurn(ctx context.Context, detail domain.OwnerTurnDe
 			if objectiveID == "" {
 				return detail, &store.Error{Code: store.CodeOwnerTurnConflict, Message: "owner plan lost its objective dependency"}
 			}
+			taskKey := ownerPayloadString(operation.Payload, "task_key", "")
+			if taskKey == "" {
+				return detail, &store.Error{Code: store.CodeOwnerTurnConflict, Message: "owner plan task lost its stable key"}
+			}
 			command := store.CreateTaskCommand{WorkspaceIdentifier: workspace, ProjectIdentifier: project, ObjectiveID: objectiveID, Title: ownerPayloadString(operation.Payload, "title", boundedOwnerTitle(detail.Turn.Instruction)), Description: ownerPayloadString(operation.Payload, "description", detail.Turn.Instruction), Priority: ownerPayloadInt(operation.Payload, "priority", 500), Budget: ownerPayloadBudget(operation.Payload), IdempotencyKey: key, CorrelationID: correlation}
 			result, err := s.store.CreateTask(ctx, command)
 			if err != nil {
 				return detail, err
 			}
-			taskID = result.Detail.Task.ID
-			detail, err = s.store.RecordOwnerOperation(ctx, store.RecordOwnerOperationCommand{WorkspaceIdentifier: workspace, TurnID: detail.Turn.ID, OperationID: operation.ID, Method: "task.create", IdempotencyKey: key, Request: command, Response: result, ResultEntityType: "task", ResultEntityID: taskID, EventSequence: result.EventSequence})
+			taskIDs[taskKey] = result.Detail.Task.ID
+			detail, err = s.store.RecordOwnerOperation(ctx, store.RecordOwnerOperationCommand{WorkspaceIdentifier: workspace, TurnID: detail.Turn.ID, OperationID: operation.ID, Method: "task.create", IdempotencyKey: key, Request: command, Response: result, ResultEntityType: "task", ResultEntityID: result.Detail.Task.ID, EventSequence: result.EventSequence})
 			if err != nil {
 				return detail, err
 			}
-		case "assign_task":
-			if taskID == "" {
-				return detail, &store.Error{Code: store.CodeOwnerTurnConflict, Message: "owner plan lost its task dependency"}
-			}
-			agent, err := ownerSelectedAgent(ctx, s.store, workspace, operation.Payload)
-			if err != nil {
-				return detail, err
+		case "add_dependency":
+			taskID := taskIDs[ownerPayloadString(operation.Payload, "task_key", "")]
+			dependsOnID := taskIDs[ownerPayloadString(operation.Payload, "depends_on_task_key", "")]
+			if taskID == "" || dependsOnID == "" {
+				return detail, &store.Error{Code: store.CodeOwnerTurnConflict, Message: "owner plan lost a typed task dependency"}
 			}
 			task, err := s.store.TaskDetail(ctx, workspace, taskID)
 			if err != nil {
 				return detail, err
 			}
-			command := store.AssignTaskCommand{WorkspaceIdentifier: workspace, TaskID: taskID, AgentIdentifier: agent.ID, LeaseSeconds: 24 * 60 * 60, ExpectedRevision: task.Task.Revision, IdempotencyKey: key, CorrelationID: correlation}
-			result, err := s.store.AssignTask(ctx, command)
+			command := store.AddTaskDependencyCommand{WorkspaceIdentifier: workspace, TaskID: taskID, DependsOnTaskID: dependsOnID, ExpectedRevision: task.Task.Revision, IdempotencyKey: key, CorrelationID: correlation}
+			result, err := s.store.AddTaskDependency(ctx, command)
 			if err != nil {
 				return detail, err
 			}
-			detail, err = s.store.RecordOwnerOperation(ctx, store.RecordOwnerOperationCommand{WorkspaceIdentifier: workspace, TurnID: detail.Turn.ID, OperationID: operation.ID, Method: "task.assign", IdempotencyKey: key, Request: command, Response: result, ResultEntityType: "assignment", ResultEntityID: taskID, EventSequence: result.EventSequence})
+			detail, err = s.store.RecordOwnerOperation(ctx, store.RecordOwnerOperationCommand{WorkspaceIdentifier: workspace, TurnID: detail.Turn.ID, OperationID: operation.ID, Method: "task.dependency.add", IdempotencyKey: key, Request: command, Response: result, ResultEntityType: "task_dependency", ResultEntityID: taskID, EventSequence: result.EventSequence})
 			if err != nil {
 				return detail, err
 			}
-		case "start_run":
-			if taskID == "" {
-				return detail, &store.Error{Code: store.CodeOwnerTurnConflict, Message: "owner plan lost its assigned task dependency"}
+		case "schedule_task":
+			taskID := taskIDs[ownerPayloadString(operation.Payload, "task_key", "")]
+			profileID := ownerPayloadString(operation.Payload, "launch_profile_id", "")
+			if taskID == "" || profileID == "" {
+				return detail, &store.Error{Code: store.CodeOwnerTurnConflict, Message: "owner plan lost a typed scheduling target"}
 			}
-			agent, err := ownerSelectedAgent(ctx, s.store, workspace, operation.Payload)
+			command := store.CreateOwnerSchedulingIntentCommand{WorkspaceIdentifier: workspace, TurnID: detail.Turn.ID, OperationID: operation.ID, TaskID: taskID, LaunchProfileID: profileID, CorrelationID: correlation}
+			result, err := s.store.CreateOwnerSchedulingIntent(ctx, command)
 			if err != nil {
 				return detail, err
 			}
-			inspection, err := s.store.InspectProject(ctx, workspace, project)
-			if err != nil {
-				return detail, err
-			}
-			checkoutID := ""
-			for _, checkout := range inspection.Checkouts {
-				if checkout.Availability == domain.CheckoutAvailable {
-					checkoutID = checkout.ID
-					break
-				}
-			}
-			if checkoutID == "" {
-				return detail, &store.Error{Code: store.CodePlacementUnavailable, Message: "owner plan has no available project checkout"}
-			}
-			task, err := s.store.TaskDetail(ctx, workspace, taskID)
-			if err != nil {
-				return detail, err
-			}
-			scenario := ownerWorkbenchScenario()
-			command := store.CreateRunCommand{WorkspaceIdentifier: workspace, TaskID: taskID, CheckoutIdentifier: checkoutID, Runtime: agent.Runtime, Provider: agent.Provider, Scenario: scenario, ExpectedTaskRevision: task.Task.Revision, IdempotencyKey: key, CorrelationID: correlation}
-			result, err := s.store.CreateRun(ctx, command)
-			if err != nil {
-				return detail, err
-			}
-			detail, err = s.store.RecordOwnerOperation(ctx, store.RecordOwnerOperationCommand{WorkspaceIdentifier: workspace, TurnID: detail.Turn.ID, OperationID: operation.ID, Method: "run.start", IdempotencyKey: key, Request: command, Response: result, ResultEntityType: "run", ResultEntityID: result.Detail.Run.ID, EventSequence: result.EventSequence})
+			detail, err = s.store.RecordOwnerOperation(ctx, store.RecordOwnerOperationCommand{WorkspaceIdentifier: workspace, TurnID: detail.Turn.ID, OperationID: operation.ID, Method: "supervisor.intent.create", IdempotencyKey: key, Request: command, Response: result, ResultEntityType: "scheduling_intent", ResultEntityID: result.Value.ID, EventSequence: result.EventSequence})
 			if err != nil {
 				return detail, err
 			}
@@ -337,7 +359,7 @@ func (s *server) executeOwnerTurn(ctx context.Context, detail domain.OwnerTurnDe
 			return detail, &store.Error{Code: store.CodeOwnerTurnConflict, Message: "owner plan contains an unsupported operation"}
 		}
 	}
-	return s.store.FinishOwnerTurn(ctx, workspace, detail.Turn.ID, "Committed the objective, created and assigned its first task, and requested the selected agent launch. The run inspector shows the exact asynchronous execution state and receipts.")
+	return s.store.FinishOwnerTurn(ctx, workspace, detail.Turn.ID, "Committed the objective and dependency graph, then published each task to the deterministic supervisor through its exact launch profile. Ready work will launch through Herdr; dependent work remains visibly deferred until its prerequisites complete.")
 }
 
 func ownerWorkbenchScenario() domain.FakeScenario {

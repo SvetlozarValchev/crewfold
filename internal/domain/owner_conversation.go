@@ -15,20 +15,94 @@ type OwnerConversation struct {
 }
 
 type OwnerTurn struct {
-	ID                     string `json:"id"`
+	ID                     string              `json:"id"`
+	ConversationID         string              `json:"conversation_id"`
+	Ordinal                int64               `json:"ordinal"`
+	Kind                   string              `json:"kind"`
+	InitiatedBy            string              `json:"initiated_by"`
+	TriggerEventSequence   int64               `json:"trigger_event_sequence,omitempty"`
+	Instruction            string              `json:"instruction"`
+	Status                 string              `json:"status"`
+	AsOfEventSequence      int64               `json:"as_of_event_sequence"`
+	Answer                 string              `json:"answer,omitempty"`
+	PlanSHA256             string              `json:"plan_sha256"`
+	ErrorCode              string              `json:"error_code,omitempty"`
+	Revision               int64               `json:"revision"`
+	CreatedAt              string              `json:"created_at"`
+	UpdatedAt              string              `json:"updated_at"`
+	CompletedEventSequence int64               `json:"completed_event_sequence,omitempty"`
+	Citations              []OwnerCitation     `json:"citations"`
+	Interpretation         OwnerInterpretation `json:"interpretation"`
+}
+
+// OwnerManagerReviewJob is the one coalesced, durable manager-review cursor for
+// a project with an open owner conversation. Worker reports and agent messages
+// advance RequestedEventSequence in their own transaction; one daemon worker
+// reviews a frozen cut and advances ReviewedEventSequence exactly once.
+type OwnerManagerReviewJob struct {
+	WorkspaceID            string `json:"workspace_id"`
+	ProjectID              string `json:"project_id"`
 	ConversationID         string `json:"conversation_id"`
-	Ordinal                int64  `json:"ordinal"`
-	Kind                   string `json:"kind"`
-	Instruction            string `json:"instruction"`
 	Status                 string `json:"status"`
-	AsOfEventSequence      int64  `json:"as_of_event_sequence"`
-	Answer                 string `json:"answer,omitempty"`
-	PlanSHA256             string `json:"plan_sha256"`
-	ErrorCode              string `json:"error_code,omitempty"`
-	Revision               int64  `json:"revision"`
+	RequestedEventSequence int64  `json:"requested_event_sequence"`
+	ReviewedEventSequence  int64  `json:"reviewed_event_sequence"`
+	Attempts               int64  `json:"attempts"`
+	AvailableAt            string `json:"available_at"`
+	LeaseExpiresAt         string `json:"lease_expires_at,omitempty"`
+	LastTurnID             string `json:"last_turn_id,omitempty"`
+	LastError              string `json:"last_error,omitempty"`
 	CreatedAt              string `json:"created_at"`
 	UpdatedAt              string `json:"updated_at"`
-	CompletedEventSequence int64  `json:"completed_event_sequence,omitempty"`
+}
+
+// OwnerCitation binds a manager answer to one exact canonical record at the
+// event cut that was supplied to the interpreter. The model chooses only the
+// opaque Ref values it was given; Crewfold resolves and persists the record
+// identity, revision, and cut itself.
+type OwnerCitation struct {
+	Ref               string `json:"ref"`
+	EntityType        string `json:"entity_type"`
+	EntityID          string `json:"entity_id"`
+	EntityRevision    int64  `json:"entity_revision"`
+	AsOfEventSequence int64  `json:"as_of_event_sequence"`
+	Label             string `json:"label"`
+}
+
+// OwnerPlanTask is the deliberately small manager output grammar. It contains
+// no executable, command, environment, provider, runtime, or authority text;
+// an exact current launch profile is the only way to nominate execution.
+type OwnerPlanTask struct {
+	Key             string   `json:"key"`
+	Title           string   `json:"title"`
+	Description     string   `json:"description"`
+	Priority        int      `json:"priority"`
+	Budget          Budget   `json:"budget"`
+	LaunchProfileID string   `json:"launch_profile_id"`
+	DependsOn       []string `json:"depends_on"`
+}
+
+// OwnerInterpretation is untrusted provider output until Store validation
+// freezes it. Disposition is answer, ready, clarify, or refuse. Only ready
+// plan/act interpretations may contain an objective and tasks.
+type OwnerInterpretation struct {
+	Disposition     string          `json:"disposition"`
+	Summary         string          `json:"summary"`
+	Answer          string          `json:"answer"`
+	Question        string          `json:"question"`
+	Choices         []OwnerChoice   `json:"choices"`
+	ObjectiveTitle  string          `json:"objective_title"`
+	ObjectiveBudget Budget          `json:"objective_budget"`
+	Tasks           []OwnerPlanTask `json:"tasks"`
+	CitationRefs    []string        `json:"citation_refs"`
+}
+
+// OwnerChoice is a typed owner decision offered by the manager. It is inert
+// until the owner submits the selected answer as a new visible instruction.
+type OwnerChoice struct {
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Recommended bool   `json:"recommended"`
 }
 
 type OwnerTurnOperation struct {

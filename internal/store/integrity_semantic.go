@@ -325,8 +325,19 @@ SELECT 'owner_turn:'||turn.id FROM owner_turns turn
 WHERE turn.plan_sha256<>lower(hex(sha256(CAST(turn.plan_json AS BLOB))))
    OR json_array_length(turn.plan_json)<>(SELECT count(*) FROM owner_turn_operations operation WHERE operation.turn_id=turn.id)
    OR (turn.kind='query' AND (turn.status<>'completed' OR turn.answer IS NULL OR json_array_length(turn.plan_json)<>0))
-   OR (turn.kind='plan' AND turn.status='planned' AND EXISTS(SELECT 1 FROM owner_turn_operations operation WHERE operation.turn_id=turn.id AND operation.status<>'pending'))
-   OR (turn.status='completed' AND EXISTS(SELECT 1 FROM owner_turn_operations operation WHERE operation.turn_id=turn.id AND operation.status<>'applied'))
+   OR (turn.initiated_by='owner' AND (turn.kind='review' OR turn.trigger_event_sequence IS NOT NULL))
+   OR (turn.initiated_by='manager' AND (turn.kind<>'review' OR turn.trigger_event_sequence<>turn.as_of_event_sequence))
+	OR (turn.kind IN ('plan','review') AND turn.status='planned' AND EXISTS(SELECT 1 FROM owner_turn_operations operation WHERE operation.turn_id=turn.id AND operation.status<>'pending'))
+	OR (turn.status='completed' AND EXISTS(SELECT 1 FROM owner_turn_operations operation WHERE operation.turn_id=turn.id AND operation.status<>'applied'))
+UNION ALL
+SELECT 'owner_manager_review:'||job.project_id FROM owner_manager_review_jobs job
+JOIN projects project ON project.id=job.project_id
+JOIN owner_conversations conversation ON conversation.id=job.conversation_id
+LEFT JOIN owner_turns turn ON turn.id=job.last_turn_id
+WHERE project.workspace_id<>job.workspace_id OR conversation.workspace_id<>job.workspace_id OR conversation.project_id<>job.project_id
+   OR (job.status='idle' AND (turn.id IS NULL OR turn.initiated_by<>'manager' OR turn.trigger_event_sequence<>job.reviewed_event_sequence))
+   OR (job.status='leased')<>(job.lease_expires_at IS NOT NULL)
+   OR crewfold_timestamp_canonical(job.available_at)<>1 OR crewfold_timestamp_canonical(job.created_at)<>1 OR crewfold_timestamp_canonical(job.updated_at)<>1
 UNION ALL
 SELECT 'owner_operation:'||operation.id FROM owner_turn_operations operation
 LEFT JOIN owner_effect_receipts receipt ON receipt.operation_id=operation.id

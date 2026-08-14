@@ -529,6 +529,11 @@ VALUES (?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''
 	if err != nil {
 		return MutationResult[domain.MessageMutation]{}, err
 	}
+	if senderRunID != "" && projectID != "" {
+		if err := enqueueOwnerManagerReview(ctx, tx, workspace.ID, projectID, sequence, now); err != nil {
+			return MutationResult[domain.MessageMutation]{}, err
+		}
+	}
 	wakeStatus := domain.WakeNotRequested
 	var targetRunID string
 	if threadKind == domain.ThreadKindParticipantBound {

@@ -251,6 +251,7 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 			value = result.Value
 			if err == nil {
 				s.signalMessageWakeWorker()
+				s.signalOwnerManagerReviewWorker()
 			}
 		}
 	case toolProgress:
@@ -264,6 +265,9 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 				RunID: briefing.Run.ID, Kind: domain.ObservationProgress, Message: arguments.Summary,
 				Evidence: arguments.EvidenceIDs, Payload: arguments, IdempotencyKey: arguments.IdempotencyKey,
 			})
+			if err == nil {
+				s.signalOwnerManagerReviewWorker()
+			}
 		}
 	case toolBlocked:
 		var arguments blockedArguments
@@ -276,6 +280,9 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 				RunID: briefing.Run.ID, Kind: domain.ObservationBlocked, Message: arguments.Reason,
 				Evidence: arguments.RelatedIDs, Payload: arguments, IdempotencyKey: arguments.IdempotencyKey,
 			})
+			if err == nil {
+				s.signalOwnerManagerReviewWorker()
+			}
 		}
 	case toolCompletion:
 		var arguments completionArguments
@@ -288,6 +295,9 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 				RunID: briefing.Run.ID, Kind: domain.ObservationCompletion, Message: arguments.Summary,
 				Evidence: arguments.EvidenceIDs, Handoff: arguments.Handoff, Payload: arguments, IdempotencyKey: arguments.IdempotencyKey,
 			})
+			if err == nil {
+				s.signalOwnerManagerReviewWorker()
+			}
 		}
 	case toolArtifact:
 		var arguments artifactArguments

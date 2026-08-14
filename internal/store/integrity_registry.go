@@ -56,6 +56,7 @@ var durableQueueRegistry = []durableQueueDefinition{
 	{name: "scheduling_intent", healthName: "scheduling_intent", table: "scheduling_intents", idColumn: "id", openPredicate: "status IN ('pending','deferred','awaiting_approval','run_requested')", terminalRule: "status IN ('satisfied','failed','cancelled')", blockerKind: "open_scheduling_intent", statuses: []string{"pending", "deferred", "awaiting_approval", "run_requested", "satisfied", "failed", "cancelled"}},
 	{name: "supervisor_action", healthName: "supervisor_action", table: "supervisor_actions", idColumn: "id", openPredicate: "status IN ('proposed','awaiting_approval','deferred')", terminalRule: "status IN ('applied','dismissed','failed')", blockerKind: "open_supervisor_action", statuses: []string{"proposed", "awaiting_approval", "deferred", "applied", "dismissed", "failed"}},
 	{name: "approval", healthName: "approval", table: "approval_requests", idColumn: "id", openPredicate: "status IN ('pending','granted')", terminalRule: "status IN ('denied','expired','consumed')", blockerKind: "open_approval", statuses: []string{"pending", "granted", "denied", "expired", "consumed"}},
+	{name: "owner_manager_review", healthName: "owner_manager_review", table: "owner_manager_review_jobs", idColumn: "project_id", openPredicate: "status IN ('pending','leased')", terminalRule: "status IN ('idle','failed')", blockerKind: "open_owner_manager_review", statuses: []string{"idle", "pending", "leased", "failed"}},
 }
 
 func queueDefinition(name string) (durableQueueDefinition, bool) {

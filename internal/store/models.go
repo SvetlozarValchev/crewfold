@@ -371,15 +371,16 @@ type QuiescentCut struct {
 }
 
 type QuiescenceCounts struct {
-	NonterminalRuns       int64 `json:"nonterminal_runs"`
-	UnsettledRunJobs      int64 `json:"unsettled_run_jobs"`
-	RuntimeBindings       int64 `json:"runtime_bindings"`
-	UnfinishedCheckRuns   int64 `json:"unfinished_check_runs"`
-	UnsettledCheckJobs    int64 `json:"unsettled_check_jobs"`
-	OpenWakeJobs          int64 `json:"open_wake_jobs"`
-	OpenSchedulingIntents int64 `json:"open_scheduling_intents"`
-	OpenSupervisorActions int64 `json:"open_supervisor_actions"`
-	OpenApprovals         int64 `json:"open_approvals"`
+	NonterminalRuns         int64 `json:"nonterminal_runs"`
+	UnsettledRunJobs        int64 `json:"unsettled_run_jobs"`
+	RuntimeBindings         int64 `json:"runtime_bindings"`
+	UnfinishedCheckRuns     int64 `json:"unfinished_check_runs"`
+	UnsettledCheckJobs      int64 `json:"unsettled_check_jobs"`
+	OpenWakeJobs            int64 `json:"open_wake_jobs"`
+	OpenSchedulingIntents   int64 `json:"open_scheduling_intents"`
+	OpenSupervisorActions   int64 `json:"open_supervisor_actions"`
+	OpenApprovals           int64 `json:"open_approvals"`
+	OpenOwnerManagerReviews int64 `json:"open_owner_manager_reviews"`
 }
 
 type QuiescenceBlocker struct {

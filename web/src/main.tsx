@@ -27,14 +27,22 @@ type Objective = { id: string; project_id: string; title: string; status: string
 type Task = { id: string; project_id: string; objective_id?: string; title: string; description?: string; status: string; priority: number; revision: number; assigned_agent_id?: string; updated_at: string };
 type TaskDetail = { task: Task; dependencies: Array<{ dependency_task_id: string }>; assignment?: { agent_id: string }; readiness: { ready: boolean; reasons: string[] } };
 type Run = { id: string; project_id: string; task_id: string; agent_id: string; runtime: string; provider: string; status: string; can_attach: boolean; revision: number; updated_at: string; result_summary?: string; blocked_question?: string; failure_code?: string; failure_message?: string };
+type RunDetailView = { run: Run & { context_packet_id?: string; created_at: string; started_at?: string; finished_at?: string; placement?: { checkout_path?: string; write_mode?: string; reasons?: string[] } }; task: Task; agent: Agent; checkout: Checkout; timeline: Array<{ sequence: number; kind: string; message?: string; evidence: string[]; recorded_at: string }>; handoff?: { summary: string; evidence: string[]; created_at: string } };
+type ContextExplanation = { packet_id: string; content_hash: string; byte_size: number; included: Array<{ section: string; entity_type: string; entity_id: string; revision: number; reason: string }>; excluded: Array<{ section: string; reason: string; reason_code?: string }>; budget: { total: { limit_bytes: number; used_bytes: number; remaining_bytes: number } } };
 type EventRecord = { event_id: string; sequence: number; type: string; recorded_at: string; actor: { actor_type: string }; entity: { type: string; id: string; revision: number } };
 type Approval = { id: string; project_id?: string; action_id: string; status: string; revision: number; expires_at?: string; created_at: string };
 type InboxItem = { message: { id: string; sender_type: string; sender_agent_name?: string; kind: string; body: string; task_id?: string; created_at: string }; delivery: { recipient_agent_id: string; recipient_name: string; status: string; wake_status: string } };
 type CheckRunItem = { run: { id: string; task_id: string; status: string; revision: number; created_at: string; updated_at: string }; outcome?: string; requirement_state: string; current_freshness?: { status?: string } };
 type FullDoctor = { status: string; event_sequence: number; resources: { database_bytes: number; referenced_artifact_bytes: number; filesystem_free_bytes: number }; checks: Array<{ code: string; status: string; issue_count: number; summary: string }> };
 type Briefing = { id: string; revision: number; event_cursor: number; caught_up: boolean; evaluated_at: string; claims: Array<{ id: string; kind: string; urgency: string; summary: string; status: string }>; omitted: Array<{ section: string; reason: string; count: number }>; byte_size: number };
+type Budget = { token_limit: number; cost_cents: number; time_seconds: number };
+type LaunchProfile = { id: string; project_id: string; agent_id: string; purpose?: string; runtime: string; provider: string; status: string; revision: number };
+type OwnerChoice = { key: string; label: string; description: string; recommended: boolean };
+type OwnerPlanTask = { key: string; title: string; description: string; priority: number; budget: Budget; launch_profile_id: string; depends_on: string[] };
+type OwnerInterpretation = { disposition: "answer" | "ready" | "clarify" | "refuse"; summary: string; answer: string; question: string; choices: OwnerChoice[]; objective_title: string; objective_budget: Budget; tasks: OwnerPlanTask[]; citation_refs: string[] };
 type OwnerOperation = { id: string; ordinal: number; type: string; payload: Record<string, unknown>; policy_result: string; status: string; result_entity_type?: string; event_sequence?: number };
-type OwnerTurnDetail = { conversation: { id: string; title: string }; turn: { id: string; kind: "query" | "plan" | "act"; instruction: string; status: string; answer?: string; as_of_event_sequence: number; completed_event_sequence?: number; revision: number }; operations: OwnerOperation[]; receipts: Array<{ operation_id: string; method: string; event_sequence?: number }> };
+type OwnerTurnDetail = { conversation: { id: string; title: string }; turn: { id: string; kind: "query" | "plan" | "act" | "review"; initiated_by: "owner" | "manager"; trigger_event_sequence?: number; instruction: string; status: string; answer?: string; as_of_event_sequence: number; completed_event_sequence?: number; revision: number; interpretation: OwnerInterpretation; citations: Array<{ ref: string; entity_type: string; entity_id: string; entity_revision: number; as_of_event_sequence: number; label: string }> }; operations: OwnerOperation[]; receipts: Array<{ operation_id: string; method: string; event_sequence?: number }> };
+type OwnerManagerReview = { workspace_id: string; project_id: string; conversation_id: string; status: "idle" | "pending" | "leased" | "failed"; requested_event_sequence: number; reviewed_event_sequence: number; attempts: number; last_turn_id?: string; last_error?: string; updated_at: string };
 
 type WorkbenchData = {
   workspaces: Workspace[];
@@ -43,6 +51,7 @@ type WorkbenchData = {
   project: Project | null;
   checkouts: Checkout[];
   agents: Agent[];
+  launchProfiles: LaunchProfile[];
   objectives: Objective[];
   tasks: TaskDetail[];
   runs: Run[];
@@ -74,7 +83,7 @@ type SessionResponse = {
 
 const expectedStatusSchema = "urn:crewfold:schema:web:workbench-status:v1";
 const expectedSessionSchema = "urn:crewfold:schema:web:workbench-session:v1";
-const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], objectives: [], tasks: [], runs: [], approvals: [], checks: [], events: [], highWater: 0 };
+const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], launchProfiles: [], objectives: [], tasks: [], runs: [], approvals: [], checks: [], events: [], highWater: 0 };
 
 class RPCFailure extends Error {
   readonly apiError: APIError;
@@ -167,11 +176,11 @@ async function retryWorkbenchRun(apiBase: string, csrf: string, workspace: strin
   return value.detail.run;
 }
 
-async function loadOwnerConversation(apiBase: string, workspace: string, project: string): Promise<OwnerTurnDetail[]> {
+async function loadOwnerConversation(apiBase: string, workspace: string, project: string): Promise<{ turns: OwnerTurnDetail[]; review: OwnerManagerReview | null }> {
   const response = await fetch(`${apiBase}/conversation?workspace=${encodeURIComponent(workspace)}&project=${encodeURIComponent(project)}`, { credentials: "same-origin" });
   if (!response.ok) throw new Error(`conversation read failed (${response.status})`);
-  const value = (await response.json()) as { turns?: OwnerTurnDetail[] };
-  return value.turns ?? [];
+  const value = (await response.json()) as { turns?: OwnerTurnDetail[]; review?: OwnerManagerReview | null };
+  return { turns: value.turns ?? [], review: value.review ?? null };
 }
 
 function bootstrapFromFragment(): string {
@@ -197,10 +206,11 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
     rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: eventAfter, limit: 200 }),
   ]);
   const project = projectPage.projects.find((item) => item.id === preferredProject) ?? projectPage.projects[0] ?? null;
-  const [checkouts, checks] = project ? await Promise.all([
+  const [checkouts, checks, launchProfiles] = project ? await Promise.all([
     rpc<{ checkouts: Checkout[] }>(apiBase, csrf, "checkout.list", { workspace: workspace.id, project: project.id }).then((value) => value.checkouts),
     rpc<{ runs: CheckRunItem[] } & Page>(apiBase, csrf, "check.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.runs),
-  ]) : [[], []];
+    rpc<{ profiles: LaunchProfile[] }>(apiBase, csrf, "launch_profile.list", { workspace: workspace.id, project: project.id, status: "active", limit: 100 }).then((value) => value.profiles),
+  ]) : [[], [], []];
   const after = await rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: before.high_water, limit: 1 });
   if (after.high_water !== before.high_water) {
     if (attempt >= 2) throw new Error("Canonical state kept changing during refresh; retry when the current event cut settles.");
@@ -208,7 +218,7 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
   }
   return {
     workspaces: workspacePage.workspaces, workspace, projects: projectPage.projects, project, checkouts,
-    agents: agentPage.agents, objectives: objectivePage.objectives, tasks: taskPage.tasks,
+    agents: agentPage.agents, launchProfiles, objectives: objectivePage.objectives, tasks: taskPage.tasks,
     runs: runPage.runs, approvals: approvalPage.approvals, checks, events: eventPage.events,
     highWater: eventPage.high_water,
   };
@@ -292,30 +302,30 @@ function Onboarding({ apiBase, csrf, onComplete }: { apiBase: string; csrf: stri
   </main>;
 }
 
-function PlanEditor({ detail, agents, disabled, save }: { detail: OwnerTurnDetail; agents: Agent[]; disabled: boolean; save: (body: Record<string, unknown>) => Promise<void> }) {
-  const task = detail.operations.find((operation) => operation.type === "create_task")?.payload ?? {};
-  const assignment = detail.operations.find((operation) => operation.type === "assign_task")?.payload ?? {};
-  const budget = task.budget && typeof task.budget === "object" ? task.budget as Record<string, unknown> : {};
+function PlanEditor({ detail, agents, profiles, disabled, save }: { detail: OwnerTurnDetail; agents: Agent[]; profiles: LaunchProfile[]; disabled: boolean; save: (body: Record<string, unknown>) => Promise<void> }) {
+  const interpretation = detail.turn.interpretation;
   const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState(String(task.title ?? detail.turn.instruction));
-  const [description, setDescription] = useState(String(task.description ?? detail.turn.instruction));
-  const [priority, setPriority] = useState(Number(task.priority ?? 500));
-  const [agent, setAgent] = useState(String(assignment.agent_id ?? agents.find((candidate) => candidate.enabled)?.id ?? ""));
-  const [tokens, setTokens] = useState(Number(budget.token_limit ?? 0));
-  const [cost, setCost] = useState(Number(budget.cost_cents ?? 0));
-  const [seconds, setSeconds] = useState(Number(budget.time_seconds ?? 0));
+  const [objectiveTitle, setObjectiveTitle] = useState(interpretation.objective_title);
+  const [objectiveBudget, setObjectiveBudget] = useState<Budget>(interpretation.objective_budget);
+  const [tasks, setTasks] = useState<OwnerPlanTask[]>(interpretation.tasks);
   const [busy, setBusy] = useState(false);
+  const updateTask = (index: number, patch: Partial<OwnerPlanTask>) => setTasks((current) => current.map((task, taskIndex) => taskIndex === index ? { ...task, ...patch } : task));
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true);
     try {
-      await save({ turn_id: detail.turn.id, expected_revision: detail.turn.revision, title: title.trim(), description: description.trim(), priority, agent, budget: { token_limit: tokens, cost_cents: cost, time_seconds: seconds } });
+      await save({ turn_id: detail.turn.id, expected_revision: detail.turn.revision, objective_title: objectiveTitle.trim(), objective_budget: objectiveBudget, tasks: tasks.map((task) => ({ ...task, title: task.title.trim(), description: task.description.trim() })) });
       setOpen(false);
     } catch {
       // The parent renders the exact server diagnosis beside the plan.
     } finally { setBusy(false); }
   };
-  if (!open) return <button className="edit-plan" disabled={disabled} onClick={() => setOpen(true)}><Settings size={13} />Edit task, agent, and budget</button>;
-  return <form className="plan-editor" onSubmit={submit}><label><span>Task and objective title</span><input required maxLength={256} value={title} onChange={(event) => setTitle(event.target.value)} /></label><label><span>Description</span><textarea required maxLength={4096} value={description} onChange={(event) => setDescription(event.target.value)} /></label><div className="plan-editor-grid"><label><span>Agent</span><select value={agent} onChange={(event) => setAgent(event.target.value)}>{agents.filter((candidate) => candidate.enabled).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.provider}/{candidate.runtime}</option>)}</select></label><label><span>Priority (0–1000)</span><input type="number" min="0" max="1000" value={priority} onChange={(event) => setPriority(Number(event.target.value))} /></label></div><div className="plan-editor-grid budget-grid"><label><span>Token limit</span><input type="number" min="0" max="1000000" value={tokens} onChange={(event) => setTokens(Number(event.target.value))} /></label><label><span>Paid cost cents (not granted)</span><input type="number" min="0" max="0" value={cost} disabled onChange={(event) => setCost(Number(event.target.value))} /></label><label><span>Time seconds</span><input type="number" min="0" max="86400" value={seconds} onChange={(event) => setSeconds(Number(event.target.value))} /></label></div><div className="plan-editor-actions"><button type="button" className="secondary-button" onClick={() => setOpen(false)}>Cancel</button><button className="primary-button compact" disabled={busy || disabled || !agent}>{busy ? <LoaderCircle className="spin" size={13} /> : <Check size={13} />}Seal reviewed revision</button></div></form>;
+  if (!open) return <button className="edit-plan" disabled={disabled} onClick={() => setOpen(true)}><Settings size={13} />Edit objective, graph, profiles, and budgets</button>;
+  return <form className="plan-editor multi-plan-editor" onSubmit={submit}>
+    <label><span>Objective</span><input required maxLength={512} value={objectiveTitle} onChange={(event) => setObjectiveTitle(event.target.value)} /></label>
+    <div className="plan-editor-grid budget-grid"><label><span>Objective token limit</span><input type="number" min="0" max="1000000" value={objectiveBudget.token_limit} onChange={(event) => setObjectiveBudget({ ...objectiveBudget, token_limit: Number(event.target.value) })} /></label><label><span>Paid cost cents</span><input type="number" value={0} disabled /></label><label><span>Objective time seconds</span><input type="number" min="0" max="86400" value={objectiveBudget.time_seconds} onChange={(event) => setObjectiveBudget({ ...objectiveBudget, time_seconds: Number(event.target.value) })} /></label></div>
+    <div className="plan-task-list">{tasks.map((task, index) => { const profile = profiles.find((candidate) => candidate.id === task.launch_profile_id); const agent = agents.find((candidate) => candidate.id === profile?.agent_id); return <fieldset key={task.key}><legend>{index + 1}. {task.key}</legend><label><span>Task title</span><input required maxLength={512} value={task.title} onChange={(event) => updateTask(index, { title: event.target.value })} /></label><label><span>Description</span><textarea maxLength={4096} value={task.description} onChange={(event) => updateTask(index, { description: event.target.value })} /></label><div className="plan-editor-grid"><label><span>Launch profile</span><select value={task.launch_profile_id} onChange={(event) => updateTask(index, { launch_profile_id: event.target.value })}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{agents.find((item) => item.id === candidate.agent_id)?.name ?? "Agent"} · {candidate.purpose || "work"} · {candidate.provider}/{candidate.runtime}</option>)}</select></label><label><span>Priority</span><input type="number" min="0" max="1000" value={task.priority} onChange={(event) => updateTask(index, { priority: Number(event.target.value) })} /></label></div><label><span>Depends on task keys</span><input value={task.depends_on.join(", ")} onChange={(event) => updateTask(index, { depends_on: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} placeholder="foundation, api" /></label><small>{agent ? `Runs as ${agent.name}; role labels do not grant authority.` : "Select a current launch profile."}</small></fieldset>; })}</div>
+    <div className="plan-editor-actions"><button type="button" className="secondary-button" onClick={() => setOpen(false)}>Cancel</button><button className="primary-button compact" disabled={busy || disabled || tasks.length === 0 || tasks.some((task) => !task.launch_profile_id)}>{busy ? <LoaderCircle className="spin" size={13} /> : <Check size={13} />}Seal reviewed graph revision</button></div>
+  </form>;
 }
 
 function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mutable }: { data: WorkbenchData; apiBase: string; csrf: string; reload: () => Promise<void>; selectTask: (task: TaskDetail) => void; selectRun: (run: Run) => void; mutable: boolean }) {
@@ -324,9 +334,27 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [turns, setTurns] = useState<OwnerTurnDetail[]>([]);
+  const [managerReview, setManagerReview] = useState<OwnerManagerReview | null>(null);
   const recovering = useRef(false);
   const pendingKey = data.workspace && data.project ? `crewfold_pending_intent_${data.workspace.id}_${data.project.id}` : "";
-  useEffect(() => { if (!data.workspace || !data.project) return; void loadOwnerConversation(apiBase, data.workspace.id, data.project.id).then(setTurns).catch(() => setTurns([])); }, [apiBase, data.project?.id, data.workspace?.id]);
+  useEffect(() => {
+    if (!data.workspace || !data.project) return;
+    let active = true;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const page = await loadOwnerConversation(apiBase, data.workspace!.id, data.project!.id);
+        if (!active) return;
+        setTurns(page.turns); setManagerReview(page.review);
+        timer = window.setTimeout(() => void poll(), page.review && ["pending", "leased"].includes(page.review.status) ? 750 : 4000);
+      } catch {
+        if (!active) return;
+        timer = window.setTimeout(() => void poll(), 4000);
+      }
+    };
+    void poll();
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [apiBase, data.project?.id, data.workspace?.id]);
   useEffect(() => {
     if (!pendingKey || recovering.current) return;
     const raw = sessionStorage.getItem(pendingKey);
@@ -354,11 +382,11 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
       sessionStorage.setItem(pendingKey, JSON.stringify(body));
       const detail = await submitOwnerIntent(apiBase, csrf, body);
       sessionStorage.removeItem(pendingKey);
-      setInstruction(""); setNotice("Committed an objective and assigned first task. Review it below, then start the agent when ready.");
+      setInstruction(""); setNotice("The manager returned a typed result bound to the current canonical event cut.");
       setTurns((current) => [...current, detail]);
       if (mode === "query") setNotice("Answered from the frozen canonical event cut without creating a domain event.");
-      if (mode === "plan") setNotice("Frozen a typed four-step plan. No effect has executed.");
-      if (mode === "act") setNotice(detail.turn.status === "awaiting_approval" ? "Paused before every effect because the instruction crosses an owner-review boundary." : "Committed four receipted effects and requested the selected agent launch.");
+      if (mode === "plan") setNotice(`Frozen a dependency-aware ${detail.turn.interpretation.tasks.length}-task plan. No effect has executed.`);
+      if (mode === "act") setNotice(detail.turn.interpretation.disposition === "clarify" ? "The manager paused before every effect and raised a bounded decision." : detail.turn.interpretation.disposition === "refuse" ? "The manager refused an operation outside the local action grammar; no effect ran." : `Committed ${detail.receipts.length} exact graph receipts; the supervisor now owns scheduling.`);
       await reload();
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The instruction could not be committed."); }
     finally { setBusy(false); }
@@ -369,9 +397,21 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
     try {
       const executed = await executeOwnerPlan(apiBase, csrf, data.workspace.id, turnID);
       setTurns((current) => current.map((turn) => turn.turn.id === turnID ? executed : turn));
-      setNotice("Committed the frozen plan exactly and requested the selected agent launch.");
+      setNotice("Committed the frozen graph exactly; the supervisor now schedules dependency-ready work through its launch profiles.");
       await reload();
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The frozen plan could not execute."); }
+    finally { setBusy(false); }
+  };
+  const answerManagerChoice = async (detail: OwnerTurnDetail, choice: OwnerChoice) => {
+    if (!mutable || !data.workspace || !data.project) return;
+    setBusy(true); setNotice("");
+    try {
+      const body = { workspace: data.workspace.id, project: data.project.id, conversation_id: detail.conversation.id, instruction: `Decision for "${detail.turn.interpretation.question}": ${choice.label}. ${choice.description}`.trim(), mode: "act", idempotency_key: newKey(`manager-choice-${choice.key}`) };
+      const next = await submitOwnerIntent(apiBase, csrf, body);
+      setTurns((current) => [...current, next]);
+      setNotice(next.turn.interpretation.disposition === "clarify" ? "The manager needs one more bounded decision." : "The selected answer is visible in the durable conversation and its typed result was processed exactly.");
+      await reload();
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The manager decision could not be processed."); }
     finally { setBusy(false); }
   };
   const savePlan = async (detail: OwnerTurnDetail, draft: Record<string, unknown>) => {
@@ -396,10 +436,21 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
         <div className="assistant-avatar"><Bot size={22} /></div>
         <div><strong>Crewfold</strong><p>I’ll answer from canonical state, freeze an editable plan, or execute a clearly authorized local goal. Destructive, publication, external, credential, budget, and authority changes stop before their first effect.</p></div>
       </div>
-      {turns.length > 0 && <div className="conversation-history">{turns.slice(-4).map((detail) => <div className="turn" key={detail.turn.id}><div className="owner-message"><strong>You</strong><p>{detail.turn.instruction}</p><span>{detail.turn.kind}</span></div><div className="crew-message"><span className="assistant-avatar"><Bot size={16} /></span><div><strong>Crewfold</strong><p>{detail.turn.answer ?? (detail.turn.status === "planned" ? `Frozen ${detail.operations.length} operations; no effects executed.` : `${detail.receipts.length} exact effects committed.`)}</p><div className="receipt-line"><ShieldCheck size={13} />{detail.turn.status} · event cut #{detail.turn.completed_event_sequence ?? detail.turn.as_of_event_sequence}</div>{detail.operations.length > 0 && <ol className="operation-list" aria-label="Frozen typed operations">{detail.operations.map((operation) => <li key={operation.id}><span>{operation.ordinal}</span><strong>{operation.type.replaceAll("_", " ")}</strong><StatusPill value={operation.status} /></li>)}</ol>}{detail.turn.status === "planned" && <PlanEditor detail={detail} agents={data.agents} disabled={!mutable || busy} save={(draft) => savePlan(detail, draft)} />}{detail.turn.status === "planned" && <button className="execute-plan" disabled={!mutable || busy} onClick={() => void executePlan(detail.turn.id)}><Play size={13} />Execute reviewed plan</button>}</div></div></div>)}</div>}
+      {managerReview && <div className={`manager-review-state ${managerReview.status}`}><Bot size={15} /><span><strong>{managerReview.status === "leased" ? "Manager is reviewing worker activity" : managerReview.status === "pending" ? "Worker activity queued for manager review" : managerReview.status === "failed" ? "Manager review needs attention" : "Manager is caught up"}</strong><small>{managerReview.status === "failed" ? managerReview.last_error : `reviewed #${managerReview.reviewed_event_sequence} · requested #${managerReview.requested_event_sequence}`}</small></span></div>}
+      {turns.length > 0 && <div className="conversation-history">{turns.slice(-6).map((detail) => <div className="turn" key={detail.turn.id}>
+        {detail.turn.initiated_by === "owner" ? <div className="owner-message"><strong>You</strong><p>{detail.turn.instruction}</p><span>{detail.turn.kind}</span></div> : <div className="manager-trigger"><Activity size={13} /><span>Proactive review of worker activity through event #{detail.turn.trigger_event_sequence}</span></div>}
+        <div className="crew-message"><span className="assistant-avatar"><Bot size={16} /></span><div><strong>Crewfold manager</strong><p>{detail.turn.answer ?? detail.turn.interpretation.summary ?? (detail.turn.status === "planned" ? `Frozen ${detail.operations.length} operations; no effects executed.` : `${detail.receipts.length} exact effects committed.`)}</p>
+          <div className="receipt-line"><ShieldCheck size={13} />{detail.turn.interpretation.disposition} · {detail.turn.status} · event cut #{detail.turn.completed_event_sequence ?? detail.turn.as_of_event_sequence}</div>
+          {detail.turn.citations.length > 0 && <div className="citation-list" aria-label="Canonical answer citations">{detail.turn.citations.map((citation) => <span key={citation.ref}>{citation.label} · r{citation.entity_revision}</span>)}</div>}
+          {detail.turn.interpretation.disposition === "clarify" && <section className="manager-decision-card"><header><span className="decision-icon">?</span><div><strong>Decision needed</strong><small>The manager paused before every effect.</small></div></header><h3>{detail.turn.interpretation.question}</h3><div className="manager-choices">{detail.turn.interpretation.choices.map((choice) => <button key={choice.key} disabled={!mutable || busy} onClick={() => void answerManagerChoice(detail, choice)}><span><strong>{choice.label}</strong>{choice.recommended && <em>Recommended</em>}</span><small>{choice.description}</small><span className="choose-label">Choose</span></button>)}</div></section>}
+          {detail.operations.length > 0 && <ol className="operation-list" aria-label="Frozen typed operations">{detail.operations.map((operation) => <li key={operation.id}><span>{operation.ordinal}</span><strong>{operation.type.replaceAll("_", " ")}</strong><StatusPill value={operation.status} /></li>)}</ol>}
+          {detail.turn.status === "planned" && <PlanEditor key={detail.turn.revision} detail={detail} agents={data.agents} profiles={data.launchProfiles} disabled={!mutable || busy} save={(draft) => savePlan(detail, draft)} />}
+          {detail.turn.status === "planned" && <button className="execute-plan" disabled={!mutable || busy} onClick={() => void executePlan(detail.turn.id)}><Play size={13} />Execute reviewed graph</button>}
+        </div></div>
+      </div>)}</div>}
       <form className="composer" onSubmit={createWork}>
-        <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} maxLength={256} placeholder="Build the first playable world loop and organize the work…" aria-label="Owner instruction" />
-        <div className="composer-footer"><div className="intent-mode" aria-label="Instruction mode">{(["query", "plan", "act"] as const).map((value) => <button type="button" key={value} className={mode === value ? "selected" : ""} onClick={() => setMode(value)}>{value}</button>)}</div><span>{instruction.length}/256</span><button className="submit-intent" disabled={!mutable || busy || !instruction.trim() || !data.project}>{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}{mode === "act" ? "Do it" : mode === "plan" ? "Plan" : "Ask"}</button></div>
+        <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} maxLength={4096} placeholder="Build the first playable world loop and organize the work…" aria-label="Owner instruction" />
+        <div className="composer-footer"><div className="intent-mode" aria-label="Instruction mode">{(["query", "plan", "act"] as const).map((value) => <button type="button" key={value} className={mode === value ? "selected" : ""} onClick={() => setMode(value)}>{value}</button>)}</div><span>{instruction.length}/4096</span><button className="submit-intent" disabled={!mutable || busy || !instruction.trim() || !data.project}>{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}{mode === "act" ? "Do it" : mode === "plan" ? "Plan" : "Ask"}</button></div>
       </form>
       {notice && <div className="notice" role="status"><CheckCircle2 size={17} />{notice}</div>}
       <div className="effect-note"><ShieldCheck size={16} /><span><strong>No hidden effects.</strong> Query is read-only, Plan freezes operations, and Act returns exact receipts only after permitted effects commit.</span></div>
@@ -589,15 +640,28 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close }: { apiBase: strin
 function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspectRun, mutable }: { data: WorkbenchData; task: TaskDetail | null; run: Run | null; agent: Agent | null; apiBase: string; csrf: string; close: () => void; reload: () => Promise<void>; inspectRun: (run: Run) => void; mutable: boolean }) {
   const [logs, setLogs] = useState("");
   const [git, setGit] = useState<Checkout | null>(null);
+  const [tab, setTab] = useState<"live" | "context" | "changes" | "history">("live");
+  const [runDetail, setRunDetail] = useState<RunDetailView | null>(null);
+  const [contextExplanation, setContextExplanation] = useState<ContextExplanation | null>(null);
+  const [runMessages, setRunMessages] = useState<InboxItem[]>([]);
   const [prompt, setPrompt] = useState("");
   const [notice, setNotice] = useState("");
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const currentRun = run ? data.runs.find((candidate) => candidate.id === run.id) ?? run : null;
   useEffect(() => { setLogs(""); if (!run) return; void rpc<{ logs: { stdout: { text: string; truncated: boolean; omitted_bytes: number }; stderr: { text: string; truncated: boolean; omitted_bytes: number }; state: string } }>(apiBase, csrf, "run.logs", { workspace: data.workspace?.id, run: run.id, tail: 160 }).then((result) => setLogs([result.logs.stdout.text, result.logs.stderr.text, result.logs.stdout.truncated || result.logs.stderr.truncated ? "[bounded log output; earlier bytes omitted]" : ""].filter(Boolean).join("\n"))).catch((error) => setLogs(error instanceof Error ? error.message : "Logs unavailable")); }, [apiBase, csrf, data.workspace?.id, run?.id, data.highWater]);
   useEffect(() => { setGit(data.checkouts[0] ?? null); }, [data.checkouts]);
+  useEffect(() => {
+    setRunDetail(null); setContextExplanation(null); setRunMessages([]); setTab("live");
+    if (!currentRun || !data.workspace) return;
+    void rpc<{ detail: RunDetailView }>(apiBase, csrf, "run.show", { workspace: data.workspace.id, run: currentRun.id }).then((result) => {
+      setRunDetail(result.detail);
+      if (result.detail.run.context_packet_id) void rpc<{ explanation: ContextExplanation }>(apiBase, csrf, "context.explain", { workspace: data.workspace?.id, context: result.detail.run.context_packet_id }).then((value) => setContextExplanation(value.explanation)).catch(() => setContextExplanation(null));
+    }).catch(() => setRunDetail(null));
+    void rpc<{ items: InboxItem[] }>(apiBase, csrf, "inbox.list", { workspace: data.workspace.id, agent: currentRun.agent_id, limit: 50 }).then((value) => setRunMessages(value.items.filter((item) => !item.message.task_id || item.message.task_id === currentRun.task_id))).catch(() => setRunMessages([]));
+  }, [apiBase, csrf, currentRun?.id, data.highWater, data.workspace?.id]);
   useEffect(() => { if (!mutable) setTerminalOpen(false); }, [mutable]);
   if (!task && !run && !agent) return null;
-  const currentRun = run ? data.runs.find((candidate) => candidate.id === run.id) ?? run : null;
   const stop = async () => { if (!mutable || !currentRun || !data.workspace) return; setBusy(true); setNotice(""); try { await rpc(apiBase, csrf, "run.stop", { workspace: data.workspace.id, run: currentRun.id, expected_revision: currentRun.revision, grace_period_millis: 5000, idempotency_key: newKey("stop") }); setNotice("Graceful stop requested with the displayed 5000 ms grace."); await reload(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Stop failed."); } finally { setBusy(false); } };
   const resume = async () => { if (!mutable || !currentRun || !data.workspace) return; setBusy(true); setNotice(""); try { await rpc(apiBase, csrf, "run.resume", { workspace: data.workspace.id, run: currentRun.id, expected_revision: currentRun.revision, idempotency_key: newKey("resume") }); setNotice("Run resumed from its exact current revision."); await reload(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Resume failed."); } finally { setBusy(false); } };
   const interrupt = async () => { if (!mutable || !currentRun || !data.workspace) return; setBusy(true); setNotice(""); try { await rpc(apiBase, csrf, "run.interrupt", { workspace: data.workspace.id, run: currentRun.id }); setNotice("Interrupt delivered to the current-node runtime binding."); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Interrupt failed."); } finally { setBusy(false); } };

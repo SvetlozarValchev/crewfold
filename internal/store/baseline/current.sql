@@ -1671,15 +1671,17 @@ CREATE TABLE "scheduling_intents" (
     launch_profile_id TEXT NOT NULL REFERENCES launch_profiles(id),
     source_proposal_id TEXT REFERENCES manager_proposals(id), source_action_id TEXT,
     source_check_repair_proposal_id TEXT REFERENCES check_repair_proposals(id),
+    source_owner_turn_id TEXT REFERENCES owner_turns(id), source_owner_operation_id TEXT UNIQUE REFERENCES owner_turn_operations(id),
     status TEXT NOT NULL CHECK(status IN ('pending','deferred','awaiting_approval','run_requested','satisfied','failed','cancelled')),
     reason TEXT, assignment_id TEXT REFERENCES task_assignments(id), run_id TEXT REFERENCES runs(id), supervisor_action_id TEXT,
     attempts INTEGER NOT NULL CHECK(attempts BETWEEN 0 AND 100), last_evaluated_event_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_evaluated_event_sequence>=0),
     revision INTEGER NOT NULL CHECK(revision>0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, next_attempt_at TEXT,
     created_by TEXT NOT NULL, updated_by TEXT NOT NULL,
-    UNIQUE(source_proposal_id,source_action_id), UNIQUE(source_check_repair_proposal_id),
+    UNIQUE(source_proposal_id,source_action_id), UNIQUE(source_check_repair_proposal_id), UNIQUE(source_owner_turn_id,source_owner_operation_id),
     FOREIGN KEY(source_action_id,source_proposal_id) REFERENCES manager_proposal_actions(id,proposal_id),
-    CHECK((source_proposal_id IS NOT NULL AND source_action_id IS NOT NULL AND source_check_repair_proposal_id IS NULL)
-       OR (source_proposal_id IS NULL AND source_action_id IS NULL AND source_check_repair_proposal_id IS NOT NULL))
+    CHECK((source_proposal_id IS NOT NULL AND source_action_id IS NOT NULL AND source_check_repair_proposal_id IS NULL AND source_owner_turn_id IS NULL AND source_owner_operation_id IS NULL)
+       OR (source_proposal_id IS NULL AND source_action_id IS NULL AND source_check_repair_proposal_id IS NOT NULL AND source_owner_turn_id IS NULL AND source_owner_operation_id IS NULL)
+       OR (source_proposal_id IS NULL AND source_action_id IS NULL AND source_check_repair_proposal_id IS NULL AND source_owner_turn_id IS NOT NULL AND source_owner_operation_id IS NOT NULL))
 ) STRICT;
 
 CREATE TABLE check_watch_state (
@@ -5021,6 +5023,20 @@ CREATE TRIGGER scheduling_intent_validate_insert BEFORE INSERT ON scheduling_int
       AND agent.enabled=1 AND agent.revision=profile.agent_revision AND task.workspace_id=NEW.workspace_id AND task.project_id=NEW.project_id AND task.objective_id=NEW.objective_id
       AND task.title=proposal.repair_task_title AND task.description=proposal.repair_task_description AND task.priority=proposal.repair_task_priority
       AND task.budget_tokens=proposal.repair_budget_tokens AND task.budget_cost_cents=proposal.repair_budget_cost_cents AND task.budget_time_seconds=proposal.repair_budget_time_seconds
+   ))
+   OR
+   (NEW.source_owner_turn_id IS NOT NULL AND EXISTS(
+    SELECT 1 FROM owner_turns turn JOIN owner_conversations conversation ON conversation.id=turn.conversation_id
+    JOIN owner_turn_operations operation ON operation.turn_id=turn.id
+    JOIN owner_turn_operations created_task ON created_task.turn_id=turn.id
+    JOIN launch_profiles profile ON profile.id=NEW.launch_profile_id JOIN agents agent ON agent.id=profile.agent_id JOIN tasks task ON task.id=NEW.task_id
+    WHERE turn.id=NEW.source_owner_turn_id AND turn.status='executing' AND conversation.workspace_id=NEW.workspace_id AND conversation.project_id=NEW.project_id
+      AND operation.id=NEW.source_owner_operation_id AND operation.type='schedule_task' AND operation.status='pending'
+      AND json_extract(operation.payload_json,'$.task_key')=json_extract(created_task.payload_json,'$.task_key')
+      AND json_extract(operation.payload_json,'$.launch_profile_id')=NEW.launch_profile_id
+      AND created_task.type='create_task' AND created_task.status='applied' AND created_task.result_entity_type='task' AND created_task.result_entity_id=NEW.task_id
+      AND profile.workspace_id=NEW.workspace_id AND profile.project_id=NEW.project_id AND profile.agent_id=NEW.agent_id AND profile.status='active' AND profile.manager_grant_id IS NULL
+      AND agent.enabled=1 AND agent.revision=profile.agent_revision AND task.workspace_id=NEW.workspace_id AND task.project_id=NEW.project_id AND task.objective_id=NEW.objective_id
    )))
  THEN RAISE(ABORT,'scheduling intent lacks exact accepted typed origin and profile') END;
 END;
@@ -5029,6 +5045,7 @@ CREATE TRIGGER scheduling_intent_validate_update BEFORE UPDATE ON scheduling_int
  SELECT CASE WHEN NEW.id IS NOT OLD.id OR NEW.workspace_id IS NOT OLD.workspace_id OR NEW.project_id IS NOT OLD.project_id OR NEW.objective_id IS NOT OLD.objective_id
   OR NEW.task_id IS NOT OLD.task_id OR NEW.agent_id IS NOT OLD.agent_id OR NEW.launch_profile_id IS NOT OLD.launch_profile_id
   OR NEW.source_proposal_id IS NOT OLD.source_proposal_id OR NEW.source_action_id IS NOT OLD.source_action_id OR NEW.source_check_repair_proposal_id IS NOT OLD.source_check_repair_proposal_id
+  OR NEW.source_owner_turn_id IS NOT OLD.source_owner_turn_id OR NEW.source_owner_operation_id IS NOT OLD.source_owner_operation_id
   OR NEW.created_at IS NOT OLD.created_at OR NEW.created_by IS NOT OLD.created_by OR NEW.last_evaluated_event_sequence<OLD.last_evaluated_event_sequence
   OR NEW.last_evaluated_event_sequence>COALESCE((SELECT MAX(event.sequence) FROM events event WHERE event.workspace_id=NEW.workspace_id),0)
   OR (NEW.last_evaluated_event_sequence>0 AND NOT EXISTS(SELECT 1 FROM events event WHERE event.workspace_id=NEW.workspace_id AND event.sequence=NEW.last_evaluated_event_sequence))
@@ -6196,8 +6213,8 @@ CREATE TABLE owner_conversations (
  revision INTEGER NOT NULL CHECK(revision>0),
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
- created_by TEXT NOT NULL CHECK(created_by='local-owner'),
- updated_by TEXT NOT NULL CHECK(updated_by='local-owner')
+ created_by TEXT NOT NULL CHECK(created_by IN ('local-owner','subsystem:owner-manager')),
+ updated_by TEXT NOT NULL CHECK(updated_by IN ('local-owner','subsystem:owner-manager'))
 ) STRICT;
 CREATE INDEX owner_conversations_scope_idx ON owner_conversations(workspace_id,project_id,status,updated_at,id);
 
@@ -6205,12 +6222,16 @@ CREATE TABLE owner_turns (
  id TEXT PRIMARY KEY CHECK(length(id)=37 AND substr(id,1,5)='turn_' AND substr(id,6) NOT GLOB '*[^0-9a-f]*'),
  conversation_id TEXT NOT NULL REFERENCES owner_conversations(id),
  ordinal INTEGER NOT NULL CHECK(ordinal>0),
- kind TEXT NOT NULL CHECK(kind IN ('query','plan','act')),
+ kind TEXT NOT NULL CHECK(kind IN ('query','plan','act','review')),
+ initiated_by TEXT NOT NULL CHECK(initiated_by IN ('owner','manager')),
+ trigger_event_sequence INTEGER CHECK(trigger_event_sequence IS NULL OR trigger_event_sequence>0),
  instruction TEXT NOT NULL CHECK(length(CAST(instruction AS BLOB)) BETWEEN 1 AND 4096),
  status TEXT NOT NULL CHECK(status IN ('planned','executing','completed','failed','awaiting_approval')),
  as_of_event_sequence INTEGER NOT NULL CHECK(as_of_event_sequence>=0),
  answer TEXT CHECK(answer IS NULL OR length(CAST(answer AS BLOB)) BETWEEN 1 AND 8192),
- plan_json TEXT NOT NULL CHECK(json_valid(plan_json) AND json_type(plan_json)='array' AND json_array_length(plan_json)<=16 AND length(CAST(plan_json AS BLOB))<=32768),
+ interpretation_json TEXT NOT NULL CHECK(json_valid(interpretation_json) AND json_type(interpretation_json)='object' AND length(CAST(interpretation_json AS BLOB))<=131072),
+ citations_json TEXT NOT NULL CHECK(json_valid(citations_json) AND json_type(citations_json)='array' AND json_array_length(citations_json)<=16 AND length(CAST(citations_json AS BLOB))<=32768),
+ plan_json TEXT NOT NULL CHECK(json_valid(plan_json) AND json_type(plan_json)='array' AND json_array_length(plan_json)<=40 AND length(CAST(plan_json AS BLOB))<=131072),
  plan_sha256 TEXT NOT NULL CHECK(length(plan_sha256)=64 AND plan_sha256 NOT GLOB '*[^0-9a-f]*'),
  error_code TEXT CHECK(error_code IS NULL OR length(error_code) BETWEEN 1 AND 128),
  completed_event_sequence INTEGER CHECK(completed_event_sequence IS NULL OR completed_event_sequence>0),
@@ -6220,19 +6241,63 @@ CREATE TABLE owner_turns (
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
  UNIQUE(conversation_id,ordinal),
- UNIQUE(idempotency_key)
+ UNIQUE(idempotency_key),
+ CHECK((initiated_by='owner' AND kind<>'review' AND trigger_event_sequence IS NULL) OR
+       (initiated_by='manager' AND kind='review' AND trigger_event_sequence IS NOT NULL AND trigger_event_sequence=as_of_event_sequence))
 ) STRICT;
+
+CREATE TABLE owner_manager_review_jobs (
+ project_id TEXT PRIMARY KEY REFERENCES projects(id),
+ workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+ conversation_id TEXT NOT NULL REFERENCES owner_conversations(id),
+ status TEXT NOT NULL CHECK(status IN ('idle','pending','leased','failed')),
+ requested_event_sequence INTEGER NOT NULL CHECK(requested_event_sequence>0),
+ reviewed_event_sequence INTEGER NOT NULL CHECK(reviewed_event_sequence>=0 AND reviewed_event_sequence<=requested_event_sequence),
+ attempts INTEGER NOT NULL CHECK(attempts>=0),
+ available_at TEXT NOT NULL,
+ lease_expires_at TEXT,
+ last_turn_id TEXT REFERENCES owner_turns(id),
+ last_error TEXT CHECK(last_error IS NULL OR length(CAST(last_error AS BLOB)) BETWEEN 1 AND 2048),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ CHECK((status='idle' AND reviewed_event_sequence=requested_event_sequence AND lease_expires_at IS NULL AND last_error IS NULL) OR
+       (status='pending' AND reviewed_event_sequence<requested_event_sequence AND lease_expires_at IS NULL AND last_error IS NULL) OR
+       (status='leased' AND reviewed_event_sequence<requested_event_sequence AND lease_expires_at IS NOT NULL AND last_error IS NULL) OR
+       (status='failed' AND reviewed_event_sequence<requested_event_sequence AND lease_expires_at IS NULL AND last_error IS NOT NULL))
+) STRICT;
+CREATE INDEX owner_manager_review_jobs_queue_idx ON owner_manager_review_jobs(status,available_at,project_id);
+
+CREATE TRIGGER owner_manager_review_job_validate_insert BEFORE INSERT ON owner_manager_review_jobs BEGIN
+ SELECT CASE WHEN crewfold_timestamp_canonical(NEW.available_at)<>1 OR crewfold_timestamp_canonical(NEW.created_at)<>1 OR crewfold_timestamp_canonical(NEW.updated_at)<>1
+   OR (NEW.lease_expires_at IS NOT NULL AND crewfold_timestamp_canonical(NEW.lease_expires_at)<>1)
+   OR NOT EXISTS(SELECT 1 FROM projects project WHERE project.id=NEW.project_id AND project.workspace_id=NEW.workspace_id)
+   OR NOT EXISTS(SELECT 1 FROM owner_conversations conversation WHERE conversation.id=NEW.conversation_id AND conversation.workspace_id=NEW.workspace_id AND conversation.project_id=NEW.project_id AND conversation.status='open')
+   OR NOT EXISTS(SELECT 1 FROM events event WHERE event.sequence=NEW.requested_event_sequence AND event.workspace_id=NEW.workspace_id)
+ THEN RAISE(ABORT,'owner manager review job is outside its exact scope') END;
+END;
+CREATE TRIGGER owner_manager_review_job_validate_update BEFORE UPDATE ON owner_manager_review_jobs BEGIN
+ SELECT CASE WHEN NEW.project_id<>OLD.project_id OR NEW.workspace_id<>OLD.workspace_id OR NEW.created_at<>OLD.created_at
+   OR crewfold_timestamp_canonical(NEW.available_at)<>1 OR crewfold_timestamp_canonical(NEW.updated_at)<>1
+   OR (NEW.lease_expires_at IS NOT NULL AND crewfold_timestamp_canonical(NEW.lease_expires_at)<>1)
+   OR NOT EXISTS(SELECT 1 FROM owner_conversations conversation WHERE conversation.id=NEW.conversation_id AND conversation.workspace_id=NEW.workspace_id AND conversation.project_id=NEW.project_id AND conversation.status='open')
+   OR NOT EXISTS(SELECT 1 FROM events event WHERE event.sequence=NEW.requested_event_sequence AND event.workspace_id=NEW.workspace_id)
+   OR (NEW.last_turn_id IS NOT NULL AND NOT EXISTS(
+     SELECT 1 FROM owner_turns turn JOIN owner_conversations conversation ON conversation.id=turn.conversation_id
+     WHERE turn.id=NEW.last_turn_id AND turn.initiated_by='manager' AND turn.kind='review'
+       AND turn.trigger_event_sequence=NEW.reviewed_event_sequence AND conversation.workspace_id=NEW.workspace_id AND conversation.project_id=NEW.project_id))
+ THEN RAISE(ABORT,'owner manager review job update is outside its exact scope') END;
+END;
 
 CREATE TABLE owner_turn_operations (
  id TEXT PRIMARY KEY CHECK(length(id)=35 AND substr(id,1,3)='op_' AND substr(id,4) NOT GLOB '*[^0-9a-f]*'),
  turn_id TEXT NOT NULL REFERENCES owner_turns(id),
- ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 16),
- type TEXT NOT NULL CHECK(type IN ('create_objective','create_task','assign_task','start_run')),
+ ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 40),
+ type TEXT NOT NULL CHECK(type IN ('create_objective','create_task','add_dependency','schedule_task')),
  payload_json TEXT NOT NULL CHECK(json_valid(payload_json) AND json_type(payload_json)='object' AND length(CAST(payload_json AS BLOB))<=8192),
  payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256)=64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
  policy_result TEXT NOT NULL CHECK(policy_result IN ('allowed','gated','denied')),
  status TEXT NOT NULL CHECK(status IN ('pending','applied','awaiting_approval','failed','skipped')),
- result_entity_type TEXT CHECK(result_entity_type IS NULL OR result_entity_type IN ('objective','task','assignment','run')),
+ result_entity_type TEXT CHECK(result_entity_type IS NULL OR result_entity_type IN ('objective','task','task_dependency','scheduling_intent')),
  result_entity_id TEXT CHECK(result_entity_id IS NULL OR length(result_entity_id) BETWEEN 1 AND 64),
  event_sequence INTEGER CHECK(event_sequence IS NULL OR event_sequence>0),
  diagnosis TEXT CHECK(diagnosis IS NULL OR length(CAST(diagnosis AS BLOB)) BETWEEN 1 AND 2048),
@@ -6244,7 +6309,7 @@ CREATE TABLE owner_turn_operations (
 
 CREATE TABLE owner_effect_receipts (
  operation_id TEXT PRIMARY KEY REFERENCES owner_turn_operations(id),
- method TEXT NOT NULL CHECK(method IN ('objective.create','task.create','task.assign','run.start')),
+ method TEXT NOT NULL CHECK(method IN ('objective.create','task.create','task.dependency.add','supervisor.intent.create')),
  idempotency_key TEXT NOT NULL CHECK(length(CAST(idempotency_key AS BLOB)) BETWEEN 1 AND 128),
  request_sha256 TEXT NOT NULL CHECK(length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'),
  response_json TEXT NOT NULL CHECK(json_valid(response_json) AND json_type(response_json)='object' AND length(CAST(response_json AS BLOB))<=32768),

@@ -21,16 +21,20 @@
     },
     "turn": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "conversation_id", "ordinal", "kind", "instruction", "status", "as_of_event_sequence", "plan_sha256", "revision", "created_at", "updated_at"],
+      "required": ["id", "conversation_id", "ordinal", "kind", "initiated_by", "instruction", "status", "as_of_event_sequence", "plan_sha256", "citations", "interpretation", "revision", "created_at", "updated_at"],
       "properties": {
         "id": {"type": "string", "pattern": "^turn_[0-9a-f]{32}$"},
         "conversation_id": {"type": "string", "pattern": "^conv_[0-9a-f]{32}$"},
         "ordinal": {"type": "integer", "minimum": 1},
-        "kind": {"enum": ["query", "plan", "act"]},
+        "kind": {"enum": ["query", "plan", "act", "review"]},
+        "initiated_by": {"enum": ["owner", "manager"]},
+        "trigger_event_sequence": {"type": "integer", "minimum": 1},
         "instruction": {"type": "string", "minLength": 1, "maxLength": 4096},
         "status": {"enum": ["planned", "executing", "completed", "failed", "awaiting_approval"]},
         "as_of_event_sequence": {"type": "integer", "minimum": 0},
         "answer": {"type": "string", "minLength": 1, "maxLength": 8192},
+        "citations": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/citation"}},
+        "interpretation": {"$ref": "#/$defs/interpretation"},
         "plan_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "error_code": {"type": "string", "minLength": 1, "maxLength": 128},
         "revision": {"type": "integer", "minimum": 1},
@@ -40,20 +44,20 @@
       }
     },
     "operations": {
-      "type": "array", "maxItems": 16,
+      "type": "array", "maxItems": 40,
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["id", "turn_id", "ordinal", "type", "payload", "payload_sha256", "policy_result", "status", "revision", "created_at", "updated_at"],
         "properties": {
           "id": {"type": "string", "pattern": "^op_[0-9a-f]{32}$"},
           "turn_id": {"type": "string", "pattern": "^turn_[0-9a-f]{32}$"},
-          "ordinal": {"type": "integer", "minimum": 1, "maximum": 16},
-          "type": {"enum": ["create_objective", "create_task", "assign_task", "start_run"]},
+          "ordinal": {"type": "integer", "minimum": 1, "maximum": 40},
+          "type": {"enum": ["create_objective", "create_task", "add_dependency", "schedule_task"]},
           "payload": {"type": "object"},
           "payload_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "policy_result": {"enum": ["allowed", "gated", "denied"]},
           "status": {"enum": ["pending", "applied", "awaiting_approval", "failed", "skipped"]},
-          "result_entity_type": {"enum": ["objective", "task", "assignment", "run"]},
+          "result_entity_type": {"enum": ["objective", "task", "task_dependency", "scheduling_intent"]},
           "result_entity_id": {"type": "string", "minLength": 1, "maxLength": 64},
           "event_sequence": {"type": "integer", "minimum": 1},
           "diagnosis": {"type": "string", "minLength": 1, "maxLength": 2048},
@@ -64,19 +68,71 @@
       }
     },
     "receipts": {
-      "type": "array", "maxItems": 16,
+      "type": "array", "maxItems": 40,
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["operation_id", "method", "idempotency_key", "request_sha256", "response_sha256", "committed_at"],
         "properties": {
           "operation_id": {"type": "string", "pattern": "^op_[0-9a-f]{32}$"},
-          "method": {"enum": ["objective.create", "task.create", "task.assign", "run.start"]},
+          "method": {"enum": ["objective.create", "task.create", "task.dependency.add", "supervisor.intent.create"]},
           "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128},
           "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "response_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "event_sequence": {"type": "integer", "minimum": 1},
           "committed_at": {"type": "string", "format": "date-time"}
         }
+      }
+    }
+  },
+  "$defs": {
+    "citation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ref", "entity_type", "entity_id", "entity_revision", "as_of_event_sequence", "label"],
+      "properties": {
+        "ref": {"type": "string", "minLength": 1, "maxLength": 96},
+        "entity_type": {"type": "string", "minLength": 1, "maxLength": 64},
+        "entity_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "entity_revision": {"type": "integer", "minimum": 0},
+        "as_of_event_sequence": {"type": "integer", "minimum": 0},
+        "label": {"type": "string", "minLength": 1, "maxLength": 512}
+      }
+    },
+    "choice": {
+      "type": "object", "additionalProperties": false,
+      "required": ["key", "label", "description", "recommended"],
+      "properties": {
+        "key": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 160},
+        "description": {"type": "string", "maxLength": 512},
+        "recommended": {"type": "boolean"}
+      }
+    },
+    "plan_task": {
+      "type": "object", "additionalProperties": false,
+      "required": ["key", "title", "description", "priority", "budget", "launch_profile_id", "depends_on"],
+      "properties": {
+        "key": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+        "title": {"type": "string", "minLength": 1, "maxLength": 512},
+        "description": {"type": "string", "maxLength": 4096},
+        "priority": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "budget": {"$ref": "../../domain/v1/budget.schema.json"},
+        "launch_profile_id": {"type": "string", "pattern": "^lprof_[0-9a-f]{32}$"},
+        "depends_on": {"type": "array", "maxItems": 7, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"}}
+      }
+    },
+    "interpretation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["disposition", "summary", "answer", "question", "choices", "objective_title", "objective_budget", "tasks", "citation_refs"],
+      "properties": {
+        "disposition": {"enum": ["answer", "ready", "clarify", "refuse"]},
+        "summary": {"type": "string", "maxLength": 2048},
+        "answer": {"type": "string", "maxLength": 8192},
+        "question": {"type": "string", "maxLength": 2048},
+        "choices": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/choice"}},
+        "objective_title": {"type": "string", "maxLength": 512},
+        "objective_budget": {"$ref": "../../domain/v1/budget.schema.json"},
+        "tasks": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/plan_task"}},
+        "citation_refs": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 96}}
       }
     }
   }

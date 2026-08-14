@@ -365,6 +365,7 @@ func TestManifestRejectsEveryFrozenQuiescenceCount(t *testing.T) {
 		{name: "scheduling intent", mutate: func(counts *store.QuiescenceCounts) { counts.OpenSchedulingIntents = 1 }},
 		{name: "supervisor action", mutate: func(counts *store.QuiescenceCounts) { counts.OpenSupervisorActions = 1 }},
 		{name: "approval", mutate: func(counts *store.QuiescenceCounts) { counts.OpenApprovals = 1 }},
+		{name: "owner manager review", mutate: func(counts *store.QuiescenceCounts) { counts.OpenOwnerManagerReviews = 1 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

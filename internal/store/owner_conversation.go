@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -18,12 +18,17 @@ import (
 const maximumOwnerConversationTurns = 200
 
 type PrepareOwnerTurnCommand struct {
-	WorkspaceIdentifier string
-	ProjectIdentifier   string
-	ConversationID      string
-	Instruction         string
-	Kind                string
-	IdempotencyKey      string
+	WorkspaceIdentifier   string
+	ProjectIdentifier     string
+	ConversationID        string
+	Instruction           string
+	Kind                  string
+	IdempotencyKey        string
+	InitiatedBy           string
+	TriggerEventSequence  int64
+	ExpectedEventSequence int64
+	Interpretation        domain.OwnerInterpretation
+	Citations             []domain.OwnerCitation
 }
 
 type RecordOwnerOperationCommand struct {
@@ -39,20 +44,28 @@ type RecordOwnerOperationCommand struct {
 	EventSequence       int64
 }
 
+type CreateOwnerSchedulingIntentCommand struct {
+	WorkspaceIdentifier string
+	TurnID              string
+	OperationID         string
+	TaskID              string
+	LaunchProfileID     string
+	CorrelationID       string
+}
+
 type EditOwnerPlanCommand struct {
 	WorkspaceIdentifier string
 	TurnID              string
 	ExpectedRevision    int64
-	Title               string
-	Description         string
-	Priority            int
-	Budget              domain.Budget
-	AgentIdentifier     string
+	ObjectiveTitle      string
+	ObjectiveBudget     domain.Budget
+	Tasks               []domain.OwnerPlanTask
 }
 
 type OwnerConversationPage struct {
-	Conversations []domain.OwnerConversation `json:"conversations"`
-	Turns         []domain.OwnerTurnDetail   `json:"turns"`
+	Conversations []domain.OwnerConversation    `json:"conversations"`
+	Turns         []domain.OwnerTurnDetail      `json:"turns"`
+	Review        *domain.OwnerManagerReviewJob `json:"review,omitempty"`
 }
 
 type ownerPlanOperation struct {
@@ -62,16 +75,79 @@ type ownerPlanOperation struct {
 	Status       string         `json:"-"`
 }
 
-func (s *Store) PrepareOwnerTurn(ctx context.Context, command PrepareOwnerTurnCommand) (domain.OwnerTurnDetail, error) {
+var ownerPlanKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+// OwnerTurnReplay checks the owner instruction idempotency boundary before a
+// provider is invoked. A replay therefore never consumes a second model turn.
+func (s *Store) OwnerTurnReplay(ctx context.Context, command PrepareOwnerTurnCommand) (domain.OwnerTurnDetail, bool, error) {
 	instruction := strings.TrimSpace(command.Instruction)
 	kind := strings.TrimSpace(command.Kind)
 	key := strings.TrimSpace(command.IdempotencyKey)
-	if !validManagerText(instruction, 4096) || (kind != "query" && kind != "plan" && kind != "act") || key == "" || len(key) > 128 {
-		return domain.OwnerTurnDetail{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner turn requires a bounded instruction, query|plan|act kind, and idempotency key"}
+	initiatedBy := strings.TrimSpace(command.InitiatedBy)
+	if initiatedBy == "" {
+		initiatedBy = "owner"
+	}
+	validOwnerTurn := initiatedBy == "owner" && command.TriggerEventSequence == 0 && (kind == "query" || kind == "plan" || kind == "act")
+	validManagerTurn := initiatedBy == "manager" && command.TriggerEventSequence > 0 && kind == "review" && strings.TrimSpace(command.ConversationID) != ""
+	if !validManagerText(instruction, 4096) || (!validOwnerTurn && !validManagerTurn) || key == "" || len(key) > 128 {
+		return domain.OwnerTurnDetail{}, false, &Error{Code: CodeInvalidOwnerConversation, Message: "owner turn requires an exact origin, bounded instruction, current kind, and idempotency key"}
 	}
 	requestHash, err := hashCommand("owner.turn", map[string]any{
 		"workspace": command.WorkspaceIdentifier, "project": command.ProjectIdentifier,
 		"conversation": command.ConversationID, "instruction": instruction, "kind": kind,
+		"initiated_by": initiatedBy, "trigger_event_sequence": command.TriggerEventSequence,
+	})
+	if err != nil {
+		return domain.OwnerTurnDetail{}, false, storageFailure("hash owner turn replay", err)
+	}
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return domain.OwnerTurnDetail{}, false, storageFailure("begin owner turn replay", err)
+	}
+	defer tx.Rollback()
+	workspace, err := workspaceInTransaction(ctx, tx, strings.TrimSpace(command.WorkspaceIdentifier))
+	if err != nil {
+		return domain.OwnerTurnDetail{}, false, err
+	}
+	project, err := queryProject(ctx, tx, workspace.ID, strings.TrimSpace(command.ProjectIdentifier))
+	if err != nil {
+		return domain.OwnerTurnDetail{}, false, err
+	}
+	var turnID, existingHash, existingWorkspace, existingProject string
+	err = tx.QueryRowContext(ctx, `SELECT turn.id,turn.request_sha256,conversation.workspace_id,conversation.project_id FROM owner_turns turn JOIN owner_conversations conversation ON conversation.id=turn.conversation_id WHERE turn.idempotency_key=?`, key).Scan(&turnID, &existingHash, &existingWorkspace, &existingProject)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.OwnerTurnDetail{}, false, nil
+	}
+	if err != nil {
+		return domain.OwnerTurnDetail{}, false, storageFailure("read owner turn replay", err)
+	}
+	if existingHash != requestHash || existingWorkspace != workspace.ID || existingProject != project.ID {
+		return domain.OwnerTurnDetail{}, false, &Error{Code: CodeIdempotencyConflict, Message: "owner turn idempotency key was used with different content"}
+	}
+	detail, err := ownerTurnDetailInTransaction(ctx, tx, turnID)
+	return detail, err == nil, err
+}
+
+func (s *Store) PrepareOwnerTurn(ctx context.Context, command PrepareOwnerTurnCommand) (domain.OwnerTurnDetail, error) {
+	if command.Citations == nil {
+		command.Citations = []domain.OwnerCitation{}
+	}
+	instruction := strings.TrimSpace(command.Instruction)
+	kind := strings.TrimSpace(command.Kind)
+	key := strings.TrimSpace(command.IdempotencyKey)
+	initiatedBy := strings.TrimSpace(command.InitiatedBy)
+	if initiatedBy == "" {
+		initiatedBy = "owner"
+	}
+	validOwnerTurn := initiatedBy == "owner" && command.TriggerEventSequence == 0 && (kind == "query" || kind == "plan" || kind == "act")
+	validManagerReview := initiatedBy == "manager" && kind == "review" && command.TriggerEventSequence > 0 && command.TriggerEventSequence == command.ExpectedEventSequence && command.ConversationID != ""
+	if !validManagerText(instruction, 4096) || (!validOwnerTurn && !validManagerReview) || key == "" || len(key) > 128 {
+		return domain.OwnerTurnDetail{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner turn requires a bounded instruction, supported origin/kind, and idempotency key"}
+	}
+	requestHash, err := hashCommand("owner.turn", map[string]any{
+		"workspace": command.WorkspaceIdentifier, "project": command.ProjectIdentifier,
+		"conversation": command.ConversationID, "instruction": instruction, "kind": kind,
+		"initiated_by": initiatedBy, "trigger_event_sequence": command.TriggerEventSequence,
 	})
 	if err != nil {
 		return domain.OwnerTurnDetail{}, storageFailure("hash owner turn", err)
@@ -102,7 +178,7 @@ FROM owner_turns turn JOIN owner_conversations conversation ON conversation.id=t
 	if !errors.Is(err, sql.ErrNoRows) {
 		return domain.OwnerTurnDetail{}, storageFailure("read owner turn replay", err)
 	}
-	conversation, err := ownerConversationForCommand(ctx, tx, workspace.ID, project.ID, strings.TrimSpace(command.ConversationID), instruction)
+	conversation, err := ownerConversationForCommand(ctx, tx, workspace.ID, project.ID, strings.TrimSpace(command.ConversationID), instruction, initiatedBy)
 	if err != nil {
 		return domain.OwnerTurnDetail{}, err
 	}
@@ -117,37 +193,45 @@ FROM owner_turns turn JOIN owner_conversations conversation ON conversation.id=t
 	if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(sequence),0) FROM events WHERE workspace_id=?", workspace.ID).Scan(&highWater); err != nil {
 		return domain.OwnerTurnDetail{}, storageFailure("capture owner turn event high-water", err)
 	}
-	plan, gated := ownerPlan(kind, instruction)
+	eventCut := highWater
+	if initiatedBy == "manager" {
+		eventCut = command.ExpectedEventSequence
+		var sourceWorkspace string
+		if eventCut < 1 || eventCut > highWater || tx.QueryRowContext(ctx, "SELECT workspace_id FROM events WHERE sequence=?", eventCut).Scan(&sourceWorkspace) != nil || sourceWorkspace != workspace.ID {
+			return domain.OwnerTurnDetail{}, &Error{Code: CodeOwnerTurnConflict, Message: "owner manager review event cut is no longer available in this workspace"}
+		}
+	} else if command.ExpectedEventSequence != highWater {
+		return domain.OwnerTurnDetail{}, &Error{Code: CodeOwnerTurnConflict, Message: "canonical project state changed while the manager was interpreting; retry against the new event cut"}
+	}
+	plan, answerText, status, interpretation, err := compileOwnerInterpretation(ctx, tx, workspace.ID, project.ID, kind, instruction, eventCut, command.Interpretation, command.Citations)
+	if err != nil {
+		return domain.OwnerTurnDetail{}, err
+	}
 	planJSON, planHash, err := canonicalContent(plan)
 	if err != nil {
 		return domain.OwnerTurnDetail{}, storageFailure("seal owner turn plan", err)
+	}
+	interpretationJSON, _, err := canonicalContent(interpretation)
+	if err != nil {
+		return domain.OwnerTurnDetail{}, storageFailure("seal owner interpretation", err)
+	}
+	citationsJSON, _, err := canonicalContent(command.Citations)
+	if err != nil {
+		return domain.OwnerTurnDetail{}, storageFailure("seal owner citations", err)
 	}
 	turnID, err := randomID("turn_")
 	if err != nil {
 		return domain.OwnerTurnDetail{}, storageFailure("generate owner turn id", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	status := "planned"
 	answer := any(nil)
-	if kind == "act" {
-		status = "executing"
-	}
-	if gated {
-		status = "awaiting_approval"
-		answer = "This instruction crosses a destructive, publication, external-communication, credential, network, budget, or authority boundary. Crewfold froze it before every effect; use a narrower local instruction or an exact typed decision path."
-	}
-	if kind == "query" {
-		status = "completed"
-		answerText, queryErr := ownerQueryAnswer(ctx, tx, workspace.ID, project.ID)
-		if queryErr != nil {
-			return domain.OwnerTurnDetail{}, queryErr
-		}
+	if answerText != "" {
 		answer = answerText
 	}
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO owner_turns(id,conversation_id,ordinal,kind,instruction,status,as_of_event_sequence,answer,plan_json,plan_sha256,error_code,completed_event_sequence,idempotency_key,request_sha256,revision,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, turnID, conversation.ID, count+1, kind, instruction, status, highWater, answer,
-		string(planJSON), planHash, nil, nil, key, requestHash, 1, now, now); err != nil {
+INSERT INTO owner_turns(id,conversation_id,ordinal,kind,initiated_by,trigger_event_sequence,instruction,status,as_of_event_sequence,answer,interpretation_json,citations_json,plan_json,plan_sha256,error_code,completed_event_sequence,idempotency_key,request_sha256,revision,created_at,updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, turnID, conversation.ID, count+1, kind, initiatedBy, nullablePositiveInt(command.TriggerEventSequence), instruction, status, eventCut, answer,
+		string(interpretationJSON), string(citationsJSON), string(planJSON), planHash, nil, nil, key, requestHash, 1, now, now); err != nil {
 		return domain.OwnerTurnDetail{}, storageFailure("insert owner turn", err)
 	}
 	for index, operation := range plan {
@@ -165,7 +249,11 @@ VALUES(?,?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,1,?,?)`, operationID, turnID, index+1
 			return domain.OwnerTurnDetail{}, storageFailure("insert owner operation", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE owner_conversations SET revision=revision+1,updated_at=? WHERE id=?", now, conversation.ID); err != nil {
+	updatedBy := localOwnerActorID
+	if initiatedBy == "manager" {
+		updatedBy = "subsystem:owner-manager"
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE owner_conversations SET revision=revision+1,updated_at=?,updated_by=? WHERE id=?", now, updatedBy, conversation.ID); err != nil {
 		return domain.OwnerTurnDetail{}, storageFailure("advance owner conversation", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -194,14 +282,102 @@ func (s *Store) OwnerTurnDetail(ctx context.Context, workspaceIdentifier, turnID
 	return detail, nil
 }
 
+// CreateOwnerSchedulingIntent publishes one supervisor work item from an
+// exact executing owner-turn operation. The baseline trigger proves the task
+// was created by the same frozen turn and the launch profile is still current.
+func (s *Store) CreateOwnerSchedulingIntent(ctx context.Context, command CreateOwnerSchedulingIntentCommand) (MutationResult[domain.SchedulingIntent], error) {
+	command.WorkspaceIdentifier = strings.TrimSpace(command.WorkspaceIdentifier)
+	command.TurnID = strings.TrimSpace(command.TurnID)
+	command.OperationID = strings.TrimSpace(command.OperationID)
+	command.TaskID = strings.TrimSpace(command.TaskID)
+	command.LaunchProfileID = strings.TrimSpace(command.LaunchProfileID)
+	command.CorrelationID = strings.TrimSpace(command.CorrelationID)
+	if command.WorkspaceIdentifier == "" || command.TurnID == "" || command.OperationID == "" || command.TaskID == "" || command.LaunchProfileID == "" || command.CorrelationID == "" || len(command.CorrelationID) > 128 {
+		return MutationResult[domain.SchedulingIntent]{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner scheduling intent requires exact turn, operation, task, and launch profile"}
+	}
+	tx, err := s.beginTx(ctx, nil)
+	if err != nil {
+		return MutationResult[domain.SchedulingIntent]{}, storageFailure("begin owner scheduling intent", err)
+	}
+	defer tx.Rollback()
+	workspace, err := workspaceInTransaction(ctx, tx, command.WorkspaceIdentifier)
+	if err != nil {
+		return MutationResult[domain.SchedulingIntent]{}, err
+	}
+	var existingID string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM scheduling_intents WHERE source_owner_operation_id=?`, command.OperationID).Scan(&existingID)
+	if err == nil {
+		intent, queryErr := querySchedulingIntent(ctx, tx, workspace.ID, existingID)
+		if queryErr != nil {
+			return MutationResult[domain.SchedulingIntent]{}, queryErr
+		}
+		var sequence int64
+		if queryErr := tx.QueryRowContext(ctx, `SELECT sequence FROM events WHERE workspace_id=? AND entity_type='scheduling_intent' AND entity_id=? AND entity_revision=1`, workspace.ID, intent.ID).Scan(&sequence); queryErr != nil {
+			return MutationResult[domain.SchedulingIntent]{}, storageFailure("read owner scheduling intent event", queryErr)
+		}
+		return MutationResult[domain.SchedulingIntent]{Value: intent, EventSequence: sequence}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return MutationResult[domain.SchedulingIntent]{}, storageFailure("read owner scheduling intent replay", err)
+	}
+	detail, err := ownerTurnDetailInTransaction(ctx, tx, command.TurnID)
+	if err != nil {
+		return MutationResult[domain.SchedulingIntent]{}, err
+	}
+	if detail.Conversation.WorkspaceID != workspace.ID || detail.Turn.Status != "executing" {
+		return MutationResult[domain.SchedulingIntent]{}, &Error{Code: CodeOwnerTurnConflict, Message: "owner turn is not executing in the selected workspace"}
+	}
+	operationFound := false
+	for _, operation := range detail.Operations {
+		if operation.ID == command.OperationID && operation.Type == "schedule_task" && operation.Status == "pending" {
+			operationFound = true
+			break
+		}
+	}
+	if !operationFound {
+		return MutationResult[domain.SchedulingIntent]{}, &Error{Code: CodeOwnerTurnConflict, Message: "owner scheduling operation changed before publication"}
+	}
+	task, err := queryTask(ctx, tx, workspace.ID, command.TaskID)
+	if err != nil {
+		return MutationResult[domain.SchedulingIntent]{}, err
+	}
+	profile, err := queryLaunchProfile(ctx, tx, workspace.ID, command.LaunchProfileID)
+	if err != nil {
+		return MutationResult[domain.SchedulingIntent]{}, err
+	}
+	if task.ProjectID != detail.Conversation.ProjectID || profile.ProjectID != task.ProjectID || profile.AgentID == "" || profile.Status != domain.LaunchProfileActive {
+		return MutationResult[domain.SchedulingIntent]{}, &Error{Code: CodeOwnerTurnConflict, Message: "owner scheduling target or profile changed"}
+	}
+	id, err := randomID("sintent_")
+	if err != nil {
+		return MutationResult[domain.SchedulingIntent]{}, storageFailure("generate owner scheduling intent id", err)
+	}
+	now := s.nowText()
+	intent := domain.SchedulingIntent{ID: id, WorkspaceID: workspace.ID, ProjectID: task.ProjectID, ObjectiveID: task.ObjectiveID, TaskID: task.ID,
+		AgentID: profile.AgentID, LaunchProfileID: profile.ID, SourceOwnerTurnID: detail.Turn.ID, SourceOwnerOperationID: command.OperationID,
+		Status: domain.SchedulingIntentPending, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO scheduling_intents(id,workspace_id,project_id,objective_id,task_id,agent_id,launch_profile_id,source_owner_turn_id,source_owner_operation_id,status,attempts,revision,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,'pending',0,1,?,?,?,?)`,
+		intent.ID, intent.WorkspaceID, intent.ProjectID, intent.ObjectiveID, intent.TaskID, intent.AgentID, intent.LaunchProfileID, intent.SourceOwnerTurnID, intent.SourceOwnerOperationID, now, now, localOwnerActorID, localOwnerActorID); err != nil {
+		return MutationResult[domain.SchedulingIntent]{}, storageFailure("insert owner scheduling intent", err)
+	}
+	sequence, err := appendEvent(ctx, tx, workspace.ID, "scheduling_intent", intent.ID, 1, schedulingIntentCreatedEvent, command.CorrelationID, now, map[string]any{
+		"task_id": intent.TaskID, "agent_id": intent.AgentID, "launch_profile_id": intent.LaunchProfileID, "source_owner_turn_id": intent.SourceOwnerTurnID, "source_owner_operation_id": intent.SourceOwnerOperationID,
+	})
+	if err != nil {
+		return MutationResult[domain.SchedulingIntent]{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return MutationResult[domain.SchedulingIntent]{}, storageFailure("commit owner scheduling intent", err)
+	}
+	return MutationResult[domain.SchedulingIntent]{Value: intent, EventSequence: sequence}, nil
+}
+
 // EditOwnerPlan replaces the editable values in one still-effect-free plan.
 // Operation identities remain stable; the new canonical plan and every payload
 // hash are sealed together before the reviewed revision is returned.
 func (s *Store) EditOwnerPlan(ctx context.Context, command EditOwnerPlanCommand) (domain.OwnerTurnDetail, error) {
-	title := strings.TrimSpace(command.Title)
-	description := strings.TrimSpace(command.Description)
-	if command.ExpectedRevision < 1 || !validTitle(title) || len(description) > 4096 || command.Priority < 0 || command.Priority > 1000 || !validBudget(command.Budget) || command.Budget.TokenLimit > 1_000_000 || command.Budget.CostCents != 0 || command.Budget.TimeSeconds > 86_400 {
-		return domain.OwnerTurnDetail{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner plan edit requires a title, bounded description, priority from 0 to 1000, at most 1000000 tokens and 86400 seconds, zero paid-cost authority, and an exact revision"}
+	if command.ExpectedRevision < 1 {
+		return domain.OwnerTurnDetail{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner plan edit requires an exact current revision"}
 	}
 	tx, err := s.beginTx(ctx, nil)
 	if err != nil {
@@ -216,41 +392,49 @@ func (s *Store) EditOwnerPlan(ctx context.Context, command EditOwnerPlanCommand)
 	if err != nil {
 		return domain.OwnerTurnDetail{}, err
 	}
-	if detail.Conversation.WorkspaceID != workspace.ID || detail.Turn.Kind != "plan" || detail.Turn.Status != "planned" || detail.Turn.Revision != command.ExpectedRevision || len(detail.Operations) != 4 {
+	if detail.Conversation.WorkspaceID != workspace.ID || (detail.Turn.Kind != "plan" && detail.Turn.Kind != "review") || detail.Turn.Status != "planned" || detail.Turn.Revision != command.ExpectedRevision {
 		return domain.OwnerTurnDetail{}, &Error{Code: CodeOwnerTurnConflict, Message: "owner plan changed or is no longer editable; refresh its exact revision"}
 	}
-	agent, err := queryAgent(ctx, tx, workspace.ID, strings.TrimSpace(command.AgentIdentifier))
+	interpretation := detail.Turn.Interpretation
+	interpretation.Disposition = "ready"
+	interpretation.ObjectiveTitle = command.ObjectiveTitle
+	interpretation.ObjectiveBudget = command.ObjectiveBudget
+	interpretation.Tasks = append([]domain.OwnerPlanTask(nil), command.Tasks...)
+	interpretation.Answer, interpretation.Question = "", ""
+	interpretation.Choices = []domain.OwnerChoice{}
+	plan, _, status, interpretation, err := compileOwnerInterpretation(ctx, tx, workspace.ID, detail.Conversation.ProjectID, detail.Turn.Kind, detail.Turn.Instruction, detail.Turn.AsOfEventSequence, interpretation, detail.Turn.Citations)
 	if err != nil {
 		return domain.OwnerTurnDetail{}, err
 	}
-	if !agent.Enabled {
-		return domain.OwnerTurnDetail{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner plan requires an enabled agent"}
-	}
-	plan := []ownerPlanOperation{
-		{Type: "create_objective", Payload: map[string]any{"title": title, "budget": command.Budget}, PolicyResult: "allowed", Status: "pending"},
-		{Type: "create_task", Payload: map[string]any{"title": title, "description": description, "priority": command.Priority, "budget": command.Budget}, PolicyResult: "allowed", Status: "pending"},
-		{Type: "assign_task", Payload: map[string]any{"agent_id": agent.ID}, PolicyResult: "allowed", Status: "pending"},
-		{Type: "start_run", Payload: map[string]any{"agent_id": agent.ID, "launch": "assigned_agent_default"}, PolicyResult: "allowed", Status: "pending"},
+	if status != "planned" {
+		return domain.OwnerTurnDetail{}, &Error{Code: CodeOwnerTurnConflict, Message: "edited owner plan did not remain inert"}
 	}
 	planJSON, planHash, err := canonicalContent(plan)
 	if err != nil {
 		return domain.OwnerTurnDetail{}, storageFailure("seal edited owner plan", err)
 	}
+	interpretationJSON, _, err := canonicalContent(interpretation)
+	if err != nil {
+		return domain.OwnerTurnDetail{}, storageFailure("seal edited owner interpretation", err)
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM owner_turn_operations WHERE turn_id=? AND status='pending'`, detail.Turn.ID); err != nil {
+		return domain.OwnerTurnDetail{}, storageFailure("replace edited owner operations", err)
+	}
 	for index, operation := range plan {
+		operationID, idErr := randomID("op_")
+		if idErr != nil {
+			return domain.OwnerTurnDetail{}, storageFailure("generate edited owner operation id", idErr)
+		}
 		payloadJSON, payloadHash, encodeErr := canonicalContent(operation.Payload)
 		if encodeErr != nil {
 			return domain.OwnerTurnDetail{}, storageFailure("seal edited owner operation", encodeErr)
 		}
-		result, updateErr := tx.ExecContext(ctx, `UPDATE owner_turn_operations SET payload_json=?,payload_sha256=?,policy_result=?,revision=revision+1,updated_at=? WHERE turn_id=? AND ordinal=? AND type=? AND status='pending'`, string(payloadJSON), payloadHash, operation.PolicyResult, now, detail.Turn.ID, index+1, operation.Type)
-		if updateErr != nil {
-			return domain.OwnerTurnDetail{}, storageFailure("update edited owner operation", updateErr)
-		}
-		if changed, rowsErr := result.RowsAffected(); rowsErr != nil || changed != 1 {
-			return domain.OwnerTurnDetail{}, &Error{Code: CodeOwnerTurnConflict, Message: "owner plan operation changed while it was being edited"}
+		if _, insertErr := tx.ExecContext(ctx, `INSERT INTO owner_turn_operations(id,turn_id,ordinal,type,payload_json,payload_sha256,policy_result,status,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,1,?,?)`, operationID, detail.Turn.ID, index+1, operation.Type, string(payloadJSON), payloadHash, operation.PolicyResult, operation.Status, now, now); insertErr != nil {
+			return domain.OwnerTurnDetail{}, storageFailure("insert edited owner operation", insertErr)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE owner_turns SET plan_json=?,plan_sha256=?,revision=revision+1,updated_at=? WHERE id=?`, string(planJSON), planHash, now, detail.Turn.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE owner_turns SET interpretation_json=?,plan_json=?,plan_sha256=?,revision=revision+1,updated_at=? WHERE id=?`, string(interpretationJSON), string(planJSON), planHash, now, detail.Turn.ID); err != nil {
 		return domain.OwnerTurnDetail{}, storageFailure("update edited owner plan", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE owner_conversations SET revision=revision+1,updated_at=? WHERE id=?`, now, detail.Conversation.ID); err != nil {
@@ -283,6 +467,11 @@ FROM owner_conversations WHERE workspace_id=? AND project_id=? AND (?='' OR id=?
 	}
 	defer rows.Close()
 	page := OwnerConversationPage{Conversations: []domain.OwnerConversation{}, Turns: []domain.OwnerTurnDetail{}}
+	if review, reviewErr := ownerManagerReviewJobInTransaction(ctx, tx, project.ID); reviewErr == nil {
+		page.Review = &review
+	} else if !errors.Is(reviewErr, sql.ErrNoRows) {
+		return OwnerConversationPage{}, storageFailure("read owner manager review state", reviewErr)
+	}
 	for rows.Next() {
 		var value domain.OwnerConversation
 		if err := rows.Scan(&value.ID, &value.WorkspaceID, &value.ProjectID, &value.Title, &value.Status, &value.Revision, &value.CreatedAt, &value.UpdatedAt); err != nil {
@@ -387,7 +576,7 @@ func (s *Store) StartOwnerTurnExecution(ctx context.Context, workspaceIdentifier
 	if err != nil {
 		return domain.OwnerTurnDetail{}, err
 	}
-	if detail.Conversation.WorkspaceID != workspace.ID || detail.Turn.Kind != "plan" {
+	if detail.Conversation.WorkspaceID != workspace.ID || (detail.Turn.Kind != "plan" && detail.Turn.Kind != "review") {
 		return domain.OwnerTurnDetail{}, &Error{Code: CodeOwnerTurnConflict, Message: "owner plan was not found in the selected workspace"}
 	}
 	if detail.Turn.Status == "completed" || detail.Turn.Status == "executing" {
@@ -457,7 +646,7 @@ func (s *Store) FinishOwnerTurn(ctx context.Context, workspaceIdentifier, turnID
 	return s.OwnerTurnDetail(ctx, workspace.ID, turnID)
 }
 
-func ownerConversationForCommand(ctx context.Context, tx *sql.Tx, workspaceID, projectID, conversationID, instruction string) (domain.OwnerConversation, error) {
+func ownerConversationForCommand(ctx context.Context, tx *sql.Tx, workspaceID, projectID, conversationID, instruction, initiatedBy string) (domain.OwnerConversation, error) {
 	if conversationID != "" {
 		var value domain.OwnerConversation
 		err := tx.QueryRowContext(ctx, `SELECT id,workspace_id,project_id,title,status,revision,created_at,updated_at FROM owner_conversations WHERE id=?`, conversationID).Scan(
@@ -480,29 +669,170 @@ func ownerConversationForCommand(ctx context.Context, tx *sql.Tx, workspaceID, p
 		title = title[:len(title)-size]
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	createdBy := localOwnerActorID
+	if initiatedBy == "manager" {
+		createdBy = "subsystem:owner-manager"
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO owner_conversations(id,workspace_id,project_id,title,status,revision,created_at,updated_at,created_by,updated_by)
-VALUES(?,?,?,?,'open',1,?,?,'local-owner','local-owner')`, id, workspaceID, projectID, title, now, now); err != nil {
+VALUES(?,?,?,?,'open',1,?,?,?,?)`, id, workspaceID, projectID, title, now, now, createdBy, createdBy); err != nil {
 		return domain.OwnerConversation{}, storageFailure("insert owner conversation", err)
 	}
 	return domain.OwnerConversation{ID: id, WorkspaceID: workspaceID, ProjectID: projectID, Title: title, Status: "open", Revision: 1, CreatedAt: now, UpdatedAt: now}, nil
 }
 
-func ownerPlan(kind, instruction string) ([]ownerPlanOperation, bool) {
-	if kind == "query" {
-		return []ownerPlanOperation{}, false
+func compileOwnerInterpretation(ctx context.Context, tx *sql.Tx, workspaceID, projectID, kind, instruction string, eventCut int64, interpretation domain.OwnerInterpretation, citations []domain.OwnerCitation) ([]ownerPlanOperation, string, string, domain.OwnerInterpretation, error) {
+	if len(citations) > 16 || !validOptionalOwnerText(interpretation.Summary, 2048) {
+		return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager interpretation is outside its bounded contract"}
 	}
-	gated := ownerInstructionRequiresReview(instruction)
-	policy, status := "allowed", "pending"
-	if gated {
-		policy, status = "gated", "awaiting_approval"
+	for _, citation := range citations {
+		if citation.Ref == "" || len(citation.Ref) > 96 || citation.EntityType == "" || citation.EntityID == "" || citation.EntityRevision < 0 || citation.AsOfEventSequence != eventCut || !validManagerText(citation.Label, 512) {
+			return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager citation is not bound to the interpreted event cut"}
+		}
 	}
-	budget := domain.Budget{}
-	return []ownerPlanOperation{
-		{Type: "create_objective", Payload: map[string]any{"title": instruction, "budget": budget}, PolicyResult: policy, Status: status},
-		{Type: "create_task", Payload: map[string]any{"title": instruction, "description": instruction, "priority": 500, "budget": budget}, PolicyResult: policy, Status: status},
-		{Type: "assign_task", Payload: map[string]any{"agent_selection": "first_enabled"}, PolicyResult: policy, Status: status},
-		{Type: "start_run", Payload: map[string]any{"launch": "assigned_agent_default"}, PolicyResult: policy, Status: status},
-	}, gated
+	if ownerInstructionRequiresReview(instruction) && interpretation.Disposition == "ready" {
+		interpretation = domain.OwnerInterpretation{Disposition: "refuse", Summary: "Crewfold rejected an unsafe operation boundary.", Answer: "This instruction requests a destructive, publication, external, credential, budget, or authority effect that is not part of the owner workbench action grammar.", ObjectiveBudget: domain.Budget{}, Tasks: []domain.OwnerPlanTask{}, Choices: []domain.OwnerChoice{}, CitationRefs: interpretation.CitationRefs}
+	}
+	switch interpretation.Disposition {
+	case "answer":
+		if (kind != "query" && kind != "review") || !validManagerText(interpretation.Answer, 8192) || interpretation.Question != "" || len(interpretation.Choices) != 0 || interpretation.ObjectiveTitle != "" || len(interpretation.Tasks) != 0 || interpretation.ObjectiveBudget != (domain.Budget{}) {
+			return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager answer contains operations or malformed content"}
+		}
+		return []ownerPlanOperation{}, interpretation.Answer, "completed", interpretation, nil
+	case "clarify":
+		if !validManagerText(interpretation.Question, 2048) || interpretation.ObjectiveTitle != "" || len(interpretation.Tasks) != 0 || interpretation.ObjectiveBudget != (domain.Budget{}) {
+			return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager clarification must be one bounded effect-free question"}
+		}
+		if err := validateOwnerChoices(interpretation.Choices); err != nil {
+			return nil, "", "", domain.OwnerInterpretation{}, err
+		}
+		return []ownerPlanOperation{}, interpretation.Question, "completed", interpretation, nil
+	case "refuse":
+		if !validManagerText(interpretation.Answer, 8192) || interpretation.Question != "" || len(interpretation.Choices) != 0 || interpretation.ObjectiveTitle != "" || len(interpretation.Tasks) != 0 || interpretation.ObjectiveBudget != (domain.Budget{}) {
+			return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager refusal must be bounded and effect-free"}
+		}
+		return []ownerPlanOperation{}, interpretation.Answer, "completed", interpretation, nil
+	case "ready":
+	default:
+		return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager returned an unknown disposition"}
+	}
+	if kind == "query" || interpretation.Answer != "" || interpretation.Question != "" || len(interpretation.Choices) != 0 || !validTitle(interpretation.ObjectiveTitle) || !validBudget(interpretation.ObjectiveBudget) || interpretation.ObjectiveBudget.TokenLimit > 1_000_000 || interpretation.ObjectiveBudget.CostCents != 0 || interpretation.ObjectiveBudget.TimeSeconds > 86_400 || len(interpretation.Tasks) < 1 || len(interpretation.Tasks) > 8 {
+		return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager ready result is not a bounded objective graph"}
+	}
+	keys := make(map[string]domain.OwnerPlanTask, len(interpretation.Tasks))
+	for _, task := range interpretation.Tasks {
+		if !ownerPlanKeyPattern.MatchString(task.Key) || !validTitle(task.Title) || len(task.Description) > 4096 || !utf8.ValidString(task.Description) || task.Priority < 0 || task.Priority > 1000 || !validBudget(task.Budget) || task.Budget.TokenLimit > 1_000_000 || task.Budget.CostCents != 0 || task.Budget.TimeSeconds > 86_400 || len(task.DependsOn) > 7 {
+			return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager task is outside the typed graph limits"}
+		}
+		if _, duplicate := keys[task.Key]; duplicate {
+			return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager task keys must be unique"}
+		}
+		profile, err := queryLaunchProfile(ctx, tx, workspaceID, task.LaunchProfileID)
+		if err != nil {
+			return nil, "", "", domain.OwnerInterpretation{}, err
+		}
+		if profile.ProjectID != projectID || profile.Status != domain.LaunchProfileActive || profile.ManagerGrantID != "" {
+			return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager selected a launch profile outside the project execution set"}
+		}
+		agent, err := queryAgent(ctx, tx, workspaceID, profile.AgentID)
+		if err != nil {
+			return nil, "", "", domain.OwnerInterpretation{}, err
+		}
+		if !agent.Enabled || agent.Revision != profile.AgentRevision || agent.Provider != profile.Provider || agent.Runtime != profile.Runtime {
+			return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager selected a stale launch profile"}
+		}
+		keys[task.Key] = task
+	}
+	for _, task := range interpretation.Tasks {
+		seen := make(map[string]struct{}, len(task.DependsOn))
+		for _, dependency := range task.DependsOn {
+			if dependency == task.Key {
+				return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager task cannot depend on itself"}
+			}
+			if _, exists := keys[dependency]; !exists {
+				return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager dependency references an unknown task key"}
+			}
+			if _, duplicate := seen[dependency]; duplicate {
+				return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager repeated a task dependency"}
+			}
+			seen[dependency] = struct{}{}
+		}
+	}
+	if ownerPlanHasCycle(keys) {
+		return nil, "", "", domain.OwnerInterpretation{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager task dependency graph contains a cycle"}
+	}
+	plan := make([]ownerPlanOperation, 0, 1+len(interpretation.Tasks)*2+28)
+	plan = append(plan, ownerPlanOperation{Type: "create_objective", Payload: map[string]any{"title": interpretation.ObjectiveTitle, "budget": interpretation.ObjectiveBudget}, PolicyResult: "allowed", Status: "pending"})
+	for _, task := range interpretation.Tasks {
+		plan = append(plan, ownerPlanOperation{Type: "create_task", Payload: map[string]any{"task_key": task.Key, "title": task.Title, "description": task.Description, "priority": task.Priority, "budget": task.Budget, "launch_profile_id": task.LaunchProfileID}, PolicyResult: "allowed", Status: "pending"})
+	}
+	for _, task := range interpretation.Tasks {
+		for _, dependency := range task.DependsOn {
+			plan = append(plan, ownerPlanOperation{Type: "add_dependency", Payload: map[string]any{"task_key": task.Key, "depends_on_task_key": dependency}, PolicyResult: "allowed", Status: "pending"})
+		}
+	}
+	for _, task := range interpretation.Tasks {
+		plan = append(plan, ownerPlanOperation{Type: "schedule_task", Payload: map[string]any{"task_key": task.Key, "launch_profile_id": task.LaunchProfileID}, PolicyResult: "allowed", Status: "pending"})
+	}
+	status := "planned"
+	if kind == "act" {
+		status = "executing"
+	}
+	return plan, interpretation.Summary, status, interpretation, nil
+}
+
+func validOptionalOwnerText(value string, maximum int) bool {
+	return value == "" || validManagerText(value, maximum)
+}
+
+func validateOwnerChoices(choices []domain.OwnerChoice) error {
+	if len(choices) != 0 && (len(choices) < 2 || len(choices) > 4) {
+		return &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager clarification choices must contain two to four alternatives"}
+	}
+	seen := make(map[string]struct{}, len(choices))
+	recommended := 0
+	for _, choice := range choices {
+		if !ownerPlanKeyPattern.MatchString(choice.Key) || !validManagerText(choice.Label, 160) || len(choice.Description) > 512 || !utf8.ValidString(choice.Description) {
+			return &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager clarification choice is malformed"}
+		}
+		if _, duplicate := seen[choice.Key]; duplicate {
+			return &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager clarification choice keys must be unique"}
+		}
+		seen[choice.Key] = struct{}{}
+		if choice.Recommended {
+			recommended++
+		}
+	}
+	if recommended > 1 {
+		return &Error{Code: CodeInvalidOwnerConversation, Message: "owner manager may recommend at most one clarification choice"}
+	}
+	return nil
+}
+
+func ownerPlanHasCycle(tasks map[string]domain.OwnerPlanTask) bool {
+	state := make(map[string]uint8, len(tasks))
+	var visit func(string) bool
+	visit = func(key string) bool {
+		if state[key] == 1 {
+			return true
+		}
+		if state[key] == 2 {
+			return false
+		}
+		state[key] = 1
+		for _, dependency := range tasks[key].DependsOn {
+			if visit(dependency) {
+				return true
+			}
+		}
+		state[key] = 2
+		return false
+	}
+	for key := range tasks {
+		if visit(key) {
+			return true
+		}
+	}
+	return false
 }
 
 func ownerInstructionRequiresReview(instruction string) bool {
@@ -521,30 +851,16 @@ func ownerInstructionRequiresReview(instruction string) bool {
 	return false
 }
 
-func ownerQueryAnswer(ctx context.Context, tx *sql.Tx, workspaceID, projectID string) (string, error) {
-	var tasks, openTasks, runs, activeRuns, approvals int
-	err := tx.QueryRowContext(ctx, `SELECT
- (SELECT count(*) FROM tasks WHERE workspace_id=? AND project_id=?),
- (SELECT count(*) FROM tasks WHERE workspace_id=? AND project_id=? AND status NOT IN ('completed','failed','cancelled')),
- (SELECT count(*) FROM runs WHERE workspace_id=? AND project_id=?),
- (SELECT count(*) FROM runs WHERE workspace_id=? AND project_id=? AND status IN ('requested','starting','active','blocked','stopping','lost')),
-	 (SELECT count(*) FROM approval_requests approval JOIN supervisor_actions action ON action.id=approval.action_id WHERE approval.workspace_id=? AND action.project_id=? AND approval.status='pending')`,
-		workspaceID, projectID, workspaceID, projectID, workspaceID, projectID, workspaceID, projectID, workspaceID, projectID).Scan(&tasks, &openTasks, &runs, &activeRuns, &approvals)
-	if err != nil {
-		return "", storageFailure("summarize owner query", err)
-	}
-	return fmt.Sprintf("This project has %d tasks (%d open), %d runs (%d active or unresolved), and %d pending decisions at the frozen event cut.", tasks, openTasks, runs, activeRuns, approvals), nil
-}
-
 func ownerTurnDetailInTransaction(ctx context.Context, tx *sql.Tx, turnID string) (domain.OwnerTurnDetail, error) {
 	var detail domain.OwnerTurnDetail
 	var answer, errorCode sql.NullString
-	var completed sql.NullInt64
+	var trigger, completed sql.NullInt64
+	var interpretationJSON, citationsJSON string
 	err := tx.QueryRowContext(ctx, `SELECT conversation.id,conversation.workspace_id,conversation.project_id,conversation.title,conversation.status,conversation.revision,conversation.created_at,conversation.updated_at,
- turn.id,turn.conversation_id,turn.ordinal,turn.kind,turn.instruction,turn.status,turn.as_of_event_sequence,turn.answer,turn.plan_sha256,turn.error_code,turn.revision,turn.created_at,turn.updated_at,turn.completed_event_sequence
+ turn.id,turn.conversation_id,turn.ordinal,turn.kind,turn.initiated_by,turn.trigger_event_sequence,turn.instruction,turn.status,turn.as_of_event_sequence,turn.answer,turn.interpretation_json,turn.citations_json,turn.plan_sha256,turn.error_code,turn.revision,turn.created_at,turn.updated_at,turn.completed_event_sequence
 FROM owner_turns turn JOIN owner_conversations conversation ON conversation.id=turn.conversation_id WHERE turn.id=?`, turnID).Scan(
 		&detail.Conversation.ID, &detail.Conversation.WorkspaceID, &detail.Conversation.ProjectID, &detail.Conversation.Title, &detail.Conversation.Status, &detail.Conversation.Revision, &detail.Conversation.CreatedAt, &detail.Conversation.UpdatedAt,
-		&detail.Turn.ID, &detail.Turn.ConversationID, &detail.Turn.Ordinal, &detail.Turn.Kind, &detail.Turn.Instruction, &detail.Turn.Status, &detail.Turn.AsOfEventSequence, &answer, &detail.Turn.PlanSHA256, &errorCode, &detail.Turn.Revision, &detail.Turn.CreatedAt, &detail.Turn.UpdatedAt, &completed)
+		&detail.Turn.ID, &detail.Turn.ConversationID, &detail.Turn.Ordinal, &detail.Turn.Kind, &detail.Turn.InitiatedBy, &trigger, &detail.Turn.Instruction, &detail.Turn.Status, &detail.Turn.AsOfEventSequence, &answer, &interpretationJSON, &citationsJSON, &detail.Turn.PlanSHA256, &errorCode, &detail.Turn.Revision, &detail.Turn.CreatedAt, &detail.Turn.UpdatedAt, &completed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.OwnerTurnDetail{}, &Error{Code: CodeOwnerConversationNotFound, Message: "owner turn was not found"}
 	}
@@ -552,6 +868,15 @@ FROM owner_turns turn JOIN owner_conversations conversation ON conversation.id=t
 		return domain.OwnerTurnDetail{}, storageFailure("read owner turn", err)
 	}
 	detail.Turn.Answer, detail.Turn.ErrorCode = answer.String, errorCode.String
+	if trigger.Valid {
+		detail.Turn.TriggerEventSequence = trigger.Int64
+	}
+	if err := json.Unmarshal([]byte(interpretationJSON), &detail.Turn.Interpretation); err != nil {
+		return domain.OwnerTurnDetail{}, storageFailure("decode owner interpretation", err)
+	}
+	if err := json.Unmarshal([]byte(citationsJSON), &detail.Turn.Citations); err != nil {
+		return domain.OwnerTurnDetail{}, storageFailure("decode owner citations", err)
+	}
 	if completed.Valid {
 		detail.Turn.CompletedEventSequence = completed.Int64
 	}

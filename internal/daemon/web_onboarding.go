@@ -126,6 +126,34 @@ func (w *workbenchServer) handleWorkbenchOnboarding(response http.ResponseWriter
 		w.writeStoreError(response, err)
 		return
 	}
+	_, err = w.daemon.store.CreateLaunchProfile(request.Context(), store.CreateLaunchProfileCommand{
+		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID,
+		AgentIdentifier: agent.Value.ID, ExpectedAgentRevision: agent.Value.Revision, Purpose: "implementation",
+		Runtime: agent.Value.Runtime, Provider: agent.Value.Provider, CheckoutIdentifier: project.Checkout.ID,
+		Scenario: ownerWorkbenchScenario(), AssignmentLeaseSeconds: 24 * 60 * 60, CapabilityTTLSeconds: 24 * 60 * 60,
+		IdempotencyKey: operation + "-profile", CorrelationID: operation,
+	})
+	if err != nil {
+		w.writeStoreError(response, err)
+		return
+	}
+	policy, err := w.daemon.store.SupervisorPolicy(request.Context(), workspace.Workspace.ID)
+	if err != nil {
+		w.writeStoreError(response, err)
+		return
+	}
+	if !policy.Enabled || !policy.AutoSchedule {
+		configured, configureErr := w.daemon.store.ConfigureSupervisorPolicy(request.Context(), store.ConfigureSupervisorPolicyCommand{
+			WorkspaceIdentifier: workspace.Workspace.ID, Enabled: true, Limits: policy.Limits, AutoSchedule: true,
+			AutoRetryLimit: policy.AutoRetryLimit, RetryCooldownSeconds: policy.RetryCooldownSeconds,
+			ExpectedRevision: policy.Revision, IdempotencyKey: operation + "-supervisor", CorrelationID: operation,
+		})
+		if configureErr != nil {
+			w.writeStoreError(response, configureErr)
+			return
+		}
+		policy = configured.Value
+	}
 	w.writeJSON(response, http.StatusOK, map[string]any{
 		"schema": "urn:crewfold:schema:web:onboarding:v1", "type": "workbench_onboarding", "status": "completed",
 		"workspace": workspace.Workspace, "project": project.Project, "checkout": project.Checkout, "agent": agent.Value,

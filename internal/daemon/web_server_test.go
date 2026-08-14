@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"crewfold/internal/domain"
 	"crewfold/internal/execution"
 	"crewfold/internal/localapi"
+	"crewfold/internal/store"
 	protocolschema "crewfold/protocol"
 
 	"github.com/gorilla/websocket"
@@ -246,11 +248,14 @@ func TestM21WorkbenchRPCRequiresExactCSRFAndExposesOnlyOwnerMethods(t *testing.T
 	}
 }
 
-func TestM21OwnerIntentCommitsReceiptedWorkAndStartsFixtureAgent(t *testing.T) {
+func TestM21OwnerIntentCommitsReceiptedWorkAndAutomaticallyReviewsWorkerReport(t *testing.T) {
 	t.Parallel()
 
 	config := testConfig(t)
 	config.GitInspector = m21WorkbenchInspector{}
+	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"fake": execution.NewFakeRuntime()}
+	config.ProviderAdapters = map[string]execution.ProviderAdapter{"fake": execution.FakeProvider{}}
+	config.OwnerInterpreter = m21OwnerLoopInterpreter{}
 	running := startTestServer(t, config)
 	api := localapi.NewClient(running.config.SocketPath)
 	workspace, err := api.WorkspaceInit(context.Background(), "personal", "web-intent-workspace")
@@ -258,11 +263,26 @@ func TestM21OwnerIntentCommitsReceiptedWorkAndStartsFixtureAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), "world-engine")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	project, err := api.ProjectAdd(context.Background(), workspace.Workspace.ID, "world-engine", root, domain.WriteModeShared, "web-intent-project")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := api.AgentCreate(context.Background(), localapi.AgentCreateParams{Workspace: workspace.Workspace.ID, Name: "builder", Role: "implementation", Provider: "fixture-mcp", Runtime: "direct", MaxConcurrency: 2, IdempotencyKey: "web-intent-agent"}); err != nil {
+	agent, err := api.AgentCreate(context.Background(), localapi.AgentCreateParams{Workspace: workspace.Workspace.ID, Name: "builder", Role: "implementation", Provider: "fake", Runtime: "fake", MaxConcurrency: 2, IdempotencyKey: "web-intent-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewScenario := domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "owner-workbench-manager-review", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "Implementation is underway", WaitForResume: true}}}
+	if _, err := api.LaunchProfileCreate(context.Background(), localapi.LaunchProfileCreateParams{Workspace: workspace.Workspace.ID, Project: project.Project.ID, Agent: agent.Agent.ID, ExpectedAgentRevision: agent.Agent.Revision, Purpose: "implementation", Runtime: agent.Agent.Runtime, Provider: agent.Agent.Provider, Checkout: project.Checkout.ID, Scenario: reviewScenario, AssignmentLeaseSeconds: 3600, CapabilityTTLSeconds: 3600, IdempotencyKey: "web-intent-profile"}); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := api.SupervisorPolicyShow(context.Background(), workspace.Workspace.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.SupervisorPolicyConfigure(context.Background(), localapi.SupervisorPolicyConfigureParams{Workspace: workspace.Workspace.ID, Enabled: true, Limits: policy.Policy.Limits, AutoSchedule: true, AutoRetryLimit: 0, ExpectedRevision: policy.Policy.Revision, IdempotencyKey: "web-intent-supervisor"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -323,7 +343,7 @@ func TestM21OwnerIntentCommitsReceiptedWorkAndStartsFixtureAgent(t *testing.T) {
 	if err := json.Unmarshal(first, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Detail.Turn.Status != "completed" || len(result.Detail.Operations) != 4 || len(result.Detail.Receipts) != 4 {
+	if result.Detail.Turn.Status != "completed" || len(result.Detail.Operations) != 3 || len(result.Detail.Receipts) != 3 {
 		t.Fatalf("owner intent detail = %#v", result.Detail)
 	}
 	for _, operation := range result.Detail.Operations {
@@ -332,12 +352,69 @@ func TestM21OwnerIntentCommitsReceiptedWorkAndStartsFixtureAgent(t *testing.T) {
 		}
 	}
 	tasks, err := api.TaskList(context.Background(), localapi.TaskListParams{Workspace: workspace.Workspace.ID, Project: project.Project.ID, PageParams: localapi.PageParams{Limit: 10}})
-	if err != nil || len(tasks.Tasks) != 1 || tasks.Tasks[0].Task.AssignedAgentID == "" {
+	if err != nil || len(tasks.Tasks) != 1 {
 		t.Fatalf("owner-created tasks = %#v, %v", tasks, err)
 	}
-	runs, err := api.RunList(context.Background(), localapi.RunListParams{Workspace: workspace.Workspace.ID, Project: project.Project.ID, PageParams: localapi.PageParams{Limit: 10}})
+	deadline := time.Now().Add(3 * time.Second)
+	var runs localapi.RunListResult
+	for time.Now().Before(deadline) {
+		runs, err = api.RunList(context.Background(), localapi.RunListParams{Workspace: workspace.Workspace.ID, Project: project.Project.ID, PageParams: localapi.PageParams{Limit: 10}})
+		if err == nil && len(runs.Runs) == 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	if err != nil || len(runs.Runs) != 1 {
 		t.Fatalf("owner-created runs = %#v, %v", runs, err)
+	}
+	active := waitForRunStatus(t, api, runs.Runs[0].ID, domain.RunActive)
+	reporter, err := store.Open(context.Background(), running.config.DataDir, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reporter.Close()
+	progress, err := reporter.SubmitRunReport(context.Background(), store.CreateRunReportCommand{
+		RunID: active.Detail.Run.ID, Kind: domain.ObservationProgress,
+		Message:        "The implementation boundary is mapped and one owner-facing decision may be needed.",
+		Payload:        map[string]any{"completed": []string{"inspected canonical project context"}, "next": []string{"continue implementation"}},
+		IdempotencyKey: "web-manager-review-progress",
+	})
+	if err != nil || progress.ID == "" {
+		t.Fatalf("SubmitRunReport(progress) = %#v, %v", progress, err)
+	}
+
+	// The fixture worker's progress report must reach the durable manager
+	// loop without another owner HTTP turn. The browser reads the resulting
+	// manager-originated turn and exact review cursor from the conversation.
+	deadline = time.Now().Add(5 * time.Second)
+	var conversationRaw []byte
+	var conversation struct {
+		Turns  []domain.OwnerTurnDetail      `json:"turns"`
+		Review *domain.OwnerManagerReviewJob `json:"review"`
+	}
+	for time.Now().Before(deadline) {
+		response, requestErr := client.Get(origin + session.APIBase + "/conversation?workspace=" + url.QueryEscape(workspace.Workspace.ID) + "&project=" + url.QueryEscape(project.Project.ID))
+		if requestErr == nil {
+			conversationRaw, requestErr = io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			if requestErr == nil && response.StatusCode == http.StatusOK && json.Unmarshal(conversationRaw, &conversation) == nil && len(conversation.Turns) >= 2 && conversation.Review != nil && conversation.Review.Status == "idle" {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := protocolschema.ValidateJSON("web/v1/owner-conversation.response.schema.json", conversationRaw); err != nil {
+		t.Fatalf("owner conversation response schema = %v: %s", err, conversationRaw)
+	}
+	if len(conversation.Turns) != 2 || conversation.Review == nil {
+		t.Fatalf("automatic manager conversation = %#v", conversation)
+	}
+	managerTurn := conversation.Turns[1].Turn
+	if managerTurn.Kind != "review" || managerTurn.InitiatedBy != "manager" || managerTurn.TriggerEventSequence < 1 || managerTurn.Interpretation.Disposition != "answer" || managerTurn.Status != "completed" {
+		t.Fatalf("automatic manager turn = %#v", managerTurn)
+	}
+	if conversation.Review.RequestedEventSequence != conversation.Review.ReviewedEventSequence || conversation.Review.LastTurnID != managerTurn.ID || conversation.Review.RequestedEventSequence != managerTurn.TriggerEventSequence {
+		t.Fatalf("automatic manager cursor = %#v, turn = %#v", conversation.Review, managerTurn)
 	}
 }
 
@@ -600,6 +677,35 @@ func TestM21WorkbenchTerminalGrantIsRunBoundSingleUseAndInteractive(t *testing.T
 }
 
 type m21WorkbenchInspector struct{}
+
+// m21OwnerLoopInterpreter keeps the daemon integration proof provider-free
+// while exercising the same untrusted interpretation boundary as Codex. The
+// first owner turn freezes one task; the autonomous review consumes the worker
+// report and returns a manager-originated update without any new effect.
+type m21OwnerLoopInterpreter struct{}
+
+func (m21OwnerLoopInterpreter) Interpret(_ context.Context, request execution.OwnerInterpretationRequest) (domain.OwnerInterpretation, error) {
+	var snapshot struct {
+		LaunchProfiles []struct {
+			ID string `json:"id"`
+		} `json:"launch_profiles"`
+	}
+	if err := json.Unmarshal(request.CanonicalContext, &snapshot); err != nil || len(snapshot.LaunchProfiles) == 0 {
+		return domain.OwnerInterpretation{}, errors.New("owner loop fixture received an invalid canonical snapshot")
+	}
+	if request.Kind == "review" {
+		return domain.OwnerInterpretation{
+			Disposition: "answer", Summary: "Reviewed the new worker report.",
+			Answer:          "The worker mapped the implementation boundary and is continuing without an owner decision.",
+			ObjectiveBudget: domain.Budget{}, Tasks: []domain.OwnerPlanTask{}, Choices: []domain.OwnerChoice{}, CitationRefs: []string{},
+		}, nil
+	}
+	return domain.OwnerInterpretation{
+		Disposition: "ready", Summary: "Prepared one exact integration task.", ObjectiveTitle: request.Instruction,
+		ObjectiveBudget: domain.Budget{}, Choices: []domain.OwnerChoice{}, CitationRefs: []string{},
+		Tasks: []domain.OwnerPlanTask{{Key: "implementation", Title: request.Instruction, Description: request.Instruction, Priority: 500, Budget: domain.Budget{}, LaunchProfileID: snapshot.LaunchProfiles[0].ID, DependsOn: []string{}}},
+	}, nil
+}
 
 func (m21WorkbenchInspector) Inspect(_ context.Context, path string) (domain.CheckoutObservation, error) {
 	return domain.CheckoutObservation{

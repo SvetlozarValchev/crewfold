@@ -3,11 +3,31 @@
   "$id": "urn:crewfold:schema:web:owner-conversation:v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "type", "conversations", "turns"],
+  "required": ["schema", "type", "conversations", "turns", "review"],
   "properties": {
     "schema": {"const": "urn:crewfold:schema:web:owner-conversation:v1"},
     "type": {"const": "owner_conversation"},
     "conversations": {"type": "array", "maxItems": 20, "items": {"$ref": "owner-turn-detail.schema.json#/properties/conversation"}},
-    "turns": {"type": "array", "maxItems": 200, "items": {"$ref": "owner-turn-detail.schema.json"}}
+    "turns": {"type": "array", "maxItems": 200, "items": {"$ref": "owner-turn-detail.schema.json"}},
+    "review": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["workspace_id", "project_id", "conversation_id", "status", "requested_event_sequence", "reviewed_event_sequence", "attempts", "available_at", "created_at", "updated_at"],
+      "properties": {
+        "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+        "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+        "conversation_id": {"type": "string", "pattern": "^conv_[0-9a-f]{32}$"},
+        "status": {"enum": ["idle", "pending", "leased", "failed"]},
+        "requested_event_sequence": {"type": "integer", "minimum": 1},
+        "reviewed_event_sequence": {"type": "integer", "minimum": 0},
+        "attempts": {"type": "integer", "minimum": 0},
+        "available_at": {"type": "string", "format": "date-time"},
+        "lease_expires_at": {"type": "string", "format": "date-time"},
+        "last_turn_id": {"type": "string", "pattern": "^turn_[0-9a-f]{32}$"},
+        "last_error": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    }
   }
 }

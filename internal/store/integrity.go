@@ -73,7 +73,7 @@ var semanticFamilyRegistry = []semanticFamilyDefinition{
 		"supervisor_actions", "supervisor_action_receipts", "approval_requests",
 		"supervisor_state", "run_scheduling_receipts", "run_retry_receipts",
 		"scheduling_intents", "owner_conversations", "owner_turns",
-		"owner_turn_operations", "owner_effect_receipts",
+		"owner_turn_operations", "owner_effect_receipts", "owner_manager_review_jobs",
 	}},
 	{name: "messaging", tables: []string{
 		"message_threads", "messages", "message_recipients", "message_wake_jobs",
@@ -729,6 +729,8 @@ SELECT
 			cut.Counts.OpenSupervisorActions = count
 		case "approval":
 			cut.Counts.OpenApprovals = count
+		case "owner_manager_review":
+			cut.Counts.OpenOwnerManagerReviews = count
 		default:
 			return QuiescentCut{}, storageFailure("map durable queue quiescence", fmt.Errorf("unmapped durable queue %q", definition.name))
 		}
@@ -755,7 +757,8 @@ func quiescenceCountsZero(counts QuiescenceCounts) bool {
 		counts.OpenWakeJobs == 0 &&
 		counts.OpenSchedulingIntents == 0 &&
 		counts.OpenSupervisorActions == 0 &&
-		counts.OpenApprovals == 0
+		counts.OpenApprovals == 0 &&
+		counts.OpenOwnerManagerReviews == 0
 }
 
 func quiescenceBlockerSamples(ctx context.Context, tx *sql.Tx) ([]QuiescenceBlocker, error) {

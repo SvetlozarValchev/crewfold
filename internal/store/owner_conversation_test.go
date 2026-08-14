@@ -32,10 +32,21 @@ func TestM21OwnerQueryAndPlanAreDurableExactAndEffectFree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	profile, err := storage.CreateLaunchProfile(context.Background(), CreateLaunchProfileCommand{
+		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID, AgentIdentifier: agent.Value.ID,
+		ExpectedAgentRevision: agent.Value.Revision, Purpose: "implementation", Runtime: agent.Value.Runtime, Provider: agent.Value.Provider,
+		CheckoutIdentifier: project.Checkout.ID, Scenario: managementProgressScenario("owner-conversation"), AssignmentLeaseSeconds: 3600, CapabilityTTLSeconds: 3600,
+		IdempotencyKey: "owner-conversation-profile", CorrelationID: "owner-conversation-profile",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	before := testWorkspaceEvents(t, storage, workspace.Workspace.ID, 0, 100)
 	queryCommand := PrepareOwnerTurnCommand{
 		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID,
 		Instruction: "What is happening?", Kind: "query", IdempotencyKey: "owner-query-one",
+		ExpectedEventSequence: before[len(before)-1].Sequence,
+		Interpretation:        domain.OwnerInterpretation{Disposition: "answer", Summary: "Current state", Answer: "The project is ready for a plan.", ObjectiveBudget: domain.Budget{}, Tasks: []domain.OwnerPlanTask{}, Choices: []domain.OwnerChoice{}, CitationRefs: []string{}},
 	}
 	query, err := storage.PrepareOwnerTurn(context.Background(), queryCommand)
 	if err != nil {
@@ -59,11 +70,13 @@ func TestM21OwnerQueryAndPlanAreDurableExactAndEffectFree(t *testing.T) {
 	plan, err := storage.PrepareOwnerTurn(context.Background(), PrepareOwnerTurnCommand{
 		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID, ConversationID: query.Conversation.ID,
 		Instruction: "Build the first playable loop", Kind: "plan", IdempotencyKey: "owner-plan-one",
+		ExpectedEventSequence: before[len(before)-1].Sequence,
+		Interpretation:        domain.OwnerInterpretation{Disposition: "ready", Summary: "One exact implementation task", ObjectiveTitle: "Build the first playable loop", ObjectiveBudget: domain.Budget{}, Choices: []domain.OwnerChoice{}, CitationRefs: []string{}, Tasks: []domain.OwnerPlanTask{{Key: "playable-loop", Title: "Build the first playable loop", Description: "Build a deterministic first loop", Priority: 500, Budget: domain.Budget{}, LaunchProfileID: profile.Value.ID, DependsOn: []string{}}}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Turn.Status != "planned" || len(plan.Operations) != 4 || len(plan.Receipts) != 0 {
+	if plan.Turn.Status != "planned" || len(plan.Operations) != 3 || len(plan.Receipts) != 0 {
 		t.Fatalf("plan turn = %#v", plan)
 	}
 	for index, operation := range plan.Operations {
@@ -74,13 +87,13 @@ func TestM21OwnerQueryAndPlanAreDurableExactAndEffectFree(t *testing.T) {
 	planEvents := testWorkspaceEvents(t, storage, workspace.Workspace.ID, 0, 100)
 	edited, err := storage.EditOwnerPlan(context.Background(), EditOwnerPlanCommand{
 		WorkspaceIdentifier: workspace.Workspace.ID, TurnID: plan.Turn.ID, ExpectedRevision: plan.Turn.Revision,
-		Title: "Playable world loop", Description: "Build a deterministic first loop", Priority: 700,
-		Budget: domain.Budget{TokenLimit: 12000, CostCents: 0, TimeSeconds: 1800}, AgentIdentifier: agent.Value.ID,
+		ObjectiveTitle: "Playable world loop", ObjectiveBudget: domain.Budget{TokenLimit: 12000, CostCents: 0, TimeSeconds: 1800},
+		Tasks: []domain.OwnerPlanTask{{Key: "playable-loop", Title: "Playable world loop", Description: "Build a deterministic first loop", Priority: 700, Budget: domain.Budget{TokenLimit: 12000, TimeSeconds: 1800}, LaunchProfileID: profile.Value.ID, DependsOn: []string{}}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if edited.Turn.Revision != plan.Turn.Revision+1 || edited.Operations[1].Payload["title"] != "Playable world loop" || edited.Operations[2].Payload["agent_id"] != agent.Value.ID {
+	if edited.Turn.Revision != plan.Turn.Revision+1 || edited.Operations[1].Payload["title"] != "Playable world loop" || edited.Operations[2].Payload["launch_profile_id"] != profile.Value.ID {
 		t.Fatalf("edited owner plan = %#v", edited)
 	}
 	if afterEdit := testWorkspaceEvents(t, storage, workspace.Workspace.ID, 0, 100); !reflect.DeepEqual(afterEdit, planEvents) {
@@ -88,13 +101,13 @@ func TestM21OwnerQueryAndPlanAreDurableExactAndEffectFree(t *testing.T) {
 	}
 	if _, err := storage.EditOwnerPlan(context.Background(), EditOwnerPlanCommand{
 		WorkspaceIdentifier: workspace.Workspace.ID, TurnID: plan.Turn.ID, ExpectedRevision: edited.Turn.Revision,
-		Title: "Paid plan", Priority: 1, Budget: domain.Budget{CostCents: 1}, AgentIdentifier: agent.Value.ID,
+		ObjectiveTitle: "Paid plan", ObjectiveBudget: domain.Budget{CostCents: 1}, Tasks: edited.Turn.Interpretation.Tasks,
 	}); ErrorCode(err) != CodeInvalidOwnerConversation {
 		t.Fatalf("paid owner plan edit error = %v", err)
 	}
 	if _, err := storage.EditOwnerPlan(context.Background(), EditOwnerPlanCommand{
 		WorkspaceIdentifier: workspace.Workspace.ID, TurnID: plan.Turn.ID, ExpectedRevision: plan.Turn.Revision,
-		Title: "Stale edit", Priority: 1, AgentIdentifier: agent.Value.ID,
+		ObjectiveTitle: "Stale edit", ObjectiveBudget: domain.Budget{}, Tasks: edited.Turn.Interpretation.Tasks,
 	}); ErrorCode(err) != CodeOwnerTurnConflict {
 		t.Fatalf("stale owner plan edit error = %v", err)
 	}
@@ -117,17 +130,14 @@ func TestM21OwnerQueryAndPlanAreDurableExactAndEffectFree(t *testing.T) {
 	gated, err := storage.PrepareOwnerTurn(context.Background(), PrepareOwnerTurnCommand{
 		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID, ConversationID: query.Conversation.ID,
 		Instruction: "Delete the repository and push a release", Kind: "act", IdempotencyKey: "owner-gated-one",
+		ExpectedEventSequence: gatedBefore[len(gatedBefore)-1].Sequence,
+		Interpretation:        domain.OwnerInterpretation{Disposition: "ready", Summary: "Unsafe plan", ObjectiveTitle: "Delete the repository", ObjectiveBudget: domain.Budget{}, Choices: []domain.OwnerChoice{}, CitationRefs: []string{}, Tasks: []domain.OwnerPlanTask{{Key: "delete", Title: "Delete the repository", Priority: 1, Budget: domain.Budget{}, LaunchProfileID: profile.Value.ID, DependsOn: []string{}}}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gated.Turn.Status != "awaiting_approval" || gated.Turn.Answer == "" || len(gated.Operations) != 4 || len(gated.Receipts) != 0 {
+	if gated.Turn.Status != "completed" || gated.Turn.Answer == "" || len(gated.Operations) != 0 || len(gated.Receipts) != 0 {
 		t.Fatalf("gated turn = %#v", gated)
-	}
-	for index, operation := range gated.Operations {
-		if operation.PolicyResult != "gated" || operation.Status != "awaiting_approval" {
-			t.Fatalf("gated operation %d = %#v", index, operation)
-		}
 	}
 	if gatedAfter := testWorkspaceEvents(t, storage, workspace.Workspace.ID, 0, 100); !reflect.DeepEqual(gatedAfter, gatedBefore) {
 		t.Fatalf("gated owner turn changed the domain journal:\nbefore=%#v\nafter=%#v", gatedBefore, gatedAfter)

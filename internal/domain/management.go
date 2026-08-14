@@ -286,6 +286,8 @@ type SchedulingIntent struct {
 	SourceProposalID            string `json:"source_proposal_id"`
 	SourceActionID              string `json:"source_action_id"`
 	SourceCheckRepairProposalID string `json:"source_check_repair_proposal_id,omitempty"`
+	SourceOwnerTurnID           string `json:"source_owner_turn_id,omitempty"`
+	SourceOwnerOperationID      string `json:"source_owner_operation_id,omitempty"`
 	Status                      string `json:"status"`
 	Reason                      string `json:"reason,omitempty"`
 	AssignmentID                string `json:"assignment_id,omitempty"`
