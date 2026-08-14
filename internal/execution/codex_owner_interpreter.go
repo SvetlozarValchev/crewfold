@@ -70,9 +70,17 @@ func NewCodexOwnerInterpreter(options CodexOwnerInterpreterOptions) *CodexOwnerI
 	if poll <= 0 {
 		poll = 100 * time.Millisecond
 	}
+	codexExecutable := strings.TrimSpace(options.CodexExecutable)
+	if codexExecutable == "" {
+		codexExecutable = "codex"
+	}
+	codexHome := strings.TrimSpace(options.CodexHome)
+	if codexHome == "" {
+		codexHome = defaultCodexHome()
+	}
 	return &CodexOwnerInterpreter{
 		runtime: options.Runtime, stateRoot: strings.TrimSpace(options.StateRoot),
-		codexExecutable: strings.TrimSpace(options.CodexExecutable), codexHome: strings.TrimSpace(options.CodexHome),
+		codexExecutable: codexExecutable, codexHome: codexHome,
 		timeout: timeout, pollInterval: poll,
 	}
 }

@@ -9,6 +9,16 @@ import (
 	"crewfold/internal/domain"
 )
 
+func TestM21CodexOwnerInterpreterUsesTheNativeSubscriptionCLIDefault(t *testing.T) {
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	t.Setenv("CODEX_HOME", codexHome)
+
+	interpreter := NewCodexOwnerInterpreter(CodexOwnerInterpreterOptions{})
+	if interpreter.codexExecutable != "codex" || interpreter.codexHome != codexHome {
+		t.Fatalf("default Codex interpreter = executable %q home %q", interpreter.codexExecutable, interpreter.codexHome)
+	}
+}
+
 func TestM21CodexOwnerInterpreterReplaysCompletedStructuredOutputWithoutRelaunch(t *testing.T) {
 	root := t.TempDir()
 	checkout := filepath.Join(root, "checkout")
