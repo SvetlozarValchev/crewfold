@@ -2,8 +2,11 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -207,6 +210,19 @@ func TestMessageWakeHandlersAndStartupRemainResponsiveDuringExternalEffect(t *te
 	case <-time.After(time.Second):
 		t.Fatal("daemon shutdown waited on the cancelled wake effect")
 	}
+	database, err := sql.Open("sqlite3", filepath.Join(config.DataDir, "crewfold.db"))
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	if _, err := database.Exec(`UPDATE message_wake_jobs
+SET lease_expires_at = '2000-01-01T00:00:00Z'
+WHERE status = 'leased'`); err != nil {
+		database.Close()
+		t.Fatalf("expire interrupted wake lease error = %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close() error = %v", err)
+	}
 
 	secondStarted, secondCanceled := make(chan struct{}), make(chan struct{})
 	var secondStartOnce, secondCancelOnce sync.Once
@@ -226,6 +242,20 @@ func TestMessageWakeHandlersAndStartupRemainResponsiveDuringExternalEffect(t *te
 	case <-secondStarted:
 	case <-time.After(2 * time.Second):
 		t.Fatal("pending wake was not picked up after restart")
+	}
+	inbox, err := restarted.InboxList(context.Background(), "personal", agent.Agent.ID, 20)
+	if err != nil {
+		t.Fatalf("InboxList(after wake recovery) error = %v", err)
+	}
+	foundFailedUnknown := false
+	for _, item := range inbox.Items {
+		if item.Message.ID != firstMessage.Mutation.Message.ID {
+			continue
+		}
+		foundFailedUnknown = item.Delivery.WakeStatus == domain.WakeFailedUnknown && strings.Contains(item.Delivery.WakeDiagnostic, "outcome is unknown")
+	}
+	if !foundFailedUnknown {
+		t.Fatalf("InboxList() did not publish failed_unknown diagnosis for interrupted wake: %#v", inbox.Items)
 	}
 	if _, err := restarted.Status(context.Background()); err != nil {
 		t.Fatalf("Status(after restart with blocked wake) error = %v", err)
