@@ -154,6 +154,46 @@ policy result, execution state, approval linkage, and effect receipt linkage.
 Canonical objectives, tasks, assignments, runs, decisions, and approvals remain
 the existing domain records rather than copies embedded in chat history.
 
+### Worker activity closes the manager loop
+
+Owner HTTP turns are not the only time the planning manager runs. Once a project
+has an open owner conversation, a worker-originated structured progress,
+blocked, or completion report and a worker-originated durable message advance
+one coalesced `owner_manager_review_jobs` cursor in the same database transaction
+as the triggering canonical event. CLI-only projects with no owner conversation
+do not silently consume a provider turn.
+
+One bounded daemon worker leases that cursor, captures an exact canonical project
+snapshot, and invokes the selected manager provider with `kind=review`. For the
+normal Codex configuration this is a read-only Codex CLI operation hosted by
+Herdr. The returned value is still untrusted and passes through the same closed
+interpretation, citation, graph, scope, budget, revision, and idempotency checks
+as an owner turn. It can do exactly one of three useful things:
+
+- append a cited material crew update;
+- raise one typed consequential owner decision; or
+- freeze a new dependency-aware graph for owner review.
+
+A review never silently executes the graph, changes authority, or impersonates
+the owner. Choosing a decision becomes a new visible owner turn; executing a
+reviewed graph uses the ordinary canonical effect/receipt path; accepted work is
+then scheduled by the deterministic supervisor. Workers continue to communicate
+through scoped MCP reports and durable inbox messages, so the observable loop is:
+
+```text
+worker report/message -> durable review cursor -> manager review
+  -> update | owner decision | reviewed graph
+  -> owner-authorized canonical effects -> supervisor -> workers
+```
+
+Concurrent worker activity only advances the requested event cut. The current
+leased pass completes its frozen cut and another coalesced pass follows; it does
+not create one provider call per message. A daemon restart immediately requeues
+the lease under the exclusive data-directory lock. Stable operation IDs,
+structured-output reuse, owner-turn idempotency, and the reviewed-event cursor
+cover crashes before provider completion, after output, after turn persistence,
+and before queue completion without duplicate interpretation or duplicate work.
+
 ### Codex subscription access is the default OpenAI path
 
 Crewfold launches the installed Codex CLI through the existing provider adapter.
@@ -230,7 +270,8 @@ of project truth.
 - The Go daemon remains one deployment and authority boundary even though the
   build gains a pinned frontend toolchain.
 - Most existing domain behavior is reused; the largest new durable seam is the
-  conversation-to-typed-command and receipt model.
+  conversation-to-typed-command and receipt model plus one coalesced project
+  manager-review cursor.
 - Browser security, service lifecycle, terminal proxying, and frontend scale are
   new first-class fault boundaries and require executable acceptance tests.
 - Herdr becomes the managed interactive default without becoming a second control

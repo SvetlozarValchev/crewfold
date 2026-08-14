@@ -1234,7 +1234,10 @@ decision/evidence/activity/briefing/health surfaces, bounded Git and logs, and a
 single-use run-bound terminal WebSocket are implemented. A built-binary real-Chrome
 scenario begins with an empty store and uses browser controls to onboard a committed
 repository, execute work, edit and launch a successor plan, inspect its agent, and
-generate the exact project briefing.
+generate the exact project briefing. Commit `d1b5dd8` completes the missing
+event-driven orchestration seam: worker reports and agent messages now trigger one
+coalesced, restart-safe manager review that can publish a cited update, raise one
+owner decision, or freeze successor work for review.
 
 **Question answered:** Can one developer start, direct, inspect, understand, and
 intervene in a real local crew from one owner interface instead of composing the
@@ -1305,6 +1308,12 @@ from the daemon's canonical APIs.
    personal-100 scale, provider-free onboarding/execution through the explicit
    Direct fallback, recorded subscription authentication, Herdr-first interactive
    operation, and every prior gate.
+9. **Event-driven manager loop.** Advance one durable project review cursor in
+   the same transaction as each worker report or message, coalesce concurrent
+   activity, run a read-only manager review through the selected provider/runtime,
+   and persist its update, typed owner decision, or inert reviewed graph. Restart
+   replays the exact event cut and completed structured output without another
+   model interpretation.
 
 **Deliverables**
 
@@ -1314,6 +1323,8 @@ from the daemon's canonical APIs.
 - First-run repository/provider/runtime/policy onboarding.
 - Durable conversation-to-typed-command execution and receipt model.
 - Editable plan, automatic within-policy execution, and exact approval cards.
+- Durable worker-to-manager review with visible updates, owner questions, and
+  reviewed successor graphs; no timer-only browser simulation.
 - Agent inspector with canonical activity/evidence and optional live terminal.
 - Browser presentations of the current work graph, inbox, decisions, checks,
   coordination, activity, briefings, health, and recovery guidance.
@@ -1333,6 +1344,9 @@ from the daemon's canonical APIs.
   outcome briefing.
 - Recorded Codex fixtures prove a ChatGPT-subscription-authenticated CLI path with
   no API key in browser, daemon state, arguments, environment, logs, or events.
+- Store and full-daemon tests prove report/message coalescing, manager-originated
+  turn provenance, exact event cursors, restart lease recovery, completed-output
+  reuse, and browser-visible review state without a second owner request.
 - Browser transport suites prove origin/host/CSRF/bootstrap/session/terminal-grant
   isolation, strict schemas, idempotent replay, bounded streams, and fail-closed
   unknown fields/events.

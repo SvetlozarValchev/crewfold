@@ -6,6 +6,7 @@
 - Review status: `passed`
 - Implementation commit: `6116b5d0b21bfba48007da464ff3bae0c8543416`
 - Herdr-first runtime correction: `a6a8f82`
+- Event-driven manager-loop completion: `d1b5dd8`
 - Reviewer: `automated acceptance and real-browser review`
 - Date: `2026-08-15`
 
@@ -25,6 +26,13 @@ Herdr supplies the normal interactive runtime and live terminal; Crewfold's
 database, events, receipts, reports, and evidence remain canonical truth. Direct
 remains an explicit advanced CI/headless fallback.
 
+The manager is now event-driven as well as owner-invoked. Structured worker
+reports and agent messages atomically advance one durable project review cursor.
+The daemon coalesces them, runs a read-only provider review through Codex/Herdr in
+normal use, and appends a manager-originated update, one typed owner question, or
+an inert successor graph. An owner decision or graph launch returns to the same
+canonical receipt and supervisor path; it is not browser-only choreography.
+
 - Public scenario: `test/scenarios/web-workbench-shell/run.sh`
 - Exact command: `./test/scenarios/web-workbench-shell/run.sh`
 - Observed result: `Authenticated local web workbench browser acceptance: PASS`
@@ -37,6 +45,7 @@ remains an explicit advanced CI/headless fallback.
 | Browser security | Exact IPv4 loopback Host/Origin, HttpOnly SameSite session, in-memory CSRF, CSP/no-frame policy, strict bounded RPC, and SSE used only to invalidate canonical reads |
 | Onboarding | Browser-only workspace/project/checkout/provider/runtime setup against an existing committed Git repository; live Herdr is the interactive default and Direct is the explicit advanced CI/headless fallback |
 | Conversation | Bounded durable query/plan/act turns with one frozen current operation grammar, canonical hashes, replay-safe idempotency, and no prose-derived authority |
+| Manager loop | Worker reports/messages trigger one coalesced restart-safe review at an exact event cut; updates, owner questions, and reviewed graphs carry explicit manager provenance and never silently execute |
 | Planning | Task/objective text, priority, enabled agent, and fixed token/time limits are editable before launch; revision and event high-water must still match |
 | Execution | Objective, task, assignment, and run effects use existing Store mutations and retain exact method/request/response/event receipts |
 | Inspection | Work graph, crew, inbox, decisions, evidence, activity, briefings, health, Git observation, and logs come from current daemon/Store truth |
@@ -49,6 +58,7 @@ remains an explicit advanced CI/headless fallback.
 | --- | --- | --- |
 | Real Chrome workflow | `./test/scenarios/web-workbench-shell/run.sh` | passed |
 | Focused Go packages | `./scripts/go.sh test ./internal/store ./internal/daemon ./internal/localapi ./internal/execution ./protocol -run 'M21\|OwnerConversation\|Workbench\|WebBootstrap' -count=1` | passed |
+| Event-driven loop | focused Store, full-daemon browser, structured-output replay, and recovery quiescence tests | passed normally and with the race detector |
 | Focused race packages | same packages and expression with `-race` | passed |
 | Embedded database generation | `./scripts/check-generated-db.sh` | passed |
 | Embedded web assets | `./scripts/check-web-assets.sh` | passed; 279,254 bytes |
@@ -80,8 +90,10 @@ static, generated, and package gates passed afterward.
 
 ## Known limitations and deferrals
 
-The current interpreter intentionally emits one small deterministic objective /
-task / assignment / run graph rather than an open-ended model-generated workflow.
+Provider-free acceptance intentionally uses a deterministic typed interpreter;
+normal Codex projects use the installed, subscription-authenticated Codex CLI for
+owner and automatic manager turns. The manager sees bounded canonical state and
+read-only repository scope, not private model reasoning or unbounded transcripts.
 Instructions that request destructive, publication, external-communication,
 credential, network, authority-changing, or cost-escalating work fail closed and
 must be expressed through an existing exact reviewed operation surface. The web
@@ -105,5 +117,6 @@ release publication.
 
 M21 is accepted at implementation commit
 `6116b5d0b21bfba48007da464ff3bae0c8543416`, with the Herdr-first service,
-preflight, diagnosis, and retry correction in `a6a8f82`. M22 remains the next
-milestone and was not started during this review.
+preflight, diagnosis, and retry correction in `a6a8f82`, and the event-driven
+manager loop in `d1b5dd8`. M22 remains the next milestone and was not started
+during this review.

@@ -95,15 +95,56 @@ func TestM21WorkerReportsAndMessagesCoalesceIntoDurableManagerReviews(t *testing
 	if err != nil || !found || replayedReview.Turn.ID != review.Turn.ID {
 		t.Fatalf("OwnerTurnReplay(manager crash boundary) = %#v, %t, %v", replayedReview, found, err)
 	}
+	lateReport, err := storage.SubmitRunReport(context.Background(), CreateRunReportCommand{
+		RunID: starting.ID, Kind: domain.ObservationProgress, Message: "A newer worker update arrived after the frozen review cut.",
+		Payload: map[string]any{"next": "include it in one follow-up pass"}, IdempotencyKey: "manager-review-late-progress",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lateQueued, found, err := storage.OwnerManagerReview(context.Background(), workspace.ID, project.ID)
+	if err != nil || !found || lateQueued.Status != "leased" || lateQueued.RequestedEventSequence <= snapshot.EventSequence {
+		t.Fatalf("OwnerManagerReview(late worker event) = %#v, %t, %v", lateQueued, found, err)
+	}
+	lateEventSequence := lateQueued.RequestedEventSequence
 	if err := storage.CompleteOwnerManagerReview(context.Background(), project.ID, snapshot.EventSequence, review.Turn.ID); err != nil {
 		t.Fatal(err)
 	}
+	pendingFollowup, found, err := storage.OwnerManagerReview(context.Background(), workspace.ID, project.ID)
+	if err != nil || !found || pendingFollowup.Status != "pending" || pendingFollowup.ReviewedEventSequence != snapshot.EventSequence || pendingFollowup.RequestedEventSequence != lateEventSequence {
+		t.Fatalf("OwnerManagerReview(coalesced follow-up) = %#v, %t, %v", pendingFollowup, found, err)
+	}
+	followupClaim, found, err := storage.ClaimOwnerManagerReview(context.Background(), time.Minute)
+	if err != nil || !found || followupClaim.RequestedEventSequence != lateEventSequence {
+		t.Fatalf("ClaimOwnerManagerReview(follow-up) = %#v, %t, %v", followupClaim, found, err)
+	}
+	followupSnapshot, err := storage.BuildOwnerInterpretationSnapshot(context.Background(), workspace.ID, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.AdvanceOwnerManagerReviewCut(context.Background(), project.ID, followupSnapshot.EventSequence); err != nil {
+		t.Fatal(err)
+	}
+	followupReview, err := storage.PrepareOwnerTurn(context.Background(), PrepareOwnerTurnCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, ConversationID: conversation.Conversation.ID,
+		Instruction: "Review newer worker activity", Kind: "review", InitiatedBy: "manager",
+		TriggerEventSequence: followupSnapshot.EventSequence, ExpectedEventSequence: followupSnapshot.EventSequence,
+		IdempotencyKey: "manager-review:" + project.ID + ":follow-up",
+		Citations:      []domain.OwnerCitation{followupSnapshot.Citations["report:"+lateReport.ID]},
+		Interpretation: domain.OwnerInterpretation{Disposition: "answer", Summary: "Follow-up reviewed.", Answer: "The newer worker update is accounted for.", ObjectiveBudget: domain.Budget{}, Tasks: []domain.OwnerPlanTask{}, Choices: []domain.OwnerChoice{}, CitationRefs: []string{"report:" + lateReport.ID}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.CompleteOwnerManagerReview(context.Background(), project.ID, followupSnapshot.EventSequence, followupReview.Turn.ID); err != nil {
+		t.Fatal(err)
+	}
 	settled, found, err := storage.OwnerManagerReview(context.Background(), workspace.ID, project.ID)
-	if err != nil || !found || settled.Status != "idle" || settled.ReviewedEventSequence != snapshot.EventSequence || settled.LastTurnID != review.Turn.ID {
+	if err != nil || !found || settled.Status != "idle" || settled.ReviewedEventSequence != followupSnapshot.EventSequence || settled.LastTurnID != followupReview.Turn.ID {
 		t.Fatalf("OwnerManagerReview(settled) = %#v, %t, %v", settled, found, err)
 	}
 	page, err := storage.ListOwnerConversation(context.Background(), workspace.ID, project.ID, conversation.Conversation.ID)
-	if err != nil || page.Review == nil || len(page.Turns) != 2 || page.Turns[1].Turn.ID != review.Turn.ID {
+	if err != nil || page.Review == nil || len(page.Turns) != 3 || page.Turns[1].Turn.ID != review.Turn.ID || page.Turns[2].Turn.ID != followupReview.Turn.ID {
 		t.Fatalf("ListOwnerConversation(after proactive review) = %#v, %v", page, err)
 	}
 	reviewer, err := storage.CreateAgent(context.Background(), CreateAgentCommand{
