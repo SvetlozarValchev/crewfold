@@ -15,8 +15,12 @@ await new Promise((resolve, reject) => {
 
 let nextID = 1;
 const pending = new Map();
+const browserExceptions = [];
 socket.addEventListener("message", (event) => {
   const message = JSON.parse(String(event.data));
+  if (message.method === "Runtime.exceptionThrown") {
+    browserExceptions.push(message.params?.exceptionDetails?.exception?.description ?? message.params?.exceptionDetails?.text ?? "unknown browser exception");
+  }
   const waiter = pending.get(message.id);
   if (!waiter) return;
   pending.delete(message.id);
@@ -94,6 +98,7 @@ await evaluate(`(() => {
   return true;
 })()`);
 await waitFor("document.body.innerText.includes('Edit objective, graph, profiles, and budgets')", "editable frozen plan");
+await waitFor("document.body.innerText.includes('actual tasks') && document.body.innerText.includes('typed execution operations')", "task plan separated from execution operations");
 await waitFor(`(() => {
   if (document.querySelector('.plan-editor')) return true;
   const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('Edit objective, graph, profiles, and budgets') && !candidate.disabled);
@@ -115,6 +120,16 @@ await waitFor(`(() => {
   return Boolean(button);
 })()`, "enabled reviewed graph execution");
 await waitFor("document.body.innerText.includes('Committed the frozen graph exactly; the supervisor now schedules dependency-ready work through its launch profiles.')", "edited plan execution", 20000);
+
+await evaluate(`(() => {
+  [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Workbench')).click();
+  const task = document.querySelector('.task-card');
+  if (task) task.click();
+  return Boolean(task);
+})()`);
+await waitFor("document.body.innerText.includes('READINESS')", "task readiness inspector");
+if (browserExceptions.length) throw new Error(`browser exceptions after task inspection: ${browserExceptions.join(" | ")}`);
+await evaluate(`(() => { document.querySelector('button[aria-label="Close inspector"]')?.click(); return true; })()`);
 
 await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Crew')).click(); return true; })()`);
 await waitFor("document.body.innerText.includes('Inspect agent')", "crew inspector action");
@@ -139,6 +154,7 @@ if (result.title !== "Crewfold Workbench") throw new Error(`unexpected title ${r
 if (result.iconCount < 8) throw new Error(`expected Lucide icon pack, found ${result.iconCount} rendered icons`);
 if (result.unnamedButtons || result.unlabelledControls) throw new Error(`unnamed browser controls: buttons=${result.unnamedButtons}, fields=${result.unlabelledControls}`);
 if (result.leakedHandle) throw new Error("private runtime authority leaked into the browser document");
+if (browserExceptions.length) throw new Error(`browser exceptions: ${browserExceptions.join(" | ")}`);
 for (const expected of ["Project briefing", "Event cut #"]) {
   if (!result.body.includes(expected)) throw new Error(`browser result omitted ${expected}`);
 }
