@@ -20,7 +20,7 @@ func (runner *unavailableCodexSandboxRunner) Run(_ context.Context, _ string, ar
 		return execution.ProviderCommandResult{Stdout: []byte("codex-cli 1.2.3\n")}, nil
 	case "exec --help":
 		return execution.ProviderCommandResult{Stdout: []byte("--config --ephemeral --ignore-user-config --json --sandbox\n")}, nil
-	case "sandbox linux -- /bin/sh -c exit 0":
+	case "sandbox -- /bin/sh -c exit 0":
 		return execution.ProviderCommandResult{Stderr: []byte("bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted\n"), ExitCode: 1}, nil
 	default:
 		return execution.ProviderCommandResult{}, nil

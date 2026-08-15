@@ -140,7 +140,7 @@ func (probe CodexProbe) run(ctx context.Context, requireWorkspaceSandbox bool) C
 		return report
 	}
 	if requireWorkspaceSandbox {
-		sandboxResult, err := probe.runner.Run(ctx, probe.executable, []string{"sandbox", "linux", "--", "/bin/sh", "-c", "exit 0"}, environment)
+		sandboxResult, err := probe.runner.Run(ctx, probe.executable, []string{"sandbox", "--", "/bin/sh", "-c", "exit 0"}, environment)
 		if err != nil {
 			report.fail("capabilities", "Codex workspace sandbox probe failed: "+boundedCodexDiagnostic(err.Error()))
 			return report
