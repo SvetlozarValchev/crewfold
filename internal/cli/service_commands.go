@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -61,7 +62,7 @@ func (a *App) runServiceCommand(ctx context.Context, mode outputMode, args []str
 			}
 		}
 	}
-	manager := service.Manager{Paths: paths, Executable: executable, HerdrExecutable: herdrExecutable, Run: a.runService}
+	manager := service.Manager{Paths: paths, Executable: executable, HerdrExecutable: herdrExecutable, EnvironmentPath: os.Getenv("PATH"), Run: a.runService}
 	var result service.Result
 	switch args[0] {
 	case "install":

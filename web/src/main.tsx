@@ -146,14 +146,25 @@ function readableRuntimeActivity(raw: string): RuntimeActivity[] {
           const itemType = typeof item.type === "string" ? item.type : "item";
           if (itemType === "agent_message") { add("Agent", item.text, "good"); continue; }
           if (itemType === "mcp_tool_call") { add("Crewfold tool", `${String(item.tool ?? "tool").replaceAll("crewfold_", "").replaceAll("_", " ")} · ${String(item.status ?? "completed")}`, item.status === "failed" ? "bad" : "live"); continue; }
-          if (itemType === "command_execution") { add("Command", item.command ?? item.text ?? "Local command completed", item.status === "failed" ? "bad" : "quiet"); continue; }
+          if (itemType === "command_execution") {
+            const failed = item.status === "failed" || typeof item.exit_code === "number" && item.exit_code !== 0;
+            const command = String(item.command ?? item.text ?? "Local command completed");
+            const output = typeof item.aggregated_output === "string" ? item.aggregated_output.trim() : "";
+            add("Command", failed && output ? `${command}\n\n${output.slice(-1600)}` : command, failed ? "bad" : "quiet");
+            continue;
+          }
         }
         continue;
       } catch {
         // A partial live JSON record is represented by its useful diagnostic below.
       }
     }
-    if (/bwrap:|failed|error|not permitted|usage limit/i.test(line)) add("Runtime", line, "bad");
+    // Bounded logs can begin in the middle of a large JSON-RPC result. Such a
+    // fragment is protocol data, not a human-facing failure (it often contains
+    // the harmless field `"error": null`). Complete Codex events are handled
+    // above; discard structural fragments and retain only plain diagnostics.
+    if (/"[A-Za-z0-9_]+"\s*:/.test(line)) continue;
+    if (/bwrap:|failed to|error:|not permitted|usage limit|command not found/i.test(line)) add("Runtime", line, "bad");
   }
   return entries.slice(-40);
 }

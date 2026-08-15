@@ -28,6 +28,7 @@ type Manager struct {
 	Paths           appdirs.Paths
 	Executable      string
 	HerdrExecutable string
+	EnvironmentPath string
 	Run             Runner
 }
 
@@ -141,6 +142,9 @@ func (m Manager) validate() error {
 	if m.HerdrExecutable != "" && (!filepath.IsAbs(m.HerdrExecutable) || filepath.Clean(m.HerdrExecutable) != m.HerdrExecutable || containsUnsafeServiceText(m.HerdrExecutable)) {
 		return errors.New("Herdr service executable must be a canonical absolute path")
 	}
+	if err := validateServicePath(m.EnvironmentPath); err != nil {
+		return err
+	}
 	for name, value := range map[string]string{
 		"data directory": m.Paths.DataDir,
 		"socket path":    m.Paths.SocketPath,
@@ -148,6 +152,21 @@ func (m Manager) validate() error {
 	} {
 		if !filepath.IsAbs(value) || filepath.Clean(value) != value || containsUnsafeServiceText(value) {
 			return fmt.Errorf("service %s must be a canonical absolute path", name)
+		}
+	}
+	return nil
+}
+
+func validateServicePath(value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > 8192 || containsUnsafeServiceText(value) {
+		return errors.New("service PATH must be bounded terminal-safe text")
+	}
+	for _, entry := range filepath.SplitList(value) {
+		if entry == "" || !filepath.IsAbs(entry) || filepath.Clean(entry) != entry {
+			return errors.New("service PATH entries must be canonical absolute paths")
 		}
 	}
 	return nil
@@ -200,6 +219,10 @@ func (m Manager) unit() string {
 	if m.HerdrExecutable != "" {
 		dependency = "Wants=" + HerdrUnitName + "\nAfter=" + HerdrUnitName + "\n"
 	}
+	environment := ""
+	if m.EnvironmentPath != "" {
+		environment = "Environment=" + systemdQuote("PATH="+m.EnvironmentPath) + "\n"
+	}
 	return `[Unit]
 Description=Crewfold local agent control plane
 After=default.target
@@ -207,7 +230,7 @@ After=default.target
 
 [Service]
 Type=simple
-ExecStart=` + systemdQuote(m.Executable) + ` daemon run --data-dir ` + systemdQuote(m.Paths.DataDir) + ` --socket ` + systemdQuote(m.Paths.SocketPath) + ` --web-address 127.0.0.1:0
+` + environment + `ExecStart=` + systemdQuote(m.Executable) + ` daemon run --data-dir ` + systemdQuote(m.Paths.DataDir) + ` --socket ` + systemdQuote(m.Paths.SocketPath) + ` --web-address 127.0.0.1:0
 Restart=on-failure
 RestartSec=2s
 UMask=0077
@@ -225,6 +248,10 @@ func (m Manager) herdrUnitPath() string {
 }
 
 func (m Manager) herdrUnit() string {
+	environment := ""
+	if m.EnvironmentPath != "" {
+		environment = "Environment=" + systemdQuote("PATH="+m.EnvironmentPath) + "\n"
+	}
 	return `[Unit]
 Description=Herdr interactive runtime host for Crewfold
 After=default.target
@@ -233,7 +260,7 @@ PartOf=` + UnitName + `
 
 [Service]
 Type=simple
-ExecStart=` + systemdQuote(m.HerdrExecutable) + ` server
+` + environment + `ExecStart=` + systemdQuote(m.HerdrExecutable) + ` server
 Restart=on-failure
 RestartSec=2s
 UMask=0077

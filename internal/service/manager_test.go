@@ -42,6 +42,7 @@ func TestInstallWritesPrivateExactUnitAndStartsIt(t *testing.T) {
 	var calls []call
 	manager := Manager{
 		Paths: paths, Executable: filepath.Join(root, "Crewfold 100%", "crewfold"),
+		EnvironmentPath: "/opt/owner-tools:/usr/bin",
 		Run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
 			calls = append(calls, call{name: name, arguments: append([]string(nil), arguments...)})
 			return nil, nil
@@ -60,6 +61,7 @@ func TestInstallWritesPrivateExactUnitAndStartsIt(t *testing.T) {
 	}
 	unit := string(contents)
 	for _, required := range []string{
+		`Environment="PATH=/opt/owner-tools:/usr/bin"`,
 		`ExecStart="` + filepath.Join(root, `Crewfold 100%%`, `crewfold`) + `" daemon run`,
 		`--data-dir "` + paths.DataDir + `"`,
 		`--socket "` + paths.SocketPath + `"`,
@@ -79,6 +81,17 @@ func TestInstallWritesPrivateExactUnitAndStartsIt(t *testing.T) {
 	}
 	if len(calls) != 3 || strings.Join(calls[0].arguments, " ") != "--user daemon-reload" || strings.Join(calls[1].arguments, " ") != "--user enable crewfold.service" || strings.Join(calls[2].arguments, " ") != "--user restart crewfold.service" {
 		t.Fatalf("systemctl calls = %#v", calls)
+	}
+}
+
+func TestInstallRejectsRelativeOrUnsafeServicePath(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"relative:/usr/bin", ":/usr/bin", "/usr/bin/../bin", "/usr/bin\n/tmp"} {
+		manager := Manager{Paths: appdirs.Paths{DataDir: "/data", SocketPath: "/run/crewfold.sock", UnitPath: "/config/crewfold.service"}, Executable: "/usr/bin/crewfold", EnvironmentPath: value, Run: func(context.Context, string, ...string) ([]byte, error) { return nil, nil }}
+		if err := manager.validate(); err == nil {
+			t.Errorf("validate(%q) error = nil", value)
+		}
 	}
 }
 

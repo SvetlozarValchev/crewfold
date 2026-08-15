@@ -52,8 +52,10 @@ crewfold service start
 ```
 
 `service install` resolves the current owner's XDG state, configuration, and
-runtime roots, writes a private systemd user unit, reloads the user manager, and
-enables and starts Crewfold. The defaults are
+runtime roots, freezes the invoking owner's bounded absolute `PATH` into both
+Crewfold and Herdr user units, writes those private units, reloads the user
+manager, and enables and starts Crewfold. Re-run `service install` after changing
+an NVM, asdf, or similar toolchain path. The defaults are
 `${XDG_STATE_HOME:-$HOME/.local/state}/crewfold` for data and
 `${XDG_RUNTIME_DIR}/crewfold/crewfold.sock` when `XDG_RUNTIME_DIR` exists, otherwise
 `<state>/runtime/crewfold.sock`. Installation creates no workspace, project,
