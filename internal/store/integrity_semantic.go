@@ -312,7 +312,8 @@ UNION ALL
 SELECT 'action_receipt:'||receipt.action_id FROM supervisor_action_receipts receipt
 JOIN supervisor_actions action ON action.id=receipt.action_id LEFT JOIN events event ON event.sequence=receipt.event_sequence
 WHERE receipt.workspace_id<>action.workspace_id OR receipt.condition_key<>action.condition_key
-   OR event.type<>'supervisor.action_recorded' OR event.entity_type<>'supervisor_action' OR event.entity_id<>action.id
+   OR event.type<>CASE WHEN receipt.recorded_status='applied' THEN 'supervisor.action_applied' ELSE 'supervisor.action_recorded' END
+   OR event.entity_type<>'supervisor_action' OR event.entity_id<>action.id
 UNION ALL
 SELECT 'approval:'||approval.id FROM approval_requests approval JOIN supervisor_actions action ON action.id=approval.action_id
 WHERE action.approval_id<>approval.id OR (approval.status IN ('denied','expired','consumed') AND approval.decision_event_sequence IS NULL)

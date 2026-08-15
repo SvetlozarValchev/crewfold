@@ -30,6 +30,26 @@ func TestCanonicalVerifierPassesPopulatedManagementAndOutcomeGraphs(t *testing.T
 		storage, _ := createManagerGrantAdversarialFixture(t)
 		assertCanonicalSemanticPass(t, storage)
 	})
+	t.Run("applied supervisor schedule", func(t *testing.T) {
+		storage, fixture := createManagerGrantAdversarialFixtureWithOptions(t, managerGrantAdversarialFixtureOptions{
+			TargetMaxConcurrency: 8,
+			SharedTargetCheckout: true,
+		})
+		acceptAdversarialSchedulingPair(t, storage, fixture, "canonical-applied-schedule", "")
+		configureSupervisorForContention(t, storage, fixture.workspace.ID, domain.SupervisorLimits{
+			MaxActiveRuns: 8, MaxStartingRuns: 2, DefaultProjectConcurrency: 4, DefaultProviderConcurrency: 4,
+		}, "canonical-applied-schedule")
+		result, err := storage.RunSupervisor(context.Background(), RunSupervisorCommand{
+			WorkspaceIdentifier: fixture.workspace.ID,
+			Limit:               1,
+			IdempotencyKey:      "canonical-applied-schedule-run",
+			CorrelationID:       "request-canonical-applied-schedule-run",
+		})
+		if err != nil || len(result.ScheduledRunIDs) != 1 || len(result.Actions) != 1 || result.Actions[0].Status != domain.SupervisorActionApplied {
+			t.Fatalf("RunSupervisor(applied schedule) = %#v, %v; want one applied scheduling action", result, err)
+		}
+		assertCanonicalSemanticPass(t, storage)
+	})
 	t.Run("outcome", func(t *testing.T) {
 		storage, fixture := newOutcomeAdversarialFixture(t, false)
 		fixture.createCommitment(t, "canonical-populated-commitment")
