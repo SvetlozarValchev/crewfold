@@ -22,6 +22,9 @@ const (
 	ownerInterpretationMaxBytes   = int64(128 * 1024)
 )
 
+// Codex structured outputs accept a strict JSON Schema subset that does not
+// include uniqueItems. Store remains the authority for duplicate task keys,
+// dependency edges, and citation refs before any plan is frozen or executed.
 var ownerInterpretationSchema = []byte(`{
   "type":"object",
   "properties":{
@@ -32,8 +35,8 @@ var ownerInterpretationSchema = []byte(`{
     "choices":{"type":"array","maxItems":4,"items":{"type":"object","properties":{"key":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,31}$"},"label":{"type":"string","minLength":1,"maxLength":160},"description":{"type":"string","maxLength":512},"recommended":{"type":"boolean"}},"required":["key","label","description","recommended"],"additionalProperties":false}},
     "objective_title":{"type":"string","maxLength":512},
     "objective_budget":{"type":"object","properties":{"token_limit":{"type":"integer","minimum":0,"maximum":1000000},"cost_cents":{"type":"integer","const":0},"time_seconds":{"type":"integer","minimum":0,"maximum":86400}},"required":["token_limit","cost_cents","time_seconds"],"additionalProperties":false},
-    "tasks":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"key":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,31}$"},"title":{"type":"string","minLength":1,"maxLength":512},"description":{"type":"string","maxLength":4096},"priority":{"type":"integer","minimum":0,"maximum":1000},"budget":{"type":"object","properties":{"token_limit":{"type":"integer","minimum":0,"maximum":1000000},"cost_cents":{"type":"integer","const":0},"time_seconds":{"type":"integer","minimum":0,"maximum":86400}},"required":["token_limit","cost_cents","time_seconds"],"additionalProperties":false},"launch_profile_id":{"type":"string","pattern":"^lprof_[0-9a-f]{32}$"},"depends_on":{"type":"array","maxItems":7,"items":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,31}$"},"uniqueItems":true}},"required":["key","title","description","priority","budget","launch_profile_id","depends_on"],"additionalProperties":false}},
-    "citation_refs":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":96},"uniqueItems":true}
+    "tasks":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"key":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,31}$"},"title":{"type":"string","minLength":1,"maxLength":512},"description":{"type":"string","maxLength":4096},"priority":{"type":"integer","minimum":0,"maximum":1000},"budget":{"type":"object","properties":{"token_limit":{"type":"integer","minimum":0,"maximum":1000000},"cost_cents":{"type":"integer","const":0},"time_seconds":{"type":"integer","minimum":0,"maximum":86400}},"required":["token_limit","cost_cents","time_seconds"],"additionalProperties":false},"launch_profile_id":{"type":"string","pattern":"^lprof_[0-9a-f]{32}$"},"depends_on":{"type":"array","maxItems":7,"items":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,31}$"}}},"required":["key","title","description","priority","budget","launch_profile_id","depends_on"],"additionalProperties":false}},
+    "citation_refs":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":96}}
   },
   "required":["disposition","summary","answer","question","choices","objective_title","objective_budget","tasks","citation_refs"],
   "additionalProperties":false
@@ -182,11 +185,11 @@ func (interpreter *CodexOwnerInterpreter) wait(ctx context.Context, operationID,
 		switch snapshot.State {
 		case RuntimeStateExited:
 			if !snapshot.ExitKnown || snapshot.ExitCode != 0 {
-				return fmt.Errorf("Codex owner interpreter exited unsuccessfully: %s", strings.TrimSpace(snapshot.Diagnostic))
+				return fmt.Errorf("Codex owner interpreter exited unsuccessfully: %s", ownerInterpreterFailureDiagnostic(snapshot))
 			}
 			return nil
 		case RuntimeStateStopped, RuntimeStateTimedOut:
-			return fmt.Errorf("Codex owner interpreter stopped before a structured result: %s", strings.TrimSpace(snapshot.Diagnostic))
+			return fmt.Errorf("Codex owner interpreter stopped before a structured result: %s", ownerInterpreterFailureDiagnostic(snapshot))
 		case RuntimeStateStarting, RuntimeStateRunning:
 		default:
 			return fmt.Errorf("Codex owner interpreter entered unknown runtime state %q", snapshot.State)
@@ -197,6 +200,95 @@ func (interpreter *CodexOwnerInterpreter) wait(ctx context.Context, operationID,
 		case <-ticker.C:
 		}
 	}
+}
+
+func ownerInterpreterFailureDiagnostic(snapshot RuntimeSnapshot) string {
+	diagnostic := codexEventFailure(snapshot.Stderr.Text)
+	if stdoutDiagnostic := codexEventFailure(snapshot.Stdout.Text); stdoutDiagnostic != "" {
+		diagnostic = stdoutDiagnostic
+	}
+	if diagnostic == "" {
+		diagnostic = snapshot.Diagnostic
+	}
+	return boundedOwnerInterpreterDiagnostic(diagnostic)
+}
+
+func codexEventFailure(output string) string {
+	var diagnostic string
+	for _, line := range strings.Split(output, "\n") {
+		var event struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+			Error   *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(line)), &event) != nil {
+			continue
+		}
+		candidate := ""
+		switch event.Type {
+		case "error":
+			candidate = event.Message
+		case "turn.failed":
+			if event.Error != nil {
+				candidate = event.Error.Message
+			}
+		}
+		if nested := codexResponseError(candidate); nested != "" {
+			candidate = nested
+		}
+		if strings.TrimSpace(candidate) != "" {
+			diagnostic = candidate
+		}
+	}
+	return diagnostic
+}
+
+func codexResponseError(value string) string {
+	var response struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(value), &response) != nil || response.Error == nil {
+		return ""
+	}
+	return response.Error.Message
+}
+
+func boundedOwnerInterpreterDiagnostic(value string) string {
+	value = strings.ToValidUTF8(value, "")
+	var builder strings.Builder
+	spacePending := false
+	for _, current := range value {
+		if current == '\r' || current == '\n' || current == '\t' {
+			spacePending = builder.Len() > 0
+			continue
+		}
+		if current <= 0x1f || current == 0x7f || current >= 0x80 && current <= 0x9f ||
+			(current >= 0x202a && current <= 0x202e) || (current >= 0x2066 && current <= 0x206f) ||
+			current == 0x061c || current == 0x200e || current == 0x200f || current == 0x2028 || current == 0x2029 {
+			continue
+		}
+		if spacePending {
+			builder.WriteByte(' ')
+			spacePending = false
+		}
+		builder.WriteRune(current)
+		if builder.Len() >= 2048 {
+			break
+		}
+	}
+	result := strings.TrimSpace(builder.String())
+	for len(result) > 2048 {
+		_, size := utf8.DecodeLastRuneInString(result)
+		result = result[:len(result)-size]
+	}
+	if result == "" {
+		return "no bounded provider diagnostic was retained"
+	}
+	return result
 }
 
 func ensurePrivateInterpreterOutput(path string) error {
