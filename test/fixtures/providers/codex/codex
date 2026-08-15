@@ -25,6 +25,12 @@ case "${1:-}" in
       exit 0
     fi
     ;;
+  sandbox)
+    if [ "${2:-}" = "linux" ] && [ "${3:-}" = "--" ] && [ "${4:-}" = "/bin/sh" ] && [ "${5:-}" = "-c" ] && [ "${6:-}" = "exit 0" ]
+    then
+      exit 0
+    fi
+    ;;
 esac
 
 if [ "${1:-}" != "exec" ]

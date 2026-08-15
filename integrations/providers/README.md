@@ -20,8 +20,9 @@ not brand names.
 The `codex` adapter currently uses the stable headless CLI rather than embedding a
 provider SDK or depending on the experimental app-server protocol. It:
 
-- probes `codex --version`, `codex exec --help`, and `codex login status` without
-  making a model call;
+- probes `codex --version`, `codex exec --help`, a no-effect
+  `codex sandbox linux` invocation, and `codex login status` without making a
+  model call;
 - launches `codex exec --json --ephemeral --ignore-user-config` in the checkout
   selected by Crewfold;
 - injects one required STDIO MCP server through inline config without modifying

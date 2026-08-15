@@ -148,6 +148,12 @@ sequences are authoritative. Malformed, unknown, stale, cyclic, over-budget, or
 out-of-scope manager output creates no effect. A lost response replays the exact
 same command; it does not ask a model to reinterpret the turn.
 
+A clarification choice is not an unreviewed action grammar. The current web
+surface submits the selected answer as a `plan` turn, displays the resulting typed
+graph, and requires the owner to execute that reviewed graph explicitly. Once any
+later turn exists in the conversation, earlier clarification controls are inert;
+historical questions cannot be clicked again to manufacture duplicate work.
+
 The current baseline gains only the records needed to preserve this boundary:
 owner conversation, owner turn, frozen interpretation, typed operation graph,
 policy result, execution state, approval linkage, and effect receipt linkage.

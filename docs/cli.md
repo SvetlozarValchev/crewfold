@@ -131,8 +131,11 @@ and selected live session. `doctor --runtime herdr` does not launch an agent or
 create a workspace. It reports the binary version, schema/protocol compatibility,
 and session reachability; an unsupported schema is a hard launch gate with upgrade
 guidance. `doctor --provider codex` makes no model call. It verifies the binary,
-the stable headless JSON/MCP flags Crewfold needs, and existing Codex
-authentication. `--codex-binary` and `--codex-home` allow an explicit installation
+the stable headless JSON/MCP flags Crewfold needs, a no-effect Linux workspace
+sandbox invocation, and existing Codex authentication. A failed sandbox probe is
+a hard launch gate: Crewfold reports the local namespace/AppArmor diagnosis before
+creating work rather than discovering it inside an assigned task. `--codex-binary`
+and `--codex-home` allow an explicit installation
 or auth/config root; the same values can be passed to `daemon run`. Codex child
 commands remain in the `workspace-write` filesystem sandbox. Their network is
 disabled by default; an operator who has authorized it can pass

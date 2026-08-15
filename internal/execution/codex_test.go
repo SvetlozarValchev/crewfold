@@ -41,8 +41,27 @@ func TestCodexProbeAcceptsRecordedCapabilitiesAndAuthentication(t *testing.T) {
 	if !report.Compatible() || report.Version != "codex-cli 1.2.3" || len(report.Checks) != 3 || len(report.Capabilities) != 3 {
 		t.Fatalf("Run() = %#v", report)
 	}
-	if len(runner.calls) != 3 || runner.env[2]["CODEX_HOME"] != "/private/codex" {
+	if len(runner.calls) != 4 || runner.env[3]["CODEX_HOME"] != "/private/codex" {
 		t.Fatalf("calls = %#v, env = %#v", runner.calls, runner.env)
+	}
+}
+
+func TestCodexProbeRejectsAnUnavailableWorkspaceSandbox(t *testing.T) {
+	t.Parallel()
+
+	runner := compatibleCodexRunner(t)
+	runner.results["sandbox linux -- /bin/sh -c exit 0"] = CodexCommandResult{Stderr: []byte("bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted\n"), ExitCode: 1}
+	report := NewCodexProbe("/opt/codex", "/private/codex", runner).Run(context.Background())
+	if report.Compatible() || len(report.Checks) != 2 || report.Checks[1].Name != "capabilities" {
+		t.Fatalf("Run() = %#v", report)
+	}
+	if err := report.Error(); err == nil || !strings.Contains(err.Error(), "workspace sandbox is unavailable") || !strings.Contains(err.Error(), "AppArmor") {
+		t.Fatalf("Run().Error() = %v", err)
+	}
+	for _, call := range runner.calls {
+		if call == "login status" {
+			t.Fatalf("authentication was probed after sandbox failure: %#v", runner.calls)
+		}
 	}
 }
 
@@ -250,9 +269,10 @@ func (preparer *recordedCapabilityPreparer) PrepareRunCapability(_ context.Conte
 func compatibleCodexRunner(t *testing.T) *recordedCodexRunner {
 	t.Helper()
 	return &recordedCodexRunner{results: map[string]CodexCommandResult{
-		"--version":    {Stdout: codexFixture(t, "version.txt")},
-		"exec --help":  {Stdout: codexFixture(t, "exec-help.txt")},
-		"login status": {Stdout: codexFixture(t, "login-status.txt")},
+		"--version":                          {Stdout: codexFixture(t, "version.txt")},
+		"exec --help":                        {Stdout: codexFixture(t, "exec-help.txt")},
+		"sandbox linux -- /bin/sh -c exit 0": {},
+		"login status":                       {Stdout: codexFixture(t, "login-status.txt")},
 	}}
 }
 

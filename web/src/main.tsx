@@ -42,7 +42,7 @@ type OwnerChoice = { key: string; label: string; description: string; recommende
 type OwnerPlanTask = { key: string; title: string; description: string; priority: number; budget: Budget; launch_profile_id: string; depends_on: string[] };
 type OwnerInterpretation = { disposition: "answer" | "ready" | "clarify" | "refuse"; summary: string; answer: string; question: string; choices: OwnerChoice[]; objective_title: string; objective_budget: Budget; tasks: OwnerPlanTask[]; citation_refs: string[] };
 type OwnerOperation = { id: string; ordinal: number; type: string; payload: Record<string, unknown>; policy_result: string; status: string; result_entity_type?: string; event_sequence?: number };
-type OwnerTurnDetail = { conversation: { id: string; title: string }; turn: { id: string; kind: "query" | "plan" | "act" | "review"; initiated_by: "owner" | "manager"; trigger_event_sequence?: number; instruction: string; status: string; answer?: string; as_of_event_sequence: number; completed_event_sequence?: number; revision: number; interpretation: OwnerInterpretation; citations: Array<{ ref: string; entity_type: string; entity_id: string; entity_revision: number; as_of_event_sequence: number; label: string }> }; operations: OwnerOperation[]; receipts: Array<{ operation_id: string; method: string; event_sequence?: number }> };
+type OwnerTurnDetail = { conversation: { id: string; title: string }; turn: { id: string; ordinal: number; kind: "query" | "plan" | "act" | "review"; initiated_by: "owner" | "manager"; trigger_event_sequence?: number; instruction: string; status: string; answer?: string; as_of_event_sequence: number; completed_event_sequence?: number; revision: number; interpretation: OwnerInterpretation; citations: Array<{ ref: string; entity_type: string; entity_id: string; entity_revision: number; as_of_event_sequence: number; label: string }> }; operations: OwnerOperation[]; receipts: Array<{ operation_id: string; method: string; event_sequence?: number }> };
 type OwnerManagerReview = { workspace_id: string; project_id: string; conversation_id: string; status: "idle" | "pending" | "leased" | "failed"; requested_event_sequence: number; reviewed_event_sequence: number; attempts: number; last_turn_id?: string; last_error?: string; updated_at: string };
 
 type WorkbenchData = {
@@ -107,6 +107,61 @@ function statusTone(status: string) {
   if (["active", "starting", "requested", "stopping", "pending"].includes(status)) return "live";
   if (["blocked", "review", "changes_requested"].includes(status)) return "warn";
   return "quiet";
+}
+
+type RuntimeActivity = { key: string; kind: string; text: string; tone: "quiet" | "live" | "good" | "bad" };
+
+function readableRuntimeActivity(raw: string): RuntimeActivity[] {
+  const clean = raw
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+  const entries: RuntimeActivity[] = [];
+  const message = (value: unknown): unknown => {
+    if (!value || typeof value !== "object") return value;
+    const candidate = value as Record<string, unknown>;
+    return candidate.message ?? candidate.error ?? JSON.stringify(candidate);
+  };
+  const add = (kind: string, text: unknown, tone: RuntimeActivity["tone"] = "quiet") => {
+    if (typeof text !== "string" || !text.trim()) return;
+    const value = text.trim();
+    if (entries.at(-1)?.kind === kind && entries.at(-1)?.text === value) return;
+    entries.push({ key: `${entries.length}-${kind}`, kind, text: value, tone });
+  };
+  for (const original of clean.split("\n")) {
+    const line = original.trim();
+    if (!line || line.startsWith("exec '") || line.includes("__herdr-pane-supervisor")) continue;
+    const start = line.indexOf('{"type"');
+    if (start >= 0) {
+      try {
+        const value = JSON.parse(line.slice(start)) as Record<string, unknown>;
+        const type = typeof value.type === "string" ? value.type : "event";
+        const item = value.item && typeof value.item === "object" ? value.item as Record<string, unknown> : null;
+        if (type === "thread.started") { add("Session", "Codex session started", "live"); continue; }
+        if (type === "turn.started") { add("Turn", "Agent reasoning started", "live"); continue; }
+        if (type === "turn.completed") { add("Turn", "Agent turn completed", "good"); continue; }
+        if (type === "turn.failed" || type === "error") { add("Error", message(value.error ?? value.message ?? line), "bad"); continue; }
+        if (type === "item.completed" && item) {
+          const itemType = typeof item.type === "string" ? item.type : "item";
+          if (itemType === "agent_message") { add("Agent", item.text, "good"); continue; }
+          if (itemType === "mcp_tool_call") { add("Crewfold tool", `${String(item.tool ?? "tool").replaceAll("crewfold_", "").replaceAll("_", " ")} · ${String(item.status ?? "completed")}`, item.status === "failed" ? "bad" : "live"); continue; }
+          if (itemType === "command_execution") { add("Command", item.command ?? item.text ?? "Local command completed", item.status === "failed" ? "bad" : "quiet"); continue; }
+        }
+        continue;
+      } catch {
+        // A partial live JSON record is represented by its useful diagnostic below.
+      }
+    }
+    if (/bwrap:|failed|error|not permitted|usage limit/i.test(line)) add("Runtime", line, "bad");
+  }
+  return entries.slice(-40);
+}
+
+function RuntimeOutput({ logs }: { logs: string }) {
+  const activity = useMemo(() => readableRuntimeActivity(logs), [logs]);
+  if (activity.length === 0) return <pre>{logs || "No runtime output was captured."}</pre>;
+  return <><div className="runtime-activity">{activity.map((entry) => <article className={entry.tone} key={entry.key}><span>{entry.kind}</span><p>{entry.text}</p></article>)}</div><details className="raw-runtime-output"><summary>Show raw bounded provider output</summary><pre>{logs}</pre></details></>;
 }
 
 async function exchangeBootstrap(token: string): Promise<SessionResponse> {
@@ -310,7 +365,7 @@ function PlanEditor({ detail, agents, profiles, disabled, save }: { detail: Owne
   const [open, setOpen] = useState(false);
   const [objectiveTitle, setObjectiveTitle] = useState(interpretation.objective_title);
   const [objectiveBudget, setObjectiveBudget] = useState<Budget>(interpretation.objective_budget);
-  const [tasks, setTasks] = useState<OwnerPlanTask[]>(interpretation.tasks);
+  const [tasks, setTasks] = useState<OwnerPlanTask[]>(interpretation.tasks.map((task) => ({ ...task, depends_on: task.depends_on ?? [] })));
   const [busy, setBusy] = useState(false);
   const updateTask = (index: number, patch: Partial<OwnerPlanTask>) => setTasks((current) => current.map((task, taskIndex) => taskIndex === index ? { ...task, ...patch } : task));
   const submit = async (event: React.FormEvent) => {
@@ -334,7 +389,11 @@ function PlanEditor({ detail, agents, profiles, disabled, save }: { detail: Owne
 function PlanReview({ detail, agents, profiles }: { detail: OwnerTurnDetail; agents: Agent[]; profiles: LaunchProfile[] }) {
   const tasks = detail.turn.interpretation.tasks;
   if (tasks.length === 0) return null;
-  return <section className="plan-review" aria-label={`${tasks.length}-task reviewed plan`}><header><div><strong>{tasks.length} actual tasks</strong><small>{detail.turn.interpretation.objective_title}</small></div><StatusPill value={detail.turn.status} /></header><ol>{tasks.map((task, index) => { const profile = profiles.find((candidate) => candidate.id === task.launch_profile_id); const agent = agents.find((candidate) => candidate.id === profile?.agent_id); return <li key={task.key}><span>{index + 1}</span><div><strong>{task.title}</strong><small>{agent?.name ?? "Current launch profile"} · {task.depends_on.length > 0 ? `after ${task.depends_on.join(", ")}` : "starts first"}</small></div></li>; })}</ol></section>;
+  return <section className="plan-review" aria-label={`${tasks.length}-task reviewed plan`}><header><div><strong>{tasks.length} actual tasks</strong><small>{detail.turn.interpretation.objective_title}</small></div><StatusPill value={detail.turn.status} /></header><ol>{tasks.map((task, index) => { const profile = profiles.find((candidate) => candidate.id === task.launch_profile_id); const agent = agents.find((candidate) => candidate.id === profile?.agent_id); const dependencies = task.depends_on ?? []; return <li key={task.key}><span>{index + 1}</span><div><strong>{task.title}</strong><small>{agent?.name ?? "Current launch profile"} · {dependencies.length > 0 ? `after ${dependencies.join(", ")}` : "starts first"}</small></div></li>; })}</ol></section>;
+}
+
+function ManagerDecisionCard({ detail, actionable, busy, mutable, choose }: { detail: OwnerTurnDetail; actionable: boolean; busy: boolean; mutable: boolean; choose: (choice: OwnerChoice) => void }) {
+  return <section className={`manager-decision-card ${actionable ? "" : "resolved"}`}><header><span className="decision-icon">?</span><div><strong>{actionable ? "Decision needed" : "Earlier decision"}</strong><small>{actionable ? "Selecting an answer creates a reviewed plan. Nothing executes until you approve that plan." : "Later conversation activity superseded this question; its choices are now inert."}</small></div></header><h3>{detail.turn.interpretation.question}</h3><div className="manager-choices">{detail.turn.interpretation.choices.map((choice) => <button key={choice.key} disabled={!actionable || !mutable || busy} onClick={() => choose(choice)}><span><strong>{choice.label}</strong>{choice.recommended && <em>Recommended</em>}</span><small>{choice.description}</small><span className="choose-label">{actionable ? "Review this response" : "Superseded"}</span></button>)}</div></section>;
 }
 
 function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mutable }: { data: WorkbenchData; apiBase: string; csrf: string; reload: () => Promise<void>; selectTask: (task: TaskDetail) => void; selectRun: (run: Run) => void; mutable: boolean }) {
@@ -415,10 +474,10 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
     if (!mutable || !data.workspace || !data.project) return;
     setBusy(true); setNotice("");
     try {
-      const body = { workspace: data.workspace.id, project: data.project.id, conversation_id: detail.conversation.id, instruction: `Decision for "${detail.turn.interpretation.question}": ${choice.label}. ${choice.description}`.trim(), mode: "act", idempotency_key: newKey(`manager-choice-${choice.key}`) };
+      const body = { workspace: data.workspace.id, project: data.project.id, conversation_id: detail.conversation.id, instruction: `Selected answer for "${detail.turn.interpretation.question}": ${choice.label}. ${choice.description} Produce a reviewed plan only; do not execute it.`.trim(), mode: "plan", idempotency_key: newKey(`manager-choice-${choice.key}`) };
       const next = await submitOwnerIntent(apiBase, csrf, body);
       setTurns((current) => [...current, next]);
-      setNotice(next.turn.interpretation.disposition === "clarify" ? "The manager needs one more bounded decision." : "The selected answer is visible in the durable conversation and its typed result was processed exactly.");
+      setNotice(next.turn.interpretation.disposition === "clarify" ? "The manager needs one more bounded decision." : next.turn.status === "planned" ? "The selected answer produced a reviewed plan. Nothing has executed; inspect the graph before choosing Execute." : "The selected answer was recorded without creating execution effects.");
       await reload();
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The manager decision could not be processed."); }
     finally { setBusy(false); }
@@ -436,7 +495,7 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
     }
   };
   const activeRuns = data.runs.filter((run) => ["requested", "starting", "active", "blocked", "stopping"].includes(run.status));
-  const attentionRuns = data.agents.map((agent) => latestRunForAgent(data.runs, agent.id)).filter((run): run is Run => Boolean(run) && ["requested", "starting", "active", "blocked", "stopping", "start_failed", "failed", "lost"].includes(run.status));
+  const attentionRuns = data.runs.filter((run) => ["requested", "starting", "active", "blocked", "stopping", "start_failed", "failed", "lost"].includes(run.status)).sort((left, right) => right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id));
   const openTasks = data.tasks.filter(({ task }) => !["completed", "failed", "cancelled"].includes(task.status));
   return <div className="view-grid workbench-view">
     <section className="conversation-panel panel">
@@ -451,7 +510,7 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
         <div className="crew-message"><span className="assistant-avatar"><Bot size={16} /></span><div><strong>Crewfold manager</strong><p>{detail.turn.answer ?? detail.turn.interpretation.summary ?? (detail.turn.status === "planned" ? `Frozen ${detail.operations.length} operations; no effects executed.` : `${detail.receipts.length} exact effects committed.`)}</p>
           <div className="receipt-line"><ShieldCheck size={13} />{detail.turn.interpretation.disposition} · {detail.turn.status} · event cut #{detail.turn.completed_event_sequence ?? detail.turn.as_of_event_sequence}</div>
           {detail.turn.citations.length > 0 && <div className="citation-list" aria-label="Canonical answer citations">{detail.turn.citations.map((citation) => <span key={citation.ref}>{citation.label} · r{citation.entity_revision}</span>)}</div>}
-          {detail.turn.interpretation.disposition === "clarify" && <section className="manager-decision-card"><header><span className="decision-icon">?</span><div><strong>Decision needed</strong><small>The manager paused before every effect.</small></div></header><h3>{detail.turn.interpretation.question}</h3><div className="manager-choices">{detail.turn.interpretation.choices.map((choice) => <button key={choice.key} disabled={!mutable || busy} onClick={() => void answerManagerChoice(detail, choice)}><span><strong>{choice.label}</strong>{choice.recommended && <em>Recommended</em>}</span><small>{choice.description}</small><span className="choose-label">Choose</span></button>)}</div></section>}
+          {detail.turn.interpretation.disposition === "clarify" && <ManagerDecisionCard detail={detail} actionable={turns.at(-1)?.turn.id === detail.turn.id} busy={busy} mutable={mutable} choose={(choice) => void answerManagerChoice(detail, choice)} />}
           <PlanReview detail={detail} agents={data.agents} profiles={data.launchProfiles} />
           {detail.operations.length > 0 && <details className="operation-details"><summary>{detail.operations.length} typed execution operations</summary><p>Internal objective, task, dependency, and scheduling receipts. These are not additional tasks.</p><ol className="operation-list" aria-label="Frozen typed execution operations">{detail.operations.map((operation) => <li key={operation.id}><span>{operation.ordinal}</span><strong>{operation.type.replaceAll("_", " ")}</strong><StatusPill value={operation.status} /></li>)}</ol></details>}
           {detail.turn.status === "planned" && <PlanEditor key={detail.turn.revision} detail={detail} agents={data.agents} profiles={data.launchProfiles} disabled={!mutable || busy} save={(draft) => savePlan(detail, draft)} />}
@@ -489,7 +548,25 @@ function CrewView({ data, selectAgent }: { data: WorkbenchData; selectAgent: (ag
 function supervisorResponseLabel(action?: SupervisorAction) {
   if (!action) return "Supervisor action";
   if (action.response === "request_owner") return action.condition === "failed" ? "Acknowledge a failed run" : "Owner acknowledgement required";
+  if (action.response === "resume_run") return "Resume a blocked run";
   return action.response.replaceAll("_", " ");
+}
+
+function supervisorDecisionLabels(action?: SupervisorAction) {
+  if (action?.response === "resume_run") return { allow: "Resume this run", deny: "Keep blocked" };
+  if (action?.response === "request_owner") return { allow: "Acknowledge", deny: "Dismiss" };
+  return { allow: "Allow", deny: "Deny" };
+}
+
+function supervisorConsequence(action?: SupervisorAction) {
+  if (action?.response === "resume_run") return "Resuming only releases this exact blocked run to continue in its existing runtime. It does not repair Herdr, replace the execution profile, or create a fresh sandbox.";
+  if (action?.response === "request_owner") return "Acknowledging records that you reviewed this terminal failure. It does not retry the run or change the failed task.";
+  return "Allowing commits only the exact requested supervisor response shown above.";
+}
+
+function snapshotText(action: SupervisorAction, name: string) {
+  const value = action.constraint_snapshot[name];
+  return typeof value === "string" && value.trim() ? value : "";
 }
 
 function DecisionsView({ data, apiBase, csrf, reload, mutable }: { data: WorkbenchData; apiBase: string; csrf: string; reload: () => Promise<void>; mutable: boolean }) {
@@ -508,7 +585,28 @@ function DecisionsView({ data, apiBase, csrf, reload, mutable }: { data: Workben
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Decision could not be committed."); }
     finally { setBusy(""); }
   };
-  return <section className="panel page-panel"><div className="page-heading"><div><div className="eyebrow"><ClipboardCheck size={13} />Policy gates</div><h1>Decisions</h1><p>Exact conditions, requested responses, affected work, and recorded owner choices.</p></div><span>{approvals.filter((item) => item.status === "pending").length} pending</span></div>{error && <div className="form-error" role="alert"><AlertCircle size={16} />{error}</div>}{approvals.length === 0 ? <EmptyState icon={ShieldCheck} title="Nothing needs approval" detail="Gated operations will appear here with their exact requested effect." /> : <div className="decision-list">{approvals.map((approval) => { const action = data.supervisorActions.find((item) => item.id === approval.action_id); const task = data.tasks.find((item) => item.task.id === action?.task_id)?.task; const run = data.runs.find((item) => item.id === action?.run_id); const agent = data.agents.find((item) => item.id === action?.agent_id); const acknowledgement = action?.response === "request_owner"; return <article className="decision-card" key={approval.id}><header><span className="row-icon"><ShieldCheck size={17} /></span><div><strong>{supervisorResponseLabel(action)}</strong><small>{task?.title ?? "Exact governed target unavailable in this bounded page"}</small></div><StatusPill value={approval.status} /></header>{action ? <><dl className="decision-facts"><div><dt>Condition</dt><dd>{action.condition.replaceAll("_", " ")}</dd></div><div><dt>Requested response</dt><dd>{action.response.replaceAll("_", " ")}</dd></div>{agent && <div><dt>Agent</dt><dd>{agent.name}</dd></div>}{run && <div><dt>Run state</dt><dd>{run.status.replaceAll("_", " ")}</dd></div>}</dl><div className="decision-reasons"><strong>Why Crewfold paused</strong><ul>{action.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>{acknowledgement && <p className="decision-consequence"><strong>Consequence:</strong> acknowledging records that you reviewed this terminal failure. It does not retry the run or change the failed task.</p>}</> : <p className="decision-unavailable">The action detail is outside this bounded page; refresh before deciding.</p>}{approval.status === "pending" ? <div className="row-actions"><button className="secondary-button" disabled={!mutable || busy === approval.id || !action} onClick={() => void decide(approval, action, "deny")}><XCircle size={14} />{acknowledgement ? "Dismiss" : "Deny"}</button><button className="primary-button compact" disabled={!mutable || busy === approval.id || !action} onClick={() => void decide(approval, action, "allow")}>{busy === approval.id ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}{acknowledgement ? "Acknowledge" : "Allow"}</button></div> : <div className="decision-record"><CheckCircle2 size={15} /><span><strong>Recorded owner decision</strong>{action?.decision ?? approval.decision_note ?? approval.status.replaceAll("_", " ")} · {displayTime(approval.decided_at ?? approval.updated_at)}</span></div>}</article>; })}</div>}</section>;
+  return <section className="panel page-panel">
+    <div className="page-heading"><div><div className="eyebrow"><ClipboardCheck size={13} />Policy gates</div><h1>Decisions</h1><p>Exact conditions, requested responses, affected work, and recorded owner choices.</p></div><span>{approvals.filter((item) => item.status === "pending").length} pending</span></div>
+    {error && <div className="form-error" role="alert"><AlertCircle size={16} />{error}</div>}
+    {approvals.length === 0 ? <EmptyState icon={ShieldCheck} title="Nothing needs approval" detail="Gated operations will appear here with their exact requested effect." /> : <div className="decision-list">{approvals.map((approval) => {
+      const action = data.supervisorActions.find((item) => item.id === approval.action_id);
+      const task = data.tasks.find((item) => item.task.id === action?.task_id)?.task;
+      const run = data.runs.find((item) => item.id === action?.run_id);
+      const agent = data.agents.find((item) => item.id === action?.agent_id);
+      const labels = supervisorDecisionLabels(action);
+      const blockedQuestion = action ? snapshotText(action, "blocked_question") || snapshotText(action, "question") : "";
+      return <article className="decision-card" key={approval.id}>
+        <header><span className="row-icon"><ShieldCheck size={17} /></span><div><strong>{supervisorResponseLabel(action)}</strong><small>{task?.title ?? "Exact governed target unavailable in this bounded page"}</small></div><StatusPill value={approval.status} /></header>
+        {action ? <>
+          <dl className="decision-facts"><div><dt>Condition</dt><dd>{action.condition.replaceAll("_", " ")}</dd></div><div><dt>Requested response</dt><dd>{action.response.replaceAll("_", " ")}</dd></div>{agent && <div><dt>Agent</dt><dd>{agent.name}</dd></div>}{run && <div><dt>Current run state</dt><dd>{run.status.replaceAll("_", " ")}</dd></div>}</dl>
+          <div className="decision-reasons"><strong>Why Crewfold paused</strong><ul>{action.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>
+          {blockedQuestion && <div className="decision-question"><strong>Agent’s exact blocker</strong><p>{blockedQuestion}</p></div>}
+          <p className="decision-consequence"><strong>Exact effect:</strong> {supervisorConsequence(action)}</p>
+        </> : <p className="decision-unavailable">The action detail is outside this bounded page; refresh before deciding.</p>}
+        {approval.status === "pending" ? <div className="row-actions"><button className="secondary-button" disabled={!mutable || busy === approval.id || !action} onClick={() => void decide(approval, action, "deny")}><XCircle size={14} />{labels.deny}</button><button className="primary-button compact" disabled={!mutable || busy === approval.id || !action} onClick={() => void decide(approval, action, "allow")}>{busy === approval.id ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}{labels.allow}</button></div> : <div className="decision-record"><CheckCircle2 size={15} /><span><strong>Recorded owner decision</strong>{action?.decision ?? approval.decision_note ?? approval.status.replaceAll("_", " ")} · {displayTime(approval.decided_at ?? approval.updated_at)}</span></div>}
+      </article>;
+    })}</div>}
+  </section>;
 }
 
 function ActivityView({ data }: { data: WorkbenchData }) {
@@ -556,7 +654,7 @@ function HealthView({ apiBase, csrf, status }: { apiBase: string; csrf: string; 
   return <section className="panel page-panel"><div className="page-heading"><div><div className="eyebrow"><Stethoscope size={13} />Local service</div><h1>Health and recovery</h1><p>Read-only physical, canonical, queue, artifact, and resource diagnosis.</p></div><button className="primary-button compact" onClick={() => void inspect()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={14} /> : <HeartPulse size={14} />}Run full doctor</button></div><div className="health-overview"><div><strong>{status?.pid ?? "—"}</strong><span>daemon PID</span></div><div><strong>{Math.floor((status?.uptime_ms ?? 0) / 1000)}s</strong><span>uptime</span></div><div><strong>{doctor?.event_sequence ?? "—"}</strong><span>event high-water</span></div><div><strong>{doctor?.status ?? "not run"}</strong><span>full diagnosis</span></div></div>{error && <div className="form-error"><AlertCircle size={16} />{error}</div>}{doctor && <div className="doctor-grid">{doctor.checks.map((check) => <article key={check.code}><StatusPill value={check.status} /><strong>{check.code.replaceAll("_", " ")}</strong><p>{check.summary}</p><small>{check.issue_count} issues</small></article>)}</div>}</section>;
 }
 
-function LiveTerminal({ apiBase, csrf, workspace, run, close }: { apiBase: string; csrf: string; workspace: string; run: Run; close: () => void }) {
+function LiveTerminal({ apiBase, csrf, workspace, run, close, mutable }: { apiBase: string; csrf: string; workspace: string; run: Run; close: () => void; mutable: boolean }) {
   const [state, setState] = useState("connecting");
   const [input, setInput] = useState("");
   const [followOutput, setFollowOutput] = useState(true);
@@ -566,10 +664,13 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close }: { apiBase: strin
   const terminal = useRef<Terminal | null>(null);
   const fit = useRef<FitAddon | null>(null);
   const follow = useRef(true);
+  const controlsEnabled = useRef(mutable);
   const decoder = useRef(new TextDecoder());
 
+  useEffect(() => { controlsEnabled.current = mutable; }, [mutable]);
+
   const sendInput = useCallback((value: string) => {
-    if (socket.current?.readyState !== WebSocket.OPEN || !value) return;
+    if (!controlsEnabled.current || socket.current?.readyState !== WebSocket.OPEN || !value) return;
     socket.current.send(JSON.stringify({ type: "input", data: value }));
   }, []);
   const sendSize = useCallback(() => {
@@ -654,7 +755,7 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close }: { apiBase: strin
     setFollowOutput(next);
     if (next) { terminal.current?.scrollToBottom(); setUnseenOutput(false); }
   };
-  return <section className="live-terminal" aria-label="Live Herdr terminal"><div className="section-title"><h3>Live Herdr terminal</h3><span><CircleDot size={11} />{state}</span></div><p>Real terminal rendering with bounded local scrollback. Canonical state remains in the inspector.</p><div className="terminal-toolbar"><span>Click the terminal to type · wheel to inspect scrollback</span><button type="button" className={followOutput ? "follow-active" : ""} onClick={toggleFollow}><ChevronDown size={13} />{unseenOutput ? "New output" : followOutput ? "Following" : "Follow output"}</button></div><div ref={host} className="terminal-canvas" role="application" aria-label="Interactive Herdr terminal output" /><form onSubmit={(event) => { event.preventDefault(); sendInput(input + "\r"); setInput(""); }}><input aria-label="Terminal input" value={input} maxLength={4095} onChange={(event) => setInput(event.target.value)} placeholder="Paste or send terminal input…" /><button className="secondary-button" disabled={state !== "connected" || !input}><Send size={14} />Send</button><button type="button" className="secondary-button" disabled={state !== "connected"} onClick={() => sendInput("\u0003")}><AlertCircle size={14} />Ctrl-C</button><button type="button" className="secondary-button" onClick={close}><X size={14} />Close</button></form></section>;
+  return <section className="live-terminal" aria-label="Live Herdr terminal"><div className="section-title"><h3>Raw interactive terminal</h3><span><CircleDot size={11} />{state}</span></div><p>The readable activity is above. This raw Herdr terminal is retained for direct inspection and input.</p>{!mutable && <div className="terminal-paused">Canonical state is refreshing; output remains connected while input is temporarily disabled.</div>}<div className="terminal-toolbar"><span>Click the terminal to type · wheel to inspect scrollback</span><button type="button" className={followOutput ? "follow-active" : ""} onClick={toggleFollow}><ChevronDown size={13} />{unseenOutput ? "New output" : followOutput ? "Following" : "Follow output"}</button></div><div ref={host} className="terminal-canvas" role="application" aria-label="Interactive Herdr terminal output" /><form onSubmit={(event) => { event.preventDefault(); sendInput(input + "\r"); setInput(""); }}><input aria-label="Terminal input" value={input} maxLength={4095} onChange={(event) => setInput(event.target.value)} placeholder="Paste or send terminal input…" disabled={!mutable} /><button className="secondary-button" disabled={!mutable || state !== "connected" || !input}><Send size={14} />Send</button><button type="button" className="secondary-button" disabled={!mutable || state !== "connected"} onClick={() => sendInput("\u0003")}><AlertCircle size={14} />Ctrl-C</button><button type="button" className="secondary-button" onClick={close}><X size={14} />Close</button></form></section>;
 }
 
 function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspectRun, mutable }: { data: WorkbenchData; task: TaskDetail | null; run: Run | null; agent: Agent | null; apiBase: string; csrf: string; close: () => void; reload: () => Promise<void>; inspectRun: (run: Run) => void; mutable: boolean }) {
@@ -680,7 +781,6 @@ function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspe
     }).catch(() => setRunDetail(null));
     void rpc<{ items: InboxItem[] }>(apiBase, csrf, "inbox.list", { workspace: data.workspace.id, agent: currentRun.agent_id, limit: 50 }).then((value) => setRunMessages(value.items.filter((item) => !item.message.task_id || item.message.task_id === currentRun.task_id))).catch(() => setRunMessages([]));
   }, [apiBase, csrf, currentRun?.id, data.highWater, data.workspace?.id]);
-  useEffect(() => { if (!mutable) setTerminalOpen(false); }, [mutable]);
   if (!task && !run && !agent) return null;
   const stop = async () => { if (!mutable || !currentRun || !data.workspace) return; setBusy(true); setNotice(""); try { await rpc(apiBase, csrf, "run.stop", { workspace: data.workspace.id, run: currentRun.id, expected_revision: currentRun.revision, grace_period_millis: 5000, idempotency_key: newKey("stop") }); setNotice("Graceful stop requested with the displayed 5000 ms grace."); await reload(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Stop failed."); } finally { setBusy(false); } };
   const resume = async () => { if (!mutable || !currentRun || !data.workspace) return; setBusy(true); setNotice(""); try { await rpc(apiBase, csrf, "run.resume", { workspace: data.workspace.id, run: currentRun.id, expected_revision: currentRun.revision, idempotency_key: newKey("resume") }); setNotice("Run resumed from its exact current revision."); await reload(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Resume failed."); } finally { setBusy(false); } };
@@ -690,7 +790,7 @@ function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspe
   const refreshGit = async () => { if (!data.workspace || !data.project) return; setBusy(true); setNotice(""); try { const response = await fetch(`${apiBase}/git?workspace=${encodeURIComponent(data.workspace.id)}&project=${encodeURIComponent(data.project.id)}`, { credentials: "same-origin" }); const result = (await response.json()) as { observations?: Array<Omit<Checkout, "id" | "project_id" | "path" | "write_mode"> & { checkout_id: string }>; error?: { message: string } }; if (!response.ok || !result.observations) throw new Error(result.error?.message ?? "Git observation failed"); const observation = result.observations[0]; const canonical = data.checkouts.find((checkout) => checkout.id === observation?.checkout_id); setGit(observation && canonical ? { ...canonical, ...observation, id: observation.checkout_id } : null); setNotice("Repository status refreshed without persisting source or diff content."); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Git observation failed."); } finally { setBusy(false); } };
   const agentRun = agent ? latestRunForAgent(data.runs, agent.id) : null;
   return <div className="drawer-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><aside className="inspector" aria-label="Canonical inspector"><header><div><div className="eyebrow">Exact inspector</div><h2>{run ? data.agents.find((candidate) => candidate.id === run.agent_id)?.name ?? "Agent run" : agent?.name ?? task?.task.title}</h2></div><IconButton label="Close inspector" onClick={close}><X size={18} /></IconButton></header>
-    {currentRun ? <><div className="inspector-status"><StatusPill value={currentRun.status} /><span>{currentRun.provider} through {currentRun.runtime}</span></div><section><h3>Assigned work</h3><p>{data.tasks.find((item) => item.task.id === currentRun.task_id)?.task.title ?? "Task unavailable in this bounded page"}</p></section>{["start_failed", "failed", "lost"].includes(currentRun.status) && <section className="launch-failure" role="alert"><div className="section-title"><h3>{currentRun.status === "start_failed" ? "Launch failed" : currentRun.status === "lost" ? "Runtime outcome is unknown" : "Run failed"}</h3><AlertCircle size={16} /></div><p>{currentRun.failure_message ?? currentRun.failure_code ?? "Inspect the bounded runtime output for the exact provider diagnosis."}</p>{currentRun.status === "start_failed" && <button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry after preflight</button>}</section>}<section><div className="section-title"><h3>Bounded runtime output</h3><TerminalSquare size={15} /></div><pre>{logs || "No runtime output was captured."}</pre></section>{terminalOpen && <LiveTerminal apiBase={apiBase} csrf={csrf} workspace={data.workspace?.id ?? ""} run={currentRun} close={() => setTerminalOpen(false)} />}{["active", "blocked"].includes(currentRun.status) && <section className="runtime-control"><label htmlFor="runtime-prompt">Send a visible runtime prompt</label><div><input id="runtime-prompt" value={prompt} maxLength={4096} onChange={(event) => setPrompt(event.target.value)} placeholder="Clarify the next observable step…" /><button className="secondary-button" disabled={busy || !prompt.trim()} onClick={() => void sendPrompt()}><Send size={14} />Send</button></div><div className="runtime-buttons">{currentRun.can_attach && !terminalOpen && <button className="secondary-button" disabled={busy} onClick={() => setTerminalOpen(true)}><TerminalSquare size={14} />Open live terminal</button>}{currentRun.status === "blocked" && <button className="secondary-button" disabled={busy} onClick={() => void resume()}><RotateCcw size={14} />Resume</button>}<button className="secondary-button" disabled={busy} onClick={() => void interrupt()}><AlertCircle size={14} />Interrupt</button><button className="danger-button" onClick={() => void stop()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <Square size={15} />}Stop · 5000 ms grace</button></div></section>}{notice && <div className="notice" role="status">{notice}</div>}<footer><span>Revision {currentRun.revision}</span><span>{currentRun.can_attach ? "Interactive runtime available" : currentRun.status === "start_failed" ? "Retry available after diagnosis" : "Bounded logs only"}</span></footer></> : agent ? <><div className="inspector-status"><StatusPill value={agentRun?.status ?? (agent.enabled ? "ready" : "disabled")} /><span>{agent.provider} through {agent.runtime}</span></div><section><h3>Authority-neutral role</h3><p>{agent.role}. Scheduling authority comes from policy, assignment, and receipts—not this label.</p></section><section><div className="section-title"><h3>Repository observation</h3><IconButton label="Refresh Git observation" onClick={() => void refreshGit()} disabled={busy}><RefreshCw className={busy ? "spin" : ""} size={14} /></IconButton></div>{git ? <><dl className="fact-list"><div><dt>Availability</dt><dd>{git.availability}</dd></div><div><dt>Branch</dt><dd>{git.branch || "detached"}</dd></div><div><dt>Working tree</dt><dd>{git.dirty ? `${git.dirty_paths?.length ?? 0}${git.omitted_paths ? `+${git.omitted_paths}` : ""} changed paths` : "clean"}</dd></div><div><dt>Write mode</dt><dd>{git.write_mode}</dd></div></dl>{git.dirty_paths && git.dirty_paths.length > 0 && <div className="changed-paths">{git.dirty_paths.slice(0, 16).map((path) => <code key={path}>{path}</code>)}{git.dirty_paths.length > 16 && <small>+{git.dirty_paths.length - 16 + (git.omitted_paths ?? 0)} paths omitted from this view</small>}</div>}</> : <p>No checkout is loaded in this bounded scope.</p>}</section>{notice && <div className="notice" role="status">{notice}</div>}{agentRun ? <button className="secondary-button" onClick={() => inspectRun(agentRun)}><TerminalSquare size={15} />Open run details</button> : <div className="quiet-line"><Clock3 size={14} />No current run</div>}<footer><span>Definition revision {agent.revision}</span><span>{agent.enabled ? "Enabled" : "Disabled"}</span></footer></> : task && <><div className="inspector-status"><StatusPill value={task.task.status} /><span>Priority {task.task.priority}</span></div><section><h3>Description</h3><p>{task.task.description || "No additional description."}</p></section><section><h3>Readiness</h3><p>{task.readiness.ready ? "Ready to run." : task.readiness.reason || "Not ready."}</p></section><section><h3>Assignment</h3><p>{data.agents.find((candidate) => candidate.id === task.task.assigned_agent_id)?.name ?? "Unassigned"}</p></section><footer><span>Revision {task.task.revision}</span><span>Updated {displayTime(task.task.updated_at)}</span></footer></>}
+    {currentRun ? <><div className="inspector-status"><StatusPill value={currentRun.status} /><span>{currentRun.provider} through {currentRun.runtime}</span></div><section><h3>Assigned work</h3><p>{data.tasks.find((item) => item.task.id === currentRun.task_id)?.task.title ?? "Task unavailable in this bounded page"}</p></section>{["start_failed", "failed", "lost"].includes(currentRun.status) && <section className="launch-failure" role="alert"><div className="section-title"><h3>{currentRun.status === "start_failed" ? "Launch failed" : currentRun.status === "lost" ? "Runtime outcome is unknown" : "Run failed"}</h3><AlertCircle size={16} /></div><p>{currentRun.failure_message ?? currentRun.failure_code ?? "Inspect the bounded runtime output for the exact provider diagnosis."}</p>{currentRun.status === "start_failed" && <button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry after preflight</button>}</section>}<section><div className="section-title"><h3>Agent activity</h3><Activity size={15} /></div><RuntimeOutput logs={logs} /></section>{terminalOpen && <LiveTerminal apiBase={apiBase} csrf={csrf} workspace={data.workspace?.id ?? ""} run={currentRun} close={() => setTerminalOpen(false)} mutable={mutable} />}{["active", "blocked"].includes(currentRun.status) && <section className="runtime-control"><label htmlFor="runtime-prompt">Send a visible runtime prompt</label><div><input id="runtime-prompt" value={prompt} maxLength={4096} onChange={(event) => setPrompt(event.target.value)} placeholder="Clarify the next observable step…" /><button className="secondary-button" disabled={busy || !prompt.trim()} onClick={() => void sendPrompt()}><Send size={14} />Send</button></div><div className="runtime-buttons">{currentRun.can_attach && !terminalOpen && <button className="secondary-button" disabled={busy} onClick={() => setTerminalOpen(true)}><TerminalSquare size={14} />Open raw terminal</button>}{currentRun.status === "blocked" && <button className="secondary-button" disabled={busy} onClick={() => void resume()}><RotateCcw size={14} />Resume</button>}<button className="secondary-button" disabled={busy} onClick={() => void interrupt()}><AlertCircle size={14} />Interrupt</button><button className="danger-button" onClick={() => void stop()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <Square size={15} />}Stop · 5000 ms grace</button></div></section>}{notice && <div className="notice" role="status">{notice}</div>}<footer><span>Revision {currentRun.revision}</span><span>{currentRun.can_attach ? "Interactive runtime available" : currentRun.status === "start_failed" ? "Retry available after diagnosis" : "Bounded logs only"}</span></footer></> : agent ? <><div className="inspector-status"><StatusPill value={agentRun?.status ?? (agent.enabled ? "ready" : "disabled")} /><span>{agent.provider} through {agent.runtime}</span></div><section><h3>Authority-neutral role</h3><p>{agent.role}. Scheduling authority comes from policy, assignment, and receipts—not this label.</p></section><section><div className="section-title"><h3>Repository observation</h3><IconButton label="Refresh Git observation" onClick={() => void refreshGit()} disabled={busy}><RefreshCw className={busy ? "spin" : ""} size={14} /></IconButton></div>{git ? <><dl className="fact-list"><div><dt>Availability</dt><dd>{git.availability}</dd></div><div><dt>Branch</dt><dd>{git.branch || "detached"}</dd></div><div><dt>Working tree</dt><dd>{git.dirty ? `${git.dirty_paths?.length ?? 0}${git.omitted_paths ? `+${git.omitted_paths}` : ""} changed paths` : "clean"}</dd></div><div><dt>Write mode</dt><dd>{git.write_mode}</dd></div></dl>{git.dirty_paths && git.dirty_paths.length > 0 && <div className="changed-paths">{git.dirty_paths.slice(0, 16).map((path) => <code key={path}>{path}</code>)}{git.dirty_paths.length > 16 && <small>+{git.dirty_paths.length - 16 + (git.omitted_paths ?? 0)} paths omitted from this view</small>}</div>}</> : <p>No checkout is loaded in this bounded scope.</p>}</section>{notice && <div className="notice" role="status">{notice}</div>}{agentRun ? <button className="secondary-button" onClick={() => inspectRun(agentRun)}><TerminalSquare size={15} />Open run details</button> : <div className="quiet-line"><Clock3 size={14} />No current run</div>}<footer><span>Definition revision {agent.revision}</span><span>{agent.enabled ? "Enabled" : "Disabled"}</span></footer></> : task && <><div className="inspector-status"><StatusPill value={task.task.status} /><span>Priority {task.task.priority}</span></div><section><h3>Description</h3><p>{task.task.description || "No additional description."}</p></section><section><h3>Readiness</h3><p>{task.readiness.ready ? "Ready to run." : task.readiness.reason || "Not ready."}</p></section><section><h3>Assignment</h3><p>{data.agents.find((candidate) => candidate.id === task.task.assigned_agent_id)?.name ?? "Unassigned"}</p></section><footer><span>Revision {task.task.revision}</span><span>Updated {displayTime(task.task.updated_at)}</span></footer></>}
   </aside></div>;
 }
 

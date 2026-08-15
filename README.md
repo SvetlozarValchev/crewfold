@@ -51,8 +51,9 @@ installed API schema, follows stable terminals across pane moves, reconciles aft
 daemon restart, delivers prompt-based mailbox wakes, and exposes attach,
 interrupt, stop, and pane logs without treating terminal lifecycle as completion
 authority. The first concrete provider edge is now implemented for Codex:
-`doctor --provider codex` verifies the installed headless/MCP surface and
-authentication, `codex exec` receives an isolated run-scoped MCP configuration,
+`doctor --provider codex` verifies the installed headless/MCP surface,
+authentication, and a no-effect workspace-sandbox invocation; `codex exec`
+receives an isolated run-scoped MCP configuration,
 and a STDIO bridge keeps the capability token out of arguments and terminal
 output. A recorded Codex endpoint proves the full offline task-to-handoff path.
 The owner-authorized disposable real-model canary also passes end to end while

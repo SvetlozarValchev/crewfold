@@ -114,6 +114,16 @@ func (w *workbenchServer) handleOwnerIntent(response http.ResponseWriter, reques
 			w.writeStoreError(response, &store.Error{Code: store.CodeAdapterUnavailable, Message: "owner manager could not produce a typed result", Cause: interpretationErr})
 			return
 		}
+		if params.Mode == "act" && interpretation.Disposition == "ready" {
+			profileIDs := make([]string, 0, len(interpretation.Tasks))
+			for _, task := range interpretation.Tasks {
+				profileIDs = append(profileIDs, task.LaunchProfileID)
+			}
+			if err := w.daemon.preflightOwnerLaunchProfiles(request.Context(), snapshot.WorkspaceID, snapshot.ProjectID, profileIDs); err != nil {
+				w.writeStoreError(response, err)
+				return
+			}
+		}
 		citations, citationErr := store.ResolveOwnerCitations(snapshot, interpretation.CitationRefs)
 		if citationErr != nil {
 			w.writeStoreError(response, citationErr)
@@ -215,12 +225,19 @@ func (w *workbenchServer) handleOwnerPlanEdit(response http.ResponseWriter, requ
 
 func (s *server) preflightOwnerTurn(ctx context.Context, detail domain.OwnerTurnDetail) error {
 	workspace, project := detail.Conversation.WorkspaceID, detail.Conversation.ProjectID
-	profiles := make(map[string]domain.LaunchProfile)
+	profileIDs := make([]string, 0, len(detail.Operations))
 	for _, operation := range detail.Operations {
 		if operation.Type != "schedule_task" {
 			continue
 		}
-		profileID := ownerPayloadString(operation.Payload, "launch_profile_id", "")
+		profileIDs = append(profileIDs, ownerPayloadString(operation.Payload, "launch_profile_id", ""))
+	}
+	return s.preflightOwnerLaunchProfiles(ctx, workspace, project, profileIDs)
+}
+
+func (s *server) preflightOwnerLaunchProfiles(ctx context.Context, workspace, project string, profileIDs []string) error {
+	profiles := make(map[string]domain.LaunchProfile)
+	for _, profileID := range profileIDs {
 		profile, err := s.store.LaunchProfile(ctx, workspace, profileID)
 		if err != nil {
 			return err

@@ -89,6 +89,10 @@ func NewCodexProbe(executable, codexHome string, runner CodexCommandRunner) Code
 }
 
 func (probe CodexProbe) Run(ctx context.Context) CodexProbeReport {
+	return probe.run(ctx, true)
+}
+
+func (probe CodexProbe) run(ctx context.Context, requireWorkspaceSandbox bool) CodexProbeReport {
 	report := CodexProbeReport{
 		Schema: CodexProbeSchema, Provider: "codex", Status: "ok", Binary: probe.executable,
 		Capabilities: append([]string(nil), codexCapabilities...), Checks: make([]CodexProbeCheck, 0, 3),
@@ -134,6 +138,18 @@ func (probe CodexProbe) Run(ctx context.Context) CodexProbeReport {
 	if len(missing) != 0 {
 		report.fail("capabilities", "Codex exec is missing required options: "+strings.Join(missing, ", ")+"; install a compatible Codex CLI")
 		return report
+	}
+	if requireWorkspaceSandbox {
+		sandboxResult, err := probe.runner.Run(ctx, probe.executable, []string{"sandbox", "linux", "--", "/bin/sh", "-c", "exit 0"}, environment)
+		if err != nil {
+			report.fail("capabilities", "Codex workspace sandbox probe failed: "+boundedCodexDiagnostic(err.Error()))
+			return report
+		}
+		if sandboxResult.ExitCode != 0 {
+			detail := codexCommandDiagnostic(sandboxResult, "Codex workspace sandbox probe failed")
+			report.fail("capabilities", "Codex workspace sandbox is unavailable: "+detail+"; on Ubuntu verify the unprivileged user-namespace/AppArmor policy before starting Crewfold work")
+			return report
+		}
 	}
 	report.pass("capabilities", strings.Join(report.Capabilities, ", "))
 
@@ -228,7 +244,8 @@ func NewCodexProvider(options CodexProviderOptions) CodexProvider {
 func (CodexProvider) Name() string { return "codex" }
 
 func (provider CodexProvider) Probe(ctx context.Context) CodexProbeReport {
-	return NewCodexProbe(provider.codexExecutable, provider.codexHome, provider.probeRunner).Run(ctx)
+	requireWorkspaceSandbox := provider.sandboxMode == CodexSandboxWorkspaceWrite
+	return NewCodexProbe(provider.codexExecutable, provider.codexHome, provider.probeRunner).run(ctx, requireWorkspaceSandbox)
 }
 
 func (provider CodexProvider) Prepare(ctx context.Context, run domain.Run, scenario domain.FakeScenario) (LaunchSpec, error) {
