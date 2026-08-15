@@ -311,6 +311,39 @@ func TestRejectedCompletionRequestsChangesAndRetainsAssignment(t *testing.T) {
 	if err != nil || detail.Run.Status != domain.RunReview || detail.Task.Status != domain.TaskChangesRequested || detail.Task.AssignmentID == "" || detail.Handoff != nil {
 		t.Fatalf("rejected completion = %#v, %v", detail, err)
 	}
+	retryCommand := RetryReviewedRunCommand{
+		WorkspaceIdentifier: workspace.ID, PriorRunID: detail.Run.ID,
+		ExpectedRunRevision: detail.Run.Revision, ExpectedTaskRevision: detail.Task.Revision,
+		Scenario:       domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "review-retry", Steps: []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "retry"}}},
+		IdempotencyKey: "retry-reviewed-run", CorrelationID: "request-retry-reviewed-run",
+	}
+	retried, err := storage.RetryReviewedRun(context.Background(), retryCommand)
+	if err != nil || retried.Detail.Run.ID == detail.Run.ID || retried.Detail.Run.Status != domain.RunRequested || retried.Detail.Task.Status != domain.TaskAssigned || retried.Detail.Task.AssignmentID != detail.Task.AssignmentID {
+		t.Fatalf("RetryReviewedRun() = %#v, %v", retried, err)
+	}
+	retryCommand.CorrelationID = "request-retry-reviewed-run-replay"
+	replay, err := storage.RetryReviewedRun(context.Background(), retryCommand)
+	if err != nil || !reflect.DeepEqual(replay, retried) {
+		t.Fatalf("RetryReviewedRun(replay) = %#v, %v; want %#v", replay, err, retried)
+	}
+	var retriedEvents int
+	if err := storage.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM events WHERE workspace_id=? AND ((entity_type='task' AND entity_id=? AND entity_revision=? AND type='task.assigned') OR (entity_type='run' AND entity_id=? AND type='run.requested'))`, workspace.ID, detail.Task.ID, retried.Detail.Task.Revision, retried.Detail.Run.ID).Scan(&retriedEvents); err != nil || retriedEvents != 2 {
+		t.Fatalf("review retry events = %d, %v; want task assignment plus run request", retriedEvents, err)
+	}
+	var eventCountBefore int
+	if err := storage.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM events WHERE workspace_id=?`, workspace.ID).Scan(&eventCountBefore); err != nil {
+		t.Fatal(err)
+	}
+	conflictCommand := retryCommand
+	conflictCommand.IdempotencyKey = "retry-reviewed-run-again"
+	conflictCommand.ExpectedTaskRevision = retried.Detail.Task.Revision
+	if _, err := storage.RetryReviewedRun(context.Background(), conflictCommand); ErrorCode(err) != CodeRunConflict {
+		t.Fatalf("RetryReviewedRun(superseded review) error = %v, code %q; want %q", err, ErrorCode(err), CodeRunConflict)
+	}
+	var eventCountAfter int
+	if err := storage.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM events WHERE workspace_id=?`, workspace.ID).Scan(&eventCountAfter); err != nil || eventCountAfter != eventCountBefore {
+		t.Fatalf("superseded retry event count = %d, %v; want unchanged %d", eventCountAfter, err, eventCountBefore)
+	}
 }
 
 func TestRunStopRetainsAssignmentAndRecordsForcedFallback(t *testing.T) {

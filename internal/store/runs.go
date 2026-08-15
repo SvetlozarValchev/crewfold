@@ -59,7 +59,7 @@ type RunLossResolutionResult struct {
 }
 
 func runStartRequestHash(command CreateRunCommand) (string, error) {
-	return hashCommand("run.start", map[string]any{
+	payload := map[string]any{
 		"workspace":                           command.WorkspaceIdentifier,
 		"task_id":                             command.TaskID,
 		"checkout_id":                         command.CheckoutIdentifier,
@@ -71,6 +71,36 @@ func runStartRequestHash(command CreateRunCommand) (string, error) {
 		"capability_ttl":                      command.CapabilityTTL,
 		"check_watch_grant_id":                command.CheckWatchGrantID,
 		"expected_check_watch_grant_revision": command.ExpectedCheckWatchGrantRevision,
+	}
+	if command.reviewedPriorRunID != "" {
+		payload["reviewed_prior_run_id"] = command.reviewedPriorRunID
+		payload["expected_reviewed_run_revision"] = command.expectedReviewedRunRevision
+	}
+	return hashCommand("run.start", payload)
+}
+
+// RetryReviewedRun creates a fresh owner-directed run after an exact rejected
+// completion. The prior review remains immutable; the retained assignment is
+// reopened and the successor run is committed in the same transaction.
+func (s *Store) RetryReviewedRun(ctx context.Context, command RetryReviewedRunCommand) (RunMutationResult, error) {
+	command.WorkspaceIdentifier = strings.TrimSpace(command.WorkspaceIdentifier)
+	command.PriorRunID = strings.TrimSpace(command.PriorRunID)
+	command.IdempotencyKey = strings.TrimSpace(command.IdempotencyKey)
+	command.CorrelationID = strings.TrimSpace(command.CorrelationID)
+	if command.WorkspaceIdentifier == "" || command.PriorRunID == "" || command.ExpectedRunRevision < 1 || command.ExpectedTaskRevision < 1 || !validStoredScenario(command.Scenario) {
+		return RunMutationResult{}, &Error{Code: CodeInvalidRun, Message: "review retry requires workspace, prior run, exact run and task revisions, and a valid scenario"}
+	}
+	prior, err := s.RunDetail(ctx, command.WorkspaceIdentifier, command.PriorRunID)
+	if err != nil {
+		return RunMutationResult{}, err
+	}
+	return s.CreateRun(ctx, CreateRunCommand{
+		WorkspaceIdentifier: command.WorkspaceIdentifier,
+		TaskID:              prior.Run.TaskID, CheckoutIdentifier: prior.Run.CheckoutID,
+		Runtime: prior.Run.Runtime, Provider: prior.Run.Provider, Scenario: command.Scenario,
+		ExpectedTaskRevision: command.ExpectedTaskRevision,
+		IdempotencyKey:       command.IdempotencyKey, CorrelationID: command.CorrelationID,
+		reviewedPriorRunID: command.PriorRunID, expectedReviewedRunRevision: command.ExpectedRunRevision,
 	})
 }
 
@@ -103,6 +133,7 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	correlationID := strings.TrimSpace(command.CorrelationID)
 	contextPacketID := strings.TrimSpace(command.ContextPacketID)
 	checkWatchGrantID := strings.TrimSpace(command.CheckWatchGrantID)
+	command.reviewedPriorRunID = strings.TrimSpace(command.reviewedPriorRunID)
 	capabilityTTL := command.CapabilityTTL
 	if capabilityTTL == 0 {
 		capabilityTTL = defaultRunCapabilityTTL
@@ -110,7 +141,7 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	if workspaceIdentifier == "" || taskID == "" || runtimeName == "" || providerName == "" || command.ExpectedTaskRevision < 1 || !validStoredScenario(command.Scenario) {
 		return RunMutationResult{}, &Error{Code: CodeInvalidRun, Message: "run start requires workspace, task, runtime, provider, a valid scenario, and expected task revision"}
 	}
-	if (checkWatchGrantID == "") != (command.ExpectedCheckWatchGrantRevision == 0) || checkWatchGrantID != "" && contextPacketID != "" {
+	if (checkWatchGrantID == "") != (command.ExpectedCheckWatchGrantRevision == 0) || checkWatchGrantID != "" && contextPacketID != "" || command.reviewedPriorRunID != "" && (contextPacketID != "" || checkWatchGrantID != "" || command.expectedReviewedRunRevision < 1) {
 		return RunMutationResult{}, &Error{Code: CodeInvalidRun, Message: "run start requires both-or-neither exact check-watch grant fields and forbids combining them with a supplied context packet"}
 	}
 	if capabilityTTL < time.Second || capabilityTTL > maximumRunCapabilityTTL {
@@ -175,8 +206,38 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	if !errors.Is(err, sql.ErrNoRows) {
 		return RunMutationResult{}, storageFailure("check task coordination hold", err)
 	}
-	if task.Status != domain.TaskAssigned || task.AssignmentID == "" {
-		return RunMutationResult{}, &Error{Code: CodeRunConflict, Message: "run start requires a task with an active assignment"}
+	if command.reviewedPriorRunID == "" {
+		if task.Status != domain.TaskAssigned || task.AssignmentID == "" {
+			return RunMutationResult{}, &Error{Code: CodeRunConflict, Message: "run start requires a task with an active assignment"}
+		}
+	} else {
+		prior, err := queryRun(ctx, tx, workspace.ID, command.reviewedPriorRunID)
+		if err != nil {
+			return RunMutationResult{}, err
+		}
+		var latestRunID string
+		if err := tx.QueryRowContext(ctx, "SELECT id FROM runs WHERE task_id=? ORDER BY created_at DESC,id DESC LIMIT 1", task.ID).Scan(&latestRunID); err != nil {
+			return RunMutationResult{}, storageFailure("read latest reviewed run", err)
+		}
+		var activeAssignment int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_assignments WHERE id=? AND task_id=? AND agent_id=? AND status='active'`, task.AssignmentID, task.ID, task.AssignedAgentID).Scan(&activeAssignment); err != nil {
+			return RunMutationResult{}, storageFailure("validate reviewed task assignment", err)
+		}
+		if prior.Revision != command.expectedReviewedRunRevision || prior.Status != domain.RunReview || prior.TaskID != task.ID || prior.AssignmentID != task.AssignmentID ||
+			prior.AgentID != task.AssignedAgentID || prior.CheckoutID != checkoutIdentifier || prior.Runtime != runtimeName || prior.Provider != providerName || latestRunID != prior.ID ||
+			task.Status != domain.TaskChangesRequested || task.AssignmentID == "" || activeAssignment != 1 {
+			return RunMutationResult{}, &Error{Code: CodeRunConflict, Message: "reviewed run or retained task assignment changed before retry"}
+		}
+		task.Status, task.BlockedReason, task.Revision = domain.TaskAssigned, "", task.Revision+1
+		now := s.nowText()
+		if err := updateTaskState(ctx, tx, task, now); err != nil {
+			return RunMutationResult{}, err
+		}
+		if _, err := appendEvent(ctx, tx, workspace.ID, "task", task.ID, task.Revision, taskAssigned, correlationID, now, map[string]any{
+			"assignment_id": task.AssignmentID, "agent_id": task.AssignedAgentID, "prior_run_id": prior.ID, "reason": "owner retried requested changes",
+		}); err != nil {
+			return RunMutationResult{}, err
+		}
 	}
 	var existingRunID string
 	err = tx.QueryRowContext(ctx, "SELECT id FROM runs WHERE task_id = ? AND status IN ('requested', 'starting', 'active', 'blocked', 'stopping', 'lost') ORDER BY created_at, id LIMIT 1", task.ID).Scan(&existingRunID)

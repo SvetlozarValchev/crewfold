@@ -47,7 +47,7 @@ canonical receipt and supervisor path; it is not browser-only choreography.
 | Conversation | Bounded durable query/plan/act turns with one frozen current operation grammar, canonical hashes, replay-safe idempotency, and no prose-derived authority |
 | Manager loop | Worker reports/messages trigger one coalesced restart-safe review at an exact event cut; updates, owner questions, and reviewed graphs carry explicit manager provenance and never silently execute |
 | Planning | Task/objective text, priority, enabled agent, and fixed token/time limits are editable before launch; revision and event high-water must still match |
-| Execution | Objective, task, assignment, and run effects use existing Store mutations and retain exact method/request/response/event receipts |
+| Execution | Objective, task, assignment, and run effects use existing Store mutations and retain exact method/request/response/event receipts; rejected completion exposes an exact-revision retry that preserves the prior review and atomically queues a fresh context-bound run |
 | Inspection | Work graph, crew, inbox, decisions, evidence, activity, briefings, health, Git observation, and logs come from current daemon/Store truth |
 | Terminal | A 30-second single-use WebSocket grant is bound to one browser session, workspace, current-node run, and PTY; no handle or capability is exposed |
 | UI | React/Vite assets are pinned and embedded; Lucide supplies named SVG icons; responsive navigation, labels, reduced motion, and stale-state fences are explicit |
@@ -87,6 +87,10 @@ static, generated, and package gates passed afterward.
   not persisted as source or diff text in conversation history.
 - Role and purpose remain descriptive. Browser prose cannot grant authority,
   raise paid-cost authority, bypass capacity, or invent a new operation type.
+- A `review` run paired with an exact `changes_requested` task may be retried only
+  from the displayed run and task revisions. The retained assignment is reopened
+  in the same transaction as the fresh run request; stale or superseded review
+  controls produce no task, event, context, capability, or runtime effect.
 
 ## Known limitations and deferrals
 

@@ -643,6 +643,18 @@ type CreateRunCommand struct {
 	ExpectedCheckWatchGrantRevision int64
 	IdempotencyKey                  string
 	CorrelationID                   string
+	reviewedPriorRunID              string
+	expectedReviewedRunRevision     int64
+}
+
+type RetryReviewedRunCommand struct {
+	WorkspaceIdentifier  string
+	PriorRunID           string
+	ExpectedRunRevision  int64
+	ExpectedTaskRevision int64
+	Scenario             domain.FakeScenario
+	IdempotencyKey       string
+	CorrelationID        string
 }
 
 type ResumeRunCommand struct {

@@ -802,7 +802,7 @@ func TestM21HerdrOnboardingRequiresLiveHostBeforeCanonicalMutation(t *testing.T)
 	}
 }
 
-func TestM21WorkbenchRetriesOneExactStartFailedRunAfterPreflight(t *testing.T) {
+func TestM21WorkbenchRetriesOneExactStartFailedOrReviewedRunAfterPreflight(t *testing.T) {
 	t.Parallel()
 
 	config := testConfig(t)
@@ -851,7 +851,11 @@ func TestM21WorkbenchRetriesOneExactStartFailedRunAfterPreflight(t *testing.T) {
 	if err := json.Unmarshal(exchangeWorkbenchBootstrap(t, client, origin, token, origin), &session); err != nil {
 		t.Fatal(err)
 	}
-	body, _ := json.Marshal(map[string]any{"workspace": workspace.Workspace.ID, "run": failed.Detail.Run.ID, "idempotency_key": "web-retry-second"})
+	failedCurrent, err := api.RunShow(context.Background(), workspace.Workspace.ID, failed.Detail.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"workspace": workspace.Workspace.ID, "run": failed.Detail.Run.ID, "expected_run_revision": failedCurrent.Detail.Run.Revision, "expected_task_revision": failedCurrent.Detail.Task.Revision, "idempotency_key": "web-retry-second"})
 	request, _ := http.NewRequest(http.MethodPost, origin+session.APIBase+"/retry-run", bytes.NewReader(body))
 	request.Header.Set("Origin", origin)
 	request.Header.Set("Content-Type", "application/json")
@@ -880,6 +884,49 @@ func TestM21WorkbenchRetriesOneExactStartFailedRunAfterPreflight(t *testing.T) {
 	if err != nil || len(runs.Runs) != 2 {
 		t.Fatalf("retry run list = %#v, %v", runs, err)
 	}
+
+	reviewTask := createAssignedRunWorkerTask(t, api, project.Project.ID, agent.Agent.ID, "web reviewed retry")
+	reviewed, err := api.RunStart(context.Background(), localapi.RunStartParams{
+		Workspace: workspace.Workspace.ID, Task: reviewTask.Detail.Task.ID, Runtime: "fake", Provider: "fake",
+		Scenario:             domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "web-reviewed-retry", Acceptance: domain.AcceptanceRule{RequiredEvidence: []string{"reviewed"}}, Steps: []domain.FakeStep{{Kind: domain.ObservationCompletion, Message: "needs review", Handoff: "review remains"}}},
+		ExpectedTaskRevision: reviewTask.Detail.Task.Revision, IdempotencyKey: "web-reviewed-first",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRunStatus(t, api, reviewed.Detail.Run.ID, domain.RunReview)
+	reviewedCurrent, err := api.RunShow(context.Background(), workspace.Workspace.ID, reviewed.Detail.Run.ID)
+	if err != nil || reviewedCurrent.Detail.Task.Status != domain.TaskChangesRequested {
+		t.Fatalf("reviewed run = %#v, %v", reviewedCurrent, err)
+	}
+	body, _ = json.Marshal(map[string]any{
+		"workspace": workspace.Workspace.ID, "run": reviewedCurrent.Detail.Run.ID,
+		"expected_run_revision": reviewedCurrent.Detail.Run.Revision, "expected_task_revision": reviewedCurrent.Detail.Task.Revision,
+		"idempotency_key": "web-reviewed-second",
+	})
+	request, _ = http.NewRequest(http.MethodPost, origin+session.APIBase+"/retry-run", bytes.NewReader(body))
+	request.Header.Set("Origin", origin)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Crewfold-CSRF", session.CSRF)
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("review retry status = %d: %s", response.StatusCode, raw)
+	}
+	if err := protocolschema.ValidateJSON("local/v1/run-mutation.result.schema.json", raw); err != nil {
+		t.Fatalf("review retry response schema = %v: %s", err, raw)
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Detail.Run.ID == reviewed.Detail.Run.ID || result.Detail.Task.Status != domain.TaskAssigned || result.Detail.Task.AssignmentID != reviewedCurrent.Detail.Task.AssignmentID {
+		t.Fatalf("review retry result = %#v", result.Detail)
+	}
+	waitForRunStatus(t, api, result.Detail.Run.ID, domain.RunCompleted)
 }
 
 func TestM21WorkbenchShellIsEmbeddedAndSecurityHeadersAreExact(t *testing.T) {
