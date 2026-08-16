@@ -22,8 +22,10 @@ read decisions, evidence, activity, health, and a bounded project briefing.
 An act response is not decorative chat: it executes a closed typed operation graph
 and records exact durable effect receipts. A plan remains inert until its reviewed
 revision is launched. Stale canonical state disables unsafe browser controls.
-Herdr supplies the normal interactive runtime and live terminal; Crewfold's
-database, events, receipts, reports, and evidence remain canonical truth. Direct
+Herdr supplies the normal interactive runtime and live stream; Crewfold renders
+structured provider events for ordinary inspection and keeps the exact protocol
+PTY behind a visibly advanced console. Crewfold's database, events, receipts,
+reports, and evidence remain canonical truth. Direct
 remains an explicit advanced CI/headless fallback.
 
 The manager is now event-driven as well as owner-invoked. Structured worker
@@ -49,7 +51,7 @@ canonical receipt and supervisor path; it is not browser-only choreography.
 | Planning | Task/objective text, priority, enabled agent, and fixed token/time limits are editable before launch; revision and event high-water must still match |
 | Execution | Objective, task, assignment, and run effects use existing Store mutations and retain exact method/request/response/event receipts; rejected completion exposes an exact-revision retry that preserves the prior review and atomically queues a fresh context-bound run |
 | Inspection | Work graph, crew, inbox, decisions, evidence, activity, briefings, health, Git observation, and logs come from current daemon/Store truth |
-| Terminal | A 30-second single-use WebSocket grant is bound to one browser session, workspace, current-node run, and PTY; no handle or capability is exposed |
+| Terminal | A 30-second single-use WebSocket grant is bound to one browser session, workspace, current-node run, and PTY; the default view renders readable live events while exact PTY bytes and direct input remain an advanced disclosure; no handle or capability is exposed |
 | UI | React/Vite assets are pinned and embedded; Lucide supplies named SVG icons; responsive navigation, labels, reduced motion, and stale-state fences are explicit |
 
 ## Test evidence

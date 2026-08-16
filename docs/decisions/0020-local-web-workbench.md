@@ -245,13 +245,16 @@ For one selected agent/run, the workbench may show:
 - structured progress, blockage, completion proposal, messages, and handoffs;
 - claims, bounded Git status/diff summary, drift, checks, and evidence;
 - current budget, capacity, elapsed time, durable history, and decisions; and
-- bounded direct logs or a live Herdr terminal when available.
+- bounded direct logs or a readable live Herdr activity stream when available.
 
 The daemon adds bounded read-only Git status/diff endpoints rather than returning
 unbounded source or storing a source-code copy. Changed paths are observations;
 declared claims and accepted outcomes remain separate facts. Raw terminal bytes
-are visibly labeled operational and untrusted, sanitized before non-terminal
-rendering, and never complete a task. Crewfold does not expose or claim access to
+are not the default inspection surface: structured provider events are rendered
+as readable activity and the exact PTY is retained only in a visibly advanced
+protocol console. Raw bytes are labeled operational and untrusted, sanitized
+before non-terminal rendering, and never complete a task. Crewfold does not
+expose or claim access to
 private model chain-of-thought, unreported provider reasoning, provider-private
 session history, or actions invisible to all runtime/MCP/Git/check boundaries.
 

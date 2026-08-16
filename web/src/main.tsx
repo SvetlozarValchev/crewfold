@@ -142,6 +142,11 @@ function readableRuntimeActivity(raw: string): RuntimeActivity[] {
         if (type === "turn.started") { add("Turn", "Agent reasoning started", "live"); continue; }
         if (type === "turn.completed") { add("Turn", "Agent turn completed", "good"); continue; }
         if (type === "turn.failed" || type === "error") { add("Error", message(value.error ?? value.message ?? line), "bad"); continue; }
+        if ((type === "item.started" || type === "item.updated") && item) {
+          const itemType = typeof item.type === "string" ? item.type : "item";
+          if (itemType === "mcp_tool_call") { add("Crewfold tool", `${String(item.tool ?? "tool").replaceAll("crewfold_", "").replaceAll("_", " ")} · running`, "live"); continue; }
+          if (itemType === "command_execution") { add("Command", String(item.command ?? item.text ?? "Local command started"), "live"); continue; }
+        }
         if (type === "item.completed" && item) {
           const itemType = typeof item.type === "string" ? item.type : "item";
           if (itemType === "agent_message") { add("Agent", item.text, "good"); continue; }
@@ -169,10 +174,14 @@ function readableRuntimeActivity(raw: string): RuntimeActivity[] {
   return entries.slice(-40);
 }
 
-function RuntimeOutput({ logs }: { logs: string }) {
+function RuntimeActivityFeed({ logs, empty }: { logs: string; empty: string }) {
   const activity = useMemo(() => readableRuntimeActivity(logs), [logs]);
-  if (activity.length === 0) return <pre>{logs || "No runtime output was captured."}</pre>;
-  return <><div className="runtime-activity">{activity.map((entry) => <article className={entry.tone} key={entry.key}><span>{entry.kind}</span><p>{entry.text}</p></article>)}</div><details className="raw-runtime-output"><summary>Show raw bounded provider output</summary><pre>{logs}</pre></details></>;
+  if (activity.length === 0) return <div className="activity-empty"><Activity size={16} /><span>{empty}</span></div>;
+  return <div className="runtime-activity">{activity.map((entry) => <article className={entry.tone} key={entry.key}><span>{entry.kind}</span><p>{entry.text}</p></article>)}</div>;
+}
+
+function RuntimeOutput({ logs }: { logs: string }) {
+  return <><RuntimeActivityFeed logs={logs} empty={logs ? "No human-readable provider event was present in this bounded capture." : "Waiting for the first agent event."} />{logs && <details className="raw-runtime-output"><summary>Show raw bounded provider output</summary><pre>{logs}</pre></details>}</>;
 }
 
 async function exchangeBootstrap(token: string): Promise<SessionResponse> {
@@ -668,6 +677,8 @@ function HealthView({ apiBase, csrf, status }: { apiBase: string; csrf: string; 
 function LiveTerminal({ apiBase, csrf, workspace, run, close, mutable }: { apiBase: string; csrf: string; workspace: string; run: Run; close: () => void; mutable: boolean }) {
   const [state, setState] = useState("connecting");
   const [input, setInput] = useState("");
+  const [streamRaw, setStreamRaw] = useState("");
+  const [protocolOpen, setProtocolOpen] = useState(false);
   const [followOutput, setFollowOutput] = useState(true);
   const [unseenOutput, setUnseenOutput] = useState(false);
   const host = useRef<HTMLDivElement | null>(null);
@@ -677,6 +688,7 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close, mutable }: { apiBa
   const follow = useRef(true);
   const controlsEnabled = useRef(mutable);
   const decoder = useRef(new TextDecoder());
+  const rawBuffer = useRef("");
 
   useEffect(() => { controlsEnabled.current = mutable; }, [mutable]);
 
@@ -690,7 +702,7 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close, mutable }: { apiBa
   }, []);
 
   useEffect(() => {
-    if (!host.current) return;
+    if (!protocolOpen || !host.current) return;
     const nextTerminal = new Terminal({
       allowProposedApi: false,
       cursorBlink: true,
@@ -713,6 +725,7 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close, mutable }: { apiBa
       try { fitAddon.fit(); sendSize(); } catch { /* the inspector is closing */ }
     };
     fitToPanel();
+    if (rawBuffer.current) nextTerminal.write(rawBuffer.current, () => nextTerminal.scrollToBottom());
     const resizeObserver = new ResizeObserver(fitToPanel);
     resizeObserver.observe(host.current);
     const inputSubscription = nextTerminal.onData(sendInput);
@@ -730,7 +743,7 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close, mutable }: { apiBa
       fit.current = null;
       nextTerminal.dispose();
     };
-  }, [sendInput, sendSize]);
+  }, [protocolOpen, sendInput, sendSize]);
 
   useEffect(() => {
     let active = true;
@@ -747,6 +760,8 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close, mutable }: { apiBa
         next.onmessage = (event) => {
           if (!active) return;
           const raw = event.data instanceof ArrayBuffer ? decoder.current.decode(event.data, { stream: true }) : String(event.data);
+          rawBuffer.current = `${rawBuffer.current}${raw}`.slice(-262144);
+          setStreamRaw(rawBuffer.current);
           if (!follow.current) setUnseenOutput(true);
           terminal.current?.write(raw, () => { if (follow.current) terminal.current?.scrollToBottom(); });
         };
@@ -766,7 +781,21 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close, mutable }: { apiBa
     setFollowOutput(next);
     if (next) { terminal.current?.scrollToBottom(); setUnseenOutput(false); }
   };
-  return <section className="live-terminal" aria-label="Live Herdr terminal"><div className="section-title"><h3>Raw interactive terminal</h3><span><CircleDot size={11} />{state}</span></div><p>The readable activity is above. This raw Herdr terminal is retained for direct inspection and input.</p>{!mutable && <div className="terminal-paused">Canonical state is refreshing; output remains connected while input is temporarily disabled.</div>}<div className="terminal-toolbar"><span>Click the terminal to type · wheel to inspect scrollback</span><button type="button" className={followOutput ? "follow-active" : ""} onClick={toggleFollow}><ChevronDown size={13} />{unseenOutput ? "New output" : followOutput ? "Following" : "Follow output"}</button></div><div ref={host} className="terminal-canvas" role="application" aria-label="Interactive Herdr terminal output" /><form onSubmit={(event) => { event.preventDefault(); sendInput(input + "\r"); setInput(""); }}><input aria-label="Terminal input" value={input} maxLength={4095} onChange={(event) => setInput(event.target.value)} placeholder="Paste or send terminal input…" disabled={!mutable} /><button className="secondary-button" disabled={!mutable || state !== "connected" || !input}><Send size={14} />Send</button><button type="button" className="secondary-button" disabled={!mutable || state !== "connected"} onClick={() => sendInput("\u0003")}><AlertCircle size={14} />Ctrl-C</button><button type="button" className="secondary-button" onClick={close}><X size={14} />Close</button></form></section>;
+  return <section className="live-terminal" aria-label="Live agent activity">
+    <div className="section-title"><h3>Live provider activity</h3><span><CircleDot size={11} />{state}</span></div>
+    <p>Codex protocol events are rendered into a readable live stream. Canonical Crewfold state and receipts remain above.</p>
+    {!mutable && <div className="terminal-paused">Canonical state is refreshing; output remains connected while controls are temporarily disabled.</div>}
+    <div className="live-activity-scroll"><RuntimeActivityFeed logs={streamRaw} empty={state === "connected" ? "Connected. Waiting for the next structured agent event." : "Connecting to the current Herdr run…"} /></div>
+    <details className="protocol-console" onToggle={(event) => setProtocolOpen(event.currentTarget.open)}>
+      <summary><span><TerminalSquare size={13} />Advanced protocol console</span><small>Exact PTY bytes and direct terminal input</small></summary>
+      {protocolOpen && <div className="protocol-console-body">
+        <div className="terminal-toolbar"><span>Diagnostic surface · raw Codex JSONL may be noisy</span><button type="button" className={followOutput ? "follow-active" : ""} onClick={toggleFollow}><ChevronDown size={13} />{unseenOutput ? "New output" : followOutput ? "Following" : "Follow output"}</button></div>
+        <div ref={host} className="terminal-canvas" role="application" aria-label="Advanced raw Herdr protocol terminal" />
+        <form onSubmit={(event) => { event.preventDefault(); sendInput(input + "\r"); setInput(""); }}><input aria-label="Raw terminal input" value={input} maxLength={4095} onChange={(event) => setInput(event.target.value)} placeholder="Send raw terminal input…" disabled={!mutable} /><button className="secondary-button" disabled={!mutable || state !== "connected" || !input}><Send size={14} />Send</button><button type="button" className="secondary-button" disabled={!mutable || state !== "connected"} onClick={() => sendInput("\u0003")}><AlertCircle size={14} />Ctrl-C</button></form>
+      </div>}
+    </details>
+    <button type="button" className="secondary-button close-live-activity" onClick={close}><X size={14} />Hide live activity</button>
+  </section>;
 }
 
 function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspectRun, mutable }: { data: WorkbenchData; task: TaskDetail | null; run: Run | null; agent: Agent | null; apiBase: string; csrf: string; close: () => void; reload: () => Promise<void>; inspectRun: (run: Run) => void; mutable: boolean }) {
@@ -783,7 +812,26 @@ function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspe
   const currentRun = run ? data.runs.find((candidate) => candidate.id === run.id) ?? run : null;
   const currentTask = currentRun ? data.tasks.find((item) => item.task.id === currentRun.task_id)?.task ?? null : null;
   const canRetryReview = currentRun?.status === "review" && currentTask?.status === "changes_requested";
-  useEffect(() => { setLogs(""); if (!run) return; void rpc<{ logs: { stdout: { text: string; truncated: boolean; omitted_bytes: number }; stderr: { text: string; truncated: boolean; omitted_bytes: number }; state: string } }>(apiBase, csrf, "run.logs", { workspace: data.workspace?.id, run: run.id, tail: 160 }).then((result) => setLogs([result.logs.stdout.text, result.logs.stderr.text, result.logs.stdout.truncated || result.logs.stderr.truncated ? "[bounded log output; earlier bytes omitted]" : ""].filter(Boolean).join("\n"))).catch((error) => setLogs(error instanceof Error ? error.message : "Logs unavailable")); }, [apiBase, csrf, data.workspace?.id, run?.id, data.highWater]);
+  useEffect(() => {
+    setLogs("");
+    if (!currentRun) return;
+    let active = true;
+    let loading = false;
+    const loadLogs = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const result = await rpc<{ logs: { stdout: { text: string; truncated: boolean; omitted_bytes: number }; stderr: { text: string; truncated: boolean; omitted_bytes: number }; state: string } }>(apiBase, csrf, "run.logs", { workspace: data.workspace?.id, run: currentRun.id, tail: 160 });
+        if (active) setLogs([result.logs.stdout.text, result.logs.stderr.text, result.logs.stdout.truncated || result.logs.stderr.truncated ? "[bounded log output; earlier bytes omitted]" : ""].filter(Boolean).join("\n"));
+      } catch (error) {
+        if (active) setLogs(error instanceof Error ? error.message : "Logs unavailable");
+      } finally { loading = false; }
+    };
+    void loadLogs();
+    const live = ["requested", "starting", "active", "blocked", "stopping"].includes(currentRun.status);
+    const timer = live ? window.setInterval(() => void loadLogs(), 1000) : undefined;
+    return () => { active = false; if (timer !== undefined) window.clearInterval(timer); };
+  }, [apiBase, csrf, data.workspace?.id, currentRun?.id, currentRun?.status, data.highWater]);
   useEffect(() => { setGit(data.checkouts[0] ?? null); }, [data.checkouts]);
   useEffect(() => {
     setRunDetail(null); setContextExplanation(null); setRunMessages([]); setTab("live");
@@ -802,8 +850,8 @@ function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspe
   const retry = async () => { if (!mutable || !currentRun || !currentTask || !data.workspace || currentRun.status !== "start_failed" && !canRetryReview) return; setBusy(true); setNotice(""); try { const freshRun = await retryWorkbenchRun(apiBase, csrf, data.workspace.id, currentRun, currentTask); setNotice(canRetryReview ? "Requested changes were reopened on the retained assignment and a fresh run was queued." : "A fresh run was requested after the runtime and provider preflight passed."); await reload(); inspectRun(freshRun); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Retry failed."); } finally { setBusy(false); } };
   const refreshGit = async () => { if (!data.workspace || !data.project) return; setBusy(true); setNotice(""); try { const response = await fetch(`${apiBase}/git?workspace=${encodeURIComponent(data.workspace.id)}&project=${encodeURIComponent(data.project.id)}`, { credentials: "same-origin" }); const result = (await response.json()) as { observations?: Array<Omit<Checkout, "id" | "project_id" | "path" | "write_mode"> & { checkout_id: string }>; error?: { message: string } }; if (!response.ok || !result.observations) throw new Error(result.error?.message ?? "Git observation failed"); const observation = result.observations[0]; const canonical = data.checkouts.find((checkout) => checkout.id === observation?.checkout_id); setGit(observation && canonical ? { ...canonical, ...observation, id: observation.checkout_id } : null); setNotice("Repository status refreshed without persisting source or diff content."); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Git observation failed."); } finally { setBusy(false); } };
   const agentRun = agent ? latestRunForAgent(data.runs, agent.id) : null;
-  return <div className="drawer-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><aside className="inspector" aria-label="Canonical inspector"><header><div><div className="eyebrow">Exact inspector</div><h2>{run ? data.agents.find((candidate) => candidate.id === run.agent_id)?.name ?? "Agent run" : agent?.name ?? task?.task.title}</h2></div><IconButton label="Close inspector" onClick={close}><X size={18} /></IconButton></header>
-    {currentRun ? <><div className="inspector-status"><StatusPill value={currentRun.status} /><span>{currentRun.provider} through {currentRun.runtime}</span></div><section><h3>Assigned work</h3><p>{currentTask?.title ?? "Task unavailable in this bounded page"}</p></section>{["start_failed", "failed", "lost"].includes(currentRun.status) && <section className="launch-failure" role="alert"><div className="section-title"><h3>{currentRun.status === "start_failed" ? "Launch failed" : currentRun.status === "lost" ? "Runtime outcome is unknown" : "Run failed"}</h3><AlertCircle size={16} /></div><p>{currentRun.failure_message ?? currentRun.failure_code ?? "Inspect the bounded runtime output for the exact provider diagnosis."}</p>{currentRun.status === "start_failed" && <button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry after preflight</button>}</section>}{canRetryReview && <section className="launch-failure review-retry" role="alert"><div className="section-title"><h3>Changes requested</h3><ClipboardCheck size={16} /></div><p>{currentTask?.blocked_reason ?? "The completion did not satisfy the task acceptance evidence."}</p><p>The prior review remains immutable. Retrying reopens this exact assignment and creates a fresh context-bound run.</p><button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry requested changes</button></section>}<section><div className="section-title"><h3>Agent activity</h3><Activity size={15} /></div><RuntimeOutput logs={logs} /></section>{terminalOpen && <LiveTerminal apiBase={apiBase} csrf={csrf} workspace={data.workspace?.id ?? ""} run={currentRun} close={() => setTerminalOpen(false)} mutable={mutable} />}{["active", "blocked"].includes(currentRun.status) && <section className="runtime-control"><label htmlFor="runtime-prompt">Send a visible runtime prompt</label><div><input id="runtime-prompt" value={prompt} maxLength={4096} onChange={(event) => setPrompt(event.target.value)} placeholder="Clarify the next observable step…" /><button className="secondary-button" disabled={busy || !prompt.trim()} onClick={() => void sendPrompt()}><Send size={14} />Send</button></div><div className="runtime-buttons">{currentRun.can_attach && !terminalOpen && <button className="secondary-button" disabled={busy} onClick={() => setTerminalOpen(true)}><TerminalSquare size={14} />Open raw terminal</button>}{currentRun.status === "blocked" && <button className="secondary-button" disabled={busy} onClick={() => void resume()}><RotateCcw size={14} />Resume</button>}<button className="secondary-button" disabled={busy} onClick={() => void interrupt()}><AlertCircle size={14} />Interrupt</button><button className="danger-button" onClick={() => void stop()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <Square size={15} />}Stop · 5000 ms grace</button></div></section>}{notice && <div className="notice" role="status">{notice}</div>}<footer><span>Revision {currentRun.revision}</span><span>{currentRun.can_attach ? "Interactive runtime available" : currentRun.status === "start_failed" ? "Retry available after diagnosis" : canRetryReview ? "Reviewed retry available" : "Bounded logs only"}</span></footer></> : agent ? <><div className="inspector-status"><StatusPill value={agentRun?.status ?? (agent.enabled ? "ready" : "disabled")} /><span>{agent.provider} through {agent.runtime}</span></div><section><h3>Authority-neutral role</h3><p>{agent.role}. Scheduling authority comes from policy, assignment, and receipts—not this label.</p></section><section><div className="section-title"><h3>Repository observation</h3><IconButton label="Refresh Git observation" onClick={() => void refreshGit()} disabled={busy}><RefreshCw className={busy ? "spin" : ""} size={14} /></IconButton></div>{git ? <><dl className="fact-list"><div><dt>Availability</dt><dd>{git.availability}</dd></div><div><dt>Branch</dt><dd>{git.branch || "detached"}</dd></div><div><dt>Working tree</dt><dd>{git.dirty ? `${git.dirty_paths?.length ?? 0}${git.omitted_paths ? `+${git.omitted_paths}` : ""} changed paths` : "clean"}</dd></div><div><dt>Write mode</dt><dd>{git.write_mode}</dd></div></dl>{git.dirty_paths && git.dirty_paths.length > 0 && <div className="changed-paths">{git.dirty_paths.slice(0, 16).map((path) => <code key={path}>{path}</code>)}{git.dirty_paths.length > 16 && <small>+{git.dirty_paths.length - 16 + (git.omitted_paths ?? 0)} paths omitted from this view</small>}</div>}</> : <p>No checkout is loaded in this bounded scope.</p>}</section>{notice && <div className="notice" role="status">{notice}</div>}{agentRun ? <button className="secondary-button" onClick={() => inspectRun(agentRun)}><TerminalSquare size={15} />Open run details</button> : <div className="quiet-line"><Clock3 size={14} />No current run</div>}<footer><span>Definition revision {agent.revision}</span><span>{agent.enabled ? "Enabled" : "Disabled"}</span></footer></> : task && <><div className="inspector-status"><StatusPill value={task.task.status} /><span>Priority {task.task.priority}</span></div><section><h3>Description</h3><p>{task.task.description || "No additional description."}</p></section><section><h3>Readiness</h3><p>{task.readiness.ready ? "Ready to run." : task.readiness.reason || "Not ready."}</p></section><section><h3>Assignment</h3><p>{data.agents.find((candidate) => candidate.id === task.task.assigned_agent_id)?.name ?? "Unassigned"}</p></section><footer><span>Revision {task.task.revision}</span><span>Updated {displayTime(task.task.updated_at)}</span></footer></>}
+  return <div className="drawer-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><aside className={`inspector${terminalOpen ? " live-inspector" : ""}`} aria-label="Canonical inspector"><header><div><div className="eyebrow">Exact inspector</div><h2>{run ? data.agents.find((candidate) => candidate.id === run.agent_id)?.name ?? "Agent run" : agent?.name ?? task?.task.title}</h2></div><IconButton label="Close inspector" onClick={close}><X size={18} /></IconButton></header>
+    {currentRun ? <><div className="inspector-status"><StatusPill value={currentRun.status} /><span>{currentRun.provider} through {currentRun.runtime}</span></div><section><h3>Assigned work</h3><p>{currentTask?.title ?? "Task unavailable in this bounded page"}</p></section>{["start_failed", "failed", "lost"].includes(currentRun.status) && <section className="launch-failure" role="alert"><div className="section-title"><h3>{currentRun.status === "start_failed" ? "Launch failed" : currentRun.status === "lost" ? "Runtime outcome is unknown" : "Run failed"}</h3><AlertCircle size={16} /></div><p>{currentRun.failure_message ?? currentRun.failure_code ?? "Inspect the bounded runtime output for the exact provider diagnosis."}</p>{currentRun.status === "start_failed" && <button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry after preflight</button>}</section>}{canRetryReview && <section className="launch-failure review-retry" role="alert"><div className="section-title"><h3>Changes requested</h3><ClipboardCheck size={16} /></div><p>{currentTask?.blocked_reason ?? "The completion did not satisfy the task acceptance evidence."}</p><p>The prior review remains immutable. Retrying reopens this exact assignment and creates a fresh context-bound run.</p><button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry requested changes</button></section>}<section><div className="section-title"><h3>Readable agent activity</h3><Activity size={15} /></div><RuntimeOutput logs={logs} /></section>{terminalOpen && <LiveTerminal key={currentRun.id} apiBase={apiBase} csrf={csrf} workspace={data.workspace?.id ?? ""} run={currentRun} close={() => setTerminalOpen(false)} mutable={mutable} />}{["active", "blocked"].includes(currentRun.status) && <section className="runtime-control"><label htmlFor="runtime-prompt">Send a visible runtime prompt</label><div><input id="runtime-prompt" value={prompt} maxLength={4096} onChange={(event) => setPrompt(event.target.value)} placeholder="Clarify the next observable step…" /><button className="secondary-button" disabled={busy || !prompt.trim()} onClick={() => void sendPrompt()}><Send size={14} />Send</button></div><div className="runtime-buttons">{currentRun.can_attach && !terminalOpen && <button className="secondary-button" disabled={busy} onClick={() => setTerminalOpen(true)}><TerminalSquare size={14} />Open live activity</button>}{currentRun.status === "blocked" && <button className="secondary-button" disabled={busy} onClick={() => void resume()}><RotateCcw size={14} />Resume</button>}<button className="secondary-button" disabled={busy} onClick={() => void interrupt()}><AlertCircle size={14} />Interrupt</button><button className="danger-button" onClick={() => void stop()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <Square size={15} />}Stop · 5000 ms grace</button></div></section>}{notice && <div className="notice" role="status">{notice}</div>}<footer><span>Revision {currentRun.revision}</span><span>{currentRun.can_attach ? "Live activity and interactive controls available" : currentRun.status === "start_failed" ? "Retry available after diagnosis" : canRetryReview ? "Reviewed retry available" : "Bounded logs only"}</span></footer></> : agent ? <><div className="inspector-status"><StatusPill value={agentRun?.status ?? (agent.enabled ? "ready" : "disabled")} /><span>{agent.provider} through {agent.runtime}</span></div><section><h3>Authority-neutral role</h3><p>{agent.role}. Scheduling authority comes from policy, assignment, and receipts—not this label.</p></section><section><div className="section-title"><h3>Repository observation</h3><IconButton label="Refresh Git observation" onClick={() => void refreshGit()} disabled={busy}><RefreshCw className={busy ? "spin" : ""} size={14} /></IconButton></div>{git ? <><dl className="fact-list"><div><dt>Availability</dt><dd>{git.availability}</dd></div><div><dt>Branch</dt><dd>{git.branch || "detached"}</dd></div><div><dt>Working tree</dt><dd>{git.dirty ? `${git.dirty_paths?.length ?? 0}${git.omitted_paths ? `+${git.omitted_paths}` : ""} changed paths` : "clean"}</dd></div><div><dt>Write mode</dt><dd>{git.write_mode}</dd></div></dl>{git.dirty_paths && git.dirty_paths.length > 0 && <div className="changed-paths">{git.dirty_paths.slice(0, 16).map((path) => <code key={path}>{path}</code>)}{git.dirty_paths.length > 16 && <small>+{git.dirty_paths.length - 16 + (git.omitted_paths ?? 0)} paths omitted from this view</small>}</div>}</> : <p>No checkout is loaded in this bounded scope.</p>}</section>{notice && <div className="notice" role="status">{notice}</div>}{agentRun ? <button className="secondary-button" onClick={() => inspectRun(agentRun)}><TerminalSquare size={15} />Open run details</button> : <div className="quiet-line"><Clock3 size={14} />No current run</div>}<footer><span>Definition revision {agent.revision}</span><span>{agent.enabled ? "Enabled" : "Disabled"}</span></footer></> : task && <><div className="inspector-status"><StatusPill value={task.task.status} /><span>Priority {task.task.priority}</span></div><section><h3>Description</h3><p>{task.task.description || "No additional description."}</p></section><section><h3>Readiness</h3><p>{task.readiness.ready ? "Ready to run." : task.readiness.reason || "Not ready."}</p></section><section><h3>Assignment</h3><p>{data.agents.find((candidate) => candidate.id === task.task.assigned_agent_id)?.name ?? "Unassigned"}</p></section><footer><span>Revision {task.task.revision}</span><span>Updated {displayTime(task.task.updated_at)}</span></footer></>}
   </aside></div>;
 }
 
