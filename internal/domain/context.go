@@ -156,6 +156,9 @@ type ContextManagerLaunchProfile struct {
 // exact authority with which the run was launched.
 type ContextManagerGrant struct {
 	Schema               string                        `json:"schema"`
+	OwnerExecutive       bool                          `json:"owner_executive"`
+	InvocationProfileID  string                        `json:"invocation_launch_profile_id"`
+	InvocationProfileRev int64                         `json:"invocation_launch_profile_revision"`
 	GrantID              string                        `json:"grant_id"`
 	GrantRevision        int64                         `json:"grant_revision"`
 	WorkspaceID          string                        `json:"workspace_id"`

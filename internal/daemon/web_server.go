@@ -314,10 +314,6 @@ func (w *workbenchServer) handleSessionAPI(response http.ResponseWriter, request
 		w.handleOwnerIntent(response, request, session)
 	case "onboarding":
 		w.handleWorkbenchOnboarding(response, request, session)
-	case "execute":
-		w.handleOwnerPlanExecution(response, request, session)
-	case "plan":
-		w.handleOwnerPlanEdit(response, request, session)
 	case "git":
 		w.handleWorkbenchGitObservation(response, request)
 	case "terminal-grant":
@@ -505,7 +501,8 @@ var workbenchMethods = map[string]struct{}{
 	localapi.MethodApprovalList: {}, localapi.MethodApprovalInspect: {}, localapi.MethodApprovalAllow: {}, localapi.MethodApprovalDeny: {},
 	localapi.MethodSupervisorPolicyShow: {}, localapi.MethodSupervisorPolicyConfigure: {},
 	localapi.MethodSupervisorActionList: {}, localapi.MethodSupervisorActionShow: {},
-	localapi.MethodLaunchProfileList: {},
+	localapi.MethodLaunchProfileList: {}, localapi.MethodProposalList: {}, localapi.MethodProposalInspect: {},
+	localapi.MethodProposalAccept: {}, localapi.MethodProposalReject: {},
 	localapi.MethodBriefingShow:      {}, localapi.MethodBriefingExplain: {},
 	localapi.MethodCheckList: {}, localapi.MethodCheckInspect: {}, localapi.MethodCheckLogs: {},
 	localapi.MethodSystemDoctorFull: {},

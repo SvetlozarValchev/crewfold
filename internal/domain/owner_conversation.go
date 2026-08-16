@@ -1,5 +1,7 @@
 package domain
 
+import "encoding/json"
+
 // OwnerConversation is the durable browser-facing command thread for one
 // exact workspace/project scope. It records intent; canonical domain effects
 // remain in their existing projections and event journal.
@@ -33,6 +35,48 @@ type OwnerTurn struct {
 	CompletedEventSequence int64               `json:"completed_event_sequence,omitempty"`
 	Citations              []OwnerCitation     `json:"citations"`
 	Interpretation         OwnerInterpretation `json:"interpretation"`
+}
+
+// OwnerExecutiveBinding is the visible, owner-authored authority tuple for one
+// project's durable executive. Role is presentation only; this exact tuple is
+// what permits executive exchanges and manager proposals.
+type OwnerExecutiveBinding struct {
+	ID              string `json:"id"`
+	WorkspaceID     string `json:"workspace_id"`
+	ProjectID       string `json:"project_id"`
+	ObjectiveID     string `json:"objective_id"`
+	PlanningTaskID  string `json:"planning_task_id"`
+	AgentID         string `json:"agent_id"`
+	ManagerGrantID  string `json:"manager_grant_id"`
+	LaunchProfileID string `json:"launch_profile_id"`
+	Status          string `json:"status"`
+	Revision        int64  `json:"revision"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
+}
+
+// OwnerExecutiveExchange binds one durable owner/review turn to one frozen
+// canonical context cut and, once dispatched, one exact manager run.
+type OwnerExecutiveExchange struct {
+	ID             string   `json:"id"`
+	TurnID         string   `json:"turn_id"`
+	BindingID      string   `json:"binding_id"`
+	RunID          string   `json:"run_id,omitempty"`
+	EventSequence  int64    `json:"event_sequence"`
+	Status         string   `json:"status"`
+	Attempts       int64    `json:"attempts"`
+	AvailableAt    string   `json:"available_at"`
+	LeaseExpiresAt string   `json:"lease_expires_at,omitempty"`
+	ProposalIDs    []string `json:"proposal_ids"`
+	LastError      string   `json:"last_error,omitempty"`
+	CreatedAt      string   `json:"created_at"`
+	UpdatedAt      string   `json:"updated_at"`
+}
+
+type OwnerExecutiveContext struct {
+	Exchange OwnerExecutiveExchange `json:"exchange"`
+	Turn     OwnerTurn              `json:"turn"`
+	Context  json.RawMessage        `json:"context"`
 }
 
 // OwnerManagerReviewJob is the one coalesced, durable manager-review cursor for
@@ -82,8 +126,9 @@ type OwnerPlanTask struct {
 }
 
 // OwnerInterpretation is untrusted provider output until Store validation
-// freezes it. Disposition is answer, ready, clarify, or refuse. Only ready
-// plan/act interpretations may contain an objective and tasks.
+// freezes it. Pending is the explicit empty state of a queued/running executive
+// exchange; completed interpretations are answer, ready, clarify, or refuse.
+// Only ready plan/act interpretations may contain an objective and tasks.
 type OwnerInterpretation struct {
 	Disposition     string          `json:"disposition"`
 	Summary         string          `json:"summary"`

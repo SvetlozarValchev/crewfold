@@ -74,60 +74,40 @@ const onboarding = `(() => {
   return true;
 })()`;
 await evaluate(onboarding);
-await waitFor("document.body.innerText.includes('What should the crew accomplish?')", "workbench after onboarding");
+await waitFor("document.body.innerText.includes('Talk to your project executive')", "workbench after onboarding");
 
 await evaluate(`(() => {
-  const area = document.querySelector('textarea[aria-label="Owner instruction"]');
+  const area = document.querySelector('textarea[aria-label="Message to project executive"]');
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(area, 'Build the first playable world loop and report exact evidence');
   area.dispatchEvent(new Event('input', { bubbles: true }));
   area.dispatchEvent(new Event('change', { bubbles: true }));
   area.form.requestSubmit();
   return true;
 })()`);
-await waitFor("document.body.innerText.includes('Committed 3 exact graph receipts; the supervisor now owns scheduling.')", "receipted owner act", 20000);
-await waitFor("document.body.innerText.includes('builder')", "created crew");
-await waitFor("document.body.innerText.includes('PROACTIVE REVIEW OF WORKER ACTIVITY THROUGH EVENT #') && document.body.innerText.includes('Manager is caught up')", "automatic manager review of worker completion", 20000);
+await waitFor("document.body.innerText.includes('I reviewed the durable project context and prepared one exact proposal for owner review. No project effect has executed.')", "durable executive response", 20000);
+await waitFor("document.body.innerText.includes('1 typed proposal is ready for explicit review.')", "linked typed proposal");
 
+await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Decisions')).click(); return true; })()`);
+await waitFor("document.body.innerText.includes('Executive proposals') && document.body.innerText.includes('Create One Exact Bounded Implementation Task For Owner Review.')", "exact executive proposal");
+await waitFor("document.body.innerText.includes('1 exact operation') && document.body.innerText.includes('Implement the next bounded project step')", "typed proposal operation");
 await evaluate(`(() => {
-  [...document.querySelectorAll('.intent-mode button')].find((button) => button.textContent.trim() === 'plan').click();
-  const area = document.querySelector('textarea[aria-label="Owner instruction"]');
-  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(area, 'Build a deterministic successor level');
-  area.dispatchEvent(new Event('input', { bubbles: true }));
-  area.dispatchEvent(new Event('change', { bubbles: true }));
-  area.form.requestSubmit();
-  return true;
-})()`);
-await waitFor("document.body.innerText.includes('Edit objective, graph, profiles, and budgets')", "editable frozen plan");
-await waitFor("document.body.innerText.includes('actual tasks') && document.body.innerText.includes('typed execution operations')", "task plan separated from execution operations");
-await waitFor(`(() => {
-  if (document.querySelector('.plan-editor')) return true;
-  const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('Edit objective, graph, profiles, and budgets') && !candidate.disabled);
-  if (button) button.click();
-  return false;
-})()`, "plan editor");
-await evaluate(`(() => {
-  const priority = document.querySelector('.plan-task-list input[type="number"]');
-  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(priority, '720');
-  priority.dispatchEvent(new Event('input', { bubbles: true }));
-  priority.dispatchEvent(new Event('change', { bubbles: true }));
-  [...document.querySelectorAll('button')].find((button) => button.textContent.includes('Seal reviewed graph revision')).click();
-  return true;
-})()`);
-await waitFor("document.body.innerText.includes('Sealed reviewed plan revision 2')", "sealed edited plan");
-await waitFor(`(() => {
-  const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('Execute reviewed graph') && !candidate.disabled);
+  const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('Accept exact proposal') && !candidate.disabled);
   if (button) button.click();
   return Boolean(button);
-})()`, "enabled reviewed graph execution");
-await waitFor("document.body.innerText.includes('Committed the frozen graph exactly; the supervisor now schedules dependency-ready work through its launch profiles.')", "edited plan execution", 20000);
+})()`);
+await waitFor("document.body.innerText.includes('Recorded owner decision') && document.body.innerText.includes('Accepted the exact reviewed executive proposal.')", "recorded exact proposal acceptance", 20000);
 
+await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Workbench')).click(); return true; })()`);
+await waitFor("document.body.innerText.includes('PROACTIVE EXECUTIVE REVIEW OF WORKER ACTIVITY THROUGH EVENT #') && document.body.innerText.includes('Executive is caught up')", "automatic executive review of worker completion", 20000);
+
+await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Work graph')).click(); return true; })()`);
+await waitFor("document.body.innerText.includes('Implement the next bounded project step')", "accepted proposal task in work graph");
 await evaluate(`(() => {
-  [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Workbench')).click();
-  const task = document.querySelector('.task-card');
+  const task = [...document.querySelectorAll('.kanban-column button')].find((button) => button.textContent.includes('Implement the next bounded project step'));
   if (task) task.click();
   return Boolean(task);
 })()`);
-await waitFor("document.body.innerText.includes('READINESS')", "task readiness inspector");
+await waitFor("document.body.innerText.includes('READINESS') && document.body.innerText.includes('ASSIGNMENT')", "task readiness inspector");
 if (browserExceptions.length) throw new Error(`browser exceptions after task inspection: ${browserExceptions.join(" | ")}`);
 await evaluate(`(() => { document.querySelector('button[aria-label="Close inspector"]')?.click(); return true; })()`);
 
@@ -148,7 +128,7 @@ const result = await evaluate(`(() => ({
   unnamedButtons: [...document.querySelectorAll('button')].filter((button) => !button.getAttribute('aria-label') && !button.textContent.trim()).length,
   unlabelledControls: [...document.querySelectorAll('input, textarea, select')].filter((control) => !control.getAttribute('aria-label') && !control.closest('label')).length,
   leakedHandle: ['runtime_handle', 'provider_handle', 'node.key', 'capability/', 'capabilities/'].some((value) => document.documentElement.innerHTML.includes(value)),
-  completedBrowserActions: ['onboarding', 'owner-act', 'plan-edit', 'plan-execute', 'crew-inspection', 'project-briefing'],
+  completedBrowserActions: ['onboarding', 'executive-exchange', 'proposal-review', 'proposal-acceptance', 'worker-review', 'crew-inspection', 'project-briefing'],
 }))()`);
 if (result.title !== "Crewfold Workbench") throw new Error(`unexpected title ${result.title}`);
 if (result.iconCount < 8) throw new Error(`expected Lucide icon pack, found ${result.iconCount} rendered icons`);

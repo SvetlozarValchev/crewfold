@@ -393,7 +393,7 @@ func quiescenceCountsZero(counts store.QuiescenceCounts) bool {
 	return counts.NonterminalRuns == 0 && counts.UnsettledRunJobs == 0 && counts.RuntimeBindings == 0 &&
 		counts.UnfinishedCheckRuns == 0 && counts.UnsettledCheckJobs == 0 && counts.OpenWakeJobs == 0 &&
 		counts.OpenSchedulingIntents == 0 && counts.OpenSupervisorActions == 0 && counts.OpenApprovals == 0 &&
-		counts.OpenOwnerManagerReviews == 0
+		counts.OpenOwnerManagerReviews == 0 && counts.OpenOwnerExecutiveExchanges == 0
 }
 
 func equalArtifactEntries(left, right []ArtifactEntry) bool {

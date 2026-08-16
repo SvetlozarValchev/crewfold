@@ -1228,16 +1228,16 @@ decision.
 
 **Implementation checkpoint:** Complete. Exact XDG service/open lifecycle, pinned
 embedded React assets, loopback bootstrap/session/CSRF security, strict canonical
-RPC plus SSE invalidation, browser onboarding, durable query/plan/act turns,
-editable reviewed plan revisions, automatic receipted execution, work/crew/inbox/
+RPC plus SSE invalidation, browser onboarding, durable owner conversation through
+a visible provider-backed project executive, explicit typed-proposal acceptance, work/crew/inbox/
 decision/evidence/activity/briefing/health surfaces, bounded Git and logs, and a
 single-use run-bound terminal WebSocket are implemented. A built-binary real-Chrome
 scenario begins with an empty store and uses browser controls to onboard a committed
-repository, execute work, edit and launch a successor plan, inspect its agent, and
+repository, direct the executive, review and accept typed work, inspect its agent, and
 generate the exact project briefing. Commit `d1b5dd8` completes the missing
 event-driven orchestration seam: worker reports and agent messages now trigger one
-coalesced, restart-safe manager review that can publish a cited update, raise one
-owner decision, or freeze successor work for review.
+coalesced, restart-safe exchange with that same executive, which can publish a cited
+update, raise one owner decision, or submit successor work for explicit review.
 
 **Question answered:** Can one developer start, direct, inspect, understand, and
 intervene in a real local crew from one owner interface instead of composing the

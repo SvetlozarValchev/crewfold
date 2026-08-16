@@ -163,8 +163,8 @@ in-memory CSRF token. Scoping the cookie to an unguessable path prevents a brows
 from attaching it to ordinary requests sent to another service on `127.0.0.1`.
 The current authenticated browser API contains bounded status and strict
 canonical-RPC reads, cursor-bearing SSE invalidation, repository/provider
-onboarding, durable owner conversation query/plan/act turns, plan revision and
-execution, fresh bounded Git observation, and one separately granted run-bound
+onboarding, durable owner/executive exchanges, explicit review of closed typed
+manager proposals, fresh bounded Git observation, and one separately granted run-bound
 terminal WebSocket. Browser mutations require the exact in-memory CSRF token.
 Static assets and the shell are public only to exact loopback Host and disclose
 no daemon data before session exchange.

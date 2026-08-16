@@ -156,24 +156,3 @@ type ProviderAdapter interface {
 	Bind(context.Context, domain.Run, RuntimeBinding) (ProviderBinding, error)
 	Next(context.Context, domain.Run, domain.FakeScenario, RuntimeSnapshot) (domain.RunObservation, bool, error)
 }
-
-// OwnerInterpretationRequest is the read-only provider input for one web
-// workbench manager turn. CanonicalContext is produced by Store at EventCut;
-// CheckoutPath is the sole filesystem scope and OperationID is stable across
-// retries so the selected runtime can reconcile rather than reinterpret.
-type OwnerInterpretationRequest struct {
-	OperationID      string
-	Kind             string
-	Instruction      string
-	Provider         string
-	CheckoutPath     string
-	CanonicalContext []byte
-	EventCut         int64
-}
-
-// OwnerInterpreter turns bounded owner prose into either an answer or the
-// closed, non-executable planning grammar. The returned value remains
-// untrusted until Store validates and seals it.
-type OwnerInterpreter interface {
-	Interpret(context.Context, OwnerInterpretationRequest) (domain.OwnerInterpretation, error)
-}

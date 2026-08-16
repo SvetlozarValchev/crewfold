@@ -39,6 +39,8 @@ const (
 	toolProposeAssignment     = "crewfold_propose_assignment"
 	toolProposeReview         = "crewfold_propose_review"
 	toolProposeEscalation     = "crewfold_propose_escalation"
+	toolExecutiveContext      = "crewfold_get_executive_context"
+	toolRespondToOwner        = "crewfold_respond_to_owner"
 	toolCompletion            = "crewfold_propose_completion"
 	toolRunCheck              = "crewfold_run_check"
 	toolListCheckResults      = "crewfold_list_check_results"
@@ -352,6 +354,24 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 		value, err = s.submitManagerProposal(request, briefing, params.Arguments, domain.ManagerProposalReview)
 	case toolProposeEscalation:
 		value, err = s.submitManagerProposal(request, briefing, params.Arguments, domain.ManagerProposalEscalation)
+	case toolExecutiveContext:
+		err = decodeEmptyToolArguments(params.Arguments)
+		if err == nil {
+			value, err = s.store.OwnerExecutiveContext(context.Background(), briefing.Run.ID)
+		}
+	case toolRespondToOwner:
+		var arguments ownerExecutiveResponseArguments
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil {
+			err = arguments.validate()
+		}
+		if err == nil {
+			value, err = s.store.RespondOwnerExecutive(context.Background(), store.RespondOwnerExecutiveCommand{
+				RunID: briefing.Run.ID, ResponseKind: arguments.Kind, Summary: arguments.Summary,
+				Answer: arguments.Answer, Question: arguments.Question, Choices: arguments.Choices,
+				CitationRefs: arguments.CitationRefs, ProposalIDs: arguments.ProposalIDs, IdempotencyKey: arguments.IdempotencyKey,
+			})
+		}
 	case toolRunCheck:
 		var arguments runCheckArguments
 		err = decodeToolArguments(params.Arguments, &arguments)
@@ -565,6 +585,13 @@ func scopedMCPTools() []mcp.Tool {
 		{Name: toolProposeEscalation, Description: "Propose one closed supervisor response for local-owner review. This never grants open-ended control of another run or task.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionRequestAction})},
 		{Name: toolProposeReview, Description: "Propose a review task through one exact owner-authored launch profile. This does not create or launch the review until local-owner acceptance and supervision.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionRequestReview})},
 		{Name: toolProposeTasks, Description: "Propose a bounded task decomposition using only exact owner-allowed launch profiles. This does not create tasks until the local owner accepts it.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionCreateTask, domain.ProposalActionAddDependency, domain.ProposalActionDeclareClaimRequirement})},
+		{Name: toolExecutiveContext, Description: "Read the exact frozen owner instruction, conversation, project snapshot, and citation namespace for this executive exchange.", InputSchema: empty},
+		{Name: toolRespondToOwner, Description: "Submit this executive exchange's sole typed owner response. This does not accept proposals or execute effects.", InputSchema: objectSchema([]string{"kind", "summary", "citation_refs", "proposal_ids", "idempotency_key"}, map[string]any{
+			"kind":    map[string]any{"type": "string", "enum": []string{"answer", "update", "decision", "proposal", "refusal"}},
+			"summary": stringSchema(0, 2048), "answer": stringSchema(1, 8192), "question": stringSchema(1, 2048),
+			"choices":       map[string]any{"type": "array", "maxItems": 8, "items": objectSchema([]string{"key", "label", "description", "recommended"}, map[string]any{"key": stringSchema(1, 64), "label": stringSchema(1, 160), "description": stringSchema(1, 512), "recommended": map[string]any{"type": "boolean"}})},
+			"citation_refs": boundedStringArraySchema(16), "proposal_ids": boundedStringArraySchema(32), "idempotency_key": stringSchema(1, 128),
+		})},
 		{Name: toolCompletion, Description: "Propose completion with an executive handoff and evidence.", InputSchema: objectSchema([]string{"summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "handoff": stringSchema(1, 4096), "evidence_ids": stringArraySchema(), "changed_paths": stringArraySchema(), "checks": stringArraySchema(), "remaining_risks": stringArraySchema(), "unknowns": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolRunCheck, Description: "Request one exact active project requirement whose frozen definition revision is present in this run's check-watch grant.", InputSchema: objectSchema([]string{"requirement_id", "idempotency_key"}, map[string]any{"requirement_id": checkEntityIDSchema("checkreq_"), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolListCheckResults, Description: "List a bounded page of check results visible through this run's exact check-watch grant.", InputSchema: objectSchema([]string{"limit"}, map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 50}, "cursor": stringSchema(1, 256)})},
@@ -747,6 +774,24 @@ type managerProposalArguments struct {
 	Summary        string                         `json:"summary"`
 	Actions        []domain.ManagerProposalAction `json:"actions"`
 	IdempotencyKey string                         `json:"idempotency_key"`
+}
+
+type ownerExecutiveResponseArguments struct {
+	Kind           string               `json:"kind"`
+	Summary        string               `json:"summary"`
+	Answer         string               `json:"answer,omitempty"`
+	Question       string               `json:"question,omitempty"`
+	Choices        []domain.OwnerChoice `json:"choices,omitempty"`
+	CitationRefs   []string             `json:"citation_refs"`
+	ProposalIDs    []string             `json:"proposal_ids"`
+	IdempotencyKey string               `json:"idempotency_key"`
+}
+
+func (a ownerExecutiveResponseArguments) validate() error {
+	if strings.TrimSpace(a.Kind) == "" || strings.TrimSpace(a.IdempotencyKey) == "" || len(a.IdempotencyKey) > 128 || len(a.CitationRefs) > 16 || len(a.ProposalIDs) > 32 {
+		return errors.New("owner response exceeds its bounded contract")
+	}
+	return nil
 }
 
 type managerProposalWireArguments struct {

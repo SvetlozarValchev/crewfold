@@ -44,7 +44,6 @@ type Config struct {
 	RuntimeDrivers            map[string]execution.RuntimeDriver
 	CheckRuntimeDriver        execution.RuntimeDriver
 	ProviderAdapters          map[string]execution.ProviderAdapter
-	OwnerInterpreter          execution.OwnerInterpreter
 	RunWorkerHook             func(string, domain.Run) error
 	CheckWorkerHook           func(string, domain.CheckRun) error
 	MessageWake               func(context.Context, domain.MessageWakeJob) error
@@ -74,30 +73,28 @@ type Config struct {
 }
 
 type server struct {
-	config                   Config
-	listener                 *net.UnixListener
-	socketInfo               os.FileInfo
-	startedAt                time.Time
-	stopOnce                 sync.Once
-	stopCh                   chan struct{}
-	shutdown                 atomic.Bool
-	activeRequests           atomic.Int64
-	connectionsMu            sync.Mutex
-	connections              map[net.Conn]struct{}
-	handlers                 sync.WaitGroup
-	workers                  sync.WaitGroup
-	store                    *store.Store
-	gitInspector             gitstate.Inspector
-	runtimes                 map[string]execution.RuntimeDriver
-	checkRuntime             execution.RuntimeDriver
-	providers                map[string]execution.ProviderAdapter
-	ownerInterpreter         execution.OwnerInterpreter
-	ownerInterpreterInjected bool
-	capabilities             *runCapabilityManager
-	claimWatcherID           string
-	claimAddMu               sync.Mutex
-	checkWatchMu             sync.Mutex
-	checkWatchPass           atomic.Uint64
+	config         Config
+	listener       *net.UnixListener
+	socketInfo     os.FileInfo
+	startedAt      time.Time
+	stopOnce       sync.Once
+	stopCh         chan struct{}
+	shutdown       atomic.Bool
+	activeRequests atomic.Int64
+	connectionsMu  sync.Mutex
+	connections    map[net.Conn]struct{}
+	handlers       sync.WaitGroup
+	workers        sync.WaitGroup
+	store          *store.Store
+	gitInspector   gitstate.Inspector
+	runtimes       map[string]execution.RuntimeDriver
+	checkRuntime   execution.RuntimeDriver
+	providers      map[string]execution.ProviderAdapter
+	capabilities   *runCapabilityManager
+	claimWatcherID string
+	claimAddMu     sync.Mutex
+	checkWatchMu   sync.Mutex
+	checkWatchPass atomic.Uint64
 	// Only the check-watch worker accesses this scope keyset cursor.
 	checkWatchScopeCursor string
 	supervisorPass        atomic.Uint64
@@ -110,6 +107,7 @@ type server struct {
 	leaseReconcileCancel      context.CancelFunc
 	messageWakeSignal         chan struct{}
 	ownerManagerReviewSignal  chan struct{}
+	ownerExecutiveSignal      chan struct{}
 	web                       *workbenchServer
 }
 
@@ -169,6 +167,9 @@ func Run(ctx context.Context, config Config) error {
 	}
 	if err := storage.RecoverOwnerManagerReviewLeases(ctx); err != nil {
 		return &StartupError{Code: CodeDatabaseUnavailable, Message: "recover durable owner manager reviews", Cause: err}
+	}
+	if err := storage.RecoverOwnerExecutiveExchangeLeases(ctx); err != nil {
+		return &StartupError{Code: CodeDatabaseUnavailable, Message: "recover durable owner executive exchanges", Cause: err}
 	}
 	capabilities, err := newRunCapabilityManager(resolved.DataDir, resolved.SocketPath)
 	if err != nil {
@@ -248,20 +249,13 @@ func Run(ctx context.Context, config Config) error {
 		runtimes:                 resolved.RuntimeDrivers,
 		checkRuntime:             resolved.CheckRuntimeDriver,
 		providers:                resolved.ProviderAdapters,
-		ownerInterpreter:         resolved.OwnerInterpreter,
-		ownerInterpreterInjected: resolved.OwnerInterpreter != nil,
 		capabilities:             capabilities,
 		claimWatcherID:           fmt.Sprintf("watcher-%d-%d", os.Getpid(), time.Now().UTC().UnixNano()),
 		leaseReconcileCtx:        leaseReconcileCtx,
 		leaseReconcileCancel:     leaseReconcileCancel,
 		messageWakeSignal:        make(chan struct{}, 1),
 		ownerManagerReviewSignal: make(chan struct{}, 1),
-	}
-	if instance.ownerInterpreter == nil {
-		instance.ownerInterpreter = execution.NewCodexOwnerInterpreter(execution.CodexOwnerInterpreterOptions{
-			Runtime: resolved.RuntimeDrivers["herdr"], StateRoot: filepath.Join(resolved.DataDir, "runtime", "herdr"),
-			CodexExecutable: resolved.CodexExecutable, CodexHome: resolved.CodexHome,
-		})
+		ownerExecutiveSignal:     make(chan struct{}, 1),
 	}
 	defer leaseReconcileCancel()
 	defer instance.cleanupSocket()
@@ -279,6 +273,7 @@ func Run(ctx context.Context, config Config) error {
 	instance.startCheckWatcher()
 	instance.startMessageWakeWorker()
 	instance.startOwnerManagerReviewWorker()
+	instance.startOwnerExecutiveWorker()
 	instance.startClaimWatcher()
 	instance.startSupervisor()
 	instance.startLeaseReconciler()

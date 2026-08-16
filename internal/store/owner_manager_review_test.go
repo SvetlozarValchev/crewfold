@@ -74,7 +74,7 @@ func TestM21WorkerReportsAndMessagesCoalesceIntoDurableManagerReviews(t *testing
 	}
 	review, err := storage.PrepareOwnerTurn(context.Background(), PrepareOwnerTurnCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, ConversationID: conversation.Conversation.ID,
-		Instruction: "Review worker activity", Kind: "review", InitiatedBy: "manager",
+		Instruction: "Review worker activity", Kind: "review", InitiatedBy: "executive",
 		TriggerEventSequence: snapshot.EventSequence, ExpectedEventSequence: snapshot.EventSequence,
 		IdempotencyKey: "manager-review:" + project.ID + ":first",
 		Citations:      []domain.OwnerCitation{snapshot.Citations["report:"+report.ID]},
@@ -83,17 +83,17 @@ func TestM21WorkerReportsAndMessagesCoalesceIntoDurableManagerReviews(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if review.Turn.InitiatedBy != "manager" || review.Turn.TriggerEventSequence != snapshot.EventSequence || review.Turn.Interpretation.Disposition != "clarify" || len(review.Operations) != 0 {
+	if review.Turn.InitiatedBy != "executive" || review.Turn.TriggerEventSequence != snapshot.EventSequence || review.Turn.Interpretation.Disposition != "clarify" || len(review.Operations) != 0 {
 		t.Fatalf("proactive review turn = %#v", review)
 	}
 	replayedReview, found, err := storage.OwnerTurnReplay(context.Background(), PrepareOwnerTurnCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, ConversationID: conversation.Conversation.ID,
-		Instruction: "Review worker activity", Kind: "review", InitiatedBy: "manager",
+		Instruction: "Review worker activity", Kind: "review", InitiatedBy: "executive",
 		TriggerEventSequence: snapshot.EventSequence,
 		IdempotencyKey:       "manager-review:" + project.ID + ":first",
 	})
 	if err != nil || !found || replayedReview.Turn.ID != review.Turn.ID {
-		t.Fatalf("OwnerTurnReplay(manager crash boundary) = %#v, %t, %v", replayedReview, found, err)
+		t.Fatalf("OwnerTurnReplay(executive crash boundary) = %#v, %t, %v", replayedReview, found, err)
 	}
 	lateReport, err := storage.SubmitRunReport(context.Background(), CreateRunReportCommand{
 		RunID: starting.ID, Kind: domain.ObservationProgress, Message: "A newer worker update arrived after the frozen review cut.",
@@ -127,7 +127,7 @@ func TestM21WorkerReportsAndMessagesCoalesceIntoDurableManagerReviews(t *testing
 	}
 	followupReview, err := storage.PrepareOwnerTurn(context.Background(), PrepareOwnerTurnCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, ConversationID: conversation.Conversation.ID,
-		Instruction: "Review newer worker activity", Kind: "review", InitiatedBy: "manager",
+		Instruction: "Review newer worker activity", Kind: "review", InitiatedBy: "executive",
 		TriggerEventSequence: followupSnapshot.EventSequence, ExpectedEventSequence: followupSnapshot.EventSequence,
 		IdempotencyKey: "manager-review:" + project.ID + ":follow-up",
 		Citations:      []domain.OwnerCitation{followupSnapshot.Citations["report:"+lateReport.ID]},

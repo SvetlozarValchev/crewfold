@@ -272,7 +272,7 @@ func (s *server) processRunWork(ctx context.Context, work store.RunWork) error {
 		accepted, missing := true, []string(nil)
 		var archive *domain.RunLogArchive
 		var logsUnavailableReason string
-		if observation.Kind == domain.ObservationCompletion {
+		if observation.Kind == domain.ObservationCompletion || observation.Kind == domain.ObservationExecutiveResponse {
 			if !snapshot.CompletionReady {
 				if err := s.store.DeferRunJob(ctx, run.ID, runActivePollDelay); err != nil {
 					s.logRunWorkerStoreError(run.ID, "defer completion until runtime settles", err)

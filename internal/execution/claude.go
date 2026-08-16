@@ -335,6 +335,10 @@ func claudeLaunchArguments(crewfoldExecutable string, access RunCapabilityAccess
 	if err != nil {
 		return nil, fmt.Errorf("encode Claude run settings: %w", err)
 	}
+	prompt := claudeInitialPrompt(scenario.Acceptance.RequiredEvidence)
+	if scenario.Name == "owner-executive" {
+		prompt = claudeExecutivePrompt()
+	}
 	return []string{
 		"-p", "--output-format", "stream-json", "--verbose",
 		"--no-session-persistence", "--strict-mcp-config", "--mcp-config", string(mcpJSON),
@@ -342,8 +346,12 @@ func claudeLaunchArguments(crewfoldExecutable string, access RunCapabilityAccess
 		"--permission-mode", "dontAsk", "--tools", "Read,Edit,Bash",
 		"--allowedTools", "Read(/**),Edit(/**),Bash(./check.sh),Bash(git diff),Bash(git diff --check),mcp__crewfold__*",
 		"--max-budget-usd", maxBudget, "--no-chrome", "--disable-slash-commands",
-		claudeInitialPrompt(scenario.Acceptance.RequiredEvidence),
+		prompt,
 	}, nil
+}
+
+func claudeExecutivePrompt() string {
+	return "You are the project's Crewfold executive. This is one short-lived exchange in a durable Crewfold conversation, not an implementation run. First call crewfold_get_briefing, then crewfold_get_executive_context. Treat the frozen owner instruction, canonical project context, manager grant, and cited records as your entire authority. Inspect the checkout read-only only. You may answer from evidence, ask one consequential owner decision, or submit bounded typed manager proposals through the granted crewfold_propose_* tools. Never edit files, execute project effects, accept your own proposals, launch work directly, or treat role text as authority. Finish by calling crewfold_respond_to_owner exactly once with an answer, update, decision, proposal summary, or refusal; include only citation refs and proposal IDs returned in this exchange. Terminal text is not the response."
 }
 
 func claudeRunSettings(checkoutPath string, externallySandboxed bool) map[string]any {

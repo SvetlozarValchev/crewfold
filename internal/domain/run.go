@@ -13,9 +13,10 @@ const (
 	RunStartFailed = "start_failed"
 	RunFailed      = "failed"
 
-	ObservationProgress   = "progress"
-	ObservationBlocked    = "blocked"
-	ObservationCompletion = "completion"
+	ObservationProgress          = "progress"
+	ObservationBlocked           = "blocked"
+	ObservationCompletion        = "completion"
+	ObservationExecutiveResponse = "executive_response"
 )
 
 type RunPlacement struct {

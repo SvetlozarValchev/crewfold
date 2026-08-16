@@ -53,18 +53,22 @@ func TestManagerToolsAreDerivedInCanonicalOrder(t *testing.T) {
 		"crewfold_propose_review",
 		"crewfold_propose_tasks",
 	}
-	tools := managerAllowedTools(allKinds)
+	tools := managerAllowedTools(allKinds, false)
 	if !reflect.DeepEqual(tools[:len(runScopedTools)], runScopedTools) || !reflect.DeepEqual(tools[len(runScopedTools):], wantSuffix) {
 		t.Fatalf("manager tools = %v, want run-scoped base plus %v", tools, wantSuffix)
 	}
 	for index, kind := range allKinds {
-		tools := managerAllowedTools([]string{kind})
+		tools := managerAllowedTools([]string{kind}, false)
 		if len(tools) != len(runScopedTools)+1 || tools[len(runScopedTools)] != wantSuffix[index] {
 			t.Errorf("manager tools for %q = %v", kind, tools)
 		}
 	}
-	if !reflect.DeepEqual(managerAllowedTools(nil), runScopedTools) {
+	if !reflect.DeepEqual(managerAllowedTools(nil, false), runScopedTools) {
 		t.Fatal("empty manager kinds changed the run-scoped tool base")
+	}
+	executiveTools := append(append([]string(nil), runScopedTools...), "crewfold_get_executive_context", "crewfold_respond_to_owner")
+	if !reflect.DeepEqual(managerAllowedTools(nil, true), executiveTools) {
+		t.Fatalf("owner executive tool order = %#v, want %#v", managerAllowedTools(nil, true), executiveTools)
 	}
 }
 
@@ -454,7 +458,8 @@ func TestManagerGrantValidationIsExactAndRoleAgnostic(t *testing.T) {
 		Task:     domain.ContextTask{TaskID: "task_exact", ObjectiveID: "obj_exact", Revision: 11},
 		Included: []domain.ContextSelection{{Section: "management_grant", EntityType: "manager_grant", EntityID: "mgrgrant_exact", Revision: 3}},
 		ManagementGrant: &domain.ContextManagerGrant{
-			Schema: domain.ContextManagerGrantSchema, GrantID: "mgrgrant_exact", GrantRevision: 3,
+			Schema: domain.ContextManagerGrantSchema, InvocationProfileID: "lprof_invocation", InvocationProfileRev: 5,
+			GrantID: "mgrgrant_exact", GrantRevision: 3,
 			WorkspaceID: "ws_exact", ProjectID: "prj_exact", ObjectiveID: "obj_exact", ObjectiveRevision: 2,
 			ManagerAgentID: "agent_exact", ManagerAgentRevision: 7, ManagerTaskID: "task_exact", ManagerTaskRevision: 11,
 			AllowedProposalKinds: []string{domain.ManagerProposalAssignment, domain.ManagerProposalTaskDecomposition},
@@ -478,7 +483,9 @@ func TestManagerGrantValidationIsExactAndRoleAgnostic(t *testing.T) {
 		"duplicate profile": func(grant *domain.ContextManagerGrant) {
 			grant.LaunchProfiles = append(grant.LaunchProfiles, grant.LaunchProfiles[0])
 		},
-		"zero limit": func(grant *domain.ContextManagerGrant) { grant.MaxTasks = 0 },
+		"missing invocation profile": func(grant *domain.ContextManagerGrant) { grant.InvocationProfileID = "" },
+		"zero invocation revision":   func(grant *domain.ContextManagerGrant) { grant.InvocationProfileRev = 0 },
+		"zero limit":                 func(grant *domain.ContextManagerGrant) { grant.MaxTasks = 0 },
 	} {
 		candidate := packet
 		grant := *packet.ManagementGrant
@@ -540,7 +547,7 @@ func TestManagerInvocationBuildsAuthorityFromExactGrantAndProfile(t *testing.T) 
 		grant.ManagerTaskID != fixture.planning.Task.ID || grant.ManagerTaskRevision != fixture.planning.Task.Revision ||
 		grant.ManagerAgentID != fixture.manager.ID || grant.ManagerAgentRevision != fixture.manager.Revision ||
 		len(grant.LaunchProfiles) != 1 || grant.LaunchProfiles[0].LaunchProfileID != fixture.target.ID ||
-		!reflect.DeepEqual(packet.Policy.AllowedTools, managerAllowedTools(fixture.grant.ProposalKinds)) {
+		!reflect.DeepEqual(packet.Policy.AllowedTools, managerAllowedTools(fixture.grant.ProposalKinds, false)) {
 		t.Fatalf("manager packet did not freeze exact grant/profile authority: %#v", packet)
 	}
 	if packet.Role.Role != "constellation cartographer" {

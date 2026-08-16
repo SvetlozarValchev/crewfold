@@ -43,7 +43,8 @@ func TestInvokeManagerDerivesAuthorityFromExactGrant(t *testing.T) {
 	}
 	if packet.Schema != domain.ContextPacketSchema || packet.ManagementGrant == nil ||
 		packet.ManagementGrant.GrantID != fixture.grant.ID || packet.ManagementGrant.ManagerTaskID != fixture.planning.Task.ID ||
-		packet.ManagementGrant.ManagerAgentID != fixture.manager.ID {
+		packet.ManagementGrant.ManagerAgentID != fixture.manager.ID || packet.ManagementGrant.OwnerExecutive ||
+		packet.ManagementGrant.InvocationProfileID != profile.ID || packet.ManagementGrant.InvocationProfileRev != profile.Revision {
 		t.Fatalf("manager packet authority = %#v", packet)
 	}
 	if fixture.manager.Role != "constellation cartographer" {

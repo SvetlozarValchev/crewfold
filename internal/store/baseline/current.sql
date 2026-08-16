@@ -335,7 +335,7 @@ CREATE TABLE run_reports (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
     run_id TEXT NOT NULL REFERENCES runs(id),
-    kind TEXT NOT NULL CHECK (kind IN ('progress', 'blocked', 'completion')),
+    kind TEXT NOT NULL CHECK (kind IN ('progress', 'blocked', 'completion', 'executive_response')),
     message TEXT NOT NULL,
     evidence_json TEXT NOT NULL CHECK (json_valid(evidence_json)),
     handoff TEXT,
@@ -5255,6 +5255,9 @@ BEGIN
         json_type(NEW.packet_json, '$.check_watch_grant') IS NOT NULL
         OR json_extract(NEW.packet_json, '$.management_grant.schema') IS NOT
           'urn:crewfold:schema:domain:context-manager-grant:v1'
+        OR json_type(NEW.packet_json, '$.management_grant.owner_executive') NOT IN ('true','false')
+        OR json_type(NEW.packet_json, '$.management_grant.invocation_launch_profile_id') IS NOT 'text'
+        OR json_type(NEW.packet_json, '$.management_grant.invocation_launch_profile_revision') IS NOT 'integer'
         OR json_extract(NEW.packet_json, '$.management_grant.workspace_id') IS NOT NEW.workspace_id
         OR json_extract(NEW.packet_json, '$.management_grant.project_id') IS NOT NEW.project_id
         OR json_extract(NEW.packet_json, '$.management_grant.manager_task_id') IS NOT NEW.task_id
@@ -5291,6 +5294,27 @@ BEGIN
             AND objective.workspace_id=NEW.workspace_id
             AND objective.revision=json_extract(NEW.packet_json, '$.management_grant.objective_revision')
         )
+        OR NOT EXISTS (
+          SELECT 1 FROM launch_profiles invocation
+          WHERE invocation.id=json_extract(NEW.packet_json, '$.management_grant.invocation_launch_profile_id')
+            AND invocation.revision=json_extract(NEW.packet_json, '$.management_grant.invocation_launch_profile_revision')
+            AND invocation.workspace_id=NEW.workspace_id AND invocation.project_id=NEW.project_id
+            AND invocation.agent_id=NEW.agent_id
+            AND invocation.agent_revision=json_extract(NEW.packet_json, '$.management_grant.manager_agent_revision')
+            AND invocation.manager_grant_id=json_extract(NEW.packet_json, '$.management_grant.grant_id')
+            AND invocation.status='active'
+        )
+        OR json_extract(NEW.packet_json, '$.management_grant.owner_executive') IS NOT (
+          SELECT EXISTS(
+            SELECT 1 FROM owner_executive_bindings binding
+            WHERE binding.workspace_id=NEW.workspace_id AND binding.project_id=NEW.project_id
+              AND binding.objective_id=json_extract(NEW.packet_json, '$.management_grant.objective_id')
+              AND binding.planning_task_id=NEW.task_id AND binding.agent_id=NEW.agent_id
+              AND binding.manager_grant_id=json_extract(NEW.packet_json, '$.management_grant.grant_id')
+              AND binding.launch_profile_id=json_extract(NEW.packet_json, '$.management_grant.invocation_launch_profile_id')
+              AND binding.status='active'
+          )
+        )
         OR json_extract(NEW.packet_json, '$.policy.allowed_tools') IS NOT (
           SELECT json_group_array(tool) FROM (
             SELECT 0 ordinal,'crewfold_acknowledge_context_delta' tool UNION ALL
@@ -5301,7 +5325,11 @@ BEGIN
             SELECT 9,'crewfold_read_message' UNION ALL SELECT 10,'crewfold_report_blocked' UNION ALL
             SELECT 11,'crewfold_report_contradiction' UNION ALL SELECT 12,'crewfold_report_progress' UNION ALL
             SELECT 13,'crewfold_send_message' UNION ALL
-            SELECT 14+kind.ordinal,CASE kind.kind WHEN 'assignment' THEN 'crewfold_propose_assignment'
+            SELECT 14,'crewfold_get_executive_context'
+              WHERE json_extract(NEW.packet_json, '$.management_grant.owner_executive')=1 UNION ALL
+            SELECT 15,'crewfold_respond_to_owner'
+              WHERE json_extract(NEW.packet_json, '$.management_grant.owner_executive')=1 UNION ALL
+            SELECT 16+kind.ordinal,CASE kind.kind WHEN 'assignment' THEN 'crewfold_propose_assignment'
               WHEN 'escalation' THEN 'crewfold_propose_escalation' WHEN 'review' THEN 'crewfold_propose_review'
               ELSE 'crewfold_propose_tasks' END
             FROM manager_grant_proposal_kinds kind
@@ -5486,6 +5514,24 @@ BEGIN
           OR grant_row.budget_time_seconds <> json_extract(packet.packet_json, '$.management_grant.budget.time_seconds')
           OR COALESCE(grant_row.expires_at,'') <> COALESCE(json_extract(packet.packet_json, '$.management_grant.expires_at'),'')
           OR NOT EXISTS (
+            SELECT 1 FROM launch_profiles invocation
+            WHERE invocation.id=json_extract(packet.packet_json, '$.management_grant.invocation_launch_profile_id')
+              AND invocation.revision=json_extract(packet.packet_json, '$.management_grant.invocation_launch_profile_revision')
+              AND invocation.workspace_id=run.workspace_id AND invocation.project_id=run.project_id
+              AND invocation.agent_id=run.agent_id AND invocation.agent_revision=grant_row.agent_revision
+              AND invocation.manager_grant_id=grant_row.id AND invocation.status='active'
+          )
+          OR json_extract(packet.packet_json, '$.management_grant.owner_executive') IS NOT (
+            SELECT EXISTS(
+              SELECT 1 FROM owner_executive_bindings binding
+              WHERE binding.workspace_id=run.workspace_id AND binding.project_id=run.project_id
+                AND binding.objective_id=grant_row.objective_id AND binding.planning_task_id=run.task_id
+                AND binding.agent_id=run.agent_id AND binding.manager_grant_id=grant_row.id
+                AND binding.launch_profile_id=json_extract(packet.packet_json, '$.management_grant.invocation_launch_profile_id')
+                AND binding.status='active'
+            )
+          )
+          OR NOT EXISTS (
             SELECT 1 FROM objectives objective WHERE objective.id=grant_row.objective_id
               AND objective.revision=json_extract(packet.packet_json, '$.management_grant.objective_revision')
           )
@@ -5499,7 +5545,11 @@ BEGIN
               SELECT 9,'crewfold_read_message' UNION ALL SELECT 10,'crewfold_report_blocked' UNION ALL
               SELECT 11,'crewfold_report_contradiction' UNION ALL SELECT 12,'crewfold_report_progress' UNION ALL
               SELECT 13,'crewfold_send_message' UNION ALL
-              SELECT 14+kind.ordinal,CASE kind.kind WHEN 'assignment' THEN 'crewfold_propose_assignment'
+              SELECT 14,'crewfold_get_executive_context'
+                WHERE json_extract(packet.packet_json, '$.management_grant.owner_executive')=1 UNION ALL
+              SELECT 15,'crewfold_respond_to_owner'
+                WHERE json_extract(packet.packet_json, '$.management_grant.owner_executive')=1 UNION ALL
+              SELECT 16+kind.ordinal,CASE kind.kind WHEN 'assignment' THEN 'crewfold_propose_assignment'
                 WHEN 'escalation' THEN 'crewfold_propose_escalation' WHEN 'review' THEN 'crewfold_propose_review'
                 ELSE 'crewfold_propose_tasks' END
               FROM manager_grant_proposal_kinds kind WHERE kind.grant_id=grant_row.id
@@ -6222,11 +6272,11 @@ CREATE TABLE owner_turns (
  id TEXT PRIMARY KEY CHECK(length(id)=37 AND substr(id,1,5)='turn_' AND substr(id,6) NOT GLOB '*[^0-9a-f]*'),
  conversation_id TEXT NOT NULL REFERENCES owner_conversations(id),
  ordinal INTEGER NOT NULL CHECK(ordinal>0),
- kind TEXT NOT NULL CHECK(kind IN ('query','plan','act','review')),
- initiated_by TEXT NOT NULL CHECK(initiated_by IN ('owner','manager')),
+ kind TEXT NOT NULL CHECK(kind IN ('query','plan','act','instruction','review')),
+ initiated_by TEXT NOT NULL CHECK(initiated_by IN ('owner','executive')),
  trigger_event_sequence INTEGER CHECK(trigger_event_sequence IS NULL OR trigger_event_sequence>0),
  instruction TEXT NOT NULL CHECK(length(CAST(instruction AS BLOB)) BETWEEN 1 AND 4096),
- status TEXT NOT NULL CHECK(status IN ('planned','executing','completed','failed','awaiting_approval')),
+ status TEXT NOT NULL CHECK(status IN ('queued','running','planned','executing','completed','failed','awaiting_approval')),
  as_of_event_sequence INTEGER NOT NULL CHECK(as_of_event_sequence>=0),
  answer TEXT CHECK(answer IS NULL OR length(CAST(answer AS BLOB)) BETWEEN 1 AND 8192),
  interpretation_json TEXT NOT NULL CHECK(json_valid(interpretation_json) AND json_type(interpretation_json)='object' AND length(CAST(interpretation_json AS BLOB))<=131072),
@@ -6242,8 +6292,8 @@ CREATE TABLE owner_turns (
  updated_at TEXT NOT NULL,
  UNIQUE(conversation_id,ordinal),
  UNIQUE(idempotency_key),
- CHECK((initiated_by='owner' AND kind<>'review' AND trigger_event_sequence IS NULL) OR
-       (initiated_by='manager' AND kind='review' AND trigger_event_sequence IS NOT NULL AND trigger_event_sequence=as_of_event_sequence))
+ CHECK((initiated_by='owner' AND kind IN ('query','plan','act','instruction') AND trigger_event_sequence IS NULL) OR
+       (initiated_by='executive' AND kind='review' AND trigger_event_sequence IS NOT NULL AND trigger_event_sequence=as_of_event_sequence))
 ) STRICT;
 
 CREATE TABLE owner_manager_review_jobs (
@@ -6267,6 +6317,83 @@ CREATE TABLE owner_manager_review_jobs (
 ) STRICT;
 CREATE INDEX owner_manager_review_jobs_queue_idx ON owner_manager_review_jobs(status,available_at,project_id);
 
+CREATE TABLE owner_executive_bindings (
+ id TEXT PRIMARY KEY CHECK(length(id)=37 AND substr(id,1,5)='exec_' AND substr(id,6) NOT GLOB '*[^0-9a-f]*'),
+ workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+ project_id TEXT NOT NULL UNIQUE REFERENCES projects(id),
+ objective_id TEXT NOT NULL REFERENCES objectives(id),
+ planning_task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id),
+ agent_id TEXT NOT NULL UNIQUE REFERENCES agents(id),
+ manager_grant_id TEXT NOT NULL UNIQUE REFERENCES manager_grants(id),
+ launch_profile_id TEXT NOT NULL UNIQUE REFERENCES launch_profiles(id),
+ status TEXT NOT NULL CHECK(status IN ('active','retired')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ created_by TEXT NOT NULL CHECK(created_by='local-owner'),
+ updated_by TEXT NOT NULL CHECK(updated_by='local-owner')
+) STRICT;
+
+CREATE TRIGGER owner_executive_binding_validate_insert BEFORE INSERT ON owner_executive_bindings BEGIN
+ SELECT CASE WHEN NOT EXISTS(
+  SELECT 1 FROM projects project
+  JOIN objectives objective ON objective.id=NEW.objective_id
+  JOIN tasks task ON task.id=NEW.planning_task_id
+  JOIN agents agent ON agent.id=NEW.agent_id
+  JOIN task_assignments assignment ON assignment.task_id=task.id AND assignment.agent_id=agent.id AND assignment.status='active'
+  JOIN manager_grants grant ON grant.id=NEW.manager_grant_id
+  JOIN launch_profiles profile ON profile.id=NEW.launch_profile_id
+  WHERE project.id=NEW.project_id AND project.workspace_id=NEW.workspace_id
+    AND objective.project_id=project.id AND objective.workspace_id=NEW.workspace_id AND objective.status='active'
+    AND task.project_id=project.id AND task.workspace_id=NEW.workspace_id AND task.objective_id=objective.id
+    AND task.status='assigned'
+    AND agent.workspace_id=NEW.workspace_id AND agent.enabled=1
+    AND grant.workspace_id=NEW.workspace_id AND grant.project_id=project.id AND grant.objective_id=objective.id
+    AND grant.task_id=task.id AND grant.task_revision=task.revision AND grant.agent_id=agent.id AND grant.agent_revision=agent.revision
+    AND grant.status='active'
+    AND profile.workspace_id=NEW.workspace_id AND profile.project_id=project.id AND profile.agent_id=agent.id
+    AND profile.agent_revision=agent.revision AND profile.manager_grant_id=grant.id AND profile.status='active'
+ ) THEN RAISE(ABORT,'invalid owner executive binding') END;
+END;
+CREATE TRIGGER owner_executive_binding_reject_update BEFORE UPDATE ON owner_executive_bindings
+WHEN NEW.workspace_id<>OLD.workspace_id OR NEW.project_id<>OLD.project_id OR NEW.objective_id<>OLD.objective_id
+ OR NEW.planning_task_id<>OLD.planning_task_id OR NEW.agent_id<>OLD.agent_id OR NEW.manager_grant_id<>OLD.manager_grant_id
+ OR NEW.launch_profile_id<>OLD.launch_profile_id
+BEGIN SELECT RAISE(ABORT,'owner executive binding authority is immutable'); END;
+
+CREATE TABLE owner_executive_exchanges (
+ id TEXT PRIMARY KEY CHECK(length(id)=38 AND substr(id,1,6)='execx_' AND substr(id,7) NOT GLOB '*[^0-9a-f]*'),
+ turn_id TEXT NOT NULL UNIQUE REFERENCES owner_turns(id),
+ binding_id TEXT NOT NULL REFERENCES owner_executive_bindings(id),
+ run_id TEXT UNIQUE REFERENCES runs(id),
+ event_sequence INTEGER NOT NULL CHECK(event_sequence>=0),
+ context_json TEXT NOT NULL CHECK(json_valid(context_json) AND json_type(context_json)='object' AND length(CAST(context_json AS BLOB))<=262144),
+ citations_json TEXT NOT NULL CHECK(json_valid(citations_json) AND json_type(citations_json)='array' AND json_array_length(citations_json)<=256 AND length(CAST(citations_json AS BLOB))<=131072),
+ proposal_ids_json TEXT NOT NULL CHECK(json_valid(proposal_ids_json) AND json_type(proposal_ids_json)='array' AND json_array_length(proposal_ids_json)<=32),
+ status TEXT NOT NULL CHECK(status IN ('pending','leased','running','responded','failed')),
+ attempts INTEGER NOT NULL CHECK(attempts>=0),
+ available_at TEXT NOT NULL,
+ lease_expires_at TEXT,
+ last_error TEXT CHECK(last_error IS NULL OR length(CAST(last_error AS BLOB)) BETWEEN 1 AND 2048),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ CHECK((status='leased')=(lease_expires_at IS NOT NULL)),
+ CHECK((status='running' OR status='responded' OR status='failed') OR run_id IS NULL),
+ CHECK(status<>'running' OR run_id IS NOT NULL)
+) STRICT;
+CREATE INDEX owner_executive_exchanges_queue_idx ON owner_executive_exchanges(status,available_at,id);
+
+CREATE TRIGGER owner_executive_exchange_validate_insert BEFORE INSERT ON owner_executive_exchanges BEGIN
+ SELECT CASE WHEN NOT EXISTS(
+  SELECT 1 FROM owner_turns turn
+  JOIN owner_conversations conversation ON conversation.id=turn.conversation_id
+  JOIN owner_executive_bindings binding ON binding.id=NEW.binding_id
+  WHERE turn.id=NEW.turn_id AND turn.status='queued'
+    AND conversation.workspace_id=binding.workspace_id AND conversation.project_id=binding.project_id
+    AND binding.status='active' AND turn.as_of_event_sequence=NEW.event_sequence
+ ) THEN RAISE(ABORT,'invalid owner executive exchange') END;
+END;
+
 CREATE TRIGGER owner_manager_review_job_validate_insert BEFORE INSERT ON owner_manager_review_jobs BEGIN
  SELECT CASE WHEN crewfold_timestamp_canonical(NEW.available_at)<>1 OR crewfold_timestamp_canonical(NEW.created_at)<>1 OR crewfold_timestamp_canonical(NEW.updated_at)<>1
    OR (NEW.lease_expires_at IS NOT NULL AND crewfold_timestamp_canonical(NEW.lease_expires_at)<>1)
@@ -6283,7 +6410,7 @@ CREATE TRIGGER owner_manager_review_job_validate_update BEFORE UPDATE ON owner_m
    OR NOT EXISTS(SELECT 1 FROM events event WHERE event.sequence=NEW.requested_event_sequence AND event.workspace_id=NEW.workspace_id)
    OR (NEW.last_turn_id IS NOT NULL AND NOT EXISTS(
      SELECT 1 FROM owner_turns turn JOIN owner_conversations conversation ON conversation.id=turn.conversation_id
-     WHERE turn.id=NEW.last_turn_id AND turn.initiated_by='manager' AND turn.kind='review'
+     WHERE turn.id=NEW.last_turn_id AND turn.initiated_by='executive' AND turn.kind='review'
        AND turn.trigger_event_sequence=NEW.reviewed_event_sequence AND conversation.workspace_id=NEW.workspace_id AND conversation.project_id=NEW.project_id))
  THEN RAISE(ABORT,'owner manager review job update is outside its exact scope') END;
 END;

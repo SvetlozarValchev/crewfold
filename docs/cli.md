@@ -20,8 +20,8 @@ decisions are also implemented. Owner-created deliverable commitments,
 owner-reviewed outcome assessments, immutable checkpoints, and bounded structured
 management briefings are implemented. M21 adds private XDG defaults,
 `crewfold service install|start|stop|status`, and `crewfold open`, plus the
-embedded authenticated workbench for repository/provider onboarding, canonical
-query/plan/act conversation, editable reviewed plans, automatic receipted work,
+embedded authenticated workbench for repository/provider onboarding, durable
+conversation with a provider-backed project executive, explicit typed-proposal review,
 crew/work/inbox/decision/evidence/activity/briefing views, bounded Git and logs,
 full health, and a separately authorized live terminal. The Go-native operator dashboard is launched with
 `crewfold ui`; ordinary commands continue to support text and JSON output. M20

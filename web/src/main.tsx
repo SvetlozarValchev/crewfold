@@ -40,10 +40,24 @@ type Budget = { token_limit: number; cost_cents: number; time_seconds: number };
 type LaunchProfile = { id: string; project_id: string; agent_id: string; purpose?: string; runtime: string; provider: string; status: string; revision: number };
 type OwnerChoice = { key: string; label: string; description: string; recommended: boolean };
 type OwnerPlanTask = { key: string; title: string; description: string; priority: number; budget: Budget; launch_profile_id: string; depends_on: string[] };
-type OwnerInterpretation = { disposition: "answer" | "ready" | "clarify" | "refuse"; summary: string; answer: string; question: string; choices: OwnerChoice[]; objective_title: string; objective_budget: Budget; tasks: OwnerPlanTask[]; citation_refs: string[] };
+type OwnerInterpretation = { disposition: "pending" | "answer" | "ready" | "clarify" | "refuse"; summary: string; answer: string; question: string; choices: OwnerChoice[]; objective_title: string; objective_budget: Budget; tasks: OwnerPlanTask[]; citation_refs: string[] };
 type OwnerOperation = { id: string; ordinal: number; type: string; payload: Record<string, unknown>; policy_result: string; status: string; result_entity_type?: string; event_sequence?: number };
-type OwnerTurnDetail = { conversation: { id: string; title: string }; turn: { id: string; ordinal: number; kind: "query" | "plan" | "act" | "review"; initiated_by: "owner" | "manager"; trigger_event_sequence?: number; instruction: string; status: string; answer?: string; as_of_event_sequence: number; completed_event_sequence?: number; revision: number; interpretation: OwnerInterpretation; citations: Array<{ ref: string; entity_type: string; entity_id: string; entity_revision: number; as_of_event_sequence: number; label: string }> }; operations: OwnerOperation[]; receipts: Array<{ operation_id: string; method: string; event_sequence?: number }> };
+type OwnerTurnDetail = { conversation: { id: string; title: string }; turn: { id: string; ordinal: number; kind: "query" | "plan" | "act" | "instruction" | "review"; initiated_by: "owner" | "executive"; trigger_event_sequence?: number; instruction: string; status: string; answer?: string; as_of_event_sequence: number; completed_event_sequence?: number; revision: number; interpretation: OwnerInterpretation; citations: Array<{ ref: string; entity_type: string; entity_id: string; entity_revision: number; as_of_event_sequence: number; label: string }> }; operations: OwnerOperation[]; receipts: Array<{ operation_id: string; method: string; event_sequence?: number }> };
 type OwnerManagerReview = { workspace_id: string; project_id: string; conversation_id: string; status: "idle" | "pending" | "leased" | "failed"; requested_event_sequence: number; reviewed_event_sequence: number; attempts: number; last_turn_id?: string; last_error?: string; updated_at: string };
+type OwnerExecutiveExchange = { id: string; turn_id: string; binding_id: string; run_id?: string; event_sequence: number; status: "pending" | "leased" | "running" | "responded" | "failed"; attempts: number; proposal_ids: string[]; last_error?: string; updated_at: string };
+type OwnerExecutiveBinding = { id: string; agent_id: string; objective_id: string; planning_task_id: string; manager_grant_id: string; launch_profile_id: string; status: string; revision: number };
+type ManagerProposalAction = {
+  id?: string;
+  ordinal: number;
+  type: string;
+  create_task?: { task_key: string; launch_profile_id: string; title: string; description?: string; priority: number; budget: Budget };
+  add_dependency?: { task: { task_id?: string; proposal_task_key?: string }; depends_on: { task_id?: string; proposal_task_key?: string } };
+  declare_claim_requirement?: { task: { task_id?: string; proposal_task_key?: string }; kind: string; target: string; mode: string; conflict_policy: string };
+  assign_task?: { task: { task_id?: string; proposal_task_key?: string }; launch_profile_id: string };
+  request_review?: { task: { task_id?: string; proposal_task_key?: string }; launch_profile_id: string; title: string; description?: string; priority: number; budget: Budget };
+  request_action?: { response: string; target_run_id?: string; target_task_id?: string; launch_profile_id?: string; reason: string; expected_revision: number };
+};
+type ManagerProposal = { id: string; project_id: string; objective_id: string; source_run_id: string; source_agent_id: string; kind: string; summary: string; status: string; as_of_event_sequence: number; actions: ManagerProposalAction[]; validation_issues: Array<{ code: string; path: string; message: string; severity: string }>; decision_note?: string; revision: number; created_at: string; updated_at: string; decided_at?: string };
 
 type WorkbenchData = {
   workspaces: Workspace[];
@@ -57,6 +71,7 @@ type WorkbenchData = {
   tasks: TaskDetail[];
   runs: Run[];
   approvals: Approval[];
+  proposals: ManagerProposal[];
   supervisorActions: SupervisorAction[];
   checks: CheckRunItem[];
   events: EventRecord[];
@@ -85,7 +100,7 @@ type SessionResponse = {
 
 const expectedStatusSchema = "urn:crewfold:schema:web:workbench-status:v1";
 const expectedSessionSchema = "urn:crewfold:schema:web:workbench-session:v1";
-const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], launchProfiles: [], objectives: [], tasks: [], runs: [], approvals: [], supervisorActions: [], checks: [], events: [], highWater: 0 };
+const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], launchProfiles: [], objectives: [], tasks: [], runs: [], approvals: [], proposals: [], supervisorActions: [], checks: [], events: [], highWater: 0 };
 
 class RPCFailure extends Error {
   readonly apiError: APIError;
@@ -217,26 +232,12 @@ async function rpc<T>(apiBase: string, csrf: string, method: string, params: Rec
   return envelope.result;
 }
 
-async function submitOwnerIntent(apiBase: string, csrf: string, body: Record<string, unknown>): Promise<OwnerTurnDetail> {
+async function submitOwnerIntent(apiBase: string, csrf: string, body: Record<string, unknown>): Promise<{ detail: OwnerTurnDetail; exchange: OwnerExecutiveExchange }> {
   const response = await fetch(`${apiBase}/intent`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-Crewfold-CSRF": csrf }, body: JSON.stringify(body) });
   if (response.status === 401) throw new Error("unauthorized");
-  const value = (await response.json()) as { detail?: OwnerTurnDetail; error?: { message: string } };
-  if (!response.ok || !value.detail) throw new Error(value.error?.message ?? `owner intent failed (${response.status})`);
-  return value.detail;
-}
-
-async function executeOwnerPlan(apiBase: string, csrf: string, workspace: string, turnID: string): Promise<OwnerTurnDetail> {
-  const response = await fetch(`${apiBase}/execute`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-Crewfold-CSRF": csrf }, body: JSON.stringify({ workspace, turn_id: turnID }) });
-  const value = (await response.json()) as { detail?: OwnerTurnDetail; error?: { message: string } };
-  if (!response.ok || !value.detail) throw new Error(value.error?.message ?? `plan execution failed (${response.status})`);
-  return value.detail;
-}
-
-async function editOwnerPlan(apiBase: string, csrf: string, body: Record<string, unknown>): Promise<OwnerTurnDetail> {
-  const response = await fetch(`${apiBase}/plan`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-Crewfold-CSRF": csrf }, body: JSON.stringify(body) });
-  const value = (await response.json()) as { detail?: OwnerTurnDetail; error?: { message: string } };
-  if (!response.ok || !value.detail) throw new Error(value.error?.message ?? `plan edit failed (${response.status})`);
-  return value.detail;
+  const value = (await response.json()) as { detail?: OwnerTurnDetail; exchange?: OwnerExecutiveExchange; error?: { message: string } };
+  if (!response.ok || !value.detail || !value.exchange) throw new Error(value.error?.message ?? `owner instruction failed (${response.status})`);
+  return { detail: value.detail, exchange: value.exchange };
 }
 
 async function submitOnboarding(apiBase: string, csrf: string, body: Record<string, unknown>): Promise<void> {
@@ -253,11 +254,11 @@ async function retryWorkbenchRun(apiBase: string, csrf: string, workspace: strin
   return value.detail.run;
 }
 
-async function loadOwnerConversation(apiBase: string, workspace: string, project: string): Promise<{ turns: OwnerTurnDetail[]; review: OwnerManagerReview | null }> {
+async function loadOwnerConversation(apiBase: string, workspace: string, project: string): Promise<{ turns: OwnerTurnDetail[]; exchanges: OwnerExecutiveExchange[]; executive: OwnerExecutiveBinding | null; review: OwnerManagerReview | null }> {
   const response = await fetch(`${apiBase}/conversation?workspace=${encodeURIComponent(workspace)}&project=${encodeURIComponent(project)}`, { credentials: "same-origin" });
   if (!response.ok) throw new Error(`conversation read failed (${response.status})`);
-  const value = (await response.json()) as { turns?: OwnerTurnDetail[]; review?: OwnerManagerReview | null };
-  return { turns: value.turns ?? [], review: value.review ?? null };
+  const value = (await response.json()) as { turns?: OwnerTurnDetail[]; exchanges?: OwnerExecutiveExchange[]; executive?: OwnerExecutiveBinding | null; review?: OwnerManagerReview | null };
+  return { turns: value.turns ?? [], exchanges: value.exchanges ?? [], executive: value.executive ?? null, review: value.review ?? null };
 }
 
 function bootstrapFromFragment(): string {
@@ -284,11 +285,12 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
     rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: eventAfter, limit: 200 }),
   ]);
   const project = projectPage.projects.find((item) => item.id === preferredProject) ?? projectPage.projects[0] ?? null;
-  const [checkouts, checks, launchProfiles] = project ? await Promise.all([
+  const [checkouts, checks, launchProfiles, proposals] = project ? await Promise.all([
     rpc<{ checkouts: Checkout[] }>(apiBase, csrf, "checkout.list", { workspace: workspace.id, project: project.id }).then((value) => value.checkouts),
     rpc<{ runs: CheckRunItem[] } & Page>(apiBase, csrf, "check.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.runs),
     rpc<{ profiles: LaunchProfile[] }>(apiBase, csrf, "launch_profile.list", { workspace: workspace.id, project: project.id, status: "active", limit: 100 }).then((value) => value.profiles),
-  ]) : [[], [], []];
+    rpc<{ proposals: ManagerProposal[] }>(apiBase, csrf, "proposal.list", { workspace: workspace.id, project: project.id, limit: 100 }).then((value) => value.proposals),
+  ]) : [[], [], [], []];
   const after = await rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: before.high_water, limit: 1 });
   if (after.high_water !== before.high_water) {
     if (attempt >= 2) throw new Error("Canonical state kept changing during refresh; retry when the current event cut settles.");
@@ -297,7 +299,7 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
   return {
     workspaces: workspacePage.workspaces, workspace, projects: projectPage.projects, project, checkouts,
     agents: agentPage.agents, launchProfiles, objectives: objectivePage.objectives, tasks: taskPage.tasks,
-    runs: runPage.runs, approvals: approvalPage.approvals, supervisorActions: supervisorActionPage.actions, checks, events: eventPage.events,
+    runs: runPage.runs, approvals: approvalPage.approvals, proposals, supervisorActions: supervisorActionPage.actions, checks, events: eventPage.events,
     highWater: eventPage.high_water,
   };
 }
@@ -380,48 +382,17 @@ function Onboarding({ apiBase, csrf, onComplete }: { apiBase: string; csrf: stri
   </main>;
 }
 
-function PlanEditor({ detail, agents, profiles, disabled, save }: { detail: OwnerTurnDetail; agents: Agent[]; profiles: LaunchProfile[]; disabled: boolean; save: (body: Record<string, unknown>) => Promise<void> }) {
-  const interpretation = detail.turn.interpretation;
-  const [open, setOpen] = useState(false);
-  const [objectiveTitle, setObjectiveTitle] = useState(interpretation.objective_title);
-  const [objectiveBudget, setObjectiveBudget] = useState<Budget>(interpretation.objective_budget);
-  const [tasks, setTasks] = useState<OwnerPlanTask[]>(interpretation.tasks.map((task) => ({ ...task, depends_on: task.depends_on ?? [] })));
-  const [busy, setBusy] = useState(false);
-  const updateTask = (index: number, patch: Partial<OwnerPlanTask>) => setTasks((current) => current.map((task, taskIndex) => taskIndex === index ? { ...task, ...patch } : task));
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault(); setBusy(true);
-    try {
-      await save({ turn_id: detail.turn.id, expected_revision: detail.turn.revision, objective_title: objectiveTitle.trim(), objective_budget: objectiveBudget, tasks: tasks.map((task) => ({ ...task, title: task.title.trim(), description: task.description.trim() })) });
-      setOpen(false);
-    } catch {
-      // The parent renders the exact server diagnosis beside the plan.
-    } finally { setBusy(false); }
-  };
-  if (!open) return <button className="edit-plan" disabled={disabled} onClick={() => setOpen(true)}><Settings size={13} />Edit objective, graph, profiles, and budgets</button>;
-  return <form className="plan-editor multi-plan-editor" onSubmit={submit}>
-    <label><span>Objective</span><input required maxLength={512} value={objectiveTitle} onChange={(event) => setObjectiveTitle(event.target.value)} /></label>
-    <div className="plan-editor-grid budget-grid"><label><span>Objective token limit</span><input type="number" min="0" max="1000000" value={objectiveBudget.token_limit} onChange={(event) => setObjectiveBudget({ ...objectiveBudget, token_limit: Number(event.target.value) })} /></label><label><span>Paid cost cents</span><input type="number" value={0} disabled /></label><label><span>Objective time seconds</span><input type="number" min="0" max="86400" value={objectiveBudget.time_seconds} onChange={(event) => setObjectiveBudget({ ...objectiveBudget, time_seconds: Number(event.target.value) })} /></label></div>
-    <div className="plan-task-list">{tasks.map((task, index) => { const profile = profiles.find((candidate) => candidate.id === task.launch_profile_id); const agent = agents.find((candidate) => candidate.id === profile?.agent_id); return <fieldset key={task.key}><legend>{index + 1}. {task.key}</legend><label><span>Task title</span><input required maxLength={512} value={task.title} onChange={(event) => updateTask(index, { title: event.target.value })} /></label><label><span>Description</span><textarea maxLength={4096} value={task.description} onChange={(event) => updateTask(index, { description: event.target.value })} /></label><div className="plan-editor-grid"><label><span>Launch profile</span><select value={task.launch_profile_id} onChange={(event) => updateTask(index, { launch_profile_id: event.target.value })}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{agents.find((item) => item.id === candidate.agent_id)?.name ?? "Agent"} · {candidate.purpose || "work"} · {candidate.provider}/{candidate.runtime}</option>)}</select></label><label><span>Priority</span><input type="number" min="0" max="1000" value={task.priority} onChange={(event) => updateTask(index, { priority: Number(event.target.value) })} /></label></div><label><span>Depends on task keys</span><input value={task.depends_on.join(", ")} onChange={(event) => updateTask(index, { depends_on: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} placeholder="foundation, api" /></label><small>{agent ? `Runs as ${agent.name}; role labels do not grant authority.` : "Select a current launch profile."}</small></fieldset>; })}</div>
-    <div className="plan-editor-actions"><button type="button" className="secondary-button" onClick={() => setOpen(false)}>Cancel</button><button className="primary-button compact" disabled={busy || disabled || tasks.length === 0 || tasks.some((task) => !task.launch_profile_id)}>{busy ? <LoaderCircle className="spin" size={13} /> : <Check size={13} />}Seal reviewed graph revision</button></div>
-  </form>;
-}
-
-function PlanReview({ detail, agents, profiles }: { detail: OwnerTurnDetail; agents: Agent[]; profiles: LaunchProfile[] }) {
-  const tasks = detail.turn.interpretation.tasks;
-  if (tasks.length === 0) return null;
-  return <section className="plan-review" aria-label={`${tasks.length}-task reviewed plan`}><header><div><strong>{tasks.length} actual tasks</strong><small>{detail.turn.interpretation.objective_title}</small></div><StatusPill value={detail.turn.status} /></header><ol>{tasks.map((task, index) => { const profile = profiles.find((candidate) => candidate.id === task.launch_profile_id); const agent = agents.find((candidate) => candidate.id === profile?.agent_id); const dependencies = task.depends_on ?? []; return <li key={task.key}><span>{index + 1}</span><div><strong>{task.title}</strong><small>{agent?.name ?? "Current launch profile"} · {dependencies.length > 0 ? `after ${dependencies.join(", ")}` : "starts first"}</small></div></li>; })}</ol></section>;
-}
-
 function ManagerDecisionCard({ detail, actionable, busy, mutable, choose }: { detail: OwnerTurnDetail; actionable: boolean; busy: boolean; mutable: boolean; choose: (choice: OwnerChoice) => void }) {
-  return <section className={`manager-decision-card ${actionable ? "" : "resolved"}`}><header><span className="decision-icon">?</span><div><strong>{actionable ? "Decision needed" : "Earlier decision"}</strong><small>{actionable ? "Selecting an answer creates a reviewed plan. Nothing executes until you approve that plan." : "Later conversation activity superseded this question; its choices are now inert."}</small></div></header><h3>{detail.turn.interpretation.question}</h3><div className="manager-choices">{detail.turn.interpretation.choices.map((choice) => <button key={choice.key} disabled={!actionable || !mutable || busy} onClick={() => choose(choice)}><span><strong>{choice.label}</strong>{choice.recommended && <em>Recommended</em>}</span><small>{choice.description}</small><span className="choose-label">{actionable ? "Review this response" : "Superseded"}</span></button>)}</div></section>;
+  return <section className={`manager-decision-card ${actionable ? "" : "resolved"}`}><header><span className="decision-icon">?</span><div><strong>{actionable ? "Executive needs your decision" : "Earlier decision"}</strong><small>{actionable ? "Your selection is sent back as a visible owner instruction. It does not silently accept proposals or execute effects." : "Later conversation activity superseded this question; its choices are now inert."}</small></div></header><h3>{detail.turn.interpretation.question}</h3><div className="manager-choices">{detail.turn.interpretation.choices.map((choice) => <button key={choice.key} disabled={!actionable || !mutable || busy} onClick={() => choose(choice)}><span><strong>{choice.label}</strong>{choice.recommended && <em>Recommended</em>}</span><small>{choice.description}</small><span className="choose-label">{actionable ? "Send this answer" : "Superseded"}</span></button>)}</div></section>;
 }
 
 function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mutable }: { data: WorkbenchData; apiBase: string; csrf: string; reload: () => Promise<void>; selectTask: (task: TaskDetail) => void; selectRun: (run: Run) => void; mutable: boolean }) {
   const [instruction, setInstruction] = useState("");
-  const [mode, setMode] = useState<"query" | "plan" | "act">("act");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [turns, setTurns] = useState<OwnerTurnDetail[]>([]);
+  const [exchanges, setExchanges] = useState<OwnerExecutiveExchange[]>([]);
+  const [executive, setExecutive] = useState<OwnerExecutiveBinding | null>(null);
   const [managerReview, setManagerReview] = useState<OwnerManagerReview | null>(null);
   const recovering = useRef(false);
   const pendingKey = data.workspace && data.project ? `crewfold_pending_intent_${data.workspace.id}_${data.project.id}` : "";
@@ -433,8 +404,9 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
       try {
         const page = await loadOwnerConversation(apiBase, data.workspace!.id, data.project!.id);
         if (!active) return;
-        setTurns(page.turns); setManagerReview(page.review);
-        timer = window.setTimeout(() => void poll(), page.review && ["pending", "leased"].includes(page.review.status) ? 750 : 4000);
+        setTurns(page.turns); setExchanges(page.exchanges); setExecutive(page.executive); setManagerReview(page.review);
+        const working = page.exchanges.some((exchange) => ["pending", "leased", "running"].includes(exchange.status));
+        timer = window.setTimeout(() => void poll(), working || page.review && ["pending", "leased"].includes(page.review.status) ? 750 : 4000);
       } catch {
         if (!active) return;
         timer = window.setTimeout(() => void poll(), 4000);
@@ -450,10 +422,11 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
     recovering.current = true; setBusy(true); setNotice("Recovering the exact interrupted owner turn…");
     try {
       const body = JSON.parse(raw) as Record<string, unknown>;
-      void submitOwnerIntent(apiBase, csrf, body).then(async (detail) => {
+      void submitOwnerIntent(apiBase, csrf, body).then(async ({ detail, exchange }) => {
         sessionStorage.removeItem(pendingKey);
         setTurns((current) => [...current.filter((item) => item.turn.id !== detail.turn.id), detail]);
-        setNotice("Recovered the exact durable turn without reinterpretation or duplicate effects.");
+        setExchanges((current) => [...current.filter((item) => item.id !== exchange.id), exchange]);
+        setNotice("Recovered the exact durable executive exchange without creating a duplicate run.");
         await reload();
       }).catch((reason) => setNotice(reason instanceof Error ? reason.message : "Interrupted turn recovery failed.")).finally(() => { recovering.current = false; setBusy(false); });
     } catch {
@@ -466,86 +439,69 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
     setBusy(true); setNotice("");
     try {
       const currentConversation = turns.at(-1)?.conversation.id;
-      const body = { workspace: data.workspace.id, project: data.project.id, ...(currentConversation ? { conversation_id: currentConversation } : {}), instruction: instruction.trim(), mode, idempotency_key: newKey("intent") };
+      const body = { workspace: data.workspace.id, project: data.project.id, ...(currentConversation ? { conversation_id: currentConversation } : {}), instruction: instruction.trim(), idempotency_key: newKey("executive-turn") };
       sessionStorage.setItem(pendingKey, JSON.stringify(body));
-      const detail = await submitOwnerIntent(apiBase, csrf, body);
+      const { detail, exchange } = await submitOwnerIntent(apiBase, csrf, body);
       sessionStorage.removeItem(pendingKey);
-      setInstruction(""); setNotice("The manager returned a typed result bound to the current canonical event cut.");
+      setInstruction(""); setNotice("Instruction recorded. The project executive is working from the frozen canonical context.");
       setTurns((current) => [...current, detail]);
-      if (mode === "query") setNotice("Answered from the frozen canonical event cut without creating a domain event.");
-      if (mode === "plan") setNotice(`Frozen a dependency-aware ${detail.turn.interpretation.tasks.length}-task plan. No effect has executed.`);
-      if (mode === "act") setNotice(detail.turn.interpretation.disposition === "clarify" ? "The manager paused before every effect and raised a bounded decision." : detail.turn.interpretation.disposition === "refuse" ? "The manager refused an operation outside the local action grammar; no effect ran." : `Committed ${detail.receipts.length} exact graph receipts; the supervisor now owns scheduling.`);
+      setExchanges((current) => [...current, exchange]);
       await reload();
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The instruction could not be committed."); }
-    finally { setBusy(false); }
-  };
-  const executePlan = async (turnID: string) => {
-    if (!mutable || !data.workspace) return;
-    setBusy(true); setNotice("");
-    try {
-      const executed = await executeOwnerPlan(apiBase, csrf, data.workspace.id, turnID);
-      setTurns((current) => current.map((turn) => turn.turn.id === turnID ? executed : turn));
-      setNotice("Committed the frozen graph exactly; the supervisor now schedules dependency-ready work through its launch profiles.");
-      await reload();
-    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The frozen plan could not execute."); }
     finally { setBusy(false); }
   };
   const answerManagerChoice = async (detail: OwnerTurnDetail, choice: OwnerChoice) => {
     if (!mutable || !data.workspace || !data.project) return;
     setBusy(true); setNotice("");
     try {
-      const body = { workspace: data.workspace.id, project: data.project.id, conversation_id: detail.conversation.id, instruction: `Selected answer for "${detail.turn.interpretation.question}": ${choice.label}. ${choice.description} Produce a reviewed plan only; do not execute it.`.trim(), mode: "plan", idempotency_key: newKey(`manager-choice-${choice.key}`) };
+      const body = { workspace: data.workspace.id, project: data.project.id, conversation_id: detail.conversation.id, instruction: `My decision for "${detail.turn.interpretation.question}": ${choice.label}. ${choice.description}`.trim(), idempotency_key: newKey(`executive-choice-${choice.key}`) };
       const next = await submitOwnerIntent(apiBase, csrf, body);
-      setTurns((current) => [...current, next]);
-      setNotice(next.turn.interpretation.disposition === "clarify" ? "The manager needs one more bounded decision." : next.turn.status === "planned" ? "The selected answer produced a reviewed plan. Nothing has executed; inspect the graph before choosing Execute." : "The selected answer was recorded without creating execution effects.");
+      setTurns((current) => [...current, next.detail]);
+      setExchanges((current) => [...current, next.exchange]);
+      setNotice("Your decision was recorded and sent to the project executive as a new durable turn.");
       await reload();
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The manager decision could not be processed."); }
     finally { setBusy(false); }
   };
-  const savePlan = async (detail: OwnerTurnDetail, draft: Record<string, unknown>) => {
-    if (!mutable || !data.workspace) return;
-    setNotice("");
-    try {
-      const edited = await editOwnerPlan(apiBase, csrf, { workspace: data.workspace.id, ...draft });
-      setTurns((current) => current.map((turn) => turn.turn.id === detail.turn.id ? edited : turn));
-      setNotice(`Sealed reviewed plan revision ${edited.turn.revision}; no domain effect has executed.`);
-    } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "The plan edit could not be sealed.");
-      throw reason;
-    }
-  };
   const activeRuns = data.runs.filter((run) => ["requested", "starting", "active", "blocked", "stopping"].includes(run.status));
   const attentionRuns = data.runs.filter((run) => ["requested", "starting", "active", "blocked", "stopping", "start_failed", "failed", "lost"].includes(run.status)).sort((left, right) => right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id));
   const openTasks = data.tasks.filter(({ task }) => !["completed", "failed", "cancelled"].includes(task.status));
+  const exchangeByTurn = new Map(exchanges.map((exchange) => [exchange.turn_id, exchange]));
+  const executiveAgent = executive ? data.agents.find((agent) => agent.id === executive.agent_id) : null;
+  const exchangeMessage = (detail: OwnerTurnDetail, exchange?: OwnerExecutiveExchange) => {
+    if (!exchange) return detail.turn.answer ?? detail.turn.interpretation.summary ?? "This historical turn predates the project executive exchange contract.";
+    if (exchange.status === "pending") return "Your instruction is durably queued for the project executive.";
+    if (exchange.status === "leased") return "Crewfold is freezing the executive run and its exact authority context.";
+    if (exchange.status === "running") return "The project executive is working in a short-lived Herdr session. Its answer and any typed proposals will appear here.";
+    if (exchange.status === "failed") return exchange.last_error ?? "The executive session ended before recording a response.";
+    return detail.turn.answer ?? detail.turn.interpretation.summary ?? "The executive response was recorded.";
+  };
   return <div className="view-grid workbench-view">
     <section className="conversation-panel panel">
-      <div className="panel-heading"><div><div className="eyebrow"><Sparkles size={13} />Owner instruction</div><h1>What should the crew accomplish?</h1></div><StatusPill value="local" /></div>
+      <div className="panel-heading"><div><div className="eyebrow"><Sparkles size={13} />Project direction</div><h1>Talk to your project executive</h1></div><StatusPill value="local" /></div>
       <div className="conversation-intro">
         <div className="assistant-avatar"><Bot size={22} /></div>
-        <div><strong>Crewfold</strong><p>I’ll answer from canonical state, freeze an editable plan, or execute a clearly authorized local goal. Destructive, publication, external, credential, budget, and authority changes stop before their first effect.</p></div>
+        <div><strong>{executiveAgent?.name ?? "Project executive"}</strong><p>I’m a durable Crewfold agent, not a one-shot form interpreter. Each exchange runs through your subscription-backed provider with frozen project context. I can answer, ask a decision, or create typed proposals; Crewfold remains the authority that validates and commits accepted effects.</p></div>
       </div>
-      {managerReview && <div className={`manager-review-state ${managerReview.status}`}><Bot size={15} /><span><strong>{managerReview.status === "leased" ? "Manager is reviewing worker activity" : managerReview.status === "pending" ? "Worker activity queued for manager review" : managerReview.status === "failed" ? "Manager review needs attention" : "Manager is caught up"}</strong><small>{managerReview.status === "failed" ? managerReview.last_error : `reviewed #${managerReview.reviewed_event_sequence} · requested #${managerReview.requested_event_sequence}`}</small></span></div>}
+      {managerReview && <div className={`manager-review-state ${managerReview.status}`}><Bot size={15} /><span><strong>{managerReview.status === "leased" ? "Executive is reviewing worker activity" : managerReview.status === "pending" ? "Worker activity queued for executive review" : managerReview.status === "failed" ? "Executive review needs attention" : "Executive is caught up"}</strong><small>{managerReview.status === "failed" ? managerReview.last_error : `reviewed #${managerReview.reviewed_event_sequence} · requested #${managerReview.requested_event_sequence}`}</small></span></div>}
       {turns.length > 0 && <div className="conversation-history">{turns.slice(-6).map((detail) => <div className="turn" key={detail.turn.id}>
-        {detail.turn.initiated_by === "owner" ? <div className="owner-message"><strong>You</strong><p>{detail.turn.instruction}</p><span>{detail.turn.kind}</span></div> : <div className="manager-trigger"><Activity size={13} /><span>Proactive review of worker activity through event #{detail.turn.trigger_event_sequence}</span></div>}
-        <div className="crew-message"><span className="assistant-avatar"><Bot size={16} /></span><div><strong>Crewfold manager</strong><p>{detail.turn.answer ?? detail.turn.interpretation.summary ?? (detail.turn.status === "planned" ? `Frozen ${detail.operations.length} operations; no effects executed.` : `${detail.receipts.length} exact effects committed.`)}</p>
-          <div className="receipt-line"><ShieldCheck size={13} />{detail.turn.interpretation.disposition} · {detail.turn.status} · event cut #{detail.turn.completed_event_sequence ?? detail.turn.as_of_event_sequence}</div>
+        {detail.turn.initiated_by === "owner" ? <div className="owner-message"><strong>You</strong><p>{detail.turn.instruction}</p><span>instruction</span></div> : <div className="manager-trigger"><Activity size={13} /><span>Proactive executive review of worker activity through event #{detail.turn.trigger_event_sequence}</span></div>}
+        <div className="crew-message"><span className="assistant-avatar"><Bot size={16} /></span><div><strong>{executiveAgent?.name ?? "Project executive"}</strong><p>{exchangeMessage(detail, exchangeByTurn.get(detail.turn.id))}</p>
+          <div className="receipt-line"><ShieldCheck size={13} />{exchangeByTurn.get(detail.turn.id)?.status ?? detail.turn.status} · frozen event cut #{detail.turn.as_of_event_sequence}</div>
           {detail.turn.citations.length > 0 && <div className="citation-list" aria-label="Canonical answer citations">{detail.turn.citations.map((citation) => <span key={citation.ref}>{citation.label} · r{citation.entity_revision}</span>)}</div>}
           {detail.turn.interpretation.disposition === "clarify" && <ManagerDecisionCard detail={detail} actionable={turns.at(-1)?.turn.id === detail.turn.id} busy={busy} mutable={mutable} choose={(choice) => void answerManagerChoice(detail, choice)} />}
-          <PlanReview detail={detail} agents={data.agents} profiles={data.launchProfiles} />
-          {detail.operations.length > 0 && <details className="operation-details"><summary>{detail.operations.length} typed execution operations</summary><p>Internal objective, task, dependency, and scheduling receipts. These are not additional tasks.</p><ol className="operation-list" aria-label="Frozen typed execution operations">{detail.operations.map((operation) => <li key={operation.id}><span>{operation.ordinal}</span><strong>{operation.type.replaceAll("_", " ")}</strong><StatusPill value={operation.status} /></li>)}</ol></details>}
-          {detail.turn.status === "planned" && <PlanEditor key={detail.turn.revision} detail={detail} agents={data.agents} profiles={data.launchProfiles} disabled={!mutable || busy} save={(draft) => savePlan(detail, draft)} />}
-          {detail.turn.status === "planned" && <button className="execute-plan" disabled={!mutable || busy} onClick={() => void executePlan(detail.turn.id)}><Play size={13} />Execute reviewed graph</button>}
+          {(exchangeByTurn.get(detail.turn.id)?.proposal_ids.length ?? 0) > 0 && <div className="proposal-ready"><ClipboardCheck size={14} /><span>{exchangeByTurn.get(detail.turn.id)!.proposal_ids.length} typed proposal{exchangeByTurn.get(detail.turn.id)!.proposal_ids.length === 1 ? " is" : "s are"} ready for explicit review.</span></div>}
         </div></div>
       </div>)}</div>}
       <form className="composer" onSubmit={createWork}>
-        <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} maxLength={4096} placeholder="Build the first playable world loop and organize the work…" aria-label="Owner instruction" />
-        <div className="composer-footer"><div className="intent-mode" aria-label="Instruction mode">{(["query", "plan", "act"] as const).map((value) => <button type="button" key={value} className={mode === value ? "selected" : ""} onClick={() => setMode(value)}>{value}</button>)}</div><span>{instruction.length}/4096</span><button className="submit-intent" disabled={!mutable || busy || !instruction.trim() || !data.project}>{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}{mode === "act" ? "Do it" : mode === "plan" ? "Plan" : "Ask"}</button></div>
+        <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} maxLength={4096} placeholder="Ask for status, give direction, or request a change…" aria-label="Message to project executive" />
+        <div className="composer-footer"><span className="executive-boundary"><ShieldCheck size={13} />Proposals require explicit acceptance</span><span>{instruction.length}/4096</span><button className="submit-intent" disabled={!mutable || busy || !instruction.trim() || !data.project}>{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}Send</button></div>
       </form>
       {notice && <div className="notice" role="status"><CheckCircle2 size={17} />{notice}</div>}
-      <div className="effect-note"><ShieldCheck size={16} /><span><strong>No hidden effects.</strong> Query is read-only, Plan freezes operations, and Act returns exact receipts only after permitted effects commit.</span></div>
+      <div className="effect-note"><ShieldCheck size={16} /><span><strong>Conversation is not authority.</strong> The executive may use read-only Crewfold tools and submit typed proposals. Only explicit proposal acceptance or an existing deterministic policy can commit work.</span></div>
     </section>
     <aside className="right-stack">
-      <section className="panel metric-panel"><div className="panel-label"><Workflow size={16} />Current work</div><div className="metric-row"><div><strong>{openTasks.length}</strong><span>open tasks</span></div><div><strong>{activeRuns.length}</strong><span>live runs</span></div><div><strong>{data.approvals.filter((item) => item.status === "pending").length}</strong><span>decisions</span></div></div></section>
+      <section className="panel metric-panel"><div className="panel-label"><Workflow size={16} />Current work</div><div className="metric-row"><div><strong>{openTasks.length}</strong><span>open tasks</span></div><div><strong>{activeRuns.length}</strong><span>live runs</span></div><div><strong>{data.approvals.filter((item) => item.status === "pending").length + data.proposals.filter((item) => item.status === "pending").length}</strong><span>decisions</span></div></div></section>
       <section className="panel compact-list"><div className="panel-title"><h2>Agents and launch attention</h2><button onClick={() => void reload()} aria-label="Refresh workbench"><RefreshCw size={15} /></button></div>{attentionRuns.length === 0 ? <EmptyState icon={Bot} title="No run needs attention" detail="There is no live, failed, or unresolved agent run in this project." /> : attentionRuns.slice(0, 5).map((run) => <button className="list-row" key={run.id} onClick={() => selectRun(run)}><span className="row-icon"><Bot size={16} /></span><span><strong>{data.agents.find((agent) => agent.id === run.agent_id)?.name ?? "Agent"}</strong><small>{run.status === "start_failed" ? run.failure_message ?? "Launch failed; inspect and retry." : run.status === "failed" ? `${data.tasks.find((task) => task.task.id === run.task_id)?.task.title ?? "Assigned work"} · inspect failure output` : run.status === "lost" ? "Runtime outcome is unknown; owner resolution is required." : data.tasks.find((task) => task.task.id === run.task_id)?.task.title ?? "Assigned work"}</small></span><StatusPill value={run.status} /></button>)}</section>
     </aside>
     <section className="panel task-strip full-span"><div className="panel-title"><div><h2>Next work</h2><p>Canonical task state, ordered by Crewfold.</p></div><span>{data.tasks.length} total</span></div>{openTasks.length === 0 ? <EmptyState icon={ListChecks} title="No work recorded yet" detail="Describe the outcome above to create the first objective and task." /> : <div className="task-cards">{openTasks.slice(0, 6).map((detail) => <button key={detail.task.id} className="task-card" onClick={() => selectTask(detail)}><div><StatusPill value={detail.task.status} /><span className="priority">P{detail.task.priority}</span></div><strong>{detail.task.title}</strong><small>{data.agents.find((agent) => agent.id === detail.task.assigned_agent_id)?.name ?? "Unassigned"} · updated {displayTime(detail.task.updated_at)}</small><ChevronRight size={16} /></button>)}</div>}</section>
@@ -589,10 +545,25 @@ function snapshotText(action: SupervisorAction, name: string) {
   return typeof value === "string" && value.trim() ? value : "";
 }
 
+function proposalTaskRef(value?: { task_id?: string; proposal_task_key?: string }) {
+  return value?.proposal_task_key ? `new task “${value.proposal_task_key}”` : value?.task_id ? `task ${value.task_id}` : "an unspecified task";
+}
+
+function proposalActionDescription(action: ManagerProposalAction) {
+  if (action.create_task) return `Create task “${action.create_task.title}” at priority ${action.create_task.priority} using the frozen launch profile.`;
+  if (action.add_dependency) return `Make ${proposalTaskRef(action.add_dependency.task)} depend on ${proposalTaskRef(action.add_dependency.depends_on)}.`;
+  if (action.declare_claim_requirement) return `Require ${proposalTaskRef(action.declare_claim_requirement.task)} to hold the ${action.declare_claim_requirement.kind} claim on “${action.declare_claim_requirement.target}” in ${action.declare_claim_requirement.mode} mode.`;
+  if (action.assign_task) return `Assign ${proposalTaskRef(action.assign_task.task)} through the frozen launch profile.`;
+  if (action.request_review) return `Create review “${action.request_review.title}” for ${proposalTaskRef(action.request_review.task)}.`;
+  if (action.request_action) return `Request ${action.request_action.response.replaceAll("_", " ")} because: ${action.request_action.reason}`;
+  return action.type.replaceAll("_", " ");
+}
+
 function DecisionsView({ data, apiBase, csrf, reload, mutable }: { data: WorkbenchData; apiBase: string; csrf: string; reload: () => Promise<void>; mutable: boolean }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const approvals = data.approvals.filter((item) => !data.project || item.project_id === data.project.id);
+  const proposals = data.proposals.filter((item) => !data.project || item.project_id === data.project.id);
   const decide = async (approval: Approval, action: SupervisorAction | undefined, decision: "allow" | "deny") => {
     if (!mutable || !data.workspace) return;
     const taskTitle = data.tasks.find((item) => item.task.id === action?.task_id)?.task.title ?? "the governed action";
@@ -605,10 +576,27 @@ function DecisionsView({ data, apiBase, csrf, reload, mutable }: { data: Workben
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Decision could not be committed."); }
     finally { setBusy(""); }
   };
+  const decideProposal = async (proposal: ManagerProposal, decision: "accept" | "reject") => {
+    if (!mutable || !data.workspace) return;
+    setBusy(proposal.id); setError("");
+    try {
+      await rpc(apiBase, csrf, `proposal.${decision}`, { workspace: data.workspace.id, proposal: proposal.id, expected_revision: proposal.revision, decision_note: decision === "accept" ? "Accepted the exact reviewed executive proposal." : "Rejected the exact reviewed executive proposal.", idempotency_key: newKey(`proposal-${decision}`) });
+      await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Executive proposal decision could not be committed."); }
+    finally { setBusy(""); }
+  };
+  const pending = approvals.filter((item) => item.status === "pending").length + proposals.filter((item) => item.status === "pending").length;
   return <section className="panel page-panel">
-    <div className="page-heading"><div><div className="eyebrow"><ClipboardCheck size={13} />Policy gates</div><h1>Decisions</h1><p>Exact conditions, requested responses, affected work, and recorded owner choices.</p></div><span>{approvals.filter((item) => item.status === "pending").length} pending</span></div>
+    <div className="page-heading"><div><div className="eyebrow"><ClipboardCheck size={13} />Owner authority boundary</div><h1>Decisions</h1><p>Review the exact graph changes proposed by your executive and the exact operational effects paused by policy.</p></div><span>{pending} pending</span></div>
     {error && <div className="form-error" role="alert"><AlertCircle size={16} />{error}</div>}
-    {approvals.length === 0 ? <EmptyState icon={ShieldCheck} title="Nothing needs approval" detail="Gated operations will appear here with their exact requested effect." /> : <div className="decision-list">{approvals.map((approval) => {
+    {proposals.length > 0 && <><div className="section-heading"><div><Sparkles size={16} /><span><strong>Executive proposals</strong><small>Nothing below takes effect until you accept this exact revision.</small></span></div><span>{proposals.length}</span></div><div className="decision-list">{proposals.map((proposal) => <article className="decision-card" key={proposal.id}>
+      <header><span className="row-icon"><Workflow size={17} /></span><div><strong>{proposal.summary}</strong><small>{proposal.kind.replaceAll("_", " ")} · frozen at event #{proposal.as_of_event_sequence}</small></div><StatusPill value={proposal.status} /></header>
+      <div className="decision-reasons"><strong>{proposal.actions.length} exact {proposal.actions.length === 1 ? "operation" : "operations"}</strong><ol>{proposal.actions.map((action) => <li key={action.id ?? `${proposal.id}-${action.ordinal}`}><span>{action.ordinal}</span>{proposalActionDescription(action)}</li>)}</ol></div>
+      {proposal.validation_issues.length > 0 && <div className="decision-question"><strong>Validation findings</strong><ul>{proposal.validation_issues.map((issue) => <li key={`${issue.path}-${issue.code}`}>{issue.severity}: {issue.message}</li>)}</ul></div>}
+      <p className="decision-consequence"><strong>Exact effect:</strong> Accepting applies only these typed operations transactionally. Rejecting records the refusal and changes no project graph state.</p>
+      {proposal.status === "pending" ? <div className="row-actions"><button className="secondary-button" disabled={!mutable || busy === proposal.id} onClick={() => void decideProposal(proposal, "reject")}><XCircle size={14} />Reject proposal</button><button className="primary-button compact" disabled={!mutable || busy === proposal.id || proposal.validation_issues.some((issue) => issue.severity === "error")} onClick={() => void decideProposal(proposal, "accept")}>{busy === proposal.id ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}Accept exact proposal</button></div> : <div className="decision-record"><CheckCircle2 size={15} /><span><strong>Recorded owner decision</strong>{proposal.decision_note ?? proposal.status.replaceAll("_", " ")} · {displayTime(proposal.decided_at ?? proposal.updated_at)}</span></div>}
+    </article>)}</div></>}
+    {approvals.length > 0 && <><div className="section-heading"><div><ShieldCheck size={16} /><span><strong>Operational approvals</strong><small>Runtime and supervisor effects that require an explicit owner decision.</small></span></div><span>{approvals.length}</span></div><div className="decision-list">{approvals.map((approval) => {
       const action = data.supervisorActions.find((item) => item.id === approval.action_id);
       const task = data.tasks.find((item) => item.task.id === action?.task_id)?.task;
       const run = data.runs.find((item) => item.id === action?.run_id);
@@ -625,7 +613,8 @@ function DecisionsView({ data, apiBase, csrf, reload, mutable }: { data: Workben
         </> : <p className="decision-unavailable">The action detail is outside this bounded page; refresh before deciding.</p>}
         {approval.status === "pending" ? <div className="row-actions"><button className="secondary-button" disabled={!mutable || busy === approval.id || !action} onClick={() => void decide(approval, action, "deny")}><XCircle size={14} />{labels.deny}</button><button className="primary-button compact" disabled={!mutable || busy === approval.id || !action} onClick={() => void decide(approval, action, "allow")}>{busy === approval.id ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}{labels.allow}</button></div> : <div className="decision-record"><CheckCircle2 size={15} /><span><strong>Recorded owner decision</strong>{action?.decision ?? approval.decision_note ?? approval.status.replaceAll("_", " ")} · {displayTime(approval.decided_at ?? approval.updated_at)}</span></div>}
       </article>;
-    })}</div>}
+    })}</div></>}
+    {proposals.length === 0 && approvals.length === 0 && <EmptyState icon={ShieldCheck} title="Nothing needs your decision" detail="Executive graph proposals and policy-gated runtime effects will appear here with their exact consequences." />}
   </section>;
 }
 

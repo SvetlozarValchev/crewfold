@@ -57,6 +57,7 @@ var durableQueueRegistry = []durableQueueDefinition{
 	{name: "supervisor_action", healthName: "supervisor_action", table: "supervisor_actions", idColumn: "id", openPredicate: "status IN ('proposed','awaiting_approval','deferred')", terminalRule: "status IN ('applied','dismissed','failed')", blockerKind: "open_supervisor_action", statuses: []string{"proposed", "awaiting_approval", "deferred", "applied", "dismissed", "failed"}},
 	{name: "approval", healthName: "approval", table: "approval_requests", idColumn: "id", openPredicate: "status IN ('pending','granted')", terminalRule: "status IN ('denied','expired','consumed')", blockerKind: "open_approval", statuses: []string{"pending", "granted", "denied", "expired", "consumed"}},
 	{name: "owner_manager_review", healthName: "owner_manager_review", table: "owner_manager_review_jobs", idColumn: "project_id", openPredicate: "status IN ('pending','leased')", terminalRule: "status IN ('idle','failed')", blockerKind: "open_owner_manager_review", statuses: []string{"idle", "pending", "leased", "failed"}},
+	{name: "owner_executive_exchange", healthName: "owner_executive_exchange", table: "owner_executive_exchanges", idColumn: "id", openPredicate: "status IN ('pending','leased','running')", terminalRule: "status IN ('responded','failed')", blockerKind: "open_owner_executive_exchange", statuses: []string{"pending", "leased", "running", "responded", "failed"}},
 }
 
 func queueDefinition(name string) (durableQueueDefinition, bool) {

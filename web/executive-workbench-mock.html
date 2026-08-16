@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crewfold — contract-grounded executive workbench mock</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b0d;
+      --panel: #0e1316;
+      --panel-2: #12191d;
+      --panel-3: #182126;
+      --line: #28343a;
+      --line-soft: #1c272c;
+      --text: #edf2ef;
+      --muted: #93a19d;
+      --faint: #65736f;
+      --cyan: #78d8cf;
+      --lime: #c7ef79;
+      --amber: #e0bc68;
+      --red: #ed887c;
+      --blue: #84b9ed;
+      --purple: #b9a2ea;
+      --shadow: 0 18px 60px rgba(0, 0, 0, .32);
+      --radius: 14px;
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--bg); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 70% -20%, rgba(120, 216, 207, .08), transparent 34rem),
+        var(--bg);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, textarea { font: inherit; }
+    button { color: inherit; }
+    svg { display: block; }
+    .icon { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .icon.sm { width: 14px; height: 14px; }
+    .icon.lg { width: 22px; height: 22px; }
+    .mono, .eyebrow, .method, .snapshot, .step-index { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+
+    .app { display: grid; grid-template-columns: 244px minmax(560px, 1fr) 356px; min-height: 100vh; }
+    .sidebar, .inspector { position: sticky; top: 0; height: 100vh; overflow: auto; background: rgba(9, 13, 15, .96); }
+    .sidebar { border-right: 1px solid var(--line); padding: 18px 12px; }
+    .inspector { border-left: 1px solid var(--line); padding: 18px; }
+    .main { min-width: 0; padding: 18px clamp(18px, 3.5vw, 54px) 80px; }
+
+    .brand { display: flex; gap: 11px; align-items: center; padding: 0 7px 18px; border-bottom: 1px solid var(--line-soft); }
+    .mark { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid #526740; border-radius: 9px; color: var(--lime); background: #182019; font-weight: 800; }
+    .brand strong { display: block; font-size: 15px; }
+    .brand small { color: var(--muted); }
+    .scope { margin: 14px 3px 18px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); }
+    .scope span { display: block; color: var(--muted); font-size: 11px; }
+    .scope strong { display: block; margin-top: 3px; }
+    .nav-group-label { margin: 18px 12px 7px; color: var(--faint); font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    .nav { display: grid; gap: 3px; }
+    .nav button { width: 100%; display: flex; align-items: center; gap: 11px; padding: 10px 11px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; text-align: left; cursor: pointer; }
+    .nav button:hover { color: var(--text); background: var(--panel); }
+    .nav button.active { color: var(--text); background: #1b241c; box-shadow: inset 2px 0 var(--lime); }
+    .nav .count { margin-left: auto; min-width: 21px; padding: 1px 6px; border-radius: 10px; color: var(--faint); background: #11181b; font-size: 10px; text-align: center; }
+    .nav button.active .count { color: var(--lime); background: #273321; }
+    .legend { margin-top: 24px; padding: 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 11px; }
+    .legend div { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; }
+    .line-key { width: 22px; margin-top: 7px; border-top: 2px solid var(--cyan); }
+    .line-key.dashed { border-top-style: dashed; border-color: var(--amber); }
+
+    .topbar { display: flex; justify-content: space-between; gap: 20px; align-items: center; min-height: 42px; margin-bottom: 22px; }
+    .breadcrumbs { display: flex; gap: 8px; align-items: center; color: var(--muted); }
+    .breadcrumbs strong { color: var(--text); }
+    .toolbar { display: flex; gap: 8px; }
+    .toggle, .quiet-button, .action, .danger-button { display: inline-flex; gap: 7px; align-items: center; justify-content: center; min-height: 34px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); cursor: pointer; }
+    .toggle:hover, .quiet-button:hover { border-color: #42545c; background: var(--panel-2); }
+    .toggle.on { border-color: #4a716b; color: var(--cyan); background: #10201f; }
+    .action { border-color: #657b39; color: #10160d; background: var(--lime); font-weight: 800; }
+    .action:hover { background: #d3f68e; }
+    .danger-button { border-color: #6d413b; color: var(--red); background: #1c1212; }
+    .action[disabled], .quiet-button[disabled] { opacity: .45; cursor: not-allowed; }
+
+    .contract-banner { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; margin-bottom: 24px; padding: 13px 15px; border: 1px solid #725f32; border-radius: 12px; background: linear-gradient(90deg, rgba(224,188,104,.1), rgba(224,188,104,.035)); }
+    .contract-banner .icon { color: var(--amber); margin-top: 2px; }
+    .contract-banner strong { display: block; }
+    .contract-banner p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+    .snapshot { color: var(--amber); font-size: 10px; white-space: nowrap; }
+
+    .view { display: none; animation: enter .18s ease-out; }
+    .view.active { display: block; }
+    @keyframes enter { from { opacity: .4; transform: translateY(3px); } }
+    .hero { display: grid; grid-template-columns: 1fr auto; gap: 22px; align-items: end; margin: 10px 0 26px; }
+    .eyebrow { display: flex; gap: 7px; align-items: center; margin-bottom: 8px; color: var(--cyan); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { max-width: 820px; margin: 0; font-size: clamp(34px, 4.2vw, 58px); line-height: 1.03; letter-spacing: -.045em; }
+    .hero p { max-width: 720px; margin: 14px 0 0; color: var(--muted); font-size: 16px; }
+    .hero-stat { display: grid; grid-template-columns: repeat(3, minmax(70px, 1fr)); min-width: 270px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    .hero-stat div { padding: 13px; border-right: 1px solid var(--line); }
+    .hero-stat div:last-child { border: 0; }
+    .hero-stat strong { display: block; font-size: 23px; }
+    .hero-stat span { color: var(--muted); font-size: 10px; }
+
+    .grid { display: grid; gap: 14px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .panel { border: 1px solid var(--line); border-radius: var(--radius); background: linear-gradient(145deg, rgba(18,25,29,.98), rgba(13,18,21,.98)); box-shadow: var(--shadow); }
+    .panel-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding: 17px 18px; border-bottom: 1px solid var(--line-soft); }
+    .panel-head h2, .panel-head h3 { margin: 0; font-size: 16px; }
+    .panel-head p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+    .panel-body { padding: 17px 18px; }
+    .section-title { margin: 30px 0 12px; }
+    .section-title h2 { margin: 0; font-size: 20px; }
+    .section-title p { margin: 4px 0 0; color: var(--muted); }
+
+    .status { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .status::before { width: 7px; height: 7px; border: 1.5px solid currentColor; border-radius: 50%; content: ""; }
+    .status.good { color: var(--lime); border-color: #4d6131; background: rgba(199,239,121,.06); }
+    .status.warn { color: var(--amber); border-color: #6d5b30; background: rgba(224,188,104,.06); }
+    .status.bad { color: var(--red); border-color: #6e4039; background: rgba(237,136,124,.06); }
+    .status.live { color: var(--cyan); border-color: #376460; background: rgba(120,216,207,.06); }
+    .method { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border: 1px solid #31534f; border-radius: 6px; color: var(--cyan); background: #0c1919; font-size: 9px; letter-spacing: .01em; }
+    .contract { display: none; }
+    body.api-map .contract { display: inline-flex; }
+
+    .truth-card { display: grid; grid-template-columns: auto 1fr auto; gap: 13px; align-items: center; padding: 16px 18px; }
+    .truth-card .signal { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid #6c5630; border-radius: 12px; color: var(--amber); background: #201a10; }
+    .truth-card h2 { margin: 0; font-size: 17px; }
+    .truth-card p { margin: 4px 0 0; color: var(--muted); }
+    .reason { padding: 13px 14px; border-left: 2px solid var(--red); background: #1a1212; color: #e8c3bf; }
+    .reason strong { display: block; margin-bottom: 3px; color: var(--red); }
+
+    .conversation { overflow: hidden; }
+    .conversation.target { border-style: dashed; border-color: #735f31; }
+    .session-strip { display: flex; gap: 11px; align-items: center; margin: 14px 18px 0; padding: 11px 12px; border: 1px solid #405158; border-radius: 10px; background: #0a1113; }
+    .session-strip .avatar { flex: 0 0 auto; }
+    .session-strip div:nth-child(2) { min-width: 0; flex: 1; }
+    .session-strip strong, .session-strip small { display: block; }
+    .session-strip small { color: var(--muted); }
+    .turn-classification { display: inline-flex; gap: 5px; align-items: center; margin-left: auto; padding: 2px 6px; border: 1px solid #3b5146; border-radius: 999px; color: var(--lime); font-size: 9px; }
+    .turn { display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding: 18px; border-bottom: 1px solid var(--line-soft); }
+    .turn.owner { margin: 15px 18px; padding: 14px; border: 0; border-radius: 11px; background: var(--panel-3); }
+    .avatar { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 9px; background: #122321; color: var(--cyan); font-size: 11px; font-weight: 800; }
+    .turn.owner .avatar { background: #20262a; color: var(--text); }
+    .turn header { display: flex; gap: 8px; align-items: center; margin-bottom: 5px; }
+    .turn header span { color: var(--faint); font-size: 10px; }
+    .turn p { margin: 0; }
+    .citation-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+    .citation { padding: 3px 7px; border-radius: 6px; color: var(--muted); background: #172025; font-size: 10px; }
+    .composer { padding: 16px 18px; }
+    .composer textarea { width: 100%; min-height: 88px; resize: vertical; padding: 13px; border: 1px solid var(--line); border-radius: 10px; outline: none; color: var(--text); background: #090e10; }
+    .composer textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 2px rgba(120,216,207,.08); }
+    .composer-foot { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-top: 10px; }
+
+    .chain { display: grid; gap: 0; }
+    .chain-item { position: relative; display: grid; grid-template-columns: 32px 1fr auto; gap: 11px; align-items: start; min-height: 70px; padding: 12px 14px; }
+    .chain-item:not(:last-child)::after { position: absolute; left: 29px; top: 48px; width: 1px; height: 36px; background: var(--line); content: ""; }
+    .chain-icon { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); background: #0a1012; z-index: 1; }
+    .chain-item h3 { margin: 1px 0 2px; font-size: 13px; }
+    .chain-item p { margin: 0; color: var(--muted); font-size: 11px; }
+
+    .boundary { padding: 15px; border: 1px dashed #745f2f; border-radius: 11px; background: rgba(224,188,104,.035); }
+    .boundary h3 { margin: 0 0 5px; color: var(--amber); font-size: 13px; }
+    .boundary p { margin: 0; color: var(--muted); font-size: 12px; }
+    .capability-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .capability-list li { display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: start; color: var(--muted); }
+    .capability-list li .icon { margin-top: 2px; color: var(--cyan); }
+    .capability-list.denied li .icon { color: var(--red); }
+    .capability-list strong { color: var(--text); }
+
+    .org { display: grid; grid-template-columns: minmax(130px, .8fr) 44px minmax(190px, 1.2fr) 44px minmax(150px, 1fr); gap: 8px; align-items: center; }
+    .org-card { min-height: 150px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: #0a1012; }
+    .org-card.target { border-style: dashed; border-color: #735f31; }
+    .org-card h3 { margin: 10px 0 3px; }
+    .org-card p { margin: 0; color: var(--muted); font-size: 11px; }
+    .org-arrow { display: grid; place-items: center; color: var(--faint); }
+    .org-arrow small { display: block; margin-top: 4px; font-size: 8px; text-align: center; }
+    .supervisor-band { display: flex; gap: 12px; align-items: center; margin-top: 12px; padding: 12px 14px; border: 1px solid #39454a; border-radius: 10px; color: var(--muted); background: #11171a; }
+    .supervisor-band .icon { color: var(--purple); }
+
+    .task-list { display: grid; gap: 8px; }
+    .task { display: grid; grid-template-columns: 31px minmax(0, 1fr) auto; gap: 11px; align-items: center; padding: 12px; border: 1px solid var(--line-soft); border-radius: 10px; background: #0c1214; cursor: pointer; }
+    .task:hover { border-color: #43545b; }
+    .task.selected { border-color: #665332; background: #16140f; }
+    .step-index { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: 10px; }
+    .task strong { display: block; font-size: 12px; }
+    .task small { color: var(--muted); }
+    .dependency-note { display: flex; gap: 8px; align-items: center; margin: 9px 0 0 42px; color: var(--faint); font-size: 10px; }
+
+    .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 20px; align-items: stretch; }
+    .flow article { position: relative; min-height: 130px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: #0b1113; }
+    .flow article:not(:last-child)::after { position: absolute; right: -21px; top: 50%; width: 20px; border-top: 1px solid var(--line); content: ""; }
+    .flow .icon { color: var(--cyan); }
+    .flow h3 { margin: 12px 0 4px; font-size: 12px; }
+    .flow p { margin: 0; color: var(--muted); font-size: 10px; }
+
+    .table { width: 100%; border-collapse: collapse; }
+    .table th, .table td { padding: 11px 10px; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: top; }
+    .table th { color: var(--faint); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+    .table td { color: var(--muted); font-size: 11px; }
+    .table td strong { color: var(--text); }
+    .table tr:last-child td { border-bottom: 0; }
+
+    .inspector-head { padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+    .inspector-head .eyebrow { margin: 0; }
+    .inspector-title { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-top: 6px; }
+    .inspector-title h2 { margin: 0; font-size: 23px; }
+    .close-inspector { display: none; }
+    .agent-meta { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-top: 12px; color: var(--muted); font-size: 11px; }
+    .inspector-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; margin: 15px 0; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: #080d0f; }
+    .inspector-tabs button { min-width: 0; padding: 7px 3px; overflow: hidden; border: 0; border-radius: 6px; color: var(--faint); background: transparent; cursor: pointer; font-size: 9px; text-overflow: ellipsis; }
+    .inspector-tabs button.active { color: var(--text); background: var(--panel-3); }
+    .inspect-pane { display: none; }
+    .inspect-pane.active { display: block; }
+    .fact { padding: 13px 0; border-bottom: 1px solid var(--line-soft); }
+    .fact label { display: block; margin-bottom: 4px; color: var(--faint); font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    .fact p { margin: 0; color: var(--muted); }
+    .fact p strong { color: var(--text); }
+    .inspect-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
+    .inspect-actions button:first-child { grid-column: 1 / -1; }
+    .history { position: relative; margin-left: 8px; padding-left: 17px; border-left: 1px solid var(--line); }
+    .history div { position: relative; margin: 0 0 15px; }
+    .history div::before { position: absolute; left: -21px; top: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); content: ""; }
+    .history strong { display: block; font-size: 11px; }
+    .history small { color: var(--muted); }
+
+    .modal-backdrop { position: fixed; inset: 0; display: none; place-items: center; padding: 20px; background: rgba(0,0,0,.72); z-index: 50; }
+    .modal-backdrop.open { display: grid; }
+    .modal { width: min(610px, 100%); max-height: 90vh; overflow: auto; border: 1px solid #44545b; border-radius: 15px; background: #101619; box-shadow: 0 30px 100px rgba(0,0,0,.6); }
+    .modal header, .modal footer { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+    .modal footer { justify-content: flex-end; border-top: 1px solid var(--line); border-bottom: 0; }
+    .modal h2 { margin: 0; font-size: 17px; }
+    .modal-body { padding: 18px; }
+    .modal-body p { color: var(--muted); }
+    .effect-list { display: grid; gap: 8px; margin: 14px 0; padding: 0; list-style: none; }
+    .effect-list li { display: flex; gap: 9px; padding: 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: #0b1012; }
+    .effect-list .icon { flex: 0 0 auto; color: var(--cyan); }
+    .toast { position: fixed; right: 20px; bottom: 20px; display: flex; gap: 10px; align-items: flex-start; width: min(430px, calc(100vw - 40px)); padding: 13px 15px; border: 1px solid #4b6333; border-radius: 11px; color: #dff7ad; background: #152013; box-shadow: var(--shadow); opacity: 0; transform: translateY(10px); pointer-events: none; transition: .18s ease; z-index: 60; }
+    .toast.show { opacity: 1; transform: none; }
+
+    @media (max-width: 1220px) {
+      .app { grid-template-columns: 210px minmax(520px, 1fr) 320px; }
+      .main { padding-inline: 24px; }
+      .hero { grid-template-columns: 1fr; }
+      .hero-stat { width: min(390px, 100%); }
+      .flow { grid-template-columns: 1fr 1fr; }
+      .flow article::after { display: none; }
+    }
+    @media (max-width: 980px) {
+      .app { grid-template-columns: 80px minmax(0, 1fr); }
+      .sidebar { padding-inline: 8px; }
+      .brand { justify-content: center; padding-inline: 0; }
+      .brand div:not(.mark), .scope, .nav-group-label, .nav button span:not(.count), .legend { display: none; }
+      .nav button { justify-content: center; padding: 11px 6px; }
+      .nav .count { position: absolute; margin: -24px 0 0 23px; }
+      .inspector { position: fixed; right: 0; z-index: 20; width: min(390px, calc(100vw - 80px)); transform: translateX(100%); transition: transform .2s ease; box-shadow: -30px 0 70px rgba(0,0,0,.5); }
+      .inspector.open { transform: none; }
+      .close-inspector { display: inline-flex; }
+      .grid.two { grid-template-columns: 1fr; }
+      .grid.three { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 700px) {
+      .app { display: block; }
+      .sidebar { position: sticky; top: 0; z-index: 15; width: 100%; height: auto; display: flex; align-items: center; gap: 8px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 7px; }
+      .brand { flex: 0 0 auto; padding: 0; border: 0; }
+      .mark { width: 32px; height: 32px; }
+      .nav { display: flex; }
+      .nav button { width: 38px; flex: 0 0 38px; }
+      .nav .count { display: none; }
+      .main { padding: 14px 13px 70px; }
+      .topbar { margin-bottom: 14px; }
+      .breadcrumbs { font-size: 11px; }
+      .contract-banner { grid-template-columns: auto 1fr; }
+      .contract-banner .snapshot { grid-column: 2; }
+      .grid.two, .flow { grid-template-columns: 1fr; }
+      .org { grid-template-columns: 1fr; }
+      .org-arrow { transform: rotate(90deg); padding: 7px; }
+      .hero-stat { min-width: 0; }
+      .truth-card { grid-template-columns: auto 1fr; }
+      .truth-card > button { grid-column: 1 / -1; }
+      .inspector { width: 100vw; }
+      .table-wrap { overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Lucide icon paths, embedded locally. No remote scripts or invented icon glyphs. -->
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute">
+    <defs>
+      <symbol id="i-command" viewBox="0 0 24 24"><path d="M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM8.6 6h6.8M18 8.6v6.8M15.4 18H8.6M6 15.4V8.6"/></symbol>
+      <symbol id="i-graph" viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h3a3 3 0 0 1 3 3v6"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+      <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 4h16v12H4zM22 16h-6l-2 3h-4l-2-3H2"/></symbol>
+      <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9.5 4A2.5 2.5 0 0 0 7 6.5v.3A3.5 3.5 0 0 0 5.5 13H6a3 3 0 0 0 3 3h1V5.5A1.5 1.5 0 0 0 8.5 4M14.5 4A2.5 2.5 0 0 1 17 6.5v.3a3.5 3.5 0 0 1 1.5 6.2H18a3 3 0 0 1-3 3h-1V5.5A1.5 1.5 0 0 1 15.5 4M10 12H8M14 9h2M10 8H8M14 13h2M10 16v3M14 16v3"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></symbol>
+      <symbol id="i-file-check" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6m-11 7 2 2 4-4"/></symbol>
+      <symbol id="i-scroll" viewBox="0 0 24 24"><path d="M8 21h8a4 4 0 0 0 4-4V5a3 3 0 0 0-6 0v12a4 4 0 0 1-8 0V4a2 2 0 0 0-4 0v2h4"/></symbol>
+      <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z"/></symbol>
+      <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3-1.8 4.7L5.5 9.5l4.7 1.8L12 16l1.8-4.7 4.7-1.8-4.7-1.8ZM5 17l-.8 2.2L2 20l2.2.8L5 23l.8-2.2L8 20l-2.2-.8Z"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m20 6-11 11-5-5"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="m18 6-12 12M6 6l12 12"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m5 3 14 9-14 9z"/></symbol>
+      <symbol id="i-git" viewBox="0 0 24 24"><circle cx="6" cy="4" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="20" r="2"/><path d="M6 6v12M8 5h4a4 4 0 0 1 4 4v7"/><circle cx="16" cy="18" r="2"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></symbol>
+      <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></symbol>
+    </defs>
+  </svg>
+
+  <div class="app">
+    <aside class="sidebar" aria-label="Workbench navigation">
+      <div class="brand"><div class="mark">CF</div><div><strong>Crewfold</strong><small>contract mock</small></div></div>
+      <div class="scope"><span>Representative project</span><strong>Signal Garden</strong><span>personal workspace</span></div>
+      <div class="nav-group-label">Direct and understand</div>
+      <nav class="nav">
+        <button class="active" data-view="executive" title="Executive"><svg class="icon"><use href="#i-command"/></svg><span>Executive</span></button>
+        <button data-view="work" title="Work graph"><svg class="icon"><use href="#i-graph"/></svg><span>Work graph</span><span class="count">6</span></button>
+        <button data-view="crew" title="Crew"><svg class="icon"><use href="#i-users"/></svg><span>Crew</span><span class="count">1</span></button>
+        <button data-view="communication" title="Communication"><svg class="icon"><use href="#i-inbox"/></svg><span>Communication</span><span class="count">0</span></button>
+        <button data-view="knowledge" title="Knowledge"><svg class="icon"><use href="#i-brain"/></svg><span>Knowledge</span><span class="count">0</span></button>
+        <button data-view="decisions" title="Decisions"><svg class="icon"><use href="#i-shield"/></svg><span>Decisions</span><span class="count">0</span></button>
+        <button data-view="evidence" title="Evidence"><svg class="icon"><use href="#i-file-check"/></svg><span>Evidence</span><span class="count">0</span></button>
+        <button data-view="briefing" title="Briefing"><svg class="icon"><use href="#i-scroll"/></svg><span>Briefing</span></button>
+        <button data-view="activity" title="Activity"><svg class="icon"><use href="#i-spark"/></svg><span>Activity</span></button>
+        <button data-view="health" title="Health"><svg class="icon"><use href="#i-heart"/></svg><span>Health</span></button>
+        <button data-view="contract" title="Contract"><svg class="icon"><use href="#i-lock"/></svg><span>Contract</span></button>
+      </nav>
+      <div class="legend">
+        <div><span class="line-key"></span><span>Implemented canonical record or API.</span></div>
+        <div><span class="line-key dashed"></span><span>Proposed composition from existing primitives; not live yet.</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div class="breadcrumbs"><span>personal</span><span>/</span><strong id="crumb">Executive</strong></div>
+        <div class="toolbar"><button class="toggle" id="apiToggle"><svg class="icon sm"><use href="#i-terminal"/></svg> API map</button><button class="quiet-button" data-static="Refresh reads: events.list + bounded page loaders"><svg class="icon sm"><use href="#i-spark"/></svg> Refresh</button></div>
+      </div>
+
+      <div class="contract-banner">
+        <svg class="icon"><use href="#i-alert"/></svg>
+        <div><strong>Contract mock, not a live client</strong><p>Solid facts are a representative Signal Garden snapshot. Dashed areas are the proposed durable-executive composition built only from existing Crewfold primitives; that integration still requires an ADR amendment. Every click describes its contract; this file performs no operation.</p></div>
+        <span class="snapshot">CAPTURED CUT #51</span>
+      </div>
+
+      <section class="view active" id="view-executive">
+        <div class="hero"><div><div class="eyebrow"><svg class="icon sm"><use href="#i-command"/></svg>Owner attention</div><h1>Direct the objective, not the machinery.</h1><p>The executive surface should explain canonical state, expose consequential choices, and turn authorized intent into inspectable typed operations.</p></div><div class="hero-stat"><div><strong>5</strong><span>waiting tasks</span></div><div><strong>0</strong><span>live runs</span></div><div><strong>0</strong><span>owner gates</span></div></div></div>
+
+        <div class="panel truth-card">
+          <div class="signal"><svg class="icon lg"><use href="#i-alert"/></svg></div>
+          <div><div class="eyebrow">Current critical gate <span class="method contract">task.show · run.show · check.list</span></div><h2>Foundation work is in review with changes requested</h2><p>Its completion evidence did not satisfy acceptance: task checks and diff inspection are missing. Every downstream task therefore remains waiting.</p></div>
+          <button class="action" data-modal="retry"><svg class="icon sm"><use href="#i-play"/></svg> Review retry</button>
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <section class="panel conversation target">
+            <div class="panel-head"><div><h2>Executive conversation</h2><p>A real grant-bound agent conversation—not a one-shot interpretation form.</p></div><span class="method contract">message.send · inbox.list · manager.invoke</span></div>
+            <div class="session-strip"><div class="avatar">EX</div><div><strong>project executive</strong><small>Codex hosted by Herdr · manager packet and MCP capability</small></div><span class="status warn">not provisioned</span></div>
+            <div class="turn owner"><div class="avatar">YOU</div><div><header><strong>Owner</strong><span>durable message</span></header><p>Why is nothing else moving?</p></div></div>
+            <div class="turn"><div class="avatar"><svg class="icon"><use href="#i-command"/></svg></div><div><header><strong>Executive</strong><span>response grounded at canonical cut #51</span><span class="turn-classification">read-only answer</span></header><p>The foundation task returned work, but review requested changes because no task-check or diff-inspection evidence was linked. Five tasks transitively depend on that foundation. There are no live runs and no owner approvals waiting.</p><div class="citation-row"><span class="citation">foundation · changes_requested · r5</span><span class="citation">run · review · r6</span><span class="citation">checks · 0</span><span class="citation">approvals · 0</span></div></div></div>
+            <div class="composer"><textarea id="prompt" placeholder="Message the project executive…"></textarea><div class="composer-foot"><span style="color:var(--muted);font-size:10px">Crewfold classifies effects after the message: answer, proposal, or owner gate.</span><button class="action" id="submitTurn"><svg class="icon sm"><use href="#i-send"/></svg><span>Send</span></button></div></div>
+          </section>
+
+          <div class="grid">
+            <section class="panel">
+              <div class="panel-head"><div><h2>What makes the executive real?</h2><p>Durable identity and authority come from Crewfold records, not the chat frame.</p></div></div>
+              <div class="panel-body chain">
+                <div class="chain-item"><div class="chain-icon"><svg class="icon"><use href="#i-users"/></svg></div><div><h3>Durable executive identity</h3><p>One AgentDefinition, assigned planning task, exact ManagerGrant, planning LaunchProfile, and current ContextPacket.</p></div><span class="method contract">manager.grant.create</span></div>
+                <div class="chain-item"><div class="chain-icon"><svg class="icon"><use href="#i-terminal"/></svg></div><div><h3>Herdr-hosted manager run</h3><p>Codex reads its packet and mailbox, uses run-scoped MCP, and remains inspectable or resumable like another agent.</p></div><span class="method contract">manager.invoke</span></div>
+                <div class="chain-item"><div class="chain-icon"><svg class="icon"><use href="#i-graph"/></svg></div><div><h3>Typed proposals and supervision</h3><p>The executive proposes bounded work. Owner acceptance and deterministic policy—not prose—produce effects and launches.</p></div><span class="method contract">proposal.accept · supervisor.run</span></div>
+              </div>
+            </section>
+            <div class="boundary"><h3>Continuity belongs to Crewfold, not one provider thread</h3><p>The executive remains the same Crewfold agent across browser refreshes and replacement runs because its task, grant, packet history, messages, proposals, accepted knowledge, and receipts are durable. Herdr may host a continuing Codex thread, but that transcript is not canonical memory.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-work">
+        <div class="hero"><div><div class="eyebrow"><svg class="icon sm"><use href="#i-graph"/></svg>Canonical dependency graph</div><h1>Ready is derived, not guessed.</h1><p>Tasks, revisions, dependencies, assignments, and run state are durable facts. The UI explains why work can or cannot advance.</p></div></div>
+        <div class="grid two">
+          <section class="panel"><div class="panel-head"><div><h2>Build the Signal Garden experiment tracker</h2><p>Objective · active · revision 1</p></div><span class="method contract">objective.show</span></div><div class="panel-body task-list">
+            <div class="task selected" data-open-inspector><span class="step-index">1</span><span><strong>Create the React application foundation</strong><small>changes requested · review evidence incomplete</small></span><span class="status warn">changes requested</span></div>
+            <div class="dependency-note"><svg class="icon sm"><use href="#i-arrow"/></svg>blocks every later task</div>
+            <div class="task"><span class="step-index">2</span><span><strong>Implement experiment model and persistence</strong><small>depends on foundation</small></span><span class="status">waiting</span></div>
+            <div class="task"><span class="step-index">3</span><span><strong>Build the core responsive interface</strong><small>depends on foundation</small></span><span class="status">waiting</span></div>
+            <div class="task"><span class="step-index">4</span><span><strong>Connect experiment management workflows</strong><small>depends on interface</small></span><span class="status">waiting</span></div>
+            <div class="task"><span class="step-index">5</span><span><strong>Polish accessibility and interaction states</strong><small>depends on workflows</small></span><span class="status">waiting</span></div>
+            <div class="task"><span class="step-index">6</span><span><strong>Add tests and verify documented workflows</strong><small>depends on accessibility</small></span><span class="status">waiting</span></div>
+          </div></section>
+          <div class="grid">
+            <section class="panel"><div class="panel-head"><div><h2>Readiness explanation</h2><p>What the scheduler can prove at this cut.</p></div><span class="method contract">coordination.status</span></div><div class="panel-body"><ul class="capability-list"><li><svg class="icon"><use href="#i-check"/></svg><span><strong>Graph is explicit.</strong> Five dependency edges determine the chain.</span></li><li><svg class="icon"><use href="#i-alert"/></svg><span><strong>Foundation is not accepted.</strong> Its task is changes_requested and its run is in review.</span></li><li><svg class="icon"><use href="#i-lock"/></svg><span><strong>Downstream launch is ineligible.</strong> The supervisor cannot treat waiting dependents as ready.</span></li></ul></div></section>
+            <section class="panel"><div class="panel-head"><div><h2>Scheduling boundary</h2><p>No role name or model prose starts a worker.</p></div></div><div class="panel-body"><p style="color:var(--muted);margin-top:0">Accepted proposal effects bind tasks to exact owner-authored launch-profile revisions. The deterministic supervisor evaluates readiness, current policy, capacity, and approvals before producing a run intent.</p><div class="citation-row"><span class="method contract">proposal.accept</span><span class="method contract">supervisor.policy.show</span><span class="method contract">supervisor.run</span><span class="method contract">run.start</span></div></div></section>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-crew">
+        <div class="hero"><div><div class="eyebrow"><svg class="icon sm"><use href="#i-users"/></svg>Attention hierarchy</div><h1>An agent of agents—without hidden authority.</h1><p>The hierarchy determines who summarizes, delegates, and escalates. Authority still comes only from exact grants, profiles, packets, policies, and owner decisions.</p></div></div>
+        <section class="panel"><div class="panel-head"><div><h2>Executive-agent composition</h2><p>Solid: present domain record. Dashed: proposed integration of exact ADR-0015 primitives into the owner conversation.</p></div><span class="method contract">agent.list · manager.grant.list · launch_profile.list</span></div><div class="panel-body"><div class="org">
+          <article class="org-card"><svg class="icon lg"><use href="#i-command"/></svg><h3>Local owner</h3><p>Creates/revokes grants and policies; accepts proposals; decides approvals, knowledge, outcomes, and consequential effects.</p></article>
+          <div class="org-arrow"><svg class="icon"><use href="#i-arrow"/></svg><small>grant + invoke</small></div>
+          <article class="org-card target"><svg class="icon lg"><use href="#i-users"/></svg><h3>Executive agent run</h3><p>Ordinary AgentDefinition + planning task + exact ManagerGrant + planning LaunchProfile + current ContextPacket.</p><div class="citation-row"><span class="method contract">manager.grant.create</span><span class="method contract">manager.invoke</span></div></article>
+          <div class="org-arrow"><svg class="icon"><use href="#i-arrow"/></svg><small>typed proposals</small></div>
+          <article class="org-card"><svg class="icon lg"><use href="#i-terminal"/></svg><h3>Builder</h3><p>Current agent definition. Executes one exact assigned task through Codex hosted by Herdr.</p><div class="citation-row"><span class="status warn">no live run</span></div></article>
+        </div><div class="supervisor-band"><svg class="icon lg"><use href="#i-graph"/></svg><span><strong style="color:var(--text)">Deterministic supervisor:</strong> schedules accepted, ready work under an exact owner policy. It is not above the agents and is not a model.</span><span class="method contract">supervisor.run</span></div></div></section>
+        <div class="grid two" style="margin-top:14px">
+          <section class="panel"><div class="panel-head"><div><h2>Executive run may</h2><p>Only when the exact grant advertises the corresponding tool.</p></div></div><div class="panel-body"><ul class="capability-list"><li><svg class="icon"><use href="#i-check"/></svg><span>Read its current packet, briefing, context delta, inbox, and status.</span></li><li><svg class="icon"><use href="#i-check"/></svg><span>Report progress, blockage, contradiction, artifacts, knowledge proposals, completion, and messages.</span></li><li><svg class="icon"><use href="#i-check"/></svg><span>Submit bounded inert task, assignment, review, or escalation proposals.</span></li></ul><div class="citation-row"><span class="method contract">crewfold_propose_tasks</span><span class="method contract">crewfold_propose_assignment</span><span class="method contract">crewfold_propose_review</span><span class="method contract">crewfold_propose_escalation</span></div></div></section>
+          <section class="panel"><div class="panel-head"><div><h2>Executive run may not</h2><p>Role, name, provider, or prose never grants these operations.</p></div></div><div class="panel-body"><ul class="capability-list denied"><li><svg class="icon"><use href="#i-x"/></svg><span>Accept its own proposal or approve a supervisor action.</span></li><li><svg class="icon"><use href="#i-x"/></svg><span>Change grants, policies, launch commands, provider/runtime, or capability scope.</span></li><li><svg class="icon"><use href="#i-x"/></svg><span>Govern knowledge or meetings, accept completion, deploy, publish, or control an uncertain run.</span></li></ul></div></section>
+        </div>
+      </section>
+
+      <section class="view" id="view-communication">
+        <div class="hero"><div><div class="eyebrow"><svg class="icon sm"><use href="#i-inbox"/></svg>Durable coordination</div><h1>Messages are records. Terminals are not.</h1><p>Agent communication survives restarts in scoped mailboxes. A terminal prompt can wake a run, but it is not the durable message record.</p></div></div>
+        <div class="grid two"><section class="panel"><div class="panel-head"><div><h2>Builder inbox</h2><p>Current bounded snapshot</p></div><span class="method contract">inbox.list</span></div><div class="panel-body" style="text-align:center;padding-block:44px"><svg class="icon lg" style="margin:0 auto 12px;color:var(--faint)"><use href="#i-inbox"/></svg><strong style="display:block">No messages</strong><p style="color:var(--muted)">The builder inbox is empty at this captured cut.</p><button class="quiet-button" data-modal="message"><svg class="icon sm"><use href="#i-message"/></svg> Message builder</button></div></section>
+          <section class="panel"><div class="panel-head"><div><h2>Mailbox contract</h2><p>Project-scoped and recipient-bound.</p></div></div><div class="panel-body chain"><div class="chain-item"><div class="chain-icon"><svg class="icon"><use href="#i-send"/></svg></div><div><h3>Send</h3><p>Owner or authenticated agent run creates one exact typed message and recipient delivery.</p></div><span class="method contract">message.send</span></div><div class="chain-item"><div class="chain-icon"><svg class="icon"><use href="#i-inbox"/></svg></div><div><h3>Read and acknowledge</h3><p>Recipient reads the durable body and explicitly acknowledges the delivery.</p></div><span class="method contract">crewfold_read_message</span></div><div class="chain-item"><div class="chain-icon"><svg class="icon"><use href="#i-terminal"/></svg></div><div><h3>Optional wake effect</h3><p>A bounded wake job may prompt a live runtime. Its success/failure is recorded separately.</p></div><span class="method contract">crewfold_list_inbox</span></div></div></section></div>
+        <div class="section-title"><h2>What communication supports</h2><p>Questions, risks, handoffs, decisions, acknowledgements, and structured report events remain distinct records.</p></div>
+        <div class="grid three"><div class="panel panel-body"><svg class="icon"><use href="#i-command"/></svg><h3>Owner ↔ executive</h3><p style="color:var(--muted)">The workbench renders durable messages and executive responses; Herdr supplies the optional live runtime view.</p></div><div class="panel panel-body"><svg class="icon"><use href="#i-message"/></svg><h3>Executive ↔ workers</h3><p style="color:var(--muted)">Exact recipients and bounded bodies. Delegation still becomes accepted tasks and profiles, not informal chat authority.</p></div><div class="panel panel-body"><svg class="icon"><use href="#i-spark"/></svg><h3>Worker → executive attention</h3><p style="color:var(--muted)">The existing coalesced review cursor should wake or resume the executive run for material progress, blockage, completion, or messages.</p></div></div>
+      </section>
+
+      <section class="view" id="view-knowledge">
+        <div class="hero"><div><div class="eyebrow"><svg class="icon sm"><use href="#i-brain"/></svg>Governed project memory</div><h1>Knowledge is accepted evidence, not chat history.</h1><p>Project memory is revisioned, scoped, provenance-linked, freshness-aware, and owner governed before it enters a worker context packet.</p></div></div>
+        <section class="panel"><div class="panel-head"><div><h2>Knowledge lifecycle</h2><p>The captured Signal Garden project has zero accepted knowledge revisions.</p></div><span class="method contract">knowledge.list · contradiction.list</span></div><div class="panel-body flow"><article><svg class="icon"><use href="#i-terminal"/></svg><h3>Observation or artifact</h3><p>A run reports bounded evidence. Raw provider transcript is not canonical knowledge.</p></article><article><svg class="icon"><use href="#i-file-check"/></svg><h3>Proposed revision</h3><p>An agent or curator proposes one scoped revision with provenance.</p></article><article><svg class="icon"><use href="#i-shield"/></svg><h3>Owner governance</h3><p>Accept, reject, mark stale, or dispute through owner-only local API.</p></article><article><svg class="icon"><use href="#i-brain"/></svg><h3>Accepted knowledge</h3><p>Current revision is searchable and contradiction-aware.</p></article><article><svg class="icon"><use href="#i-scroll"/></svg><h3>Context packet</h3><p>Only bounded accepted/current revisions explicitly selected for the task enter a run.</p></article></div></section>
+        <div class="grid two" style="margin-top:14px"><section class="panel"><div class="panel-head"><div><h2>Agent surface</h2><p>Proposal and contradiction reporting only.</p></div></div><div class="panel-body citation-row"><span class="method contract">crewfold_propose_knowledge</span><span class="method contract">crewfold_report_contradiction</span><span class="method contract">crewfold_publish_artifact</span></div></section><section class="panel"><div class="panel-head"><div><h2>Owner surface</h2><p>Governance stays outside run authority.</p></div></div><div class="panel-body citation-row"><span class="method contract">knowledge.accept</span><span class="method contract">knowledge.reject</span><span class="method contract">knowledge.mark_stale</span><span class="method contract">knowledge.dispute</span><span class="method contract">contradiction.confirm</span></div></section></div>
+      </section>
+
+      <section class="view" id="view-decisions">
+        <div class="hero"><div><div class="eyebrow"><svg class="icon sm"><use href="#i-shield"/></svg>Owner authority</div><h1>Different gates remain different.</h1><p>The UI should explain the exact requested effect and current revision; it must not flatten proposals, approvals, knowledge governance, and outcome review into generic “Accept” buttons.</p></div></div>
+        <section class="panel"><div class="panel-head"><div><h2>Current pending owner decisions</h2><p>Signal Garden representative cut</p></div><span class="status good">0 pending</span></div><div class="panel-body" style="text-align:center;padding-block:42px"><svg class="icon lg" style="margin:0 auto 10px;color:var(--faint)"><use href="#i-shield"/></svg><strong>No current approval request</strong><p style="color:var(--muted)">The review defect is a work/evidence gate, not an owner approval.</p></div></section>
+        <div class="section-title"><h2>Four exact decision families</h2><p>Each has a distinct source, effect, and deciding API.</p></div>
+        <div class="table-wrap panel"><table class="table"><thead><tr><th>Record</th><th>Who creates it</th><th>What owner decides</th><th>Exact surface</th></tr></thead><tbody>
+          <tr><td><strong>Manager proposal</strong></td><td>Authenticated grant-bound manager run</td><td>Apply all validated typed effects atomically, or none</td><td><span class="method contract">proposal.inspect · proposal.accept / reject</span></td></tr>
+          <tr><td><strong>Supervisor approval</strong></td><td>Deterministic supervisor when policy cannot auto-apply</td><td>Allow or deny one exact governed action</td><td><span class="method contract">approval.inspect · approval.allow / deny</span></td></tr>
+          <tr><td><strong>Knowledge proposal</strong></td><td>Agent/curator under scoped capability</td><td>Make one revision accepted/current or reject it</td><td><span class="method contract">knowledge.show · knowledge.accept / reject</span></td></tr>
+          <tr><td><strong>Outcome assessment</strong></td><td>Assessment workflow over commitments and evidence</td><td>Accept or reject the evidence-linked conclusion</td><td><span class="method contract">outcome.assessment.show · accept / reject</span></td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section class="view" id="view-evidence">
+        <div class="hero"><div><div class="eyebrow"><svg class="icon sm"><use href="#i-file-check"/></svg>Verification before acceptance</div><h1>A completion claim is not an accepted result.</h1><p>Checks, artifacts, diff inspection, commitments, and outcome assessments make the gap between “agent says done” and “Crewfold accepts done” visible.</p></div></div>
+        <div class="grid two"><section class="panel"><div class="panel-head"><div><h2>Foundation review</h2><p>Exact current gap</p></div><span class="status warn">incomplete</span></div><div class="panel-body"><div class="reason"><strong>Changes requested</strong>Completion evidence did not satisfy acceptance: missing task checks and diff inspected.</div><ul class="capability-list" style="margin-top:16px"><li><svg class="icon"><use href="#i-check"/></svg><span>Worker returned a completion report and bounded result.</span></li><li><svg class="icon" style="color:var(--red)"><use href="#i-x"/></svg><span>No task check result is recorded.</span></li><li><svg class="icon" style="color:var(--red)"><use href="#i-x"/></svg><span>No diff-inspection evidence is linked.</span></li></ul></div></section><section class="panel"><div class="panel-head"><div><h2>Verification surface</h2><p>Current project has zero check runs.</p></div><span class="method contract">check.list</span></div><div class="panel-body"><p style="color:var(--muted);margin-top:0">Definitions, requirements, grants, routes, policy, runs, results, logs, and repair proposals are explicit records. A worker may request a configured check only when its packet advertises the watch operation.</p><div class="citation-row"><span class="method contract">check.definition.list</span><span class="method contract">check.requirement.list</span><span class="method contract">check.run</span><span class="method contract">check.inspect</span><span class="method contract">crewfold_run_check</span></div></div></section></div>
+      </section>
+
+      <section class="view" id="view-briefing">
+        <div class="hero"><div><div class="eyebrow"><svg class="icon sm"><use href="#i-scroll"/></svg>Bounded canonical understanding</div><h1>Briefings summarize governed facts.</h1><p>They project current decisions, risks, verification gaps, accepted delivery, rationale, and change at one exact cursor—with provenance and omission accounting.</p></div></div>
+        <section class="panel"><div class="panel-head"><div><h2>Project briefing contract</h2><p>Generated on demand; no invented confidence score.</p></div><button class="quiet-button" data-static="Would call briefing.show for the exact project scope"><svg class="icon sm"><use href="#i-scroll"/></svg> Generate static preview</button></div><div class="panel-body"><div class="grid three"><div><div class="eyebrow">Bound</div><strong>≤128 whole claims</strong><p style="color:var(--muted)">Claims are selected deterministically and capped.</p></div><div><div class="eyebrow">Bound</div><strong>≤64 KiB</strong><p style="color:var(--muted)">Byte-limit omissions are explicit, not silently truncated prose.</p></div><div><div class="eyebrow">Identity</div><strong>Semantic reuse</strong><p style="color:var(--muted)">Unchanged claims at the same cut reuse the same stored briefing.</p></div></div><div class="boundary" style="margin-top:16px"><h3>Not a memory dump</h3><p>Raw transcripts, terminal buffers, arbitrary role claims, and unverifiable narrative are not automatically briefing truth. Use <span class="method contract">briefing.explain</span> to follow a claim to its provenance.</p></div></div></section>
+      </section>
+
+      <section class="view" id="view-activity">
+        <div class="hero"><div><div class="eyebrow"><svg class="icon sm"><use href="#i-spark"/></svg>Immutable journal</div><h1>History explains state; it does not replace state.</h1><p>The journal records committed domain facts. The browser invalidates and reloads canonical bounded reads instead of treating event payloads as a client-side database.</p></div></div>
+        <section class="panel"><div class="panel-head"><div><h2>Representative recent facts</h2><p>Readable summaries over the captured cut.</p></div><span class="method contract">events.list · events.timeline</span></div><div class="panel-body history"><div><strong>Foundation completion was reviewed</strong><small>Run moved to review; task moved to changes requested.</small></div><div><strong>Completion report was recorded</strong><small>Worker result is immutable evidence, not automatic acceptance.</small></div><div><strong>Foundation run was started</strong><small>Exact assignment, packet, capability, runtime binding, and job were created.</small></div><div><strong>Six-task dependency graph was accepted</strong><small>Typed effects produced objective/task/dependency/scheduling records.</small></div></div></section>
+        <div class="boundary" style="margin-top:14px"><h3>Historical manager prose can be stale</h3><p>A prior review message may describe a state that has since changed. The current objective/task/run/check/approval pages remain authoritative, and every executive answer must bind to a current event cut.</p></div>
+      </section>
+
+      <section class="view" id="view-health">
+        <div class="hero"><div><div class="eyebrow"><svg class="icon sm"><use href="#i-heart"/></svg>Local service integrity</div><h1>Health is canonical, physical, and operational.</h1><p>Full doctor is read-only and reports exact baseline, database, semantic, queue, runtime-binding, artifact, derived-index, filesystem, and resource checks.</p></div></div>
+        <section class="panel"><div class="panel-head"><div><h2>Doctor check families</h2><p>This mock does not assert a live result.</p></div><button class="quiet-button" data-static="Would call system.doctor.full; no live request is made"><svg class="icon sm"><use href="#i-heart"/></svg> Describe full doctor</button></div><div class="panel-body"><div class="grid three"><div><strong>Canonical</strong><p style="color:var(--muted)">Baseline identity, physical integrity, foreign keys, semantic families, event envelope, projection/receipt parity.</p></div><div><strong>Operational</strong><p style="color:var(--muted)">Durable queues, current-node runtime bindings, artifacts, filesystem permissions.</p></div><div><strong>Derived/resource</strong><p style="color:var(--muted)">Knowledge index diagnosis and bounded database/artifact/resource measurements.</p></div></div><div class="citation-row"><span class="method contract">system.status</span><span class="method contract">database.status</span><span class="method contract">system.doctor.full</span></div></div></section>
+      </section>
+
+      <section class="view" id="view-contract">
+        <div class="hero"><div><div class="eyebrow"><svg class="icon sm"><use href="#i-lock"/></svg>Traceability</div><h1>Every concept has an owner in the contract.</h1><p>This page is the guardrail for the mock. It records which source defines each interaction and whether the current repository implements the primitive or merely documents its composition.</p></div></div>
+        <div class="table-wrap panel"><table class="table"><thead><tr><th>Product concept</th><th>Binding source</th><th>Current repository truth</th><th>Rendered here as</th></tr></thead><tbody>
+          <tr><td><strong>Owner directs objectives and delegates bounded tasks</strong></td><td><span class="mono">docs/vision.md</span><br><span class="mono">docs/coordination.md</span></td><td>Objectives, tasks, dependencies, assignments, packets, runs, messages, and reports exist.</td><td>Executive + Work graph</td></tr>
+          <tr><td><strong>Grant-bound manager proposes; owner accepts</strong></td><td><span class="mono">ADR-0015</span><br><span class="mono">docs/reference/mcp-tools.md</span></td><td>ManagerGrant, LaunchProfile, <span class="mono">manager.invoke</span>, four proposal MCP tools, proposal inspection/decision, and supervisor APIs exist. No manager is provisioned in this sample.</td><td>Dashed executive card + exact authority lists</td></tr>
+          <tr><td><strong>Durable executive conversation</strong></td><td><span class="mono">ADR-0020</span><br><span class="mono">ADR-0015 primitives</span></td><td>Implemented as one durable project-executive binding, queued exchange, provider run, scoped MCP context/response, typed proposals, and exact receipts. The one-shot <span class="mono">CodexOwnerInterpreter</span> is not part of the current path.</td><td>One composer addressing the executive agent; effect classification appears after response</td></tr>
+          <tr><td><strong>Deterministic scheduling and approvals</strong></td><td><span class="mono">ADR-0015</span><br><span class="mono">docs/reference/local-api.md</span></td><td>Supervisor policy/actions/explanations and owner approvals exist. Supervisor is a subsystem, not an agent.</td><td>Supervisor band + distinct Decisions families</td></tr>
+          <tr><td><strong>Durable scoped communication</strong></td><td><span class="mono">docs/coordination.md</span><br><span class="mono">docs/reference/local-api.md</span></td><td>Messages, deliveries, inbox, threads, optional wake jobs, and run-scoped MCP tools exist.</td><td>Communication</td></tr>
+          <tr><td><strong>Governed knowledge and contradictions</strong></td><td><span class="mono">docs/reference/local-api.md</span><br><span class="mono">docs/reference/mcp-tools.md</span></td><td>Proposal, curation, owner decisions, freshness/dispute, contradictions, search/index, and packet selection exist.</td><td>Knowledge lifecycle</td></tr>
+          <tr><td><strong>Checks, outcomes, briefing, history, health</strong></td><td><span class="mono">docs/reference/local-api.md</span><br><span class="mono">ADR-0019</span></td><td>Strict local methods and schemas exist for each displayed record family.</td><td>Evidence + Briefing + Activity + Health</td></tr>
+        </tbody></table></div>
+
+        <div class="section-title"><h2>Deliberate non-features</h2><p>Things this mock refuses to imply.</p></div>
+        <div class="grid three">
+          <section class="panel panel-body"><svg class="icon"><use href="#i-x"/></svg><h3>No stored org chart</h3><p style="color:var(--muted)">“Executive → worker” is a derived attention view over tasks, grants, profiles, messages, and proposals. There is no hidden manager rank.</p></section>
+          <section class="panel panel-body"><svg class="icon"><use href="#i-x"/></svg><h3>No transcript-as-memory</h3><p style="color:var(--muted)">The executive identity is durable even when its provider run is replaced. Canonical continuity comes from packets, messages, proposals, knowledge, and receipts.</p></section>
+          <section class="panel panel-body"><svg class="icon"><use href="#i-x"/></svg><h3>No invented telemetry</h3><p style="color:var(--muted)">No confidence score, percentage progress, speculative cost, hidden “thinking,” or role-derived authority is rendered.</p></section>
+          <section class="panel panel-body"><svg class="icon"><use href="#i-x"/></svg><h3>No browser authority</h3><p style="color:var(--muted)">The browser never reads SQLite, provider homes, capability files, MCP sockets, runtime handles, or Git directly.</p></section>
+          <section class="panel panel-body"><svg class="icon"><use href="#i-x"/></svg><h3>No terminal-as-record</h3><p style="color:var(--muted)">Herdr hosts interactive terminal capability. Canonical state stays in the daemon; raw PTY output is diagnostic.</p></section>
+          <section class="panel panel-body"><svg class="icon"><use href="#i-x"/></svg><h3>No fake execution</h3><p style="color:var(--muted)">Every button in this static file reports the exact method it would invoke and explicitly leaves state unchanged.</p></section>
+        </div>
+      </section>
+    </main>
+
+    <aside class="inspector" id="inspector" aria-label="Selected agent inspector">
+      <div class="inspector-head"><div class="eyebrow">Exact inspector</div><div class="inspector-title"><h2>builder</h2><button class="quiet-button close-inspector" id="closeInspector" aria-label="Close inspector"><svg class="icon"><use href="#i-x"/></svg></button></div><div class="agent-meta"><span class="status warn">review</span><span>Codex through Herdr</span><span class="method contract">agent.show · run.show</span></div></div>
+      <div class="inspector-tabs"><button class="active" data-pane="task">Task</button><button data-pane="context">Context</button><button data-pane="messages">Messages</button><button data-pane="evidence">Evidence</button><button data-pane="history">History</button></div>
+      <div class="inspect-pane active" id="pane-task"><div class="fact"><label>Assigned work</label><p><strong>Create the React application foundation</strong></p></div><div class="fact"><label>Task state</label><p>Changes requested · revision 5</p></div><div class="fact"><label>Last run</label><p>Review · revision 6 · no live runtime control</p></div><div class="fact"><label>Review reason</label><p>Missing task checks and diff-inspection evidence.</p></div><div class="inspect-actions"><button class="action" data-modal="retry"><svg class="icon sm"><use href="#i-play"/></svg> Review retry</button><button class="quiet-button" data-modal="message"><svg class="icon sm"><use href="#i-message"/></svg> Message</button><button class="quiet-button" disabled title="No active/blocked run"><svg class="icon sm"><use href="#i-terminal"/></svg> Open terminal</button></div></div>
+      <div class="inspect-pane" id="pane-context"><div class="fact"><label>Authority source</label><p>The worker’s authority comes from its exact current packet and run capability—not the role label “builder.”</p></div><div class="fact"><label>Packet contents</label><p>Assigned task and revision, checkout, budget, accepted/current knowledge selected by the owner, bounded messages, claims, tools, and policy snapshot.</p></div><div class="fact"><label>Allowed worker tools</label><p>Briefing/status/context delta, inbox/read/ack/send, progress/blocked, artifact, knowledge/contradiction, completion.</p></div><span class="method contract">context.show · context.explain</span></div>
+      <div class="inspect-pane" id="pane-messages"><div class="fact"><label>Current inbox</label><p><strong>0 messages</strong></p></div><div class="fact"><label>Durable semantics</label><p>Full bodies stay in mailbox records. A terminal wake is only a delivery effect.</p></div><button class="quiet-button" data-modal="message"><svg class="icon sm"><use href="#i-message"/></svg> Compose owner message</button></div>
+      <div class="inspect-pane" id="pane-evidence"><div class="fact"><label>Completion claim</label><p>Created the minimal React, TypeScript, and Vite foundation.</p></div><div class="fact"><label>Acceptance state</label><p><strong style="color:var(--amber)">Not accepted</strong></p></div><div class="fact"><label>Missing</label><p>Task checks and diff-inspection evidence.</p></div><div class="fact"><label>Check runs</label><p>0 in the captured project cut.</p></div></div>
+      <div class="inspect-pane" id="pane-history"><div class="history"><div><strong>changes_requested</strong><small>Review did not accept evidence.</small></div><div><strong>review</strong><small>Worker submitted completion report.</small></div><div><strong>active</strong><small>Herdr-hosted Codex run executed the task.</small></div><div><strong>assigned</strong><small>Supervisor scheduled accepted ready work.</small></div></div><span class="method contract">task.timeline · events.timeline</span></div>
+    </aside>
+  </div>
+
+  <div class="modal-backdrop" id="retryModal" role="dialog" aria-modal="true" aria-labelledby="retryTitle">
+    <div class="modal"><header><div><div class="eyebrow">Exact effect review</div><h2 id="retryTitle">Retry the reviewed foundation task</h2></div><button class="quiet-button" data-close-modal><svg class="icon"><use href="#i-x"/></svg></button></header><div class="modal-body"><p>This is the existing web retry operation—not a generic “repair” promise. A real client must bind the current workspace, reviewed run revision, task revision, and a replay-safe idempotency key.</p><ul class="effect-list"><li><svg class="icon"><use href="#i-check"/></svg><span>Retain the exact assignment and reopen the task for a fresh run.</span></li><li><svg class="icon"><use href="#i-check"/></svg><span>Build a fresh context packet at current revisions and request a new run through the bound launch profile.</span></li><li><svg class="icon"><use href="#i-lock"/></svg><span>Keep the prior run, report, evidence, and review history immutable.</span></li><li><svg class="icon"><use href="#i-alert"/></svg><span>This does not install missing checks or guarantee the next review will pass.</span></li></ul><div class="citation-row"><span class="method contract">web /retry-run</span><span class="method contract">run.start</span><span class="method contract">context.build</span></div></div><footer><button class="quiet-button" data-close-modal>Cancel</button><button class="action" data-static="Static mock only: would submit the exact /retry-run request; no state changed"><svg class="icon sm"><use href="#i-play"/></svg> Submit exact retry</button></footer></div>
+  </div>
+
+  <div class="modal-backdrop" id="messageModal" role="dialog" aria-modal="true" aria-labelledby="messageTitle">
+    <div class="modal"><header><div><div class="eyebrow">Durable owner message</div><h2 id="messageTitle">Message builder</h2></div><button class="quiet-button" data-close-modal><svg class="icon"><use href="#i-x"/></svg></button></header><div class="modal-body"><p>This creates a scoped mailbox record. It does not bypass task authority or make a terminal transcript canonical.</p><textarea style="width:100%;min-height:110px;padding:12px;border:1px solid var(--line);border-radius:9px;color:var(--text);background:#080d0f" placeholder="Clarify evidence needed or ask a bounded question…"></textarea><div class="citation-row"><span class="method contract">message.send</span><span class="method contract">inbox.list</span></div></div><footer><button class="quiet-button" data-close-modal>Cancel</button><button class="action" data-static="Static mock only: would submit message.send to the exact builder agent; no message created"><svg class="icon sm"><use href="#i-send"/></svg> Send durable message</button></footer></div>
+  </div>
+
+  <div class="toast" id="toast"><svg class="icon"><use href="#i-check"/></svg><span id="toastText"></span></div>
+
+  <script>
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    const labels = { executive: "Executive", work: "Work graph", crew: "Crew", communication: "Communication", knowledge: "Knowledge", decisions: "Decisions", evidence: "Evidence", briefing: "Briefing", activity: "Activity", health: "Health", contract: "Contract" };
+    let toastTimer;
+
+    function icon(name, size = "") {
+      return `<svg class="icon ${size}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+    }
+    function showToast(message) {
+      $("#toastText").textContent = message;
+      $("#toast").classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => $("#toast").classList.remove("show"), 4200);
+    }
+    function showView(name) {
+      if (!labels[name]) name = "executive";
+      $$(".nav button").forEach(button => button.classList.toggle("active", button.dataset.view === name));
+      $$(".view").forEach(view => view.classList.toggle("active", view.id === `view-${name}`));
+      $("#crumb").textContent = labels[name] || name;
+      history.replaceState(null, "", `#${name}`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    $$(".nav button[data-view]").forEach(button => button.addEventListener("click", () => showView(button.dataset.view)));
+    $("#apiToggle").addEventListener("click", event => {
+      document.body.classList.toggle("api-map");
+      event.currentTarget.classList.toggle("on", document.body.classList.contains("api-map"));
+    });
+    $$("[data-static]").forEach(button => button.addEventListener("click", () => showToast(`${button.dataset.static}. This HTML never contacts Crewfold.`)));
+    $$("[data-modal]").forEach(button => button.addEventListener("click", () => $(`#${button.dataset.modal}Modal`).classList.add("open")));
+    $$("[data-close-modal]").forEach(button => button.addEventListener("click", () => button.closest(".modal-backdrop").classList.remove("open")));
+    $$(".modal-backdrop").forEach(backdrop => backdrop.addEventListener("click", event => { if (event.target === backdrop) backdrop.classList.remove("open"); }));
+    $("#submitTurn").addEventListener("click", () => {
+      const value = $("#prompt").value.trim();
+      showToast(value ? "Static mock: would send one durable owner message to the executive agent; Crewfold would render any answer, proposal, or owner gate after validation. No provider called and no state changed" : "Enter a message for the executive first");
+    });
+    $$(".inspector-tabs button").forEach(button => button.addEventListener("click", () => {
+      $$(".inspector-tabs button").forEach(item => item.classList.toggle("active", item === button));
+      $$(".inspect-pane").forEach(pane => pane.classList.toggle("active", pane.id === `pane-${button.dataset.pane}`));
+    }));
+    $$("[data-open-inspector]").forEach(button => button.addEventListener("click", () => $("#inspector").classList.add("open")));
+    $("#closeInspector").addEventListener("click", () => $("#inspector").classList.remove("open"));
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") {
+        $$(".modal-backdrop.open").forEach(modal => modal.classList.remove("open"));
+        $("#inspector").classList.remove("open");
+      }
+    });
+    showView(location.hash.slice(1) || "executive");
+  </script>
+</body>
+</html>

@@ -22,8 +22,8 @@ than forcing the core to understand every terminal UI.
 
 Crewfold has completed M21's owner-local web workbench. Private XDG service
 defaults, `crewfold service install`, and `crewfold open` lead into one embedded
-React interface for repository onboarding, query/plan/act conversation, reviewed
-plan launch, work and crew inspection, inbox and decisions, evidence, activity,
+React interface for repository onboarding, durable conversation with a real
+provider-backed project executive, explicit typed-proposal review, work and crew inspection, inbox and decisions, evidence, activity,
 briefings, health, bounded Git/log views, and separately authorized live terminal
 access. The CLI remains the typed automation/recovery/administration surface; the
 TUI is an operational fallback; Herdr is the normal interactive runtime host,

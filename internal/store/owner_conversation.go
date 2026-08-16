@@ -63,9 +63,11 @@ type EditOwnerPlanCommand struct {
 }
 
 type OwnerConversationPage struct {
-	Conversations []domain.OwnerConversation    `json:"conversations"`
-	Turns         []domain.OwnerTurnDetail      `json:"turns"`
-	Review        *domain.OwnerManagerReviewJob `json:"review,omitempty"`
+	Conversations []domain.OwnerConversation      `json:"conversations"`
+	Turns         []domain.OwnerTurnDetail        `json:"turns"`
+	Exchanges     []domain.OwnerExecutiveExchange `json:"exchanges"`
+	Executive     *domain.OwnerExecutiveBinding   `json:"executive,omitempty"`
+	Review        *domain.OwnerManagerReviewJob   `json:"review,omitempty"`
 }
 
 type ownerPlanOperation struct {
@@ -88,7 +90,7 @@ func (s *Store) OwnerTurnReplay(ctx context.Context, command PrepareOwnerTurnCom
 		initiatedBy = "owner"
 	}
 	validOwnerTurn := initiatedBy == "owner" && command.TriggerEventSequence == 0 && (kind == "query" || kind == "plan" || kind == "act")
-	validManagerTurn := initiatedBy == "manager" && command.TriggerEventSequence > 0 && kind == "review" && strings.TrimSpace(command.ConversationID) != ""
+	validManagerTurn := initiatedBy == "executive" && command.TriggerEventSequence > 0 && kind == "review" && strings.TrimSpace(command.ConversationID) != ""
 	if !validManagerText(instruction, 4096) || (!validOwnerTurn && !validManagerTurn) || key == "" || len(key) > 128 {
 		return domain.OwnerTurnDetail{}, false, &Error{Code: CodeInvalidOwnerConversation, Message: "owner turn requires an exact origin, bounded instruction, current kind, and idempotency key"}
 	}
@@ -140,7 +142,7 @@ func (s *Store) PrepareOwnerTurn(ctx context.Context, command PrepareOwnerTurnCo
 		initiatedBy = "owner"
 	}
 	validOwnerTurn := initiatedBy == "owner" && command.TriggerEventSequence == 0 && (kind == "query" || kind == "plan" || kind == "act")
-	validManagerReview := initiatedBy == "manager" && kind == "review" && command.TriggerEventSequence > 0 && command.TriggerEventSequence == command.ExpectedEventSequence && command.ConversationID != ""
+	validManagerReview := initiatedBy == "executive" && kind == "review" && command.TriggerEventSequence > 0 && command.TriggerEventSequence == command.ExpectedEventSequence && command.ConversationID != ""
 	if !validManagerText(instruction, 4096) || (!validOwnerTurn && !validManagerReview) || key == "" || len(key) > 128 {
 		return domain.OwnerTurnDetail{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner turn requires a bounded instruction, supported origin/kind, and idempotency key"}
 	}
@@ -194,7 +196,7 @@ FROM owner_turns turn JOIN owner_conversations conversation ON conversation.id=t
 		return domain.OwnerTurnDetail{}, storageFailure("capture owner turn event high-water", err)
 	}
 	eventCut := highWater
-	if initiatedBy == "manager" {
+	if initiatedBy == "executive" {
 		eventCut = command.ExpectedEventSequence
 		var sourceWorkspace string
 		if eventCut < 1 || eventCut > highWater || tx.QueryRowContext(ctx, "SELECT workspace_id FROM events WHERE sequence=?", eventCut).Scan(&sourceWorkspace) != nil || sourceWorkspace != workspace.ID {
@@ -250,7 +252,7 @@ VALUES(?,?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,1,?,?)`, operationID, turnID, index+1
 		}
 	}
 	updatedBy := localOwnerActorID
-	if initiatedBy == "manager" {
+	if initiatedBy == "executive" {
 		updatedBy = "subsystem:owner-manager"
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE owner_conversations SET revision=revision+1,updated_at=?,updated_by=? WHERE id=?", now, updatedBy, conversation.ID); err != nil {
@@ -466,7 +468,12 @@ FROM owner_conversations WHERE workspace_id=? AND project_id=? AND (?='' OR id=?
 		return OwnerConversationPage{}, storageFailure("list owner conversations", err)
 	}
 	defer rows.Close()
-	page := OwnerConversationPage{Conversations: []domain.OwnerConversation{}, Turns: []domain.OwnerTurnDetail{}}
+	page := OwnerConversationPage{Conversations: []domain.OwnerConversation{}, Turns: []domain.OwnerTurnDetail{}, Exchanges: []domain.OwnerExecutiveExchange{}}
+	if executive, found, bindingErr := ownerExecutiveBindingInTransaction(ctx, tx, project.ID); bindingErr != nil {
+		return OwnerConversationPage{}, bindingErr
+	} else if found {
+		page.Executive = &executive
+	}
 	if review, reviewErr := ownerManagerReviewJobInTransaction(ctx, tx, project.ID); reviewErr == nil {
 		page.Review = &review
 	} else if !errors.Is(reviewErr, sql.ErrNoRows) {
@@ -505,6 +512,11 @@ FROM owner_conversations WHERE workspace_id=? AND project_id=? AND (?='' OR id=?
 			return OwnerConversationPage{}, err
 		}
 		page.Turns = append(page.Turns, detail)
+		if exchange, exchangeErr := ownerExecutiveExchangeByTurnInTransaction(ctx, tx, id); exchangeErr == nil {
+			page.Exchanges = append(page.Exchanges, exchange)
+		} else if ErrorCode(exchangeErr) != CodeOwnerConversationNotFound {
+			return OwnerConversationPage{}, exchangeErr
+		}
 	}
 	return page, nil
 }
@@ -670,7 +682,7 @@ func ownerConversationForCommand(ctx context.Context, tx *sql.Tx, workspaceID, p
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	createdBy := localOwnerActorID
-	if initiatedBy == "manager" {
+	if initiatedBy == "executive" {
 		createdBy = "subsystem:owner-manager"
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO owner_conversations(id,workspace_id,project_id,title,status,revision,created_at,updated_at,created_by,updated_by)

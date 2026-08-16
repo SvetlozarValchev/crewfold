@@ -137,7 +137,7 @@ func (s *Store) CompleteOwnerManagerReview(ctx context.Context, projectID string
 	var trigger int64
 	err = tx.QueryRowContext(ctx, `SELECT conversation.project_id,turn.initiated_by,turn.trigger_event_sequence
 FROM owner_turns turn JOIN owner_conversations conversation ON conversation.id=turn.conversation_id WHERE turn.id=?`, strings.TrimSpace(turnID)).Scan(&turnProjectID, &initiatedBy, &trigger)
-	if err != nil || turnProjectID != job.ProjectID || initiatedBy != "manager" || trigger != reviewedEventSequence {
+	if err != nil || turnProjectID != job.ProjectID || initiatedBy != "executive" || trigger != reviewedEventSequence {
 		return &Error{Code: CodeOwnerTurnConflict, Message: "owner manager review turn does not seal the leased project event cut", Cause: err}
 	}
 	now := s.nowText()

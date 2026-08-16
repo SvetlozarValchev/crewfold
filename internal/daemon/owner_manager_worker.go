@@ -2,14 +2,11 @@ package daemon
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
 	"crewfold/internal/domain"
-	"crewfold/internal/execution"
 	"crewfold/internal/store"
 )
 
@@ -17,6 +14,8 @@ const (
 	ownerManagerReviewLease     = 3 * time.Minute
 	ownerManagerReviewPassLimit = 2
 	ownerManagerReviewIdleWait  = 500 * time.Millisecond
+	ownerManagerFreezeAttempts  = 8
+	ownerManagerFreezeRetryWait = 10 * time.Millisecond
 )
 
 func (s *server) startOwnerManagerReviewWorker() {
@@ -66,66 +65,47 @@ func (s *server) signalOwnerManagerReviewWorker() {
 	}
 }
 
-func (s *server) ownerInterpreterForProvider(provider string) execution.OwnerInterpreter {
-	if !s.ownerInterpreterInjected && (provider == "fixture" || strings.HasPrefix(provider, "fixture-")) {
-		return execution.FixtureOwnerInterpreter{}
-	}
-	return s.ownerInterpreter
-}
-
 func (s *server) processOwnerManagerReview(ctx context.Context, job domain.OwnerManagerReviewJob) error {
-	snapshot, err := s.store.BuildOwnerInterpretationSnapshot(ctx, job.WorkspaceID, job.ProjectID)
+	var snapshot store.OwnerInterpretationSnapshot
+	var result store.OwnerExecutiveTurnResult
+	var err error
+	for attempt := 0; attempt < ownerManagerFreezeAttempts; attempt++ {
+		snapshot, err = s.store.BuildOwnerInterpretationSnapshot(ctx, job.WorkspaceID, job.ProjectID)
+		if err != nil {
+			break
+		}
+		if err = s.store.AdvanceOwnerManagerReviewCut(ctx, job.ProjectID, snapshot.EventSequence); err != nil {
+			break
+		}
+		instruction := fmt.Sprintf("Review worker reports and agent messages through canonical event cut %d. Summarize material progress, raise exactly one consequential owner decision when needed, or freeze only genuinely new dependency-aware work for owner review. Do not execute effects or duplicate existing work.", snapshot.EventSequence)
+		result, err = s.store.RequestOwnerExecutiveTurn(ctx, store.RequestOwnerExecutiveTurnCommand{
+			WorkspaceIdentifier: job.WorkspaceID, ProjectIdentifier: job.ProjectID, ConversationID: job.ConversationID,
+			Instruction: instruction, Kind: "review", IdempotencyKey: fmt.Sprintf("manager-review:%s:%d", job.ProjectID, snapshot.EventSequence),
+			InitiatedBy: "executive", TriggerEventSequence: snapshot.EventSequence, Snapshot: snapshot,
+		})
+		if err == nil || store.ErrorCode(err) != store.CodeOwnerTurnConflict || !strings.Contains(err.Error(), "canonical project state changed") {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			attempt = ownerManagerFreezeAttempts
+		case <-time.After(ownerManagerFreezeRetryWait):
+		}
+	}
 	if err != nil {
-		_ = s.store.FailOwnerManagerReview(ctx, job.ProjectID, job.RequestedEventSequence, err)
+		failedCut := job.RequestedEventSequence
+		if snapshot.EventSequence > 0 {
+			failedCut = snapshot.EventSequence
+		}
+		_ = s.store.FailOwnerManagerReview(ctx, job.ProjectID, failedCut, err)
 		return err
 	}
-	if err := s.store.AdvanceOwnerManagerReviewCut(ctx, job.ProjectID, snapshot.EventSequence); err != nil {
-		_ = s.store.FailOwnerManagerReview(ctx, job.ProjectID, job.RequestedEventSequence, err)
+	if err := s.store.CompleteOwnerManagerReview(ctx, job.ProjectID, snapshot.EventSequence, result.Detail.Turn.ID); err != nil {
 		return err
 	}
-	interpreter := s.ownerInterpreterForProvider(snapshot.Provider)
-	if interpreter == nil {
-		err := &store.Error{Code: store.CodeAdapterUnavailable, Message: "owner manager interpreter is unavailable"}
-		_ = s.store.FailOwnerManagerReview(ctx, job.ProjectID, snapshot.EventSequence, err)
-		return err
-	}
-	digest := sha256.Sum256([]byte(fmt.Sprintf("owner-manager-review:%s:%d", job.ProjectID, snapshot.EventSequence)))
-	operationID := "run_" + hex.EncodeToString(digest[:16])
-	instruction := fmt.Sprintf("Review worker reports and agent messages through canonical event cut %d. Summarize material progress, raise exactly one consequential owner decision when needed, or freeze only genuinely new dependency-aware work for owner review. Do not execute effects or duplicate existing work.", snapshot.EventSequence)
-	command := store.PrepareOwnerTurnCommand{
-		WorkspaceIdentifier: job.WorkspaceID, ProjectIdentifier: job.ProjectID, ConversationID: job.ConversationID,
-		Instruction: instruction, Kind: "review", IdempotencyKey: fmt.Sprintf("manager-review:%s:%d", job.ProjectID, snapshot.EventSequence),
-		InitiatedBy: "manager", TriggerEventSequence: snapshot.EventSequence, ExpectedEventSequence: snapshot.EventSequence,
-	}
-	if replay, found, replayErr := s.store.OwnerTurnReplay(ctx, command); replayErr != nil {
-		_ = s.store.FailOwnerManagerReview(ctx, job.ProjectID, snapshot.EventSequence, replayErr)
-		return replayErr
-	} else if found {
-		return s.store.CompleteOwnerManagerReview(ctx, job.ProjectID, snapshot.EventSequence, replay.Turn.ID)
-	}
-	interpretation, err := interpreter.Interpret(ctx, execution.OwnerInterpretationRequest{
-		OperationID: operationID, Kind: "review", Instruction: instruction, Provider: snapshot.Provider,
-		CheckoutPath: snapshot.CheckoutPath, CanonicalContext: snapshot.CanonicalContext, EventCut: snapshot.EventSequence,
-	})
-	if err != nil {
-		_ = s.store.FailOwnerManagerReview(ctx, job.ProjectID, snapshot.EventSequence, err)
-		return err
-	}
-	citations, err := store.ResolveOwnerCitations(snapshot, interpretation.CitationRefs)
-	if err != nil {
-		_ = s.store.FailOwnerManagerReview(ctx, job.ProjectID, snapshot.EventSequence, err)
-		return err
-	}
-	command.Interpretation, command.Citations = interpretation, citations
-	turn, err := s.store.PrepareOwnerTurn(ctx, command)
-	if err != nil {
-		_ = s.store.FailOwnerManagerReview(ctx, job.ProjectID, snapshot.EventSequence, err)
-		return err
-	}
-	if err := s.store.CompleteOwnerManagerReview(ctx, job.ProjectID, snapshot.EventSequence, turn.Turn.ID); err != nil {
-		return err
-	}
+	s.signalOwnerExecutiveWorker()
 	s.config.Logger.Info("owner manager reviewed worker activity", "component", "owner_manager", "project_id", job.ProjectID,
-		"turn_id", turn.Turn.ID, "event_sequence", snapshot.EventSequence, "disposition", turn.Turn.Interpretation.Disposition)
+		"turn_id", result.Detail.Turn.ID, "event_sequence", snapshot.EventSequence, "exchange_id", result.Exchange.ID)
 	return nil
 }

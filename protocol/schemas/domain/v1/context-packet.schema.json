@@ -46,6 +46,17 @@
   "allOf": [
     {"not": {"required": ["management_grant", "check_watch_grant"]}},
     {
+      "if": {"required": ["management_grant"], "properties": {"management_grant": {"properties": {"owner_executive": {"const": true}}}}},
+      "then": {"properties": {"policy": {"properties": {"allowed_tools": {"allOf": [
+        {"contains": {"const": "crewfold_get_executive_context"}},
+        {"contains": {"const": "crewfold_respond_to_owner"}}
+      ]}}}}},
+      "else": {"properties": {"policy": {"properties": {"allowed_tools": {"allOf": [
+        {"not": {"contains": {"const": "crewfold_get_executive_context"}}},
+        {"not": {"contains": {"const": "crewfold_respond_to_owner"}}}
+      ]}}}}}
+    },
+    {
       "if": {"required": ["management_grant"], "properties": {"management_grant": {"properties": {"allowed_proposal_kinds": {"contains": {"const": "assignment"}}}}}},
       "then": {"properties": {"policy": {"properties": {"allowed_tools": {"contains": {"const": "crewfold_propose_assignment"}}}}}},
       "else": {"properties": {"policy": {"properties": {"allowed_tools": {"not": {"contains": {"const": "crewfold_propose_assignment"}}}}}}}
@@ -138,7 +149,7 @@
       "type": "object", "additionalProperties": false, "required": ["allowed_tools", "denied_operations", "approval_required"],
       "properties": {
         "allowed_tools": {
-          "type": "array", "minItems": 14, "maxItems": 18, "uniqueItems": true,
+          "type": "array", "minItems": 14, "maxItems": 20, "uniqueItems": true,
           "prefixItems": [
             {"const": "crewfold_acknowledge_context_delta"}, {"const": "crewfold_acknowledge_message"}, {"const": "crewfold_get_briefing"},
             {"const": "crewfold_get_context_delta"}, {"const": "crewfold_get_status"}, {"const": "crewfold_list_inbox"},
@@ -147,6 +158,7 @@
             {"const": "crewfold_report_progress"}, {"const": "crewfold_send_message"}
           ],
           "items": {"enum": [
+            "crewfold_get_executive_context", "crewfold_respond_to_owner",
             "crewfold_propose_assignment", "crewfold_propose_escalation", "crewfold_propose_review", "crewfold_propose_tasks",
             "crewfold_run_check", "crewfold_list_check_results", "crewfold_inspect_check_result", "crewfold_propose_check_repair"
           ]}

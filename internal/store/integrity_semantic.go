@@ -327,7 +327,7 @@ WHERE turn.plan_sha256<>lower(hex(sha256(CAST(turn.plan_json AS BLOB))))
    OR json_array_length(turn.plan_json)<>(SELECT count(*) FROM owner_turn_operations operation WHERE operation.turn_id=turn.id)
    OR (turn.kind='query' AND (turn.status<>'completed' OR turn.answer IS NULL OR json_array_length(turn.plan_json)<>0))
    OR (turn.initiated_by='owner' AND (turn.kind='review' OR turn.trigger_event_sequence IS NOT NULL))
-   OR (turn.initiated_by='manager' AND (turn.kind<>'review' OR turn.trigger_event_sequence<>turn.as_of_event_sequence))
+   OR (turn.initiated_by='executive' AND (turn.kind<>'review' OR turn.trigger_event_sequence<>turn.as_of_event_sequence))
 	OR (turn.kind IN ('plan','review') AND turn.status='planned' AND EXISTS(SELECT 1 FROM owner_turn_operations operation WHERE operation.turn_id=turn.id AND operation.status<>'pending'))
 	OR (turn.status='completed' AND EXISTS(SELECT 1 FROM owner_turn_operations operation WHERE operation.turn_id=turn.id AND operation.status<>'applied'))
 UNION ALL
@@ -336,9 +336,34 @@ JOIN projects project ON project.id=job.project_id
 JOIN owner_conversations conversation ON conversation.id=job.conversation_id
 LEFT JOIN owner_turns turn ON turn.id=job.last_turn_id
 WHERE project.workspace_id<>job.workspace_id OR conversation.workspace_id<>job.workspace_id OR conversation.project_id<>job.project_id
-   OR (job.status='idle' AND (turn.id IS NULL OR turn.initiated_by<>'manager' OR turn.trigger_event_sequence<>job.reviewed_event_sequence))
+   OR (job.status='idle' AND (turn.id IS NULL OR turn.initiated_by<>'executive' OR turn.trigger_event_sequence<>job.reviewed_event_sequence))
    OR (job.status='leased')<>(job.lease_expires_at IS NOT NULL)
    OR crewfold_timestamp_canonical(job.available_at)<>1 OR crewfold_timestamp_canonical(job.created_at)<>1 OR crewfold_timestamp_canonical(job.updated_at)<>1
+UNION ALL
+SELECT 'owner_executive_binding:'||binding.id FROM owner_executive_bindings binding
+JOIN projects project ON project.id=binding.project_id
+JOIN objectives objective ON objective.id=binding.objective_id
+JOIN tasks task ON task.id=binding.planning_task_id
+JOIN agents agent ON agent.id=binding.agent_id
+JOIN manager_grants grant_row ON grant_row.id=binding.manager_grant_id
+JOIN launch_profiles profile ON profile.id=binding.launch_profile_id
+WHERE project.workspace_id<>binding.workspace_id OR objective.project_id<>binding.project_id OR objective.workspace_id<>binding.workspace_id
+   OR task.project_id<>binding.project_id OR task.workspace_id<>binding.workspace_id OR task.objective_id<>binding.objective_id
+   OR agent.workspace_id<>binding.workspace_id OR grant_row.project_id<>binding.project_id OR grant_row.objective_id<>binding.objective_id
+   OR grant_row.task_id<>binding.planning_task_id OR grant_row.agent_id<>binding.agent_id
+   OR profile.project_id<>binding.project_id OR profile.agent_id<>binding.agent_id OR profile.manager_grant_id<>binding.manager_grant_id
+   OR crewfold_timestamp_canonical(binding.created_at)<>1 OR crewfold_timestamp_canonical(binding.updated_at)<>1
+UNION ALL
+SELECT 'owner_executive_exchange:'||exchange.id FROM owner_executive_exchanges exchange
+JOIN owner_turns turn ON turn.id=exchange.turn_id
+JOIN owner_conversations conversation ON conversation.id=turn.conversation_id
+JOIN owner_executive_bindings binding ON binding.id=exchange.binding_id
+LEFT JOIN runs run ON run.id=exchange.run_id
+WHERE conversation.workspace_id<>binding.workspace_id OR conversation.project_id<>binding.project_id
+   OR turn.as_of_event_sequence<>exchange.event_sequence
+   OR (exchange.status='running' AND (run.id IS NULL OR run.task_id<>binding.planning_task_id OR run.agent_id<>binding.agent_id))
+   OR (exchange.status='leased')<>(exchange.lease_expires_at IS NOT NULL)
+   OR crewfold_timestamp_canonical(exchange.available_at)<>1 OR crewfold_timestamp_canonical(exchange.created_at)<>1 OR crewfold_timestamp_canonical(exchange.updated_at)<>1
 UNION ALL
 SELECT 'owner_operation:'||operation.id FROM owner_turn_operations operation
 LEFT JOIN owner_effect_receipts receipt ON receipt.operation_id=operation.id

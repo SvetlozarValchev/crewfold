@@ -124,6 +124,9 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 		fmt.Fprintln(diagnostics, "decode scoped briefing failed")
 		return 1
 	}
+	if scenario.Name == "owner-executive" {
+		return runFixtureOwnerExecutive(ctx, client, briefing, output, diagnostics)
+	}
 	if scenario.Mailbox.RequireInboxSummary {
 		if briefing.Packet.Inbox.UnseenCount < 1 || len(briefing.Packet.Inbox.Items) < 1 {
 			fmt.Fprintln(diagnostics, "scoped briefing omitted required inbox summary")
@@ -199,6 +202,74 @@ func RunFixtureMCPProvider(input io.Reader, output, diagnostics io.Writer) int {
 		}
 	}
 	return scenario.Process.ExitCode
+}
+
+func runFixtureOwnerExecutive(ctx context.Context, client fixtureToolClient, briefing domain.RunBriefing, output, diagnostics io.Writer) int {
+	result, err := client.CallTool(ctx, "crewfold_get_executive_context", map[string]any{})
+	if err != nil || result.IsError {
+		fmt.Fprintln(diagnostics, "get fixture executive context failed")
+		return 1
+	}
+	var executive domain.OwnerExecutiveContext
+	if err := json.Unmarshal(result.StructuredContent, &executive); err != nil || executive.Exchange.RunID != briefing.Run.ID || executive.Turn.Instruction == "" || len(executive.Context) == 0 {
+		fmt.Fprintln(diagnostics, "decode fixture executive context failed")
+		return 1
+	}
+	responseKind := "answer"
+	responseSummary := "Fixture executive reviewed the frozen project context."
+	responseAnswer := "I reviewed the durable project context and recorded this executive update without executing project effects."
+	proposalIDs := []string{}
+	if executive.Turn.Kind == "instruction" {
+		var snapshot struct {
+			LaunchProfiles []struct {
+				ID string `json:"id"`
+			} `json:"launch_profiles"`
+		}
+		if err := json.Unmarshal(executive.Context, &snapshot); err != nil || len(snapshot.LaunchProfiles) == 0 {
+			fmt.Fprintln(diagnostics, "fixture executive context has no launch profile")
+			return 1
+		}
+		proposalResult, err := client.CallTool(ctx, "crewfold_propose_tasks", map[string]any{
+			"summary": "Create one exact bounded implementation task for owner review.",
+			"actions": []any{map[string]any{"type": "create_task", "create_task": map[string]any{
+				"task_key": "fixture-next-step", "launch_profile_id": snapshot.LaunchProfiles[0].ID,
+				"title": "Implement the next bounded project step", "description": "A deterministic fixture proposal proving the executive review boundary.",
+				"priority": 500, "budget": map[string]any{"token_limit": 1000, "cost_cents": 0, "time_seconds": 300},
+			}}},
+			"idempotency_key": "fixture-executive-proposal-" + briefing.Run.ID,
+		})
+		if err != nil || proposalResult.IsError {
+			fmt.Fprintf(diagnostics, "submit fixture executive proposal failed: err=%v result=%s\n", err, proposalResult.StructuredContent)
+			return 1
+		}
+		var proposal domain.ManagerProposal
+		if err := json.Unmarshal(proposalResult.StructuredContent, &proposal); err != nil || proposal.ID == "" {
+			fmt.Fprintln(diagnostics, "decode fixture executive proposal failed")
+			return 1
+		}
+		responseKind = "proposal"
+		responseSummary = "Fixture executive answered from the frozen project context and submitted one bounded proposal."
+		responseAnswer = "I reviewed the durable project context and prepared one exact proposal for owner review. No project effect has executed."
+		proposalIDs = append(proposalIDs, proposal.ID)
+	}
+	response, err := client.CallTool(ctx, "crewfold_respond_to_owner", map[string]any{
+		"kind": responseKind, "summary": responseSummary, "answer": responseAnswer,
+		"citation_refs": []string{}, "proposal_ids": proposalIDs, "idempotency_key": "fixture-executive-" + briefing.Run.ID,
+	})
+	if err != nil || response.IsError {
+		fmt.Fprintln(diagnostics, "respond from fixture executive failed")
+		return 1
+	}
+	fmt.Fprintln(output, "fixture executive response recorded")
+	// Keep the fixture child alive long enough for both Direct and Herdr
+	// supervisors to publish their durable launch acknowledgement before the
+	// deliberately short executive exchange exits.
+	select {
+	case <-ctx.Done():
+		return 1
+	case <-time.After(250 * time.Millisecond):
+	}
+	return 0
 }
 
 func fixtureBriefingHasExactScope(briefing domain.RunBriefing) bool {

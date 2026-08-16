@@ -168,6 +168,9 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .crew-message { margin-right: clamp(16px, 4vw, 50px); display: flex; align-items: flex-start; gap: 9px; }
 .crew-message .assistant-avatar { width: 28px; height: 28px; border-radius: 8px; }
 .receipt-line { margin-top: 7px; display: flex; align-items: center; gap: 5px; color: var(--cyan); font-size: 8px; text-transform: capitalize; }
+.proposal-ready { margin-top: 9px; padding: 8px 9px; display: flex; align-items: center; gap: 7px; border: 1px solid rgba(201, 242, 123, .22); border-radius: 7px; color: var(--lime); background: rgba(201, 242, 123, .045); font-size: 9px; }
+.executive-boundary { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 8px; }
+.executive-boundary svg { color: var(--cyan); }
 .execute-plan { margin-top: 8px; padding: 6px 9px; display: flex; align-items: center; gap: 5px; border: 1px solid rgba(201, 242, 123, .28); border-radius: 7px; color: var(--lime); background: rgba(201, 242, 123, .06); font-size: 9px; }
 .notice, .form-error { margin-top: 12px; padding: 10px 12px; display: flex; align-items: flex-start; gap: 8px; border-radius: 8px; font-size: 11px; }
 .notice { border: 1px solid rgba(201, 242, 123, .25); color: var(--lime); background: rgba(201, 242, 123, .06); }
@@ -241,6 +244,12 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .table-row strong { font-size: 12px; }
 .table-row small { margin-top: 3px; color: var(--muted); font-size: 9px; }
 .decision-list { margin-top: 18px; display: grid; gap: 11px; }
+.section-heading { margin-top: 24px; padding-bottom: 9px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); color: var(--muted-strong); }
+.section-heading > div { display: flex; align-items: center; gap: 9px; }
+.section-heading span, .section-heading strong, .section-heading small { display: block; }
+.section-heading strong { color: var(--text); font-size: 11px; }
+.section-heading small { margin-top: 2px; color: var(--faint); font-size: 9px; }
+.section-heading > span { font-family: ui-monospace, monospace; font-size: 9px; }
 .decision-card { padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255, 255, 255, .014); }
 .decision-card > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; }
 .decision-card > header strong, .decision-card > header small { display: block; }
@@ -252,7 +261,10 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .decision-facts dd { margin: 0; font-size: 10px; text-transform: capitalize; }
 .decision-reasons { margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--line); }
 .decision-reasons > strong { font-size: 9px; }
-.decision-reasons ul { margin: 6px 0 0; padding-left: 17px; color: var(--muted); font-size: 9px; line-height: 1.55; }
+.decision-reasons ul, .decision-reasons ol { margin: 6px 0 0; padding-left: 17px; color: var(--muted); font-size: 9px; line-height: 1.55; }
+.decision-reasons ol { display: grid; gap: 6px; list-style: none; padding-left: 0; }
+.decision-reasons ol li { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: start; gap: 7px; }
+.decision-reasons ol li > span { width: 20px; height: 20px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--aqua); font-family: ui-monospace, monospace; font-size: 8px; }
 .decision-question { margin-top: 11px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: rgba(0, 0, 0, .14); }
 .decision-question strong { color: var(--amber); font-size: 9px; }
 .decision-question p { margin: 5px 0 0; color: var(--muted-strong); font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }

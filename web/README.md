@@ -9,9 +9,10 @@ The M21 workbench is live: a pinned React/TypeScript/Vite application is built
 into content-hashed assets, embedded in the Go binary, and served by the daemon
 on exact IPv4 loopback. `crewfold open` obtains a one-time grant through the
 owner-only Unix socket and exchanges it for a private browser session. From there
-the owner can onboard a repository/provider/runtime, query or direct canonical
-work, edit and execute a frozen plan, inspect crew/Git/logs/evidence/activity,
-make exact approval decisions, generate a bounded briefing, run full health, and
+the owner can onboard a repository/provider/runtime, talk to one durable
+provider-backed project executive, explicitly review and accept closed typed
+proposals, inspect crew/Git/logs/evidence/activity, make exact approval decisions,
+generate a bounded briefing, run full health, and
 open a separately granted current-run terminal. Empty state is always rendered
 honestly; the client invents no workspace, project, task, or agent records.
 

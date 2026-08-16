@@ -743,9 +743,12 @@ func (s *Store) MarkRunStarted(ctx context.Context, runID, runtimeHandle, provid
 	if task.Status != domain.TaskAssigned {
 		return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "run task is no longer assigned"}
 	}
-	task.Status, task.BlockedReason, task.Revision = domain.TaskActive, "", task.Revision+1
-	if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
-		return domain.RunDetail{}, err
+	isExecutive := ownerExecutiveRunInTransaction(ctx, tx, run.ID)
+	if !isExecutive {
+		task.Status, task.BlockedReason, task.Revision = domain.TaskActive, "", task.Revision+1
+		if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
+			return domain.RunDetail{}, err
+		}
 	}
 	if err := setRunJob(ctx, tx, run.ID, "pending", now); err != nil {
 		return domain.RunDetail{}, err
@@ -756,8 +759,10 @@ func (s *Store) MarkRunStarted(ctx context.Context, runID, runtimeHandle, provid
 	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"runtime_bound": true, "provider_bound": true}); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskStarted, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
-		return domain.RunDetail{}, err
+	if !isExecutive {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskStarted, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
+			return domain.RunDetail{}, err
+		}
 	}
 	detail, err := runDetailInTransaction(ctx, tx, run)
 	if err != nil {
@@ -837,6 +842,9 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message, "logs_available": false, "logs_unavailable_reason": "runtime did not produce a trustworthy terminal capture"}); err != nil {
 		return domain.RunDetail{}, err
 	}
+	if _, err := failOwnerExecutiveRunInTransaction(ctx, tx, run.ID, message, now); err != nil {
+		return domain.RunDetail{}, err
+	}
 	// A start failure may keep its accepted intent open only while the current
 	// supervisor policy can still authorize a bounded retry. In particular, a
 	// disabled policy has no worker that could later close the intent, so leaving
@@ -868,7 +876,7 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 }
 
 func (s *Store) ApplyRunObservation(ctx context.Context, runID string, observation domain.RunObservation, accepted bool, missing []string, correlationID string) (domain.RunDetail, error) {
-	if observation.Kind == domain.ObservationCompletion {
+	if observation.Kind == domain.ObservationCompletion || observation.Kind == domain.ObservationExecutiveResponse {
 		if err := s.validateTerminalLogOutcome(strings.TrimSpace(runID), observation.LogArchive, observation.LogUnavailableReason); err != nil {
 			return domain.RunDetail{}, err
 		}
@@ -917,12 +925,12 @@ func (s *Store) ApplyQueuedRunReport(ctx context.Context, runID, reportID string
 		return domain.RunDetail{}, err
 	}
 	observation := domain.RunObservation{Kind: report.Kind, Message: report.Message, Evidence: append([]string(nil), report.Evidence...), Handoff: report.Handoff, LogArchive: archive, LogUnavailableReason: strings.TrimSpace(logsUnavailableReason)}
-	if observation.Kind == domain.ObservationCompletion {
+	if observation.Kind == domain.ObservationCompletion || observation.Kind == domain.ObservationExecutiveResponse {
 		if err := s.validateTerminalLogOutcome(report.RunID, observation.LogArchive, observation.LogUnavailableReason); err != nil {
 			return domain.RunDetail{}, err
 		}
 	} else if observation.LogArchive != nil || observation.LogUnavailableReason != "" {
-		return domain.RunDetail{}, &Error{Code: CodeInvalidRun, Message: "only a completion report can carry terminal logs"}
+		return domain.RunDetail{}, &Error{Code: CodeInvalidRun, Message: "only a terminal report can carry terminal logs"}
 	}
 	now := s.nowText()
 	detail, err := s.applyRunObservationInTransaction(ctx, tx, &run, observation, accepted, missing, correlationID, now)
@@ -945,6 +953,10 @@ func (s *Store) ApplyQueuedRunReport(ctx context.Context, runID, reportID string
 func (s *Store) applyRunObservationInTransaction(ctx context.Context, tx *sql.Tx, run *domain.Run, observation domain.RunObservation, accepted bool, missing []string, correlationID, now string) (domain.RunDetail, error) {
 	if run.Status != domain.RunActive {
 		return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "observations require an active run"}
+	}
+	isExecutive := ownerExecutiveRunInTransaction(ctx, tx, run.ID)
+	if isExecutive != (observation.Kind == domain.ObservationExecutiveResponse) {
+		return domain.RunDetail{}, &Error{Code: CodeInvalidRun, Message: "project executive runs accept only their exact typed owner response"}
 	}
 	run.StepCursor++
 	run.Revision++
@@ -995,6 +1007,15 @@ func (s *Store) applyRunObservationInTransaction(ctx context.Context, tx *sql.Tx
 		}
 		clearRunRuntimeProjection(run)
 		jobStatus = "complete"
+	case domain.ObservationExecutiveResponse:
+		if err := applyOwnerExecutiveResponseObservation(ctx, tx, run, observation, correlationID, now); err != nil {
+			return domain.RunDetail{}, err
+		}
+		if err := deleteRunRuntimeBinding(ctx, tx, run.ID); err != nil {
+			return domain.RunDetail{}, err
+		}
+		clearRunRuntimeProjection(run)
+		jobStatus = "complete"
 	default:
 		return domain.RunDetail{}, &Error{Code: CodeInvalidRun, Message: fmt.Sprintf("unsupported observation kind %q", observation.Kind)}
 	}
@@ -1008,7 +1029,7 @@ func (s *Store) applyRunObservationInTransaction(ctx context.Context, tx *sql.Tx
 			}
 		}
 	}
-	if run.Status == domain.RunCompleted {
+	if run.Status == domain.RunCompleted && !ownerExecutiveRunInTransaction(ctx, tx, run.ID) {
 		// The raw reservation guard must observe the run's definite terminal
 		// projection before its exact assignment can be released.
 		if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'released', revision = revision + 1, updated_at = ?, updated_by = ? WHERE task_id = ? AND status = 'active'", now, run.ID, run.TaskID); err != nil {
@@ -1026,6 +1047,29 @@ func (s *Store) applyRunObservationInTransaction(ctx context.Context, tx *sql.Tx
 		return domain.RunDetail{}, err
 	}
 	return detail, nil
+}
+
+func applyOwnerExecutiveResponseObservation(ctx context.Context, tx *sql.Tx, run *domain.Run, observation domain.RunObservation, correlationID, now string) error {
+	var exchangeStatus, turnStatus string
+	err := tx.QueryRowContext(ctx, `SELECT exchange.status,turn.status FROM owner_executive_exchanges exchange JOIN owner_turns turn ON turn.id=exchange.turn_id WHERE exchange.run_id=?`, run.ID).Scan(&exchangeStatus, &turnStatus)
+	if err != nil || exchangeStatus != "responded" || turnStatus != "completed" {
+		return &Error{Code: CodeOwnerTurnConflict, Message: "owner executive terminal report has no exact completed response", Cause: err}
+	}
+	summary := strings.TrimSpace(observation.Message)
+	if summary == "" {
+		summary = "Executive response recorded"
+	}
+	run.Status, run.ResultSummary, run.FinishedAt = domain.RunCompleted, summary, now
+	if err := appendRunTimeline(ctx, tx, run.ID, runCompletedEvent, summary, nil, now); err != nil {
+		return err
+	}
+	_, err = appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runCompletedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, mergeEventData(map[string]any{"summary": summary, "executive_exchange": true}, terminalLogEventData(observation.LogArchive, observation.LogUnavailableReason)))
+	return err
+}
+
+func ownerExecutiveRunInTransaction(ctx context.Context, tx *sql.Tx, runID string) bool {
+	var count int
+	return tx.QueryRowContext(ctx, `SELECT count(*) FROM owner_executive_exchanges WHERE run_id=?`, runID).Scan(&count) == nil && count == 1
 }
 
 func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run, observation domain.RunObservation, accepted bool, missing []string, correlationID, now string) error {
@@ -1315,16 +1359,23 @@ func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, d
 			return domain.RunDetail{}, err
 		}
 	}
-	task, err := queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
+	isExecutive, err := failOwnerExecutiveRunInTransaction(ctx, tx, run.ID, "project executive run was stopped before responding", now)
 	if err != nil {
 		return domain.RunDetail{}, err
 	}
-	if task.AssignmentID == "" || task.AssignedAgentID != run.AgentID {
-		return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "stopped run lost its task assignment"}
-	}
-	task.Status, task.BlockedReason, task.Revision = domain.TaskAssigned, "", task.Revision+1
-	if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
-		return domain.RunDetail{}, err
+	var task domain.Task
+	if !isExecutive {
+		task, err = queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
+		if err != nil {
+			return domain.RunDetail{}, err
+		}
+		if task.AssignmentID == "" || task.AssignedAgentID != run.AgentID {
+			return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "stopped run lost its task assignment"}
+		}
+		task.Status, task.BlockedReason, task.Revision = domain.TaskAssigned, "", task.Revision+1
+		if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
+			return domain.RunDetail{}, err
+		}
 	}
 	if err := setRunJob(ctx, tx, run.ID, "complete", now); err != nil {
 		return domain.RunDetail{}, err
@@ -1339,8 +1390,10 @@ func (s *Store) MarkRunStopped(ctx context.Context, runID string, forced bool, d
 	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStoppedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, mergeEventData(map[string]any{"forced": forced, "diagnostic": message}, terminalLogEventData(archive, logsUnavailableReason))); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskRunStoppedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
-		return domain.RunDetail{}, err
+	if !isExecutive {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskRunStoppedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
+			return domain.RunDetail{}, err
+		}
 	}
 	if err := terminalizeSchedulingIntentForRun(ctx, tx, run, message, correlationID, now); err != nil {
 		return domain.RunDetail{}, err
@@ -1380,13 +1433,20 @@ func (s *Store) LoseRun(ctx context.Context, runID, message, correlationID strin
 	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
 	}
-	task, err := queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
+	isExecutive, err := failOwnerExecutiveRunInTransaction(ctx, tx, run.ID, message, now)
 	if err != nil {
 		return domain.RunDetail{}, err
 	}
-	task.Status, task.BlockedReason, task.Revision = domain.TaskBlocked, message, task.Revision+1
-	if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
-		return domain.RunDetail{}, err
+	var task domain.Task
+	if !isExecutive {
+		task, err = queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
+		if err != nil {
+			return domain.RunDetail{}, err
+		}
+		task.Status, task.BlockedReason, task.Revision = domain.TaskBlocked, message, task.Revision+1
+		if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
+			return domain.RunDetail{}, err
+		}
 	}
 	if err := setRunJob(ctx, tx, run.ID, "complete", now); err != nil {
 		return domain.RunDetail{}, err
@@ -1397,8 +1457,10 @@ func (s *Store) LoseRun(ctx context.Context, runID, message, correlationID strin
 	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runLostEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message, "capacity_retained": true, "logs_available": false, "logs_unavailable_reason": "runtime identity or outcome is not trusted"}); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskBlocked, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": message, "status": task.Status}); err != nil {
-		return domain.RunDetail{}, err
+	if !isExecutive {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskBlocked, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": message, "status": task.Status}); err != nil {
+			return domain.RunDetail{}, err
+		}
 	}
 	detail, err := runDetailInTransaction(ctx, tx, run)
 	if err != nil {
@@ -1461,7 +1523,9 @@ func (s *Store) ResolveLostRun(ctx context.Context, command ResolveLostRunComman
 	if err != nil {
 		return RunLossResolutionResult{}, err
 	}
-	if task.Status != domain.TaskBlocked || task.AssignmentID != run.AssignmentID || task.AssignedAgentID != run.AgentID {
+	isExecutive := ownerExecutiveRunInTransaction(ctx, tx, run.ID)
+	validTaskStatus := task.Status == domain.TaskBlocked || isExecutive && task.Status == domain.TaskAssigned
+	if !validTaskStatus || task.AssignmentID != run.AssignmentID || task.AssignedAgentID != run.AgentID {
 		return RunLossResolutionResult{}, &Error{Code: CodeRunConflict, Message: "lost-run resolution requires its exact blocked task reservation"}
 	}
 	if !s.runLossResolutionActive.CompareAndSwap(false, true) {
@@ -1515,14 +1579,16 @@ func (s *Store) ResolveLostRun(ctx context.Context, command ResolveLostRunComman
 		return RunLossResolutionResult{}, storageFailure("insert lost-run resolution receipt", err)
 	}
 
-	assignmentResult, err := tx.ExecContext(ctx, `UPDATE task_assignments
+	if !isExecutive {
+		assignmentResult, err := tx.ExecContext(ctx, `UPDATE task_assignments
 SET status='released', revision=revision+1, updated_at=?, updated_by=?
 WHERE id=? AND task_id=? AND agent_id=? AND status='active'`, now, localOwnerActorID, run.AssignmentID, run.TaskID, run.AgentID)
-	if err != nil {
-		return RunLossResolutionResult{}, storageFailure("release lost-run assignment", err)
-	}
-	if changed, err := assignmentResult.RowsAffected(); err != nil || changed != 1 {
-		return RunLossResolutionResult{}, storageFailure("verify lost-run assignment release", errors.New("exact active assignment was not released"))
+		if err != nil {
+			return RunLossResolutionResult{}, storageFailure("release lost-run assignment", err)
+		}
+		if changed, err := assignmentResult.RowsAffected(); err != nil || changed != 1 {
+			return RunLossResolutionResult{}, storageFailure("verify lost-run assignment release", errors.New("exact active assignment was not released"))
+		}
 	}
 
 	claimRows, err := tx.QueryContext(ctx, claimSelect+" WHERE workspace_id=? AND task_id=? AND status='active' ORDER BY id", run.WorkspaceID, run.TaskID)
@@ -1534,6 +1600,9 @@ WHERE id=? AND task_id=? AND agent_id=? AND status='active'`, now, localOwnerAct
 		return RunLossResolutionResult{}, err
 	}
 	for _, claim := range claims {
+		if isExecutive {
+			break
+		}
 		claim.Status = domain.ClaimReleased
 		claim.Revision++
 		if _, err := tx.ExecContext(ctx, `UPDATE work_claims
@@ -1635,16 +1704,23 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message string, archiv
 			return domain.RunDetail{}, err
 		}
 	}
-	task, err := queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
+	isExecutive, err := failOwnerExecutiveRunInTransaction(ctx, tx, run.ID, run.FailureMessage, now)
 	if err != nil {
 		return domain.RunDetail{}, err
 	}
-	task.Status, task.BlockedReason, task.Revision = domain.TaskFailed, run.FailureMessage, task.Revision+1
-	if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
-		return domain.RunDetail{}, err
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'released', revision = revision + 1, updated_at = ?, updated_by = ? WHERE task_id = ? AND status = 'active'", now, runWorkerActorID, task.ID); err != nil {
-		return domain.RunDetail{}, storageFailure("release failed run assignment", err)
+	var task domain.Task
+	if !isExecutive {
+		task, err = queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
+		if err != nil {
+			return domain.RunDetail{}, err
+		}
+		task.Status, task.BlockedReason, task.Revision = domain.TaskFailed, run.FailureMessage, task.Revision+1
+		if err := updateTaskStateForActor(ctx, tx, task, now, runWorkerActorID); err != nil {
+			return domain.RunDetail{}, err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE task_assignments SET status = 'released', revision = revision + 1, updated_at = ?, updated_by = ? WHERE task_id = ? AND status = 'active'", now, runWorkerActorID, task.ID); err != nil {
+			return domain.RunDetail{}, storageFailure("release failed run assignment", err)
+		}
 	}
 	if err := setRunJob(ctx, tx, run.ID, "complete", now); err != nil {
 		return domain.RunDetail{}, err
@@ -1655,8 +1731,10 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message string, archiv
 	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, mergeEventData(map[string]any{"code": run.FailureCode, "message": run.FailureMessage}, terminalLogEventData(archive, logsUnavailableReason))); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": run.FailureMessage}); err != nil {
-		return domain.RunDetail{}, err
+	if !isExecutive {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": run.FailureMessage}); err != nil {
+			return domain.RunDetail{}, err
+		}
 	}
 	if err := terminalizeSchedulingIntentForRun(ctx, tx, run, run.FailureMessage, correlationID, now); err != nil {
 		return domain.RunDetail{}, err

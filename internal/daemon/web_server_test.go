@@ -19,7 +19,6 @@ import (
 	"crewfold/internal/domain"
 	"crewfold/internal/execution"
 	"crewfold/internal/localapi"
-	"crewfold/internal/store"
 	protocolschema "crewfold/protocol"
 
 	"github.com/gorilla/websocket"
@@ -177,8 +176,8 @@ func TestM21WorkbenchRejectsOriginHostAndUnknownSessionFields(t *testing.T) {
 
 func TestM21WorkbenchRPCRequiresExactCSRFAndExposesOnlyOwnerMethods(t *testing.T) {
 	t.Parallel()
-	if !workbenchMethodAllowed(localapi.MethodLaunchProfileList) {
-		t.Fatal("owner workbench must expose launch_profile.list for canonical onboarding refresh and plan editing")
+	if !workbenchMethodAllowed(localapi.MethodLaunchProfileList) || !workbenchMethodAllowed(localapi.MethodProposalList) || !workbenchMethodAllowed(localapi.MethodProposalInspect) || !workbenchMethodAllowed(localapi.MethodProposalAccept) || !workbenchMethodAllowed(localapi.MethodProposalReject) {
+		t.Fatal("owner workbench must expose launch profiles and the exact manager-proposal review boundary")
 	}
 
 	running := startTestServer(t, testConfig(t))
@@ -251,45 +250,14 @@ func TestM21WorkbenchRPCRequiresExactCSRFAndExposesOnlyOwnerMethods(t *testing.T
 	}
 }
 
-func TestM21OwnerIntentCommitsReceiptedWorkAndAutomaticallyReviewsWorkerReport(t *testing.T) {
+func TestM21OwnerConversationRunsThroughDurableProjectExecutive(t *testing.T) {
 	t.Parallel()
 
 	config := testConfig(t)
 	config.GitInspector = m21WorkbenchInspector{}
-	config.RuntimeDrivers = map[string]execution.RuntimeDriver{"fake": execution.NewFakeRuntime()}
-	config.ProviderAdapters = map[string]execution.ProviderAdapter{"fake": execution.FakeProvider{}}
-	config.OwnerInterpreter = m21OwnerLoopInterpreter{}
 	running := startTestServer(t, config)
 	api := localapi.NewClient(running.config.SocketPath)
-	workspace, err := api.WorkspaceInit(context.Background(), "personal", "web-intent-workspace")
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Join(t.TempDir(), "world-engine")
-	if err := os.Mkdir(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	project, err := api.ProjectAdd(context.Background(), workspace.Workspace.ID, "world-engine", root, domain.WriteModeShared, "web-intent-project")
-	if err != nil {
-		t.Fatal(err)
-	}
-	agent, err := api.AgentCreate(context.Background(), localapi.AgentCreateParams{Workspace: workspace.Workspace.ID, Name: "builder", Role: "implementation", Provider: "fake", Runtime: "fake", MaxConcurrency: 2, IdempotencyKey: "web-intent-agent"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	reviewScenario := domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "owner-workbench-manager-review", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "Implementation is underway", WaitForResume: true}}}
-	if _, err := api.LaunchProfileCreate(context.Background(), localapi.LaunchProfileCreateParams{Workspace: workspace.Workspace.ID, Project: project.Project.ID, Agent: agent.Agent.ID, ExpectedAgentRevision: agent.Agent.Revision, Purpose: "implementation", Runtime: agent.Agent.Runtime, Provider: agent.Agent.Provider, Checkout: project.Checkout.ID, Scenario: reviewScenario, AssignmentLeaseSeconds: 3600, CapabilityTTLSeconds: 3600, IdempotencyKey: "web-intent-profile"}); err != nil {
-		t.Fatal(err)
-	}
-	policy, err := api.SupervisorPolicyShow(context.Background(), workspace.Workspace.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := api.SupervisorPolicyConfigure(context.Background(), localapi.SupervisorPolicyConfigureParams{Workspace: workspace.Workspace.ID, Enabled: true, Limits: policy.Policy.Limits, AutoSchedule: true, AutoRetryLimit: 0, ExpectedRevision: policy.Policy.Revision, IdempotencyKey: "web-intent-supervisor"}); err != nil {
-		t.Fatal(err)
-	}
-
-	bootstrap, err := localapi.NewClient(running.config.SocketPath).WebBootstrap(context.Background())
+	bootstrap, err := api.WebBootstrap(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,12 +274,10 @@ func TestM21OwnerIntentCommitsReceiptedWorkAndAutomaticallyReviewsWorkerReport(t
 	if err := json.Unmarshal(exchangeWorkbenchBootstrap(t, client, origin, token, origin), &session); err != nil {
 		t.Fatal(err)
 	}
-	body, _ := json.Marshal(map[string]any{
-		"workspace": workspace.Workspace.ID, "project": project.Project.ID, "instruction": "Build the first playable world loop",
-		"mode": "act", "idempotency_key": "web-owner-act-one",
-	})
-	call := func() []byte {
-		request, err := http.NewRequest(http.MethodPost, origin+session.APIBase+"/intent", bytes.NewReader(body))
+
+	post := func(path string, body []byte) []byte {
+		t.Helper()
+		request, err := http.NewRequest(http.MethodPost, origin+session.APIBase+path, bytes.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -328,96 +294,171 @@ func TestM21OwnerIntentCommitsReceiptedWorkAndAutomaticallyReviewsWorkerReport(t
 			t.Fatal(err)
 		}
 		if response.StatusCode != http.StatusOK {
-			t.Fatalf("owner intent status = %d: %s", response.StatusCode, raw)
+			t.Fatalf("%s status = %d: %s", path, response.StatusCode, raw)
 		}
 		return raw
 	}
-	first := call()
-	second := call()
-	if err := protocolschema.ValidateJSON("web/v1/owner-intent.response.schema.json", first); err != nil {
-		t.Fatalf("owner intent response schema = %v: %s", err, first)
-	}
-	if !bytes.Equal(first, second) {
-		t.Fatalf("owner act replay changed:\nfirst=%s\nsecond=%s", first, second)
-	}
-	var result struct {
-		Detail domain.OwnerTurnDetail `json:"detail"`
-	}
-	if err := json.Unmarshal(first, &result); err != nil {
+
+	repository := filepath.Join(t.TempDir(), "world-engine")
+	if err := os.Mkdir(repository, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if result.Detail.Turn.Status != "completed" || len(result.Detail.Operations) != 3 || len(result.Detail.Receipts) != 3 {
-		t.Fatalf("owner intent detail = %#v", result.Detail)
-	}
-	for _, operation := range result.Detail.Operations {
-		if operation.Status != "applied" || operation.EventSequence == 0 {
-			t.Fatalf("owner operation = %#v", operation)
-		}
-	}
-	tasks, err := api.TaskList(context.Background(), localapi.TaskListParams{Workspace: workspace.Workspace.ID, Project: project.Project.ID, PageParams: localapi.PageParams{Limit: 10}})
-	if err != nil || len(tasks.Tasks) != 1 {
-		t.Fatalf("owner-created tasks = %#v, %v", tasks, err)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	var runs localapi.RunListResult
-	for time.Now().Before(deadline) {
-		runs, err = api.RunList(context.Background(), localapi.RunListParams{Workspace: workspace.Workspace.ID, Project: project.Project.ID, PageParams: localapi.PageParams{Limit: 10}})
-		if err == nil && len(runs.Runs) == 1 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if err != nil || len(runs.Runs) != 1 {
-		t.Fatalf("owner-created runs = %#v, %v", runs, err)
-	}
-	active := waitForRunStatus(t, api, runs.Runs[0].ID, domain.RunActive)
-	reporter, err := store.Open(context.Background(), running.config.DataDir, store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reporter.Close()
-	progress, err := reporter.SubmitRunReport(context.Background(), store.CreateRunReportCommand{
-		RunID: active.Detail.Run.ID, Kind: domain.ObservationProgress,
-		Message:        "The implementation boundary is mapped and one owner-facing decision may be needed.",
-		Payload:        map[string]any{"completed": []string{"inspected canonical project context"}, "next": []string{"continue implementation"}},
-		IdempotencyKey: "web-manager-review-progress",
+	onboardingBody, _ := json.Marshal(map[string]any{
+		"repository_path": repository, "workspace": "personal", "project": "world-engine",
+		"agent": "builder", "provider": "fixture-mcp", "runtime": "direct", "write_mode": "shared",
 	})
-	if err != nil || progress.ID == "" {
-		t.Fatalf("SubmitRunReport(progress) = %#v, %v", progress, err)
+	onboardingRaw := post("/onboarding", onboardingBody)
+	if err := protocolschema.ValidateJSON("web/v1/onboarding.response.schema.json", onboardingRaw); err != nil {
+		t.Fatalf("onboarding response schema = %v: %s", err, onboardingRaw)
+	}
+	var onboarding struct {
+		Workspace domain.Workspace             `json:"workspace"`
+		Project   domain.Project               `json:"project"`
+		Executive domain.AgentDefinition       `json:"executive"`
+		Binding   domain.OwnerExecutiveBinding `json:"executive_binding"`
+	}
+	if err := json.Unmarshal(onboardingRaw, &onboarding); err != nil {
+		t.Fatal(err)
+	}
+	if onboarding.Executive.Name != "project-executive" || onboarding.Binding.AgentID != onboarding.Executive.ID {
+		t.Fatalf("onboarding executive = %#v, binding = %#v", onboarding.Executive, onboarding.Binding)
 	}
 
-	// The fixture worker's progress report must reach the durable manager
-	// loop without another owner HTTP turn. The browser reads the resulting
-	// manager-originated turn and exact review cursor from the conversation.
-	deadline = time.Now().Add(5 * time.Second)
-	var conversationRaw []byte
-	var conversation struct {
-		Turns  []domain.OwnerTurnDetail      `json:"turns"`
-		Review *domain.OwnerManagerReviewJob `json:"review"`
+	type executiveResult struct {
+		Detail   domain.OwnerTurnDetail        `json:"detail"`
+		Exchange domain.OwnerExecutiveExchange `json:"exchange"`
 	}
-	for time.Now().Before(deadline) {
-		response, requestErr := client.Get(origin + session.APIBase + "/conversation?workspace=" + url.QueryEscape(workspace.Workspace.ID) + "&project=" + url.QueryEscape(project.Project.ID))
-		if requestErr == nil {
-			conversationRaw, requestErr = io.ReadAll(response.Body)
-			_ = response.Body.Close()
-			if requestErr == nil && response.StatusCode == http.StatusOK && json.Unmarshal(conversationRaw, &conversation) == nil && len(conversation.Turns) >= 2 && conversation.Review != nil && conversation.Review.Status == "idle" {
-				break
-			}
+	submit := func(conversationID, instruction, key string) executiveResult {
+		t.Helper()
+		body := map[string]any{"workspace": onboarding.Workspace.ID, "project": onboarding.Project.ID, "instruction": instruction, "idempotency_key": key}
+		if conversationID != "" {
+			body["conversation_id"] = conversationID
 		}
-		time.Sleep(20 * time.Millisecond)
+		raw, _ := json.Marshal(body)
+		response := post("/intent", raw)
+		if err := protocolschema.ValidateJSON("web/v1/owner-intent.response.schema.json", response); err != nil {
+			t.Fatalf("owner executive response schema = %v: %s", err, response)
+		}
+		var result executiveResult
+		if err := json.Unmarshal(response, &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
 	}
-	if err := protocolschema.ValidateJSON("web/v1/owner-conversation.response.schema.json", conversationRaw); err != nil {
-		t.Fatalf("owner conversation response schema = %v: %s", err, conversationRaw)
+
+	first := submit("", "Explain the current project and propose the next bounded work.", "web-executive-one")
+	replay := submit("", "Explain the current project and propose the next bounded work.", "web-executive-one")
+	if replay.Detail.Turn.ID != first.Detail.Turn.ID || replay.Exchange.ID != first.Exchange.ID {
+		t.Fatalf("owner executive replay changed identity: first=%#v replay=%#v", first, replay)
 	}
-	if len(conversation.Turns) != 2 || conversation.Review == nil {
-		t.Fatalf("automatic manager conversation = %#v", conversation)
+
+	type conversationPage struct {
+		Turns     []domain.OwnerTurnDetail        `json:"turns"`
+		Exchanges []domain.OwnerExecutiveExchange `json:"exchanges"`
+		Executive *domain.OwnerExecutiveBinding   `json:"executive"`
 	}
-	managerTurn := conversation.Turns[1].Turn
-	if managerTurn.Kind != "review" || managerTurn.InitiatedBy != "manager" || managerTurn.TriggerEventSequence < 1 || managerTurn.Interpretation.Disposition != "answer" || managerTurn.Status != "completed" {
-		t.Fatalf("automatic manager turn = %#v", managerTurn)
+	readConversation := func() ([]byte, conversationPage) {
+		t.Helper()
+		response, err := client.Get(origin + session.APIBase + "/conversation?workspace=" + url.QueryEscape(onboarding.Workspace.ID) + "&project=" + url.QueryEscape(onboarding.Project.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		raw, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var page conversationPage
+		if err := json.Unmarshal(raw, &page); err != nil {
+			t.Fatal(err)
+		}
+		return raw, page
 	}
-	if conversation.Review.RequestedEventSequence != conversation.Review.ReviewedEventSequence || conversation.Review.LastTurnID != managerTurn.ID || conversation.Review.RequestedEventSequence != managerTurn.TriggerEventSequence {
-		t.Fatalf("automatic manager cursor = %#v, turn = %#v", conversation.Review, managerTurn)
+	waitForResponses := func(want int) conversationPage {
+		t.Helper()
+		deadline := time.Now().Add(8 * time.Second)
+		var last conversationPage
+		for time.Now().Before(deadline) {
+			raw, page := readConversation()
+			last = page
+			if err := protocolschema.ValidateJSON("web/v1/owner-conversation.response.schema.json", raw); err != nil {
+				t.Fatalf("owner conversation response schema = %v: %s", err, raw)
+			}
+			respondedOwners := 0
+			turnByID := make(map[string]domain.OwnerTurn, len(page.Turns))
+			for _, detail := range page.Turns {
+				turnByID[detail.Turn.ID] = detail.Turn
+			}
+			for _, exchange := range page.Exchanges {
+				if turnByID[exchange.TurnID].InitiatedBy == "owner" && exchange.Status == "responded" {
+					respondedOwners++
+				}
+			}
+			if respondedOwners == want {
+				return page
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if len(last.Exchanges) > 0 && last.Exchanges[0].RunID != "" {
+			logs, _ := api.RunLogs(context.Background(), onboarding.Workspace.ID, last.Exchanges[0].RunID, 0)
+			t.Fatalf("owner executive exchanges did not complete: %#v; logs=%#v", last, logs)
+		}
+		t.Fatalf("owner executive exchanges did not complete: %#v", last)
+		return conversationPage{}
+	}
+
+	settled := waitForResponses(1)
+	if settled.Executive == nil || settled.Executive.ID != onboarding.Binding.ID {
+		t.Fatalf("conversation executive = %#v", settled.Executive)
+	}
+	if turn := settled.Turns[0].Turn; turn.Kind != "instruction" || turn.InitiatedBy != "owner" || turn.Status != "completed" || turn.Answer == "" {
+		t.Fatalf("first executive turn = %#v", turn)
+	}
+	if got := settled.Exchanges[0].ProposalIDs; len(got) != 1 {
+		t.Fatalf("first executive proposal ids = %#v", got)
+	}
+	proposalPage, err := api.ProposalList(context.Background(), localapi.ProposalQueryParams{
+		Workspace: onboarding.Workspace.ID, Project: onboarding.Project.ID, Limit: 100,
+	})
+	if err != nil || len(proposalPage.Proposals) != 1 || proposalPage.Proposals[0].ID != settled.Exchanges[0].ProposalIDs[0] {
+		t.Fatalf("executive proposal list = %#v, %v", proposalPage, err)
+	}
+	accepted, err := api.ProposalAccept(context.Background(), localapi.ProposalDecisionParams{
+		Workspace: onboarding.Workspace.ID, Proposal: proposalPage.Proposals[0].ID, ExpectedRevision: proposalPage.Proposals[0].Revision,
+		DecisionNote: "Accepted the exact reviewed executive proposal.", IdempotencyKey: "web-executive-proposal-accept",
+	})
+	if err != nil || accepted.Proposal.Status != domain.ManagerProposalAccepted || len(accepted.Effects) != 2 || accepted.Effects[0].EntityType != "task" || accepted.Effects[1].EntityType != "scheduling_intent" {
+		t.Fatalf("executive proposal accept = %#v, %v; source=%#v", accepted, err, proposalPage.Proposals[0])
+	}
+	firstRunID := settled.Exchanges[0].RunID
+	firstRun := waitForRunStatus(t, api, firstRunID, domain.RunCompleted)
+	if firstRun.Detail.Task.Status != domain.TaskAssigned || firstRun.Detail.Task.AssignedAgentID != onboarding.Executive.ID {
+		t.Fatalf("executive planning task was consumed by exchange: %#v", firstRun.Detail.Task)
+	}
+	contextResult, err := api.ContextShow(context.Background(), onboarding.Workspace.ID, firstRun.Detail.Run.ContextPacketID)
+	if err != nil {
+		t.Fatalf("ContextShow(executive) = %v", err)
+	}
+	grant := contextResult.Packet.ManagementGrant
+	if grant == nil || !grant.OwnerExecutive || grant.InvocationProfileID != onboarding.Binding.LaunchProfileID ||
+		!containsString(contextResult.Packet.Policy.AllowedTools, "crewfold_get_executive_context") ||
+		!containsString(contextResult.Packet.Policy.AllowedTools, "crewfold_respond_to_owner") {
+		t.Fatalf("executive packet authority = %#v, tools = %#v", grant, contextResult.Packet.Policy.AllowedTools)
+	}
+
+	second := submit(first.Detail.Conversation.ID, "Now summarize what changed since my previous message.", "web-executive-two")
+	if second.Detail.Turn.ID == first.Detail.Turn.ID {
+		t.Fatal("second owner instruction reused the first turn")
+	}
+	settled = waitForResponses(2)
+	var secondExchange domain.OwnerExecutiveExchange
+	for _, exchange := range settled.Exchanges {
+		if exchange.TurnID == second.Detail.Turn.ID {
+			secondExchange = exchange
+		}
+	}
+	if secondExchange.RunID == "" || secondExchange.RunID == firstRunID || secondExchange.Status != "responded" {
+		t.Fatalf("second executive exchange = %#v / %#v", secondExchange, second.Detail.Turn)
 	}
 }
 
@@ -680,35 +721,6 @@ func TestM21WorkbenchTerminalGrantIsRunBoundSingleUseAndInteractive(t *testing.T
 }
 
 type m21WorkbenchInspector struct{}
-
-// m21OwnerLoopInterpreter keeps the daemon integration proof provider-free
-// while exercising the same untrusted interpretation boundary as Codex. The
-// first owner turn freezes one task; the autonomous review consumes the worker
-// report and returns a manager-originated update without any new effect.
-type m21OwnerLoopInterpreter struct{}
-
-func (m21OwnerLoopInterpreter) Interpret(_ context.Context, request execution.OwnerInterpretationRequest) (domain.OwnerInterpretation, error) {
-	var snapshot struct {
-		LaunchProfiles []struct {
-			ID string `json:"id"`
-		} `json:"launch_profiles"`
-	}
-	if err := json.Unmarshal(request.CanonicalContext, &snapshot); err != nil || len(snapshot.LaunchProfiles) == 0 {
-		return domain.OwnerInterpretation{}, errors.New("owner loop fixture received an invalid canonical snapshot")
-	}
-	if request.Kind == "review" {
-		return domain.OwnerInterpretation{
-			Disposition: "answer", Summary: "Reviewed the new worker report.",
-			Answer:          "The worker mapped the implementation boundary and is continuing without an owner decision.",
-			ObjectiveBudget: domain.Budget{}, Tasks: []domain.OwnerPlanTask{}, Choices: []domain.OwnerChoice{}, CitationRefs: []string{},
-		}, nil
-	}
-	return domain.OwnerInterpretation{
-		Disposition: "ready", Summary: "Prepared one exact integration task.", ObjectiveTitle: request.Instruction,
-		ObjectiveBudget: domain.Budget{}, Choices: []domain.OwnerChoice{}, CitationRefs: []string{},
-		Tasks: []domain.OwnerPlanTask{{Key: "implementation", Title: request.Instruction, Description: request.Instruction, Priority: 500, Budget: domain.Budget{}, LaunchProfileID: snapshot.LaunchProfiles[0].ID, DependsOn: []string{}}},
-	}, nil
-}
 
 func (m21WorkbenchInspector) Inspect(_ context.Context, path string) (domain.CheckoutObservation, error) {
 	return domain.CheckoutObservation{

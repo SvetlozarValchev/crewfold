@@ -106,61 +106,87 @@ enter browser state or web responses.
 M21 has no remote bind, TLS termination, LAN sharing, hosted synchronization,
 multi-user identity, organization login, or browser access from another machine.
 
-### Conversation is an execution surface
+### The owner talks to one durable project executive
 
-The workbench conversation accepts owner questions and owner commands. A command
-is not merely prose and does not always require a second confirmation. Each turn
-is durably classified as `query`, `plan`, or `act` and records its exact workspace
-and optional project/objective/task scope.
+The primary conversation is not a form that asks the owner to choose a model
+operation mode. There is no owner-facing `query`/`plan`/`act` switch. The owner
+addresses one named project executive in ordinary language. Crewfold persists the
+instruction first and then hosts a real provider run for that executive through
+the same Herdr, capability, context-packet, and MCP boundary used by other agents.
 
-An `act` turn follows one current path:
+Workbench onboarding creates one explicit project-direction objective and the
+minimum current authority tuple needed to serve it: a persistent executive agent
+definition, a durable assigned planning task, an owner-authored manager grant,
+the worker launch profiles named by that grant, and one management launch profile
+bound to the grant. These records are visible canonical state. The executive is
+not inferred from `AgentDefinition.Role`, a prompt label, a provider session, or a
+browser-only setting.
+
+Every exchange is short lived and durable:
 
 ```text
 owner instruction
-  -> bounded manager interpretation
-  -> closed typed operation set
-  -> structural and semantic validation
-  -> current policy/authority/capacity evaluation
-  -> execute allowed operations through canonical commands
-  -> persist exact receipts and linked entity/event IDs
-  -> render committed effects
+  -> durable owner turn and frozen canonical event cut
+  -> queued executive exchange
+  -> exact manager grant + planning assignment + launch profile
+  -> Herdr-hosted Codex/Claude run with scoped Crewfold MCP
+  -> read-only executive context and ordinary inbox/message tools
+  -> typed proposals and one typed owner response
+  -> structural, semantic, authority, revision, and budget validation
+  -> durable answer/proposal/decision links and exact run receipt
 ```
 
-An explicit instruction such as “organize this objective and start” authorizes
-the manager invocation and every resulting operation permitted by the current
-project policy and frozen budget. Those operations execute without another modal.
-The workbench immediately shows what was interpreted, what is executing, what
-committed, and what failed. “No confirmation” never means invisible or
-unattributed.
+The executive agent identity, owner conversation, project knowledge, messages,
+proposals, and canonical history persist across exchanges. Provider thread or
+terminal continuity may be used as a runtime optimization in a later milestone,
+but it is never the record or authority. A new provider process may therefore
+answer the next turn without losing Crewfold continuity.
 
-An operation pauses before its first effect when it exceeds the frozen monetary,
-token, time, scope, or concurrency limit; changes authority or policy; requests
-push, deploy, publication, destructive state/filesystem work, or external human
-communication; or admits materially different interpretations. The owner receives
-an exact review card or one bounded clarification question. Already-allowed
-operations are not silently rolled back merely because a separate independent
-operation needs approval; the original operation graph must make that partial
-ordering explicit before execution.
+The manager planning task remains assigned after a successful, failed, stopped,
+or interrupted executive exchange. Terminalizing an executive run clears its
+node-bound runtime binding and archives bounded logs, but it does not complete,
+block, revise, or release the long-lived planning task. A new exchange cannot
+start while an earlier exchange for that assignment is live. Assignment expiry,
+grant revocation, provider failure, capacity, and runtime failure remain visible
+canonical blockers rather than reasons to fall back to a hidden interpreter.
 
-Conversation prose is presentation, not authority. The accepted operation set,
-policy decision, idempotency key, receipts, canonical entity revisions, and event
+The executive receives two additional manager-only MCP capabilities. A frozen
+`crewfold_get_executive_context` read returns the exact owner instruction,
+conversation history, bounded project state, and citation namespace captured for
+that exchange. `crewfold_respond_to_owner` submits exactly one bounded typed
+response and terminalizes the exchange after the provider process exits. The
+response may classify its result as a read-only answer, material update,
+clarification/decision, proposal, or refusal. This classification is rendered
+after the response; it is not authority selected by the owner before sending.
+
+The existing manager proposal tools remain the only path for an executive to
+suggest task decomposition, assignments, review work, or escalation. A response
+may link only proposals created by the same executive run and citations from its
+frozen context. Proposal acceptance remains an explicit canonical owner action.
+An accepted proposal is validated again against the current grant, revisions,
+scope, budget, and policy before its first effect; the deterministic supervisor,
+not the executive prose, launches ready work.
+
+An explicit owner instruction may authorize an already reviewed, closed typed
+operation when the current policy permits it. Destructive work, publication,
+external communication, credentials, budget/authority changes, and materially
+ambiguous choices still stop before their first effect and become an exact owner
+decision. “No extra confirmation” never means an untyped or invisible effect.
+
+Conversation prose is presentation, not authority. Typed proposals, decisions,
+policy results, idempotency keys, receipts, canonical entity revisions, and event
 sequences are authoritative. Malformed, unknown, stale, cyclic, over-budget, or
-out-of-scope manager output creates no effect. A lost response replays the exact
-same command; it does not ask a model to reinterpret the turn.
+out-of-scope executive output creates no effect. A lost request or response
+replays the same durable exchange; it does not ask another model to reinterpret
+the owner instruction.
 
-A clarification choice is not an unreviewed action grammar. The current web
-surface submits the selected answer as a `plan` turn, displays the resulting typed
-graph, and requires the owner to execute that reviewed graph explicitly. Once any
-later turn exists in the conversation, earlier clarification controls are inert;
-historical questions cannot be clicked again to manufacture duplicate work.
+The previous one-shot `CodexOwnerInterpreter` path is not a second steady-state
+manager. It is removed from the current workbench contract rather than retained
+as a fallback. Provider-free fixtures may implement the same executive MCP
+contract for tests, but production owner conversation always traverses a visible
+agent definition, grant, run, runtime binding, and response receipt.
 
-The current baseline gains only the records needed to preserve this boundary:
-owner conversation, owner turn, frozen interpretation, typed operation graph,
-policy result, execution state, approval linkage, and effect receipt linkage.
-Canonical objectives, tasks, assignments, runs, decisions, and approvals remain
-the existing domain records rather than copies embedded in chat history.
-
-### Worker activity closes the manager loop
+### Worker activity returns to the same executive
 
 Owner HTTP turns are not the only time the planning manager runs. Once a project
 has an open owner conversation, a worker-originated structured progress,
@@ -169,12 +195,12 @@ one coalesced `owner_manager_review_jobs` cursor in the same database transactio
 as the triggering canonical event. CLI-only projects with no owner conversation
 do not silently consume a provider turn.
 
-One bounded daemon worker leases that cursor, captures an exact canonical project
-snapshot, and invokes the selected manager provider with `kind=review`. For the
-normal Codex configuration this is a read-only Codex CLI operation hosted by
-Herdr. The returned value is still untrusted and passes through the same closed
-interpretation, citation, graph, scope, budget, revision, and idempotency checks
-as an owner turn. It can do exactly one of three useful things:
+One bounded daemon worker leases that cursor and creates a review exchange for
+the same durable project executive. It does not invoke a separate interpreter.
+For the normal Codex configuration this is a Codex CLI run hosted by Herdr with
+the same grant and MCP boundary as an owner exchange. The response is still
+untrusted and passes through the same citation, proposal, scope, budget,
+revision, and idempotency checks. It can do exactly one of three useful things:
 
 - append a cited material crew update;
 - raise one typed consequential owner decision; or
@@ -187,7 +213,7 @@ then scheduled by the deterministic supervisor. Workers continue to communicate
 through scoped MCP reports and durable inbox messages, so the observable loop is:
 
 ```text
-worker report/message -> durable review cursor -> manager review
+worker report/message -> durable review cursor -> executive review exchange
   -> update | owner decision | reviewed graph
   -> owner-authorized canonical effects -> supervisor -> workers
 ```

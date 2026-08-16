@@ -183,8 +183,17 @@ func (s *Store) buildManagerContextPacketInTransaction(ctx context.Context, tx *
 			AgentID: target.AgentID, AgentRevision: target.AgentRevision,
 		}
 	}
+	var ownerExecutive bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM owner_executive_bindings
+		WHERE workspace_id=? AND project_id=? AND objective_id=? AND planning_task_id=?
+		  AND agent_id=? AND manager_grant_id=? AND launch_profile_id=? AND status='active'
+	)`, workspaceID, task.ProjectID, task.ObjectiveID, task.ID, agent.ID, grant.ID, profile.ID).Scan(&ownerExecutive); err != nil {
+		return domain.ContextPacket{}, 0, storageFailure("resolve owner executive context authority", err)
+	}
 	managementGrant := &domain.ContextManagerGrant{
-		Schema: domain.ContextManagerGrantSchema, GrantID: grant.ID, GrantRevision: grant.Revision,
+		Schema: domain.ContextManagerGrantSchema, OwnerExecutive: ownerExecutive, InvocationProfileID: profile.ID,
+		InvocationProfileRev: profile.Revision, GrantID: grant.ID, GrantRevision: grant.Revision,
 		WorkspaceID: workspaceID, ProjectID: grant.ProjectID, ObjectiveID: grant.ObjectiveID, ObjectiveRevision: grant.ObjectiveRevision,
 		ManagerAgentID: grant.AgentID, ManagerAgentRevision: grant.AgentRevision,
 		ManagerTaskID: grant.TaskID, ManagerTaskRevision: grant.TaskRevision,
@@ -267,11 +276,7 @@ func (s *Store) buildContextPacketWithAuthorityInTransaction(ctx context.Context
 	}
 	allowedTools := append([]string(nil), runScopedTools...)
 	if managementGrant != nil {
-		for _, candidate := range managerProposalTools {
-			if containsContextString(managementGrant.AllowedProposalKinds, candidate.kind) {
-				allowedTools = append(allowedTools, candidate.tool)
-			}
-		}
+		allowedTools = managerAllowedTools(managementGrant.AllowedProposalKinds, managementGrant.OwnerExecutive)
 	}
 	if checkWatchGrant != nil {
 		allowedTools = checkWatchAllowedTools(checkWatchGrant.Operations)
@@ -847,6 +852,29 @@ func validateStoredManagerGrantAgainstCanonical(ctx context.Context, database qu
 			return errors.New("stored manager launch profile tuple differs from normalized authority")
 		}
 	}
+	var invocationProfileCount int
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM launch_profiles
+		WHERE id=? AND revision=? AND workspace_id=? AND project_id=? AND agent_id=?
+		  AND agent_revision=? AND manager_grant_id=?`, snapshot.InvocationProfileID,
+		snapshot.InvocationProfileRev, snapshot.WorkspaceID, snapshot.ProjectID,
+		snapshot.ManagerAgentID, snapshot.ManagerAgentRevision, snapshot.GrantID).Scan(&invocationProfileCount); err != nil {
+		return err
+	}
+	if invocationProfileCount != 1 {
+		return errors.New("stored manager invocation profile differs from normalized authority")
+	}
+	var ownerExecutive bool
+	if err := database.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM owner_executive_bindings
+		WHERE workspace_id=? AND project_id=? AND objective_id=? AND planning_task_id=?
+		  AND agent_id=? AND manager_grant_id=? AND launch_profile_id=?
+	)`, snapshot.WorkspaceID, snapshot.ProjectID, snapshot.ObjectiveID, snapshot.ManagerTaskID,
+		snapshot.ManagerAgentID, snapshot.GrantID, snapshot.InvocationProfileID).Scan(&ownerExecutive); err != nil {
+		return err
+	}
+	if snapshot.OwnerExecutive != ownerExecutive {
+		return errors.New("stored manager grant owner executive authority differs from canonical binding")
+	}
 	return nil
 }
 
@@ -927,7 +955,7 @@ func validateLiveContextPacket(packet domain.ContextPacket) error {
 		if err := validateContextManagerGrant(packet); err != nil {
 			return err
 		}
-		return validateLiveContextPacketBase(packet, managerAllowedTools(packet.ManagementGrant.AllowedProposalKinds))
+		return validateLiveContextPacketBase(packet, managerAllowedTools(packet.ManagementGrant.AllowedProposalKinds, packet.ManagementGrant.OwnerExecutive))
 	}
 	if packet.CheckWatchGrant != nil {
 		if err := validateContextCheckWatchGrant(packet); err != nil {
@@ -948,8 +976,11 @@ func checkWatchAllowedTools(operations []string) []string {
 	return result
 }
 
-func managerAllowedTools(proposalKinds []string) []string {
+func managerAllowedTools(proposalKinds []string, ownerExecutive bool) []string {
 	result := append([]string(nil), runScopedTools...)
+	if ownerExecutive {
+		result = append(result, "crewfold_get_executive_context", "crewfold_respond_to_owner")
+	}
 	for _, candidate := range managerProposalTools {
 		if containsContextString(proposalKinds, candidate.kind) {
 			result = append(result, candidate.tool)
@@ -1093,6 +1124,7 @@ func validateContextManagerGrant(packet domain.ContextPacket) error {
 	if grant == nil || grant.Schema != domain.ContextManagerGrantSchema || grant.GrantID == "" || grant.GrantRevision < 1 ||
 		grant.WorkspaceID != packet.WorkspaceID || grant.ProjectID != packet.ProjectID || grant.ObjectiveID != packet.Task.ObjectiveID || grant.ObjectiveRevision < 1 ||
 		grant.ManagerAgentID != packet.AgentID || grant.ManagerAgentRevision != packet.Role.Revision ||
+		grant.InvocationProfileID == "" || grant.InvocationProfileRev < 1 ||
 		grant.ManagerTaskID != packet.TaskID || grant.ManagerTaskRevision != packet.Task.Revision ||
 		len(grant.AllowedProposalKinds) < 1 || len(grant.AllowedProposalKinds) > len(managerProposalTools) ||
 		grant.MaxOpenProposals < 1 || grant.MaxOpenProposals > 32 || grant.MaxActions < 1 || grant.MaxActions > 32 ||
@@ -1581,6 +1613,13 @@ func (s *Store) SubmitRunReport(ctx context.Context, command CreateRunReportComm
 	run, err := queryRun(ctx, tx, "", runID)
 	if err != nil {
 		return domain.RunReport{}, err
+	}
+	var executiveExchangeCount int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM owner_executive_exchanges WHERE run_id=?`, run.ID).Scan(&executiveExchangeCount); err != nil {
+		return domain.RunReport{}, storageFailure("check owner executive report authority", err)
+	}
+	if executiveExchangeCount != 0 {
+		return domain.RunReport{}, &Error{Code: CodeInvalidReport, Message: "owner executive runs must answer through crewfold_respond_to_owner"}
 	}
 	var existingHash string
 	err = tx.QueryRowContext(ctx, "SELECT request_hash FROM run_reports WHERE run_id = ? AND idempotency_key = ?", run.ID, key).Scan(&existingHash)

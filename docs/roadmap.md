@@ -9,7 +9,7 @@ rules are in the [testing strategy](testing.md).
 
 Current status: **M0 through M21 are complete. M22 is next. The owner-local web
 workbench now provides service/open lifecycle, browser onboarding, durable
-query/plan/act work, editable reviewed launch plans, canonical inspection and
+conversation with a provider-backed project executive, explicit typed-proposal review, canonical inspection and
 understanding surfaces, bounded Git/log access, and separately authorized live
 terminal access.** Evidence is
 recorded in the [M0 review](reviews/buildable-repository.md), [M1
@@ -298,8 +298,10 @@ single-place owner workflow rather than adding another control surface.
 M21 is complete at implementation commit
 `6116b5d0b21bfba48007da464ff3bae0c8543416`; its
 [passed review](reviews/local-web-workbench.md) records the local service and
-browser-security boundary, repository onboarding, durable owner conversation and
-receipts, editable reviewed plans, automatic execution, canonical inspection,
+browser-security boundary and repository onboarding. The current M21 contract
+replaces that initial form-like planning harness with one durable provider-backed
+project executive, exact exchange receipts, and explicit typed-proposal review;
+the deterministic supervisor alone launches accepted ready work. Canonical inspection,
 Herdr-first interactive terminal access with an explicit Direct headless fallback,
 and the real-browser public scenario. The post-acceptance Herdr-first correction
 is `a6a8f82`.
