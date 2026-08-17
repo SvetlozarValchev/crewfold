@@ -130,7 +130,7 @@ export CREWFOLD_OPEN_CAPTURE="$scenario_root/flow.url"
 flow_url=$(sed -n '1p' "$CREWFOLD_OPEN_CAPTURE")
 flow_profile="$scenario_root/chrome-flow"
 google-chrome --headless --disable-gpu --no-sandbox --disable-dev-shm-usage \
-  --user-data-dir="$flow_profile" --remote-debugging-port=0 "$flow_url" \
+  --window-size=1440,1000 --user-data-dir="$flow_profile" --remote-debugging-port=0 "$flow_url" \
   >"$scenario_root/flow-chrome.stdout" 2>"$scenario_root/flow-chrome.stderr" &
 chrome_pid=$!
 attempts=0
@@ -145,7 +145,7 @@ debugger_port=$(sed -n '1p' "$flow_profile/DevToolsActivePort")
 node "$repo_root/test/scenarios/web-workbench-shell/browser.mjs" \
   "$debugger_port" "$scenario_root/world-engine-2" "$scenario_root/browser-flow.json"
 grep -Fq '"iconCount"' "$scenario_root/browser-flow.json"
-grep -Fq 'Project briefing' "$scenario_root/browser-flow.json"
+grep -Fq '"project-briefing"' "$scenario_root/browser-flow.json"
 kill "$chrome_pid" 2>/dev/null || true
 wait "$chrome_pid" 2>/dev/null || true
 chrome_pid=""

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 
 const [, , debuggerPort, repositoryPath, outputPath] = process.argv;
 if (!debuggerPort || !repositoryPath || !outputPath) throw new Error("usage: browser.mjs <debugger-port> <repository-path> <output-path>");
@@ -50,9 +51,21 @@ async function waitFor(expression, label, timeout = 15000) {
   throw new Error(`timed out waiting for ${label}\n${body}`);
 }
 
+async function capture(label) {
+  const directory = process.env.CREWFOLD_SCREENSHOT_DIR;
+  if (!directory) return;
+  fs.mkdirSync(directory, { recursive: true });
+  const metrics = await command("Page.getLayoutMetrics");
+  const content = metrics.cssContentSize ?? metrics.contentSize;
+  const result = await command("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, fromSurface: true, clip: { x: 0, y: 0, width: content.width, height: Math.min(content.height, 5000), scale: 1 } });
+  fs.writeFileSync(path.join(directory, `${label}.png`), Buffer.from(result.data, "base64"));
+}
+
 await command("Runtime.enable");
-await waitFor("document.body.innerText.includes('Bring your repository into the workbench.')", "onboarding");
+await command("Page.enable");
+await waitFor("document.body?.innerText.includes('Bring your repository into the workbench.')", "onboarding");
 await waitFor("document.body.innerText.includes('Herdr interactive runtime') && document.querySelector('.advanced-runtime select')?.value === 'herdr'", "Herdr-first onboarding default");
+await capture("01-onboarding");
 
 const onboarding = `(() => {
   const set = (element, value) => {
@@ -75,6 +88,7 @@ const onboarding = `(() => {
 })()`;
 await evaluate(onboarding);
 await waitFor("document.body.innerText.includes('Talk to your project executive')", "workbench after onboarding");
+await waitFor("document.body.innerText.includes('No implementation work accepted yet') && document.body.innerText.includes('worker runs')", "executive and implementation surfaces are separated");
 
 await evaluate(`(() => {
   const area = document.querySelector('textarea[aria-label="Message to project executive"]');
@@ -85,43 +99,56 @@ await evaluate(`(() => {
   return true;
 })()`);
 await waitFor("document.body.innerText.includes('I reviewed the durable project context and prepared one exact proposal for owner review. No project effect has executed.')", "durable executive response", 20000);
-await waitFor("document.body.innerText.includes('1 typed proposal is ready for explicit review.')", "linked typed proposal");
-await waitFor("document.body.innerText.includes('Executive response recorded. Its short-lived provider session is finishing; the durable conversation remains here.')", "terminal executive exchange notice");
-await waitFor("document.body.innerText.includes('No implementation work proposed yet') && [...document.querySelectorAll('.metric-row strong')].at(0)?.textContent === '0'", "standing executive task excluded from implementation work");
+await waitFor("document.body.innerText.includes('1 proposal is ready. Review exactly what will change.')", "linked typed proposal");
+await waitFor("document.body.innerText.includes('Executive response recorded. The durable conversation remains here; its short-lived provider session is not project authority.')", "terminal executive exchange notice");
+await waitFor("document.body.innerText.includes('No implementation work accepted yet') && [...document.querySelectorAll('.metric-row strong')].at(0)?.textContent === '0'", "standing executive task excluded from implementation work");
+await capture("02-executive-conversation");
 
 await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Decisions')).click(); return true; })()`);
-await waitFor("document.body.innerText.includes('Executive proposals') && document.body.innerText.includes('Create One Exact Bounded Implementation Task For Owner Review.')", "exact executive proposal");
-await waitFor("document.body.innerText.includes('1 exact operation') && document.body.innerText.includes('Implement the next bounded project step')", "typed proposal operation");
+await waitFor("document.body.innerText.includes('Needs your review') && document.body.innerText.includes('Create one exact bounded implementation task for owner review.')", "exact executive proposal");
+await waitFor("document.body.innerText.toLowerCase().includes('1 proposed implementation task') && document.body.innerText.includes('Implement the next bounded project step')", "plain-language proposal impact");
+await capture("03-decision-review");
 await evaluate(`(() => {
-  const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('Accept exact proposal') && !candidate.disabled);
+  const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('Accept these tasks') && !candidate.disabled);
   if (button) button.click();
   return Boolean(button);
 })()`);
-await waitFor("document.body.innerText.includes('Recorded owner decision') && document.body.innerText.includes('Accepted the exact reviewed executive proposal.')", "recorded exact proposal acceptance", 20000);
+await waitFor("document.body.innerText.includes('Nothing needs your decision') && document.body.innerText.includes('Earlier decisions and rejected drafts')", "recorded exact proposal acceptance", 20000);
+await evaluate(`(() => { document.querySelector('.decision-history > summary')?.click(); return true; })()`);
+await waitFor("document.body.innerText.includes('Recorded owner decision') && document.body.innerText.includes('Accepted the exact reviewed executive proposal.')", "accepted proposal history");
+await capture("03b-decision-history");
 
 await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Workbench')).click(); return true; })()`);
 await waitFor("document.body.innerText.includes('PROACTIVE EXECUTIVE REVIEW OF WORKER ACTIVITY THROUGH EVENT #') && document.body.innerText.includes('Executive is caught up')", "automatic executive review of worker completion", 20000);
 
 await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Work graph')).click(); return true; })()`);
 await waitFor("document.body.innerText.includes('Implement the next bounded project step')", "accepted proposal task in work graph");
+await capture("04-work-graph");
 await evaluate(`(() => {
-  const task = [...document.querySelectorAll('.kanban-column button')].find((button) => button.textContent.includes('Implement the next bounded project step'));
+  const task = [...document.querySelectorAll('.work-item')].find((button) => button.textContent.includes('Implement the next bounded project step'));
   if (task) task.click();
   return Boolean(task);
 })()`);
 await waitFor("document.body.innerText.includes('READINESS') && document.body.innerText.includes('ASSIGNMENT')", "task readiness inspector");
+await capture("04b-task-inspector");
 if (browserExceptions.length) throw new Error(`browser exceptions after task inspection: ${browserExceptions.join(" | ")}`);
 await evaluate(`(() => { document.querySelector('button[aria-label="Close inspector"]')?.click(); return true; })()`);
 
 await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Crew')).click(); return true; })()`);
-await waitFor("document.body.innerText.includes('Inspect agent')", "crew inspector action");
-await evaluate(`(() => { [...document.querySelectorAll('button')].find((button) => button.textContent.includes('Inspect agent')).click(); return true; })()`);
+await waitFor("document.body.innerText.includes('Project executive') && document.body.innerText.includes('Implementation workers') && document.body.innerText.includes('Inspect worker')", "crew roles and inspector action");
+await capture("05-crew-roles");
+await evaluate(`(() => { [...document.querySelectorAll('button')].find((button) => button.textContent.includes('Inspect worker')).click(); return true; })()`);
 await waitFor("document.body.innerText.includes('REPOSITORY OBSERVATION')", "agent repository observation");
 
 await evaluate(`(() => { document.querySelector('button[aria-label="Close inspector"]').click(); [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Briefing')).click(); return true; })()`);
 await waitFor("document.body.innerText.includes('Project briefing')", "briefing view");
 await evaluate(`(() => { [...document.querySelectorAll('button')].find((button) => button.textContent.includes('Generate briefing')).click(); return true; })()`);
 await waitFor("document.body.innerText.includes('Event cut #')", "bounded project briefing", 20000);
+
+await command("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Workbench')).click(); window.scrollTo(0, 0); return true; })()`);
+await waitFor("getComputedStyle(document.querySelector('.mobile-menu')).display !== 'none' && document.querySelector('.sidebar').getBoundingClientRect().right <= 0", "collapsed mobile navigation");
+await capture("06-mobile-workbench");
 
 const result = await evaluate(`(() => ({
   title: document.title,
@@ -137,8 +164,6 @@ if (result.iconCount < 8) throw new Error(`expected Lucide icon pack, found ${re
 if (result.unnamedButtons || result.unlabelledControls) throw new Error(`unnamed browser controls: buttons=${result.unnamedButtons}, fields=${result.unlabelledControls}`);
 if (result.leakedHandle) throw new Error("private runtime authority leaked into the browser document");
 if (browserExceptions.length) throw new Error(`browser exceptions: ${browserExceptions.join(" | ")}`);
-for (const expected of ["Project briefing", "Event cut #"]) {
-  if (!result.body.includes(expected)) throw new Error(`browser result omitted ${expected}`);
-}
+if (!result.body.includes("Talk to your project executive")) throw new Error("mobile result omitted the project executive workbench");
 fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));
 socket.close();

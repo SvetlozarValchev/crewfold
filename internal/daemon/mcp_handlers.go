@@ -96,7 +96,7 @@ func (s *server) handleMCPRequest(request mcp.Request) mcp.Response {
 				allowed = withoutCheckWatchTools(allowed)
 			}
 		}
-		return mcp.Success(request.ID, map[string]any{"tools": allowedMCPTools(allowed)})
+		return mcp.Success(request.ID, map[string]any{"tools": allowedMCPTools(allowed, briefing.Packet.ManagementGrant)})
 	case "resources/list":
 		return mcp.Success(request.ID, map[string]any{"resources": scopedMCPResources(briefing)})
 	case "resources/read":
@@ -600,10 +600,20 @@ func scopedMCPTools() []mcp.Tool {
 	}
 }
 
-func allowedMCPTools(allowed []string) []mcp.Tool {
+func allowedMCPTools(allowed []string, grant *domain.ContextManagerGrant) []mcp.Tool {
 	result := make([]mcp.Tool, 0, len(allowed))
 	for _, tool := range scopedMCPTools() {
 		if containsString(allowed, tool.Name) {
+			if tool.Name == toolProposeTasks && grant != nil {
+				actionTypes := []string{domain.ProposalActionCreateTask, domain.ProposalActionAddDependency}
+				description := "Propose a bounded task decomposition using only exact owner-allowed launch profiles. Claim requirements are unavailable for this run. This does not create tasks until the local owner accepts it."
+				if len(grant.AllowedClaimKinds) > 0 {
+					actionTypes = append(actionTypes, domain.ProposalActionDeclareClaimRequirement)
+					description = "Propose a bounded task decomposition using only exact owner-allowed launch profiles and claim kinds. This does not create tasks until the local owner accepts it."
+				}
+				tool.Description = description
+				tool.InputSchema = managerProposalInputSchema(actionTypes, grant.AllowedClaimKinds)
+			}
 			result = append(result, tool)
 		}
 	}
@@ -632,11 +642,15 @@ func knownMCPTool(name string) bool {
 	return false
 }
 
-func managerProposalInputSchema(actionTypes []string) map[string]any {
+func managerProposalInputSchema(actionTypes []string, allowedClaimKinds ...[]string) map[string]any {
+	claimKinds := []string{domain.ClaimKindPath, domain.ClaimKindComponent, domain.ClaimKindOperation}
+	if len(allowedClaimKinds) > 0 {
+		claimKinds = append([]string(nil), allowedClaimKinds[0]...)
+	}
 	actionChoices := make([]map[string]any, 0, len(actionTypes))
 	for _, actionType := range actionTypes {
 		actionChoices = append(actionChoices, objectSchema([]string{"type", actionType}, map[string]any{
-			"type": map[string]any{"const": actionType}, actionType: managerActionPayloadSchema(actionType),
+			"type": map[string]any{"const": actionType}, actionType: managerActionPayloadSchema(actionType, claimKinds),
 		}))
 	}
 	return objectSchema([]string{"summary", "actions", "idempotency_key"}, map[string]any{
@@ -652,7 +666,11 @@ func managerProposalInputSchema(actionTypes []string) map[string]any {
 // The canonical store validates the closed action union, exact task revisions,
 // and launch-profile scope. The transport still closes each nested payload so a
 // model cannot smuggle trusted run/workspace/provider fields through MCP.
-func managerActionPayloadSchema(actionType string) map[string]any {
+func managerActionPayloadSchema(actionType string, allowedClaimKinds ...[]string) map[string]any {
+	claimKinds := []string{domain.ClaimKindPath, domain.ClaimKindComponent, domain.ClaimKindOperation}
+	if len(allowedClaimKinds) > 0 {
+		claimKinds = append([]string(nil), allowedClaimKinds[0]...)
+	}
 	existingTaskRef := func() map[string]any {
 		return objectSchema([]string{"task_id", "expected_task_revision"}, map[string]any{
 			"task_id": managerEntityIDSchema("task_"), "expected_task_revision": map[string]any{"type": "integer", "minimum": 1},
@@ -681,7 +699,7 @@ func managerActionPayloadSchema(actionType string) map[string]any {
 		return objectSchema([]string{"task", "depends_on"}, map[string]any{"task": taskRef(true), "depends_on": taskRef(true)})
 	case domain.ProposalActionDeclareClaimRequirement:
 		return objectSchema([]string{"task", "kind", "target", "mode", "conflict_policy"}, map[string]any{
-			"task": taskRef(true), "kind": map[string]any{"type": "string", "enum": []string{domain.ClaimKindPath, domain.ClaimKindComponent, domain.ClaimKindOperation}}, "target": stringSchema(1, 512),
+			"task": taskRef(true), "kind": map[string]any{"type": "string", "enum": claimKinds}, "target": stringSchema(1, 512),
 			"mode":            map[string]any{"type": "string", "enum": []string{domain.ClaimModeExclusive, domain.ClaimModeShared, domain.ClaimModeAdvisory}},
 			"conflict_policy": map[string]any{"type": "string", "enum": []string{domain.ClaimPolicyNotify, domain.ClaimPolicyDenyNew, domain.ClaimPolicyPauseScheduling, domain.ClaimPolicyRequestResolution}},
 		})

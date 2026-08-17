@@ -14,7 +14,7 @@ import (
 func TestImmutableToolAllowlistHidesLaterCapabilities(t *testing.T) {
 	t.Parallel()
 	frozenAllowed := []string{toolBriefing, toolStatus, toolCompletion, toolArtifact, toolBlocked, toolProgress}
-	tools := allowedMCPTools(frozenAllowed)
+	tools := allowedMCPTools(frozenAllowed, nil)
 	if len(tools) != len(frozenAllowed) {
 		t.Fatalf("allowedMCPTools(frozen) count = %d, want %d", len(tools), len(frozenAllowed))
 	}
@@ -64,7 +64,7 @@ func TestCheckWatchToolsAreOperationDerivedAndExposeNoTrustedScope(t *testing.T)
 		toolContextDeltaAck, toolAcknowledge, toolBriefing, toolContextDelta, toolStatus, toolInbox,
 		toolKnowledge, toolCompletion, toolArtifact, toolRead, toolBlocked, toolContradictionReport, toolProgress, toolSend,
 	}
-	allowed := allowedMCPTools(append(append([]string(nil), base...), wantNames...))
+	allowed := allowedMCPTools(append(append([]string(nil), base...), wantNames...), nil)
 	gotSuffix := make([]string, 0, len(wantNames))
 	for _, tool := range allowed {
 		if containsString(wantNames, tool.Name) {
@@ -101,7 +101,7 @@ func TestCheckWatchAuthorityIsExactAndNeverDerivedFromRole(t *testing.T) {
 	if _, err := checkWatchGrantForOperation(ungranted, domain.CheckWatchOperationInspect); store.ErrorCode(err) != store.CodeCheckWatchGrantDenied {
 		t.Fatalf("same-role ungranted run error = %v, code = %q", err, store.ErrorCode(err))
 	}
-	for _, tool := range allowedMCPTools(baseRunToolNamesForTest()) {
+	for _, tool := range allowedMCPTools(baseRunToolNamesForTest(), nil) {
 		if tool.Name == toolRunCheck || tool.Name == toolListCheckResults || tool.Name == toolInspectCheckResult || tool.Name == toolProposeCheckRepair {
 			t.Fatalf("same-role ungranted run advertised check tool %q", tool.Name)
 		}
@@ -187,11 +187,49 @@ func TestManagerProposalToolsAreBoundedDerivedScopeAndCanonical(t *testing.T) {
 			}
 		}
 	}
-	allowed := allowedMCPTools(append([]string(nil), wantNames...))
+	allowed := allowedMCPTools(append([]string(nil), wantNames...), nil)
 	for index, tool := range allowed {
 		if tool.Name != wantNames[index] {
 			t.Fatalf("allowed manager tool %d = %q, want %q", index, tool.Name, wantNames[index])
 		}
+	}
+}
+
+func TestManagerTaskProposalSchemaCannotExceedFrozenClaimGrant(t *testing.T) {
+	t.Parallel()
+	find := func(grant *domain.ContextManagerGrant) mcp.Tool {
+		for _, tool := range allowedMCPTools([]string{toolProposeTasks}, grant) {
+			return tool
+		}
+		t.Fatal("task proposal tool was not exposed")
+		return mcp.Tool{}
+	}
+	actionTypes := func(tool mcp.Tool) []string {
+		choices := tool.InputSchema["properties"].(map[string]any)["actions"].(map[string]any)["items"].(map[string]any)["oneOf"].([]map[string]any)
+		values := make([]string, 0, len(choices))
+		for _, choice := range choices {
+			values = append(values, choice["properties"].(map[string]any)["type"].(map[string]any)["const"].(string))
+		}
+		return values
+	}
+
+	withoutClaims := find(&domain.ContextManagerGrant{})
+	if got := actionTypes(withoutClaims); !reflect.DeepEqual(got, []string{domain.ProposalActionCreateTask, domain.ProposalActionAddDependency}) {
+		t.Fatalf("zero-claim proposal actions = %v", got)
+	}
+	if !strings.Contains(withoutClaims.Description, "unavailable") {
+		t.Fatalf("zero-claim proposal description = %q", withoutClaims.Description)
+	}
+
+	withPathClaims := find(&domain.ContextManagerGrant{AllowedClaimKinds: []string{domain.ClaimKindPath}})
+	if got := actionTypes(withPathClaims); !reflect.DeepEqual(got, []string{domain.ProposalActionCreateTask, domain.ProposalActionAddDependency, domain.ProposalActionDeclareClaimRequirement}) {
+		t.Fatalf("path-claim proposal actions = %v", got)
+	}
+	choices := withPathClaims.InputSchema["properties"].(map[string]any)["actions"].(map[string]any)["items"].(map[string]any)["oneOf"].([]map[string]any)
+	claimPayload := choices[2]["properties"].(map[string]any)[domain.ProposalActionDeclareClaimRequirement].(map[string]any)
+	kinds := claimPayload["properties"].(map[string]any)["kind"].(map[string]any)["enum"].([]string)
+	if !reflect.DeepEqual(kinds, []string{domain.ClaimKindPath}) {
+		t.Fatalf("claim kind enum = %v", kinds)
 	}
 }
 
