@@ -51,9 +51,28 @@ func (w *workbenchServer) handleWorkbenchRunRetry(response http.ResponseWriter, 
 		w.writeStoreError(response, &store.Error{Code: store.CodeRunConflict, Message: "run or task revision changed before retry"})
 		return
 	}
-	if prior.Run.Status != domain.RunStartFailed && (prior.Run.Status != domain.RunReview || prior.Task.Status != domain.TaskChangesRequested) {
-		w.writeStoreError(response, &store.Error{Code: store.CodeRunConflict, Message: "only an exact start_failed run or review with requested changes can be retried from the workbench"})
+	if prior.Run.Status != domain.RunStartFailed && prior.Run.Status != domain.RunStopped && (prior.Run.Status != domain.RunReview || prior.Task.Status != domain.TaskChangesRequested) {
+		w.writeStoreError(response, &store.Error{Code: store.CodeRunConflict, Message: "only an exact start_failed or stopped run, or a review with requested changes, can be retried from the workbench"})
 		return
+	}
+	if prior.Run.Status == domain.RunStopped && (prior.Task.Status != domain.TaskAssigned || prior.Task.AssignmentID == "") {
+		w.writeStoreError(response, &store.Error{Code: store.CodeRunConflict, Message: "a stopped run can start fresh only while its exact task assignment is retained"})
+		return
+	}
+	if prior.Run.Status == domain.RunStopped {
+		if prior.Run.AssignmentID != prior.Task.AssignmentID || prior.Run.AgentID != prior.Task.AssignedAgentID {
+			w.writeStoreError(response, &store.Error{Code: store.CodeRunConflict, Message: "stopped run no longer matches the retained task assignment"})
+			return
+		}
+		latest, listErr := w.daemon.store.ListRuns(request.Context(), store.ListRunsQuery{WorkspaceIdentifier: params.Workspace, TaskID: prior.Run.TaskID, Limit: 1})
+		if listErr != nil {
+			w.writeStoreError(response, listErr)
+			return
+		}
+		if len(latest.Runs) != 1 || latest.Runs[0].ID != prior.Run.ID {
+			w.writeStoreError(response, &store.Error{Code: store.CodeRunConflict, Message: "only the latest stopped run can start a fresh environment"})
+			return
+		}
 	}
 	runtimeDriver, exists := w.daemon.runtimes[prior.Run.Runtime]
 	if !exists {

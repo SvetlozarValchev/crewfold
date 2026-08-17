@@ -93,6 +93,13 @@ crewfold crew disable agent_0123456789abcdef0123456789abcdef \
 Adding starts no work. Disabling is rejected while the worker owns accepted or
 live work and cannot remove the final implementation worker.
 
+The run inspector distinguishes in-place recovery from environment replacement.
+`Resume same runtime` preserves the exact current runtime and sandbox, so it is
+valid only after a blocker was repaired in place. If service, provider, runtime,
+or network policy changed, the owner first stops that authority holder; once the
+run is durably stopped, `Start fresh run` launches the retained assignment under
+the current policy. Crewfold never silently swaps a live sandbox.
+
 ## Operator dashboard
 
 ```sh

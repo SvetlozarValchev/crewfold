@@ -814,7 +814,7 @@ func TestM21HerdrOnboardingRequiresLiveHostBeforeCanonicalMutation(t *testing.T)
 	}
 }
 
-func TestM21WorkbenchRetriesOneExactStartFailedOrReviewedRunAfterPreflight(t *testing.T) {
+func TestM21WorkbenchRetriesOneExactStartFailedStoppedOrReviewedRunAfterPreflight(t *testing.T) {
 	t.Parallel()
 
 	config := testConfig(t)
@@ -937,6 +937,49 @@ func TestM21WorkbenchRetriesOneExactStartFailedOrReviewedRunAfterPreflight(t *te
 	}
 	if result.Detail.Run.ID == reviewed.Detail.Run.ID || result.Detail.Task.Status != domain.TaskAssigned || result.Detail.Task.AssignmentID != reviewedCurrent.Detail.Task.AssignmentID {
 		t.Fatalf("review retry result = %#v", result.Detail)
+	}
+	waitForRunStatus(t, api, result.Detail.Run.ID, domain.RunCompleted)
+
+	stoppedTask := createAssignedRunWorkerTask(t, api, project.Project.ID, agent.Agent.ID, "web stopped retry")
+	blocked, err := api.RunStart(context.Background(), localapi.RunStartParams{
+		Workspace: workspace.Workspace.ID, Task: stoppedTask.Detail.Task.ID, Runtime: "fake", Provider: "fake",
+		Scenario:             domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "web-stopped-retry", Steps: []domain.FakeStep{{Kind: domain.ObservationBlocked, Message: "replacement environment required"}}},
+		ExpectedTaskRevision: stoppedTask.Detail.Task.Revision, IdempotencyKey: "web-stopped-first",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedCurrent := waitForRunStatus(t, api, blocked.Detail.Run.ID, domain.RunBlocked)
+	if _, err := api.RunStop(context.Background(), localapi.RunStopParams{
+		Workspace: workspace.Workspace.ID, Run: blockedCurrent.Detail.Run.ID, ExpectedRevision: blockedCurrent.Detail.Run.Revision,
+		GracePeriodMillis: 100, IdempotencyKey: "web-stopped-retire",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stoppedCurrent := waitForRunStatus(t, api, blocked.Detail.Run.ID, domain.RunStopped)
+	body, _ = json.Marshal(map[string]any{
+		"workspace": workspace.Workspace.ID, "run": stoppedCurrent.Detail.Run.ID,
+		"expected_run_revision": stoppedCurrent.Detail.Run.Revision, "expected_task_revision": stoppedCurrent.Detail.Task.Revision,
+		"idempotency_key": "web-stopped-second",
+	})
+	request, _ = http.NewRequest(http.MethodPost, origin+session.APIBase+"/retry-run", bytes.NewReader(body))
+	request.Header.Set("Origin", origin)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Crewfold-CSRF", session.CSRF)
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("stopped retry status = %d: %s", response.StatusCode, raw)
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Detail.Run.ID == stoppedCurrent.Detail.Run.ID || result.Detail.Run.TaskID != stoppedTask.Detail.Task.ID {
+		t.Fatalf("stopped retry result = %#v", result.Detail.Run)
 	}
 	waitForRunStatus(t, api, result.Detail.Run.ID, domain.RunCompleted)
 }
