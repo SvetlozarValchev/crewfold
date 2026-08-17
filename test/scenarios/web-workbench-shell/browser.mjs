@@ -86,6 +86,8 @@ await evaluate(`(() => {
 })()`);
 await waitFor("document.body.innerText.includes('I reviewed the durable project context and prepared one exact proposal for owner review. No project effect has executed.')", "durable executive response", 20000);
 await waitFor("document.body.innerText.includes('1 typed proposal is ready for explicit review.')", "linked typed proposal");
+await waitFor("document.body.innerText.includes('Executive response recorded. Its short-lived provider session is finishing; the durable conversation remains here.')", "terminal executive exchange notice");
+await waitFor("document.body.innerText.includes('No implementation work proposed yet') && [...document.querySelectorAll('.metric-row strong')].at(0)?.textContent === '0'", "standing executive task excluded from implementation work");
 
 await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Decisions')).click(); return true; })()`);
 await waitFor("document.body.innerText.includes('Executive proposals') && document.body.innerText.includes('Create One Exact Bounded Implementation Task For Owner Review.')", "exact executive proposal");

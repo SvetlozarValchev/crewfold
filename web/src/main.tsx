@@ -394,6 +394,7 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
   const [exchanges, setExchanges] = useState<OwnerExecutiveExchange[]>([]);
   const [executive, setExecutive] = useState<OwnerExecutiveBinding | null>(null);
   const [managerReview, setManagerReview] = useState<OwnerManagerReview | null>(null);
+  const [trackedExchangeID, setTrackedExchangeID] = useState("");
   const recovering = useRef(false);
   const pendingKey = data.workspace && data.project ? `crewfold_pending_intent_${data.workspace.id}_${data.project.id}` : "";
   useEffect(() => {
@@ -416,6 +417,14 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
     return () => { active = false; window.clearTimeout(timer); };
   }, [apiBase, data.project?.id, data.workspace?.id]);
   useEffect(() => {
+    if (!trackedExchangeID) return;
+    const exchange = exchanges.find((item) => item.id === trackedExchangeID);
+    if (!exchange || !["responded", "failed"].includes(exchange.status)) return;
+    setNotice(exchange.status === "responded" ? "Executive response recorded. Its short-lived provider session is finishing; the durable conversation remains here." : exchange.last_error ?? "The executive session ended before recording a response.");
+    setTrackedExchangeID("");
+    void reload();
+  }, [exchanges, reload, trackedExchangeID]);
+  useEffect(() => {
     if (!pendingKey || recovering.current) return;
     const raw = sessionStorage.getItem(pendingKey);
     if (!raw) return;
@@ -426,6 +435,7 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
         sessionStorage.removeItem(pendingKey);
         setTurns((current) => [...current.filter((item) => item.turn.id !== detail.turn.id), detail]);
         setExchanges((current) => [...current.filter((item) => item.id !== exchange.id), exchange]);
+        setTrackedExchangeID(exchange.id);
         setNotice("Recovered the exact durable executive exchange without creating a duplicate run.");
         await reload();
       }).catch((reason) => setNotice(reason instanceof Error ? reason.message : "Interrupted turn recovery failed.")).finally(() => { recovering.current = false; setBusy(false); });
@@ -446,6 +456,7 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
       setInstruction(""); setNotice("Instruction recorded. The project executive is working from the frozen canonical context.");
       setTurns((current) => [...current, detail]);
       setExchanges((current) => [...current, exchange]);
+      setTrackedExchangeID(exchange.id);
       await reload();
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The instruction could not be committed."); }
     finally { setBusy(false); }
@@ -463,9 +474,11 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The manager decision could not be processed."); }
     finally { setBusy(false); }
   };
-  const activeRuns = data.runs.filter((run) => ["requested", "starting", "active", "blocked", "stopping"].includes(run.status));
-  const attentionRuns = data.runs.filter((run) => ["requested", "starting", "active", "blocked", "stopping", "start_failed", "failed", "lost"].includes(run.status)).sort((left, right) => right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id));
-  const openTasks = data.tasks.filter(({ task }) => !["completed", "failed", "cancelled"].includes(task.status));
+  const projectTasks = data.tasks.filter(({ task }) => task.id !== executive?.planning_task_id);
+  const projectRuns = data.runs.filter((run) => run.task_id !== executive?.planning_task_id);
+  const activeRuns = projectRuns.filter((run) => ["requested", "starting", "active", "blocked", "stopping"].includes(run.status));
+  const attentionRuns = projectRuns.filter((run) => ["requested", "starting", "active", "blocked", "stopping", "start_failed", "failed", "lost"].includes(run.status)).sort((left, right) => right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id));
+  const openTasks = projectTasks.filter(({ task }) => !["completed", "failed", "cancelled"].includes(task.status));
   const exchangeByTurn = new Map(exchanges.map((exchange) => [exchange.turn_id, exchange]));
   const executiveAgent = executive ? data.agents.find((agent) => agent.id === executive.agent_id) : null;
   const exchangeMessage = (detail: OwnerTurnDetail, exchange?: OwnerExecutiveExchange) => {
@@ -481,7 +494,7 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
       <div className="panel-heading"><div><div className="eyebrow"><Sparkles size={13} />Project direction</div><h1>Talk to your project executive</h1></div><StatusPill value="local" /></div>
       <div className="conversation-intro">
         <div className="assistant-avatar"><Bot size={22} /></div>
-        <div><strong>{executiveAgent?.name ?? "Project executive"}</strong><p>I’m a durable Crewfold agent, not a one-shot form interpreter. Each exchange runs through your subscription-backed provider with frozen project context. I can answer, ask a decision, or create typed proposals; Crewfold remains the authority that validates and commits accepted effects.</p></div>
+        <div><strong>{executiveAgent?.name ?? "Project executive"}</strong><p>I’m a durable Crewfold agent, not a one-shot form interpreter. The conversation persists, while each provider session is short-lived and closes after recording its response. I can answer, ask a decision, or create typed proposals; Crewfold remains the authority that validates and commits accepted effects.</p></div>
       </div>
       {managerReview && <div className={`manager-review-state ${managerReview.status}`}><Bot size={15} /><span><strong>{managerReview.status === "leased" ? "Executive is reviewing worker activity" : managerReview.status === "pending" ? "Worker activity queued for executive review" : managerReview.status === "failed" ? "Executive review needs attention" : "Executive is caught up"}</strong><small>{managerReview.status === "failed" ? managerReview.last_error : `reviewed #${managerReview.reviewed_event_sequence} · requested #${managerReview.requested_event_sequence}`}</small></span></div>}
       {turns.length > 0 && <div className="conversation-history">{turns.slice(-6).map((detail) => <div className="turn" key={detail.turn.id}>
@@ -504,7 +517,7 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, mut
       <section className="panel metric-panel"><div className="panel-label"><Workflow size={16} />Current work</div><div className="metric-row"><div><strong>{openTasks.length}</strong><span>open tasks</span></div><div><strong>{activeRuns.length}</strong><span>live runs</span></div><div><strong>{data.approvals.filter((item) => item.status === "pending").length + data.proposals.filter((item) => item.status === "pending").length}</strong><span>decisions</span></div></div></section>
       <section className="panel compact-list"><div className="panel-title"><h2>Agents and launch attention</h2><button onClick={() => void reload()} aria-label="Refresh workbench"><RefreshCw size={15} /></button></div>{attentionRuns.length === 0 ? <EmptyState icon={Bot} title="No run needs attention" detail="There is no live, failed, or unresolved agent run in this project." /> : attentionRuns.slice(0, 5).map((run) => <button className="list-row" key={run.id} onClick={() => selectRun(run)}><span className="row-icon"><Bot size={16} /></span><span><strong>{data.agents.find((agent) => agent.id === run.agent_id)?.name ?? "Agent"}</strong><small>{run.status === "start_failed" ? run.failure_message ?? "Launch failed; inspect and retry." : run.status === "failed" ? `${data.tasks.find((task) => task.task.id === run.task_id)?.task.title ?? "Assigned work"} · inspect failure output` : run.status === "lost" ? "Runtime outcome is unknown; owner resolution is required." : data.tasks.find((task) => task.task.id === run.task_id)?.task.title ?? "Assigned work"}</small></span><StatusPill value={run.status} /></button>)}</section>
     </aside>
-    <section className="panel task-strip full-span"><div className="panel-title"><div><h2>Next work</h2><p>Canonical task state, ordered by Crewfold.</p></div><span>{data.tasks.length} total</span></div>{openTasks.length === 0 ? <EmptyState icon={ListChecks} title="No work recorded yet" detail="Describe the outcome above to create the first objective and task." /> : <div className="task-cards">{openTasks.slice(0, 6).map((detail) => <button key={detail.task.id} className="task-card" onClick={() => selectTask(detail)}><div><StatusPill value={detail.task.status} /><span className="priority">P{detail.task.priority}</span></div><strong>{detail.task.title}</strong><small>{data.agents.find((agent) => agent.id === detail.task.assigned_agent_id)?.name ?? "Unassigned"} · updated {displayTime(detail.task.updated_at)}</small><ChevronRight size={16} /></button>)}</div>}</section>
+    <section className="panel task-strip full-span"><div className="panel-title"><div><h2>Next work</h2><p>Canonical implementation task state, ordered by Crewfold.</p></div><span>{projectTasks.length} total</span></div>{openTasks.length === 0 ? <EmptyState icon={ListChecks} title="No implementation work proposed yet" detail="Ask the executive for a bounded plan or change; accepted typed proposals will appear here." /> : <div className="task-cards">{openTasks.slice(0, 6).map((detail) => <button key={detail.task.id} className="task-card" onClick={() => selectTask(detail)}><div><StatusPill value={detail.task.status} /><span className="priority">P{detail.task.priority}</span></div><strong>{detail.task.title}</strong><small>{data.agents.find((agent) => agent.id === detail.task.assigned_agent_id)?.name ?? "Unassigned"} · updated {displayTime(detail.task.updated_at)}</small><ChevronRight size={16} /></button>)}</div>}</section>
   </div>;
 }
 
