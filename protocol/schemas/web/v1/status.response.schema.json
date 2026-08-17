@@ -4,7 +4,7 @@
   "title": "Crewfold workbench status response v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "type", "status", "protocol", "pid", "started_at", "uptime_ms", "server_version"],
+  "required": ["schema", "type", "status", "protocol", "pid", "started_at", "uptime_ms", "codex_tool_network_access", "server_version"],
   "properties": {
     "schema": {"const": "urn:crewfold:schema:web:workbench-status:v1"},
     "type": {"const": "workbench_status"},
@@ -13,6 +13,7 @@
     "pid": {"type": "integer", "minimum": 1},
     "started_at": {"type": "string", "format": "date-time"},
     "uptime_ms": {"type": "integer", "minimum": 0},
+    "codex_tool_network_access": {"type": "boolean"},
     "server_version": {"$ref": "../../cli/v1/version.response.schema.json"}
   }
 }

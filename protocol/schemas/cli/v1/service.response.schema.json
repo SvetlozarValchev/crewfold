@@ -12,6 +12,7 @@
     "status": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z_-]*$"},
     "unit_path": {"type": "string", "minLength": 2, "maxLength": 4096, "pattern": "^/[^\\x00\\r\\n]*$"},
     "data_dir": {"type": "string", "minLength": 2, "maxLength": 4096, "pattern": "^/[^\\x00\\r\\n]*$"},
-    "socket": {"type": "string", "minLength": 2, "maxLength": 4096, "pattern": "^/[^\\x00\\r\\n]*$"}
+    "socket": {"type": "string", "minLength": 2, "maxLength": 4096, "pattern": "^/[^\\x00\\r\\n]*$"},
+    "codex_tool_network_access": {"type": "boolean"}
   }
 }

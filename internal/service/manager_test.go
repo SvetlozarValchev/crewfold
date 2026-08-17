@@ -42,7 +42,7 @@ func TestInstallWritesPrivateExactUnitAndStartsIt(t *testing.T) {
 	var calls []call
 	manager := Manager{
 		Paths: paths, Executable: filepath.Join(root, "Crewfold 100%", "crewfold"),
-		EnvironmentPath: "/opt/owner-tools:/usr/bin",
+		EnvironmentPath: "/opt/owner-tools:/usr/bin", CodexToolNetworkAccess: true,
 		Run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
 			calls = append(calls, call{name: name, arguments: append([]string(nil), arguments...)})
 			return nil, nil
@@ -66,6 +66,7 @@ func TestInstallWritesPrivateExactUnitAndStartsIt(t *testing.T) {
 		`--data-dir "` + paths.DataDir + `"`,
 		`--socket "` + paths.SocketPath + `"`,
 		`--web-address 127.0.0.1:0`,
+		`--codex-tool-network-access true`,
 		`UMask=0077`,
 		`NoNewPrivileges=true`,
 		`RuntimeDirectory=crewfold`,

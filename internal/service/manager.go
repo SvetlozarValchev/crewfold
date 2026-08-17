@@ -25,11 +25,12 @@ type Runner func(context.Context, string, ...string) ([]byte, error)
 
 // Manager owns one exact systemd user-service definition.
 type Manager struct {
-	Paths           appdirs.Paths
-	Executable      string
-	HerdrExecutable string
-	EnvironmentPath string
-	Run             Runner
+	Paths                  appdirs.Paths
+	Executable             string
+	HerdrExecutable        string
+	EnvironmentPath        string
+	CodexToolNetworkAccess bool
+	Run                    Runner
 }
 
 // Result is the stable human-facing service lifecycle result.
@@ -230,7 +231,7 @@ After=default.target
 
 [Service]
 Type=simple
-` + environment + `ExecStart=` + systemdQuote(m.Executable) + ` daemon run --data-dir ` + systemdQuote(m.Paths.DataDir) + ` --socket ` + systemdQuote(m.Paths.SocketPath) + ` --web-address 127.0.0.1:0
+` + environment + `ExecStart=` + systemdQuote(m.Executable) + ` daemon run --data-dir ` + systemdQuote(m.Paths.DataDir) + ` --socket ` + systemdQuote(m.Paths.SocketPath) + ` --web-address 127.0.0.1:0 --codex-tool-network-access ` + strconv.FormatBool(m.CodexToolNetworkAccess) + `
 Restart=on-failure
 RestartSec=2s
 UMask=0077

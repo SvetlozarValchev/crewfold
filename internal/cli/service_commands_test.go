@@ -62,8 +62,43 @@ func TestM21ServiceInstallUsesPrivateDefaultsAndMachineContract(t *testing.T) {
 	if response.Status != "active" || response.DataDir != paths.DataDir || response.Socket != paths.SocketPath {
 		t.Fatalf("service response = %#v", response)
 	}
+	if response.CodexToolNetworkAccess == nil || !*response.CodexToolNetworkAccess {
+		t.Fatalf("service response network policy = %#v", response.CodexToolNetworkAccess)
+	}
+	unit, err := os.ReadFile(paths.UnitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(unit), "--codex-tool-network-access true") {
+		t.Fatalf("installed service did not enable the ordinary dependency network policy:\n%s", unit)
+	}
 	if len(commands) != 3 || !strings.Contains(commands[1], "enable crewfold.service") || !strings.Contains(commands[2], "restart crewfold.service") {
 		t.Fatalf("systemctl commands = %#v", commands)
+	}
+}
+
+func TestM21ServiceInstallCanExplicitlyDisableCodexToolNetwork(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	paths := appdirs.Paths{
+		StateDir: filepath.Join(root, "state"), ConfigDir: filepath.Join(root, "config"), RuntimeDir: filepath.Join(root, "run"),
+		DataDir: filepath.Join(root, "state", "crewfold"), SocketPath: filepath.Join(root, "run", "crewfold.sock"), UnitPath: filepath.Join(root, "config", "crewfold.service"),
+	}
+	app, stdout, stderr := newTestApp()
+	app.resolveAppDirs = func() (appdirs.Paths, error) { return paths, nil }
+	app.executablePath = func() (string, error) { return filepath.Join(root, "bin", "crewfold"), nil }
+	app.lookPath = func(string) (string, error) { return "", errors.New("not installed") }
+	app.runService = func(context.Context, string, ...string) ([]byte, error) { return nil, nil }
+	if exit := app.Run([]string{"service", "install", "--codex-tool-network-access", "false"}); exit != ExitOK {
+		t.Fatalf("service install exit = %d stderr = %q", exit, stderr.String())
+	}
+	unit, err := os.ReadFile(paths.UnitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(unit), "--codex-tool-network-access false") || !strings.Contains(stdout.String(), "network: disabled") {
+		t.Fatalf("unit=%s stdout=%q", unit, stdout.String())
 	}
 }
 

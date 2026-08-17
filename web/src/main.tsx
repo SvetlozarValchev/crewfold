@@ -87,6 +87,7 @@ type DaemonStatus = {
   pid: number;
   started_at: string;
   uptime_ms: number;
+  codex_tool_network_access: boolean;
   server_version: { version: string };
 };
 
@@ -384,7 +385,7 @@ function EmptyState({ icon: Icon, title, detail }: { icon: typeof Inbox; title: 
   return <div className="empty-state"><Icon size={28} aria-hidden="true" /><h3>{title}</h3><p>{detail}</p></div>;
 }
 
-function Onboarding({ apiBase, csrf, onComplete }: { apiBase: string; csrf: string; onComplete: () => Promise<void> }) {
+function Onboarding({ apiBase, csrf, status, onComplete }: { apiBase: string; csrf: string; status: DaemonStatus | null; onComplete: () => Promise<void> }) {
   const [workspace, setWorkspace] = useState("personal");
   const [project, setProject] = useState("");
   const [path, setPath] = useState("");
@@ -429,6 +430,7 @@ function Onboarding({ apiBase, csrf, onComplete }: { apiBase: string; csrf: stri
       </div>
       <label><span>Implementation worker</span><input required pattern="[a-z][a-z0-9-]{0,62}" value={agent} onChange={(event) => setAgent(event.target.value)} /><small className="field-help">Executes implementation tasks only after you accept a proposal. Crewfold also creates a separate project executive for conversation and planning.</small></label>
       <label><span>Provider</span><select value={provider} onChange={(event) => setProvider(event.target.value)}><option value="codex">Codex subscription</option><option value="claude">Claude subscription</option><option value="fixture-mcp">Local fixture</option></select></label>
+      {provider === "codex" && <div className="runtime-primary"><Network size={19} /><div><strong>Dependency and documentation network {status?.codex_tool_network_access ? "enabled" : "disabled"}</strong><span>{status?.codex_tool_network_access ? "Codex may retrieve packages and documentation inside the workspace sandbox. Publishing, deployment, credentials, paid services, and external side effects remain outside this grant." : "This service cannot retrieve uncached packages. Reinstall with --codex-tool-network-access true before starting implementation work."}</span></div><StatusPill value={status?.codex_tool_network_access ? "enabled" : "blocked"} /></div>}
       <div className="runtime-primary"><TerminalSquare size={19} /><div><strong>Herdr interactive runtime</strong><span>Persistent agent terminal hosted beside Crewfold's canonical state.</span></div><StatusPill value={runtime === "herdr" ? "recommended" : "fallback"} /></div>
       <details className="advanced-runtime"><summary>Advanced runtime fallback</summary><label><span>Execution runtime</span><select value={runtime} onChange={(event) => setRuntime(event.target.value)}><option value="herdr">Herdr interactive · recommended</option><option value="direct">Direct headless · CI and automation</option></select></label><p>Direct has bounded logs but no persistent interactive terminal.</p></details>
       {error && <div className="form-error" role="alert"><AlertCircle size={17} />{error}</div>}
@@ -870,7 +872,7 @@ function HealthView({ apiBase, csrf, status }: { apiBase: string; csrf: string; 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const inspect = async () => { setBusy(true); setError(""); try { setDoctor(await rpc<FullDoctor>(apiBase, csrf, "system.doctor.full", {})); } catch (reason) { setError(reason instanceof Error ? reason.message : "Full diagnosis failed."); } finally { setBusy(false); } };
-  return <section className="panel page-panel"><div className="page-heading"><div><div className="eyebrow"><Stethoscope size={13} />Local service</div><h1>Health and recovery</h1><p>Read-only physical, canonical, queue, artifact, and resource diagnosis.</p></div><button className="primary-button compact" onClick={() => void inspect()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={14} /> : <HeartPulse size={14} />}Run full doctor</button></div><div className="health-overview"><div><strong>{status?.pid ?? "—"}</strong><span>daemon PID</span></div><div><strong>{Math.floor((status?.uptime_ms ?? 0) / 1000)}s</strong><span>uptime</span></div><div><strong>{doctor?.event_sequence ?? "—"}</strong><span>event high-water</span></div><div><strong>{doctor?.status ?? "not run"}</strong><span>full diagnosis</span></div></div>{error && <div className="form-error"><AlertCircle size={16} />{error}</div>}{doctor && <div className="doctor-grid">{doctor.checks.map((check) => <article key={check.code}><StatusPill value={check.status} /><strong>{check.code.replaceAll("_", " ")}</strong><p>{check.summary}</p><small>{check.issue_count} issues</small></article>)}</div>}</section>;
+  return <section className="panel page-panel"><div className="page-heading"><div><div className="eyebrow"><Stethoscope size={13} />Local service</div><h1>Health and recovery</h1><p>Read-only physical, canonical, queue, artifact, and resource diagnosis.</p></div><button className="primary-button compact" onClick={() => void inspect()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={14} /> : <HeartPulse size={14} />}Run full doctor</button></div><div className="health-overview"><div><strong>{status?.pid ?? "—"}</strong><span>daemon PID</span></div><div><strong>{Math.floor((status?.uptime_ms ?? 0) / 1000)}s</strong><span>uptime</span></div><div><strong>{status?.codex_tool_network_access ? "enabled" : "disabled"}</strong><span>Codex dependency network</span></div><div><strong>{doctor?.event_sequence ?? "—"}</strong><span>event high-water</span></div><div><strong>{doctor?.status ?? "not run"}</strong><span>full diagnosis</span></div></div><div className="effect-note"><Network size={16} /><span>This service policy permits Codex package and documentation retrieval only inside its workspace-write sandbox. It does not authorize publishing, deployment, credentials, paid services, or external side effects.</span></div>{error && <div className="form-error"><AlertCircle size={16} />{error}</div>}{doctor && <div className="doctor-grid">{doctor.checks.map((check) => <article key={check.code}><StatusPill value={check.status} /><strong>{check.code.replaceAll("_", " ")}</strong><p>{check.summary}</p><small>{check.issue_count} issues</small></article>)}</div>}</section>;
 }
 
 function LiveTerminal({ apiBase, csrf, workspace, run, initialLogs, close, mutable }: { apiBase: string; csrf: string; workspace: string; run: Run; initialLogs: string; close: () => void; mutable: boolean }) {
@@ -1170,7 +1172,7 @@ function App() {
       <button className="mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(!mobileNav)}><Menu size={19} /></button>
       <div className="brand"><span className="mark">CF</span><span>Crewfold <small>local</small></span></div>
       <div className="crumbs"><span>{data.workspace?.name ?? "personal workbench"}</span><ChevronRight size={14} /><strong>{title}</strong></div>
-      <div className={`service-state ${fresh ? "connected" : "connecting"}`}><i /><span>{fresh ? "Current · local only" : "Refreshing exact state…"}</span></div>
+      <div className={`service-state ${fresh ? "connected" : "connecting"}`}><i /><span>{fresh ? "Current · owner-local UI" : "Refreshing exact state…"}</span></div>
     </header>
     <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
       <div className="workspace-card"><div className="workspace-glyph"><Boxes size={18} /></div><div><strong>{data.workspace?.name ?? "Your workbench"}</strong><span>{data.project?.name ?? "Exact local state"}</span></div>{data.workspaces.length > 1 && <ChevronDown size={15} />}</div>
@@ -1181,7 +1183,7 @@ function App() {
       <div className="health-card"><HeartPulse size={16} /><span><strong>Canonical state</strong><small>Journal #{data.highWater}</small></span><Check size={14} /></div>
       <button className="settings-button" onClick={() => setView("health")}><Settings size={16} />Service settings</button>
     </aside>
-    {loading ? <main className="loading-main"><LoaderCircle className="spin" size={26} /><p>Loading exact local state…</p></main> : data.workspaces.length === 0 || data.projects.length === 0 || data.agents.length === 0 ? <Onboarding apiBase={apiBase} csrf={csrf} onComplete={reload} /> : <main className="content-main">
+    {loading ? <main className="loading-main"><LoaderCircle className="spin" size={26} /><p>Loading exact local state…</p></main> : data.workspaces.length === 0 || data.projects.length === 0 || data.agents.length === 0 ? <Onboarding apiBase={apiBase} csrf={csrf} status={status} onComplete={reload} /> : <main className="content-main">
       {error && <div className="global-error"><AlertCircle size={17} /><span>{error}</span><button onClick={() => void reload()}><RefreshCw size={15} />Retry</button></div>}
       {view === "workbench" && <WorkbenchView data={data} apiBase={apiBase} csrf={csrf} reload={reload} selectTask={inspectTask} selectRun={inspectRun} openDecisions={() => setView("decisions")} openCrew={() => setView("crew")} mutable={fresh} />}
       {view === "graph" && <GraphView data={data} selectTask={inspectTask} />}

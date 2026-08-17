@@ -1809,13 +1809,16 @@ sandbox; use --claude-external-sandbox true only inside an independent boundary.
 `
 
 const serviceHelp = `Usage:
-  crewfold service install [--output text|json]
+  crewfold service install [--codex-tool-network-access true|false] [--output text|json]
   crewfold service start [--output text|json]
   crewfold service stop [--output text|json]
   crewfold service status [--output text|json]
 
 Install or control the private Linux systemd user service using Crewfold's XDG
 state, configuration, and runtime defaults. Install enables and starts the unit.
+Codex dependency and documentation network access defaults to true inside its
+workspace-write sandbox. This does not authorize publishing, deployment,
+credentials, paid services, or Crewfold state changes. Pass false to opt out.
 No workspace, repository, provider call, model charge, or credential is created.
 `
 

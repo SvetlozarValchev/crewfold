@@ -62,6 +62,13 @@ an NVM, asdf, or similar toolchain path. The defaults are
 `<state>/runtime/crewfold.sock`. Installation creates no workspace, project,
 provider call, model charge, or credential.
 
+The ordinary owner-local install explicitly enables Codex dependency and
+documentation network access inside Codex's existing `workspace-write` sandbox.
+Use `crewfold service install --codex-tool-network-access false` to opt out. This
+service policy does not authorize publishing, deployment, credentials, paid
+services, or external side effects; those remain governed by Crewfold's exact
+authority and approval paths.
+
 `crewfold open` contacts that private socket, asks the daemon for one short-lived
 single-use browser grant, passes the fragment-bearing URL directly to `xdg-open`,
 and never prints or logs the grant. The loopback page exchanges it for an
@@ -156,9 +163,11 @@ a hard launch gate: Crewfold reports the local namespace/AppArmor diagnosis befo
 creating work rather than discovering it inside an assigned task. `--codex-binary`
 and `--codex-home` allow an explicit installation
 or auth/config root; the same values can be passed to `daemon run`. Codex child
-commands remain in the `workspace-write` filesystem sandbox. Their network is
-disabled by default; an operator who has authorized it can pass
-`--codex-tool-network-access true` to `daemon run`. This does not select Codex
+commands remain in the `workspace-write` filesystem sandbox. Foreground daemon
+runs keep network disabled by default and require the explicit
+`--codex-tool-network-access true` flag; the ordinary installed workbench service
+enables dependency and documentation retrieval by default and records that flag
+in its exact unit. This does not select Codex
 full-access mode. `--codex-sandbox danger-full-access` is available only for an
 operator who independently confines the entire Codex process, such as in a
 container that mounts only the assigned checkout, and Crewfold additionally

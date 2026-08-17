@@ -22,7 +22,8 @@ func TestM21WebSchemasAreClosedAndExecutable(t *testing.T) {
 	status, _ := json.Marshal(map[string]any{
 		"schema": "urn:crewfold:schema:web:workbench-status:v1", "type": "workbench_status", "status": "ok",
 		"protocol": 1, "pid": 123, "started_at": "2026-08-14T20:00:00Z", "uptime_ms": 42,
-		"server_version": buildinfo.Current(),
+		"codex_tool_network_access": true,
+		"server_version":            buildinfo.Current(),
 	})
 	if err := protocolschema.ValidateJSON("web/v1/status.response.schema.json", status); err != nil {
 		t.Fatalf("status schema error = %v", err)

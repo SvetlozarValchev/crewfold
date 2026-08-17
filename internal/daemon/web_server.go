@@ -300,9 +300,10 @@ func (w *workbenchServer) handleSessionAPI(response http.ResponseWriter, request
 		w.writeJSON(response, http.StatusOK, map[string]any{
 			"schema": workbenchStatusSchema, "type": "workbench_status", "status": "ok",
 			"protocol": localapi.MaxProtocol, "pid": os.Getpid(),
-			"started_at":     w.daemon.startedAt.Format(time.RFC3339Nano),
-			"uptime_ms":      time.Since(w.daemon.startedAt).Milliseconds(),
-			"server_version": w.daemon.config.Version,
+			"codex_tool_network_access": w.daemon.config.CodexToolNetworkAccess,
+			"started_at":                w.daemon.startedAt.Format(time.RFC3339Nano),
+			"uptime_ms":                 time.Since(w.daemon.startedAt).Milliseconds(),
+			"server_version":            w.daemon.config.Version,
 		})
 	case "rpc":
 		w.handleRPC(response, request, session)

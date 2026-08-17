@@ -21,13 +21,14 @@ const (
 )
 
 type serviceResponse struct {
-	Schema   string `json:"schema"`
-	Type     string `json:"type"`
-	Action   string `json:"action"`
-	Status   string `json:"status"`
-	UnitPath string `json:"unit_path"`
-	DataDir  string `json:"data_dir"`
-	Socket   string `json:"socket"`
+	Schema                 string `json:"schema"`
+	Type                   string `json:"type"`
+	Action                 string `json:"action"`
+	Status                 string `json:"status"`
+	UnitPath               string `json:"unit_path"`
+	DataDir                string `json:"data_dir"`
+	Socket                 string `json:"socket"`
+	CodexToolNetworkAccess *bool  `json:"codex_tool_network_access,omitempty"`
 }
 
 type openResponse struct {
@@ -43,8 +44,25 @@ func (a *App) runServiceCommand(ctx context.Context, mode outputMode, args []str
 		fmt.Fprint(a.stdout, serviceHelp)
 		return ExitOK
 	}
-	if len(args) != 1 {
-		return a.writeFailure(mode, usageFailure("service requires exactly one lifecycle action", "run 'crewfold help service' for usage"))
+	if len(args) == 0 {
+		return a.writeFailure(mode, usageFailure("service requires one lifecycle action", "run 'crewfold help service' for usage"))
+	}
+	action := args[0]
+	codexToolNetworkAccess := true
+	if action == "install" {
+		options, failure := parseOptions(args[1:], "codex-tool-network-access")
+		if failure != nil {
+			return a.writeFailure(mode, *failure)
+		}
+		if _, present := options["codex-tool-network-access"]; present {
+			value, parseFailure := boolOption(options, "codex-tool-network-access")
+			if parseFailure != nil {
+				return a.writeFailure(mode, *parseFailure)
+			}
+			codexToolNetworkAccess = value
+		}
+	} else if len(args) != 1 {
+		return a.writeFailure(mode, usageFailure("service lifecycle options are accepted only by install", "run 'crewfold help service' for usage"))
 	}
 	paths, err := a.resolveAppDirs()
 	if err != nil {
@@ -62,9 +80,12 @@ func (a *App) runServiceCommand(ctx context.Context, mode outputMode, args []str
 			}
 		}
 	}
-	manager := service.Manager{Paths: paths, Executable: executable, HerdrExecutable: herdrExecutable, EnvironmentPath: os.Getenv("PATH"), Run: a.runService}
+	manager := service.Manager{
+		Paths: paths, Executable: executable, HerdrExecutable: herdrExecutable,
+		EnvironmentPath: os.Getenv("PATH"), CodexToolNetworkAccess: codexToolNetworkAccess, Run: a.runService,
+	}
 	var result service.Result
-	switch args[0] {
+	switch action {
 	case "install":
 		result, err = manager.Install(ctx)
 	case "start":
@@ -83,6 +104,9 @@ func (a *App) runServiceCommand(ctx context.Context, mode outputMode, args []str
 		Schema: serviceResponseSchema, Type: "service", Action: result.Action, Status: result.Status,
 		UnitPath: result.UnitPath, DataDir: result.DataDir, Socket: result.Socket,
 	}
+	if action == "install" {
+		response.CodexToolNetworkAccess = &codexToolNetworkAccess
+	}
 	if mode == outputJSON {
 		if err := writeJSON(a.stdout, response); err != nil {
 			return a.writeFailure(outputText, internalFailure("write service result", err))
@@ -94,6 +118,9 @@ func (a *App) runServiceCommand(ctx context.Context, mode outputMode, args []str
 	fmt.Fprintf(a.stdout, "data: %s\n", response.DataDir)
 	fmt.Fprintf(a.stdout, "socket: %s\n", response.Socket)
 	fmt.Fprintf(a.stdout, "unit: %s\n", response.UnitPath)
+	if action == "install" {
+		fmt.Fprintf(a.stdout, "Codex dependency and documentation network: %s\n", map[bool]string{true: "enabled", false: "disabled"}[codexToolNetworkAccess])
+	}
 	return ExitOK
 }
 
