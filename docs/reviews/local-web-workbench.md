@@ -46,6 +46,19 @@ choreography.
 - Exact command: `./test/scenarios/web-workbench-shell/run.sh`
 - Observed result: `Authenticated local web workbench browser acceptance: PASS`
 
+That public scenario remains the provider-free reproducible gate. A separate
+real authenticated Codex/Herdr browser run used a fresh repository and no
+`OPENAI_API_KEY`: it created and then revised a typed proposal, retained the first
+draft as rejected history, accepted the revision, completed two dependency-ordered
+tasks, automatically launched the successor, persisted proactive executive
+reviews, survived daemon restart, and ended with zero open tasks, live runs, or
+pending decisions. Routine progress and dependency release produced no owner
+decision. Desktop and 390-pixel layouts were inspected from the built assets.
+
+The Crew page also added a second worker, proved the resulting exact grant/profile
+binding, refused removal while work was retained, and disabled the idle non-final
+worker. The same operation is covered by strict local-API and CLI tests.
+
 ## Accepted boundary
 
 | Area | Accepted behavior |
@@ -54,8 +67,9 @@ choreography.
 | Browser security | Exact IPv4 loopback Host/Origin, HttpOnly SameSite session, in-memory CSRF, CSP/no-frame policy, strict bounded RPC, and SSE used only to invalidate canonical reads |
 | Onboarding | Browser-only workspace/project/checkout/provider/runtime setup against an existing committed Git repository; live Herdr is the interactive default and Direct is the explicit advanced CI/headless fallback |
 | Conversation | Bounded durable owner/executive exchanges run through one visible provider-backed executive agent, frozen canonical context, replay-safe idempotency, and no prose-derived authority |
-| Manager loop | Worker reports/messages trigger one coalesced restart-safe exchange with the same executive at an exact event cut; updates, owner questions, and typed proposals never silently execute |
-| Planning | The executive may submit only the existing closed manager-proposal grammar; Decisions shows every exact operation and acceptance revalidates current scope, grant, revisions, and budget |
+| Manager loop | Worker reports/messages trigger one coalesced restart-safe exchange with the same executive at an exact event cut; routine progress, dependencies, completion, acknowledgement, and unresolved blockers do not manufacture owner decisions |
+| Planning | The executive may submit only the existing closed manager-proposal grammar; Decisions shows every exact operation, request-changes preserves immutable history, and acceptance revalidates current scope, grant, revisions, and budget |
+| Crew authority | Owner add/disable replaces the exact executive grant/profile binding; adding starts no work, retained work blocks removal, and the final implementation worker remains required |
 | Execution | Objective, task, assignment, and run effects use existing Store mutations and retain exact method/request/response/event receipts; rejected completion exposes an exact-revision retry that preserves the prior review and atomically queues a fresh context-bound run |
 | Inspection | Work graph, crew, inbox, decisions, evidence, activity, briefings, health, Git observation, and logs come from current daemon/Store truth |
 | Terminal | A 30-second single-use WebSocket grant is bound to one browser session, workspace, current-node run, and PTY; the default view renders readable live events while exact PTY bytes and direct input remain an advanced disclosure; no handle or capability is exposed |
@@ -65,15 +79,17 @@ choreography.
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Real Chrome workflow | `./test/scenarios/web-workbench-shell/run.sh` | passed |
-| Full Go tree | `./scripts/go.sh test ./... -count=1` | passed; loadtest 274.910s, Store 90.533s, daemon 52.326s |
+| Real Chrome workflow | `./test/scenarios/web-workbench-shell/run.sh` | passed, including immutable request-changes history and the revised proposal |
+| Full Go tree | `./scripts/go.sh test ./... -count=1` | passed; loadtest 280.269s, Store 93.105s, daemon 53.008s |
+| Full race tree | `./scripts/go.sh test -race -timeout 20m ./... -count=1` | passed; Store 887.525s, recovery 333.850s, daemon 314.420s |
 | Durable executive path | full-daemon browser exchange, exact replay, executive-only context tools, typed proposal acceptance, standing planning assignment, and a second distinct exchange | passed |
 | Event-driven loop | focused Store and full-daemon executive review, structured-output replay, and recovery quiescence tests | passed normally and with the race detector |
 | Focused race packages | execution and local API packages plus exact M21 Store/daemon executive tests | passed |
 | Embedded database generation | `./scripts/check-generated-db.sh` | passed |
-| Embedded web assets | `./scripts/build-web.sh` | passed; content hash `fd09e87af800d55c4891729df1d56b17ca4e6b1aca21c7c7fb073e4b4c954f96` |
+| Embedded web assets | `./scripts/build-web.sh` | passed; content hash `22c0b225e9f641f0f8fce3fdfecd3040463dafee83495ff2d688ff3db3fb0251` |
 | Static analysis | `./scripts/go.sh vet ./...` | passed |
 | Linux candidate | `./scripts/package-linux_test.sh` | passed and reproducible |
+| Public black-box scenarios | every `test/scenarios/*/run.sh` | passed, including browser, Herdr, provider fixtures, recovery, and personal-beta load |
 | Frontend build | `./scripts/build-web.sh` | TypeScript and Vite passed |
 | Formatting/syntax/whitespace | Go formatting scan, `node --check`, `sh -n`, and `git diff --check` | passed |
 

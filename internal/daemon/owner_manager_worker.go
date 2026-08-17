@@ -77,7 +77,7 @@ func (s *server) processOwnerManagerReview(ctx context.Context, job domain.Owner
 		if err = s.store.AdvanceOwnerManagerReviewCut(ctx, job.ProjectID, snapshot.EventSequence); err != nil {
 			break
 		}
-		instruction := fmt.Sprintf("Review worker reports and agent messages through canonical event cut %d. Summarize material progress, raise exactly one consequential owner decision when needed, or freeze only genuinely new dependency-aware work for owner review. Do not execute effects or duplicate existing work.", snapshot.EventSequence)
+		instruction := fmt.Sprintf("Review worker reports and agent messages through canonical event cut %d. Summarize material progress, raise exactly one consequential owner decision only when distinct owner choices can change authorized project state, or freeze only genuinely new dependency-aware work for owner review. Do not ask the owner merely to acknowledge a failure, resume before a blocker is proved repaired, bypass dependency order, or choose an effect Crewfold cannot perform. A lost runtime must first be independently confirmed retired through the exact lost-run recovery control; explain that prerequisite instead of proposing around retained runtime authority. After that exact retirement is recorded and no run or scheduling intent retains authority, recovery may be proposed only as reassign_task with the exact blocked task revision and an authorized launch profile. Do not execute effects or duplicate existing work.", snapshot.EventSequence)
 		result, err = s.store.RequestOwnerExecutiveTurn(ctx, store.RequestOwnerExecutiveTurnCommand{
 			WorkspaceIdentifier: job.WorkspaceID, ProjectIdentifier: job.ProjectID, ConversationID: job.ConversationID,
 			Instruction: instruction, Kind: "review", IdempotencyKey: fmt.Sprintf("manager-review:%s:%d", job.ProjectID, snapshot.EventSequence),
@@ -94,6 +94,12 @@ func (s *server) processOwnerManagerReview(ctx context.Context, job domain.Owner
 		}
 	}
 	if err != nil {
+		if store.OwnerExecutiveReviewTemporarilyBusy(err) {
+			if deferErr := s.store.DeferOwnerManagerReview(ctx, job.ProjectID); deferErr != nil {
+				return deferErr
+			}
+			return nil
+		}
 		failedCut := job.RequestedEventSequence
 		if snapshot.EventSequence > 0 {
 			failedCut = snapshot.EventSequence

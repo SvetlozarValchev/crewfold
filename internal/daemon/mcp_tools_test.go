@@ -233,6 +233,72 @@ func TestManagerTaskProposalSchemaCannotExceedFrozenClaimGrant(t *testing.T) {
 	}
 }
 
+func TestOwnerExecutiveDecisionSchemaMatchesTheStoreContract(t *testing.T) {
+	t.Parallel()
+	var response mcp.Tool
+	for _, tool := range allowedMCPTools([]string{toolRespondToOwner}, nil) {
+		response = tool
+	}
+	if response.Name != toolRespondToOwner {
+		t.Fatal("owner response tool was not exposed")
+	}
+	variants := response.InputSchema["oneOf"].([]map[string]any)
+	if len(variants) != 5 {
+		t.Fatalf("owner response variants = %d, want 5", len(variants))
+	}
+	byKind := make(map[string]map[string]any, len(variants))
+	for _, variant := range variants {
+		properties := variant["properties"].(map[string]any)
+		kind := properties["kind"].(map[string]any)["const"].(string)
+		byKind[kind] = variant
+	}
+	for _, kind := range []string{"answer", "update", "proposal", "refusal"} {
+		properties := byKind[kind]["properties"].(map[string]any)
+		if properties["answer"] == nil || properties["question"] != nil || properties["choices"] != nil {
+			t.Fatalf("%s response shape = %#v", kind, properties)
+		}
+	}
+	proposalIDs := byKind["proposal"]["properties"].(map[string]any)["proposal_ids"].(map[string]any)
+	if proposalIDs["minItems"] != 1 || proposalIDs["maxItems"] != 32 {
+		t.Fatalf("proposal links = %#v", proposalIDs)
+	}
+	decisionProperties := byKind["decision"]["properties"].(map[string]any)
+	if decisionProperties["answer"] != nil || decisionProperties["question"] == nil {
+		t.Fatalf("decision response shape = %#v", decisionProperties)
+	}
+	choices := decisionProperties["choices"].(map[string]any)
+	if choices["minItems"] != 2 || choices["maxItems"] != 4 {
+		t.Fatalf("owner choice bounds = %v..%v, want 2..4", choices["minItems"], choices["maxItems"])
+	}
+	key := choices["items"].(map[string]any)["properties"].(map[string]any)["key"].(map[string]any)
+	if key["pattern"] != "^[a-z][a-z0-9-]{0,31}$" {
+		t.Fatalf("owner choice key pattern = %v", key["pattern"])
+	}
+}
+
+func TestM21WorkbenchCompletionRequiresStructuredChecksAndChangedPaths(t *testing.T) {
+	t.Parallel()
+
+	run := domain.Run{ScenarioName: "owner-workbench"}
+	valid := completionArguments{Checks: []string{"node --test"}, ChangedPaths: []string{"src/domain.js"}}
+	if err := valid.validateForRun(run); err != nil {
+		t.Fatalf("valid workbench completion = %v", err)
+	}
+	for name, arguments := range map[string]completionArguments{
+		"missing checks":        {ChangedPaths: []string{"src/domain.js"}},
+		"missing changed paths": {Checks: []string{"node --test"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := arguments.validateForRun(run); err == nil {
+				t.Fatal("incomplete workbench completion was accepted")
+			}
+		})
+	}
+	if err := (completionArguments{}).validateForRun(domain.Run{ScenarioName: "fixture"}); err != nil {
+		t.Fatalf("unrelated scenario inherited workbench acceptance: %v", err)
+	}
+}
+
 func TestManagerProposalActionKindsAreClosed(t *testing.T) {
 	t.Parallel()
 	allowed := map[string][]string{

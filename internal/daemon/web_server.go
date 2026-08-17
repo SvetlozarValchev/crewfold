@@ -490,7 +490,8 @@ var workbenchMethods = map[string]struct{}{
 	localapi.MethodProjectAdd: {}, localapi.MethodProjectShow: {}, localapi.MethodProjectInspect: {}, localapi.MethodProjectList: {},
 	localapi.MethodCheckoutAdd: {}, localapi.MethodCheckoutList: {},
 	localapi.MethodAgentCreate: {}, localapi.MethodAgentUpdate: {}, localapi.MethodAgentShow: {}, localapi.MethodAgentList: {},
-	localapi.MethodObjectiveCreate: {}, localapi.MethodObjectiveUpdate: {}, localapi.MethodObjectiveShow: {}, localapi.MethodObjectiveList: {},
+	localapi.MethodOwnerCrewConfigure: {},
+	localapi.MethodObjectiveCreate:    {}, localapi.MethodObjectiveUpdate: {}, localapi.MethodObjectiveShow: {}, localapi.MethodObjectiveList: {},
 	localapi.MethodTaskCreate: {}, localapi.MethodTaskUpdate: {}, localapi.MethodTaskShow: {}, localapi.MethodTaskList: {},
 	localapi.MethodTaskDepend: {}, localapi.MethodTaskAssign: {}, localapi.MethodTaskTransition: {}, localapi.MethodTaskTimeline: {},
 	localapi.MethodRunStart: {}, localapi.MethodRunShow: {}, localapi.MethodRunList: {}, localapi.MethodRunResume: {},
@@ -503,7 +504,7 @@ var workbenchMethods = map[string]struct{}{
 	localapi.MethodSupervisorActionList: {}, localapi.MethodSupervisorActionShow: {},
 	localapi.MethodLaunchProfileList: {}, localapi.MethodProposalList: {}, localapi.MethodProposalInspect: {},
 	localapi.MethodProposalAccept: {}, localapi.MethodProposalReject: {},
-	localapi.MethodBriefingShow:      {}, localapi.MethodBriefingExplain: {},
+	localapi.MethodBriefingShow: {}, localapi.MethodBriefingExplain: {},
 	localapi.MethodCheckList: {}, localapi.MethodCheckInspect: {}, localapi.MethodCheckLogs: {},
 	localapi.MethodSystemDoctorFull: {},
 }

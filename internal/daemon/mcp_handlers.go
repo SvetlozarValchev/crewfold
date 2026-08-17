@@ -267,9 +267,6 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 				RunID: briefing.Run.ID, Kind: domain.ObservationProgress, Message: arguments.Summary,
 				Evidence: arguments.EvidenceIDs, Payload: arguments, IdempotencyKey: arguments.IdempotencyKey,
 			})
-			if err == nil {
-				s.signalOwnerManagerReviewWorker()
-			}
 		}
 	case toolBlocked:
 		var arguments blockedArguments
@@ -282,24 +279,18 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 				RunID: briefing.Run.ID, Kind: domain.ObservationBlocked, Message: arguments.Reason,
 				Evidence: arguments.RelatedIDs, Payload: arguments, IdempotencyKey: arguments.IdempotencyKey,
 			})
-			if err == nil {
-				s.signalOwnerManagerReviewWorker()
-			}
 		}
 	case toolCompletion:
 		var arguments completionArguments
 		err = decodeToolArguments(params.Arguments, &arguments)
 		if err == nil {
-			err = arguments.validate()
+			err = arguments.validateForRun(briefing.Run)
 		}
 		if err == nil {
 			value, err = s.store.SubmitRunReport(context.Background(), store.CreateRunReportCommand{
 				RunID: briefing.Run.ID, Kind: domain.ObservationCompletion, Message: arguments.Summary,
 				Evidence: arguments.EvidenceIDs, Handoff: arguments.Handoff, Payload: arguments, IdempotencyKey: arguments.IdempotencyKey,
 			})
-			if err == nil {
-				s.signalOwnerManagerReviewWorker()
-			}
 		}
 	case toolArtifact:
 		var arguments artifactArguments
@@ -586,12 +577,7 @@ func scopedMCPTools() []mcp.Tool {
 		{Name: toolProposeReview, Description: "Propose a review task through one exact owner-authored launch profile. This does not create or launch the review until local-owner acceptance and supervision.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionRequestReview})},
 		{Name: toolProposeTasks, Description: "Propose a bounded task decomposition using only exact owner-allowed launch profiles. This does not create tasks until the local owner accepts it.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionCreateTask, domain.ProposalActionAddDependency, domain.ProposalActionDeclareClaimRequirement})},
 		{Name: toolExecutiveContext, Description: "Read the exact frozen owner instruction, conversation, project snapshot, and citation namespace for this executive exchange.", InputSchema: empty},
-		{Name: toolRespondToOwner, Description: "Submit this executive exchange's sole typed owner response. This does not accept proposals or execute effects.", InputSchema: objectSchema([]string{"kind", "summary", "citation_refs", "proposal_ids", "idempotency_key"}, map[string]any{
-			"kind":    map[string]any{"type": "string", "enum": []string{"answer", "update", "decision", "proposal", "refusal"}},
-			"summary": stringSchema(0, 2048), "answer": stringSchema(1, 8192), "question": stringSchema(1, 2048),
-			"choices":       map[string]any{"type": "array", "maxItems": 8, "items": objectSchema([]string{"key", "label", "description", "recommended"}, map[string]any{"key": stringSchema(1, 64), "label": stringSchema(1, 160), "description": stringSchema(1, 512), "recommended": map[string]any{"type": "boolean"}})},
-			"citation_refs": boundedStringArraySchema(16), "proposal_ids": boundedStringArraySchema(32), "idempotency_key": stringSchema(1, 128),
-		})},
+		{Name: toolRespondToOwner, Description: "Submit this executive exchange's sole typed owner response. Proposal responses explain linked proposals; decision responses ask a genuine owner choice. These shapes are exclusive. This tool does not accept proposals or execute effects.", InputSchema: ownerExecutiveResponseInputSchema()},
 		{Name: toolCompletion, Description: "Propose completion with an executive handoff and evidence.", InputSchema: objectSchema([]string{"summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "handoff": stringSchema(1, 4096), "evidence_ids": stringArraySchema(), "changed_paths": stringArraySchema(), "checks": stringArraySchema(), "remaining_risks": stringArraySchema(), "unknowns": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolRunCheck, Description: "Request one exact active project requirement whose frozen definition revision is present in this run's check-watch grant.", InputSchema: objectSchema([]string{"requirement_id", "idempotency_key"}, map[string]any{"requirement_id": checkEntityIDSchema("checkreq_"), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolListCheckResults, Description: "List a bounded page of check results visible through this run's exact check-watch grant.", InputSchema: objectSchema([]string{"limit"}, map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 50}, "cursor": stringSchema(1, 256)})},
@@ -746,6 +732,42 @@ func objectSchema(required []string, properties map[string]any) map[string]any {
 		properties = map[string]any{}
 	}
 	return map[string]any{"type": "object", "additionalProperties": false, "required": required, "properties": properties}
+}
+
+func ownerExecutiveResponseInputSchema() map[string]any {
+	common := func(kind string) map[string]any {
+		return map[string]any{
+			"kind":            map[string]any{"type": "string", "const": kind},
+			"summary":         stringSchema(0, 2048),
+			"citation_refs":   boundedStringArraySchema(16),
+			"proposal_ids":    boundedStringArraySchema(32),
+			"idempotency_key": stringSchema(1, 128),
+		}
+	}
+	answer := func(kind string) map[string]any {
+		properties := common(kind)
+		properties["answer"] = stringSchema(1, 8192)
+		return objectSchema([]string{"kind", "summary", "answer", "citation_refs", "proposal_ids", "idempotency_key"}, properties)
+	}
+	proposal := answer("proposal")
+	proposal["properties"].(map[string]any)["proposal_ids"] = map[string]any{"type": "array", "minItems": 1, "maxItems": 32, "items": stringSchema(1, 128)}
+	decision := common("decision")
+	decision["question"] = stringSchema(1, 2048)
+	decision["choices"] = map[string]any{
+		"type": "array", "minItems": 2, "maxItems": 4,
+		"items": objectSchema([]string{"key", "label", "description", "recommended"}, map[string]any{
+			"key": map[string]any{
+				"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$",
+				"description": "Lowercase hyphen-separated key; underscores are forbidden.",
+			},
+			"label": stringSchema(1, 160), "description": stringSchema(1, 512), "recommended": map[string]any{"type": "boolean"},
+		}),
+	}
+	return map[string]any{"oneOf": []map[string]any{
+		answer("answer"), answer("update"), proposal,
+		objectSchema([]string{"kind", "summary", "question", "choices", "citation_refs", "proposal_ids", "idempotency_key"}, decision),
+		answer("refusal"),
+	}}
 }
 
 func stringSchema(minimum, maximum int) map[string]any {
@@ -1406,6 +1428,16 @@ func (arguments completionArguments) validate() error {
 	return validateMCPStringItems(arguments.EvidenceIDs, arguments.ChangedPaths, arguments.Checks, arguments.RemainingRisks, arguments.Unknowns)
 }
 
+func (arguments completionArguments) validateForRun(run domain.Run) error {
+	if err := arguments.validate(); err != nil {
+		return err
+	}
+	if run.ScenarioName == "owner-workbench" && (len(arguments.Checks) == 0 || len(arguments.ChangedPaths) == 0) {
+		return errors.New("workbench completion requires at least one exact check and one inspected changed path")
+	}
+	return nil
+}
+
 func validateMCPStringItems(collections ...[]string) error {
 	for _, collection := range collections {
 		if len(collection) > 32 {
@@ -1434,7 +1466,7 @@ func mcpErrorFromStore(err error) mcp.ToolError {
 	switch code {
 	case store.CodeInvalidContext, store.CodeInvalidContextDelta, store.CodeInvalidReport, store.CodeInvalidRun, store.CodeInvalidMessage, store.CodeInvalidKnowledge,
 		store.CodeKnowledgeConflict, store.CodeContradictionConflict, store.CodeInvalidManagerProposal, store.CodeManagerProposalConflict,
-		store.CodeInvalidManagerGrant, store.CodeInvalidCheckRequirement, store.CodeInvalidCheckWatchGrant,
+		store.CodeInvalidManagerGrant, store.CodeInvalidOwnerConversation, store.CodeInvalidCheckRequirement, store.CodeInvalidCheckWatchGrant,
 		store.CodeCheckRequirementConflict, store.CodeCheckRunConflict, store.CodeCheckRepairConflict, store.CodeIdempotencyConflict:
 		result.Code = "invalid_input"
 	case store.CodeContextNotFound, store.CodeContextDeltaNotFound, store.CodeRunNotFound, store.CodeMessageNotFound, store.CodeKnowledgeNotFound, store.CodeContradictionNotFound,

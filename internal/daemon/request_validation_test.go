@@ -43,6 +43,7 @@ func TestOperatorRequestParamContractRegistryIsComplete(t *testing.T) {
 		localapi.MethodSystemDoctorFull:     "local/v1/system-doctor-full.params.schema.json",
 		localapi.MethodBackupCreate:         "local/v1/backup-create.params.schema.json",
 		localapi.MethodWebBootstrap:         "local/v1/web-bootstrap.params.schema.json",
+		localapi.MethodOwnerCrewConfigure:   "local/v1/owner-crew-configure.params.schema.json",
 	}
 	if !reflect.DeepEqual(operatorRequestParamContracts, want) {
 		t.Fatalf("operator request contract registry = %#v, want %#v", operatorRequestParamContracts, want)

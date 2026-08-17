@@ -56,7 +56,7 @@ func KnownEventType(value string) bool {
 		"context.packet_built", "context_delta.built", "context_delta.acknowledged",
 		"context_delta.rebase_required",
 		"manager.grant_created", "manager.grant_revoked", "manager.launch_profile_created",
-		"manager.launch_profile_retired", "manager.proposal_submitted", "manager.proposal_accepted",
+		"manager.launch_profile_retired", "owner.executive_reconfigured", "manager.proposal_submitted", "manager.proposal_accepted",
 		"manager.proposal_rejected", "manager.proposal_stale",
 		"supervisor.policy_configured", "supervisor.intent_created", "supervisor.intent_satisfied",
 		"supervisor.intent_failed", "supervisor.intent_cancelled", "supervisor.action_recorded",

@@ -167,6 +167,12 @@ An accepted proposal is validated again against the current grant, revisions,
 scope, budget, and policy before its first effect; the deterministic supervisor,
 not the executive prose, launches ready work.
 
+Proposal provenance is immutable. “Request changes” never edits model output in
+place: it rejects the reviewed revision with the owner's bounded note, records a
+new durable instruction in the same executive conversation, and waits for a new
+typed proposal. The earlier proposal remains visible history and inert. Only the
+new exact revision can later be accepted.
+
 An explicit owner instruction may authorize an already reviewed, closed typed
 operation when the current policy permits it. Destructive work, publication,
 external communication, credentials, budget/authority changes, and materially
@@ -180,6 +186,15 @@ out-of-scope executive output creates no effect. A lost request or response
 replays the same durable exchange; it does not ask another model to reinterpret
 the owner instruction.
 
+A rendered question is not justified merely because the executive emitted valid
+choices. A consequential owner decision exists only when two or more valid owner
+choices would materially change authorized project state and current policy,
+accepted dependencies, and deterministic scheduling do not already select the
+next step. Routine progress, dependency release, ordinary scheduling, completion,
+failure acknowledgement, and an unresolved blocker are not owner decisions. The
+executive must explain those facts, wait for more evidence, or submit an exact
+recovery/replanning proposal instead of manufacturing a choice.
+
 The previous one-shot `CodexOwnerInterpreter` path is not a second steady-state
 manager. It is removed from the current workbench contract rather than retained
 as a fallback. Provider-free fixtures may implement the same executive MCP
@@ -189,11 +204,13 @@ agent definition, grant, run, runtime binding, and response receipt.
 ### Worker activity returns to the same executive
 
 Owner HTTP turns are not the only time the planning manager runs. Once a project
-has an open owner conversation, a worker-originated structured progress,
-blocked, or completion report and a worker-originated durable message advance
-one coalesced `owner_manager_review_jobs` cursor in the same database transaction
-as the triggering canonical event. CLI-only projects with no owner conversation
-do not silently consume a provider turn.
+has an open owner conversation, application of a worker-originated structured
+progress, blocked, or completion report and creation of a worker-originated
+durable message advance one coalesced `owner_manager_review_jobs` cursor in the
+same database transaction as the resulting canonical state. Merely receiving a
+pending report is not enough: the executive must see the applied run/task
+projection at the frozen cut. CLI-only projects with no owner conversation do
+not silently consume a provider turn.
 
 One bounded daemon worker leases that cursor and creates a review exchange for
 the same durable project executive. It does not invoke a separate interpreter.
@@ -225,6 +242,59 @@ the lease under the exclusive data-directory lock. Stable operation IDs,
 structured-output reuse, owner-turn idempotency, and the reviewed-event cursor
 cover crashes before provider completion, after output, after turn persistence,
 and before queue completion without duplicate interpretation or duplicate work.
+
+The short-lived project-executive run is control-plane conversation, not worker
+delivery. Its provider/runtime failure remains visible on the exact owner turn
+and exchange, while the long-lived planning task stays assigned for a later
+turn. It does not produce a supervisor resume or failure-acknowledgement approval:
+such an approval would change no project work and duplicate the visible exchange
+failure.
+
+For a project with an active owner-executive binding and open owner conversation,
+M21 also refines M16's conservative generic exception presentation for
+implementation runs. An applied
+worker blocker, definite failure, repeated failure, stale outcome, or wall-time
+exhaustion first becomes executive attention through the coalesced review cursor.
+The supervisor does not immediately ask the owner to resume a blocker that has
+not been shown resolved, or to acknowledge a failure when acknowledgement changes
+no project work. The executive may answer with a cited material update, ask a
+specific consequential owner question, or submit a typed recovery/replanning
+proposal. Only that exact consequential choice or proposal enters owner review.
+CLI-only projects without an owner conversation retain M16's conservative generic
+approval behavior.
+
+An uncertain `lost` runtime is the one direct recovery attestation that cannot be
+reduced to executive prose. The Decisions surface shows the exact retained run,
+diagnosis, and consequence, and requires the owner to confirm that the Herdr pane
+or native process has ended before calling `run.lost.resolve`. The UI states that
+this confirmation does not stop the process: it transitions the run to failed,
+releases retained binding/capacity, and leaves the task blocked for explicit
+replanning. Once that exact retirement is recorded and no live run or scheduling
+intent retains authority, the executive may propose one `reassign_task` action
+that names the blocked task's exact revision and an authorized launch profile.
+Accepting and allowing that exact action readies the task and creates a new
+scheduling intent; `retry_task` remains reserved for definite `start_failed`
+runs. A generic “failure acknowledged” record is not a substitute.
+
+### The owner configures implementation authority explicitly
+
+The Crew page is not read-only decoration. It shows the one durable project
+executive separately from implementation workers and exposes one exact owner
+configuration operation for adding or disabling a worker. The same operation is
+available through `owner.crew.configure` and the secondary `crewfold crew`
+command.
+
+Adding a worker creates an enabled agent definition and project-scoped immutable
+launch profile, then replaces the executive's manager grant and management launch
+profile at the exact binding revision. The new worker can appear in future typed
+proposals; it receives no task and starts no run merely because it was added.
+Disabling first proves that the worker retains no accepted assignment or live run,
+requires a replacement when it is the final worker, removes its profiles from the
+replacement grant, and disables it for future work. It never silently stops,
+reassigns, or bypasses accepted work. The operation is replay-safe across a lost
+response, and the old grant/profile pair is retired in the same binding
+reconfiguration transaction so an executive exchange cannot observe mixed
+authority.
 
 ### Codex subscription access is the default OpenAI path
 

@@ -169,6 +169,31 @@ terminal WebSocket. Browser mutations require the exact in-memory CSRF token.
 Static assets and the shell are public only to exact loopback Host and disclose
 no daemon data before session exchange.
 
+### `owner.crew.configure`
+
+Changes the implementation workers authorized by one active workbench executive
+binding. It is an owner-authority mutation available through authenticated
+browser RPC and the secondary `crewfold crew` CLI surface. Parameters are one of:
+
+```json
+{"workspace":"ws_<id>","project":"prj_<id>","action":"add","expected_binding_revision":3,"name":"reviewer","provider":"codex","runtime":"herdr","max_concurrency":2,"idempotency_key":"owner-crew-4"}
+```
+
+```json
+{"workspace":"ws_<id>","project":"prj_<id>","action":"disable","expected_binding_revision":4,"agent":"agent_<id>","idempotency_key":"owner-crew-5"}
+```
+
+`add` preflights the selected registered provider/runtime and creates an enabled
+implementation definition plus immutable project launch profile before replacing
+the executive's exact grant/profile binding. It creates no task, assignment, or
+run. `disable` requires an exact canonical agent ID, refuses the final worker and
+any worker retaining accepted/live work, replaces the executive authority, then
+disables the definition and retires its active implementation profiles. Replay
+uses the same configuration hash and returns the exact committed result; changed
+content is an idempotency conflict. The result schema is
+`urn:crewfold:schema:local-api:owner-crew-mutation-result:v1` and returns the
+binding, affected agent, complete active worker-profile set, and event sequence.
+
 The listener is exact `127.0.0.1`, sends no wildcard CORS policy, denies framing,
 sets `nosniff` and no-referrer policy, and restricts scripts, styles, connections,
 objects, forms, and ancestors with CSP. The terminal grant is single-use,
@@ -467,6 +492,12 @@ no external stop. One successful mutation changes the run to failed with
 `runtime_retired_by_owner`, records captured/unavailable log state, clears the
 node binding, releases capacity, leaves the task blocked for an explicit retry or
 reassignment, and appends `run.lost_resolved` exactly once.
+
+For the manager proposal surface, a post-resolution blocked task with no reserved
+run or open scheduling intent is an actionable `reassign_task` target. The
+request freezes the exact task revision and one authorized launch profile; owner
+approval readies the task and creates a new scheduling intent. `retry_task`
+remains limited to the retained assignment of a definite `start_failed` run.
 
 The runtime driver's `Launch` operation is idempotent by stable run ID. A restart
 after committed intent or after runtime launch reclaims the durable job and

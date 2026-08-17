@@ -7,11 +7,13 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M21 are complete. M22 is next. The owner-local web
-workbench now provides service/open lifecycle, browser onboarding, durable
-conversation with a provider-backed project executive, explicit typed-proposal review, canonical inspection and
-understanding surfaces, bounded Git/log access, and separately authorized live
-terminal access.** Evidence is
+Current status: **M0 through M21 are complete. M22 is next.** The owner-local
+web workbench now provides service/open lifecycle, browser onboarding, durable
+conversation with a provider-backed project executive, explicit typed-proposal
+review, canonical inspection and understanding surfaces, bounded Git/log access,
+and separately authorized live terminal access. Post-onboarding crew-authority
+editing, immutable proposal revision, dependency/readiness explanations, and a
+subscription-backed Codex/Herdr workflow are included. Evidence is
 recorded in the [M0 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -295,10 +297,12 @@ SDK/conformance, installation/tutorial polish, contribution governance, security
 contact, license selection, and any upstream publication build on M21's accepted
 single-place owner workflow rather than adding another control surface.
 
-M21 is complete at implementation commit
+M21's service/browser foundation is recorded at commit
 `6116b5d0b21bfba48007da464ff3bae0c8543416`; its
 [passed review](reviews/local-web-workbench.md) records the local service and
-browser-security boundary and repository onboarding. The current M21 contract
+browser-security boundary, repository onboarding, explicit crew-authority
+configuration, immutable proposal revision, and real subscription-backed Herdr
+workflow. The current M21 contract
 replaces that initial form-like planning harness with one durable provider-backed
 project executive, exact exchange receipts, and explicit typed-proposal review;
 the deterministic supervisor alone launches accepted ready work. Canonical inspection,

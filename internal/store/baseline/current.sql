@@ -4752,7 +4752,7 @@ BEGIN
 	        OR (NEW.response='reassign_task'
 	          AND json_extract(source.payload_json,'$.target_task_id')=NEW.task_id
 	          AND json_extract(source.payload_json,'$.target_run_id') IS NULL
-	          AND task.status IN ('ready','failed','changes_requested') AND task.revision=NEW.entity_revision
+	          AND task.status IN ('ready','blocked','failed','changes_requested') AND task.revision=NEW.entity_revision
 	          AND json_extract(source.payload_json,'$.launch_profile_id')=json_extract(NEW.constraint_snapshot_json,'$.launch_profile_id')
 	          AND EXISTS (
 	            SELECT 1 FROM launch_profiles profile JOIN agents agent ON agent.id=profile.agent_id
@@ -6355,11 +6355,29 @@ CREATE TRIGGER owner_executive_binding_validate_insert BEFORE INSERT ON owner_ex
     AND profile.agent_revision=agent.revision AND profile.manager_grant_id=grant.id AND profile.status='active'
  ) THEN RAISE(ABORT,'invalid owner executive binding') END;
 END;
-CREATE TRIGGER owner_executive_binding_reject_update BEFORE UPDATE ON owner_executive_bindings
-WHEN NEW.workspace_id<>OLD.workspace_id OR NEW.project_id<>OLD.project_id OR NEW.objective_id<>OLD.objective_id
- OR NEW.planning_task_id<>OLD.planning_task_id OR NEW.agent_id<>OLD.agent_id OR NEW.manager_grant_id<>OLD.manager_grant_id
- OR NEW.launch_profile_id<>OLD.launch_profile_id
-BEGIN SELECT RAISE(ABORT,'owner executive binding authority is immutable'); END;
+CREATE TRIGGER owner_executive_binding_validate_update BEFORE UPDATE ON owner_executive_bindings BEGIN
+ SELECT CASE WHEN NEW.id<>OLD.id OR NEW.workspace_id<>OLD.workspace_id OR NEW.project_id<>OLD.project_id
+  OR NEW.objective_id<>OLD.objective_id OR NEW.planning_task_id<>OLD.planning_task_id OR NEW.agent_id<>OLD.agent_id
+  OR NEW.status<>'active' OR OLD.status<>'active' OR NEW.revision<>OLD.revision+1
+  OR NEW.created_at<>OLD.created_at OR NEW.created_by<>OLD.created_by OR NEW.updated_by<>'local-owner'
+  OR crewfold_timestamp_canonical(NEW.updated_at)<>1
+  OR crewfold_timestamp_key(NEW.updated_at)<=crewfold_timestamp_key(OLD.updated_at)
+  OR (NEW.manager_grant_id=OLD.manager_grant_id AND NEW.launch_profile_id=OLD.launch_profile_id)
+  OR NOT EXISTS(
+   SELECT 1 FROM manager_grants grant_row
+   JOIN launch_profiles profile ON profile.id=NEW.launch_profile_id
+   JOIN tasks task ON task.id=NEW.planning_task_id
+   JOIN agents agent ON agent.id=NEW.agent_id
+   WHERE grant_row.id=NEW.manager_grant_id AND grant_row.status='active'
+    AND grant_row.workspace_id=NEW.workspace_id AND grant_row.project_id=NEW.project_id
+    AND grant_row.objective_id=NEW.objective_id AND grant_row.task_id=NEW.planning_task_id
+    AND grant_row.task_revision=task.revision AND grant_row.agent_id=NEW.agent_id
+    AND grant_row.agent_revision=agent.revision AND task.status='assigned' AND agent.enabled=1
+    AND profile.workspace_id=NEW.workspace_id AND profile.project_id=NEW.project_id
+    AND profile.agent_id=NEW.agent_id AND profile.agent_revision=agent.revision
+    AND profile.manager_grant_id=grant_row.id AND profile.status='active'
+  ) THEN RAISE(ABORT,'invalid owner executive binding reconfiguration') END;
+END;
 
 CREATE TABLE owner_executive_exchanges (
  id TEXT PRIMARY KEY CHECK(length(id)=38 AND substr(id,1,6)='execx_' AND substr(id,7) NOT GLOB '*[^0-9a-f]*'),

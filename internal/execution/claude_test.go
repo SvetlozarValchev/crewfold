@@ -212,6 +212,12 @@ func TestClaudeProviderNormalizesOnlyExplicitBoundaries(t *testing.T) {
 	if found || err != nil {
 		t.Fatalf("Next(task error) found=%t error=%v", found, err)
 	}
+	_, found, err = provider.Next(context.Background(), domain.Run{}, claudeScenario(), RuntimeSnapshot{
+		State: RuntimeStateExited, ExitKnown: true, ExitCode: 0, Stdout: domain.CapturedLog{Text: `{"type":"result","subtype":"success","is_error":false,"result":"The project excludes authentication; an earlier command failed."}`},
+	})
+	if found || err != nil {
+		t.Fatalf("Next(project result text) found=%t error=%v; want no fabricated provider boundary", found, err)
+	}
 }
 
 func compatibleClaudeRunner() *recordedClaudeRunner {

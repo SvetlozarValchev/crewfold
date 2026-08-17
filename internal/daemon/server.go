@@ -691,6 +691,8 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleAgentShow(request), false
 	case localapi.MethodAgentList:
 		return s.handleAgentList(request), false
+	case localapi.MethodOwnerCrewConfigure:
+		return s.handleOwnerCrewConfigure(request), false
 	case localapi.MethodObjectiveCreate:
 		return s.handleObjectiveCreate(request), false
 	case localapi.MethodObjectiveUpdate:

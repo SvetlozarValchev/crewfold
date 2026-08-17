@@ -24,6 +24,7 @@ const (
 	managerGrantRevokedEvent         = "manager.grant_revoked"
 	launchProfileCreatedEvent        = "manager.launch_profile_created"
 	launchProfileRetiredEvent        = "manager.launch_profile_retired"
+	ownerExecutiveReconfiguredEvent  = "owner.executive_reconfigured"
 	managerProposalSubmittedEvent    = "manager.proposal_submitted"
 	managerProposalAcceptedEvent     = "manager.proposal_accepted"
 	managerProposalRejectedEvent     = "manager.proposal_rejected"
@@ -674,6 +675,19 @@ func (s *Store) InvokeManager(ctx context.Context, command InvokeManagerCommand)
 		return ManagerInvocationResult{}, storageFailure("commit manager invocation", err)
 	}
 	return result, nil
+}
+
+// ManagerInvocationTemporarilyBusy identifies admission failures that mean the
+// exact manager exchange is still valid but must wait for the existing manager
+// session or bounded execution capacity. Callers must not consume a retry
+// attempt for this ordinary serialization condition.
+func ManagerInvocationTemporarilyBusy(err error) bool {
+	code := ErrorCode(err)
+	if code == CodePlacementUnavailable || code == CodeExecutionCapacityExhausted {
+		return true
+	}
+	var typed *Error
+	return code == CodeRunConflict && errors.As(err, &typed) && strings.HasPrefix(typed.Message, "planning assignment already has live run ")
 }
 
 func uniqueStringInTransaction(ctx context.Context, tx *sql.Tx, statement string, arguments ...any) (string, error) {
@@ -2037,6 +2051,25 @@ ORDER BY run.updated_at,run.id LIMIT ?`, workspace.ID, command.Limit-len(actions
 			if err != nil {
 				return SupervisorRunResult{}, err
 			}
+			hasExecutiveReview, err := ownerExecutiveReviewEnabledInTransaction(ctx, tx, run.ProjectID)
+			if err != nil {
+				return SupervisorRunResult{}, err
+			}
+			if hasExecutiveReview {
+				// M21 workbench projects route an applied worker blocker through the
+				// durable project-executive review loop first. A bare blocked state is
+				// not evidence that its cause has been repaired, so materializing a
+				// generic "resume" approval here would ask the owner to authorize an
+				// effect before the executive has supplied a consequential choice.
+				continue
+			}
+			// Owner-executive exchanges are short-lived control-plane
+			// conversations, not implementation work. Their failure is already
+			// represented on the exact owner turn/exchange and must not create a
+			// second, operationally meaningless resume approval.
+			if ownerExecutiveRunInTransaction(ctx, tx, run.ID) {
+				continue
+			}
 			conditionKey := supervisorConditionKey(domain.SupervisorConditionBlocked, domain.SupervisorResponseResumeRun, "", run.TaskID, run.ID, run.Revision)
 			var exists int
 			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM supervisor_action_receipts WHERE condition_key=?`, conditionKey).Scan(&exists); err != nil {
@@ -2826,6 +2859,57 @@ ORDER BY run.updated_at,run.id LIMIT ?`, policy.WorkspaceID, now, remaining)
 		if err != nil {
 			return err
 		}
+		// Owner-executive exchanges are short-lived control-plane
+		// conversations, not implementation work. Their failure is already
+		// represented on the exact owner turn/exchange and must not create a
+		// second attention route or operationally meaningless owner action.
+		if ownerExecutiveRunInTransaction(ctx, tx, run.ID) {
+			continue
+		}
+		hasExecutiveReview, err := ownerExecutiveReviewEnabledInTransaction(ctx, tx, run.ProjectID)
+		if err != nil {
+			return err
+		}
+		if hasExecutiveReview {
+			task, err := queryTask(ctx, tx, policy.WorkspaceID, run.TaskID)
+			if err != nil {
+				return err
+			}
+			// Seal the exact run revision as routed attention before scheduling the
+			// executive review. Without this receipt, every later supervisor pass
+			// would rediscover the same unchanged failure at a newer journal cursor
+			// and manufacture an endless sequence of near-identical owner questions.
+			action, err := newSupervisorAction(policy, cursor, value.condition, value.response, domain.SupervisorActionDeferred,
+				task, &run, nil,
+				[]string{value.reason, "the workbench routes this exact run revision to the durable project executive", "no owner effect or approval was created"},
+				map[string]any{"run_status": run.Status, "failure_code": run.FailureCode, "attention_route": "project_executive"}, now)
+			if err != nil {
+				return err
+			}
+			if err := insertSupervisorAction(ctx, tx, action); err != nil {
+				return err
+			}
+			actionSequence, err := appendEventForActor(ctx, tx, policy.WorkspaceID, "supervisor_action", action.ID, 1, supervisorActionRecordedEvent,
+				correlationID, now, "subsystem:supervisor", "subsystem", map[string]any{
+					"condition": action.Condition, "response": action.Response, "status": action.Status, "run_id": run.ID,
+				})
+			if err != nil {
+				return err
+			}
+			if err := s.sealSupervisorAction(ctx, tx, action, actionSequence); err != nil {
+				return err
+			}
+			if err := enqueueOwnerManagerReview(ctx, tx, run.WorkspaceID, run.ProjectID, actionSequence, now); err != nil {
+				return err
+			}
+			// In the owner workbench, definite failure, repeated failure, stale
+			// state, and wall-time exhaustion are executive attention facts. The
+			// executive may explain them or submit one exact recovery proposal;
+			// an acknowledgement-only approval is not a project decision.
+			*actions = append(*actions, action)
+			created++
+			continue
+		}
 		var hasRetrySuccessor int
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM run_retry_receipts WHERE prior_run_id=?)`, run.ID).Scan(&hasRetrySuccessor); err != nil {
 			return storageFailure("check retry successor", err)
@@ -3444,7 +3528,7 @@ WHERE source.id=? AND source.proposal_id=? AND source.type='request_action' AND 
 ) LIMIT 1`, prior.ID, prior.ID).Scan(&profileID); err != nil {
 			return &Error{Code: CodeApprovalConflict, Message: "failed run has no exact launch profile receipt", Cause: err}
 		}
-	} else if task.Status != domain.TaskReady && task.Status != domain.TaskFailed && task.Status != domain.TaskChangesRequested {
+	} else if task.Status != domain.TaskReady && task.Status != domain.TaskBlocked && task.Status != domain.TaskFailed && task.Status != domain.TaskChangesRequested {
 		return &Error{Code: CodeApprovalConflict, Message: "task is no longer in an actionable reassign state"}
 	}
 	profile, err := queryLaunchProfile(ctx, tx, action.WorkspaceID, profileID)
@@ -3765,7 +3849,7 @@ WHERE run.task_id=? ORDER BY run.created_at DESC,run.id DESC LIMIT 1`, task.ID).
 				if exactTarget {
 					task, err := queryTask(ctx, tx, grant.WorkspaceID, value.TargetTaskID)
 					exactTarget = err == nil && task.ProjectID == grant.ProjectID && task.ObjectiveID == grant.ObjectiveID && task.Revision == value.ExpectedRevision &&
-						(task.Status == domain.TaskReady || task.Status == domain.TaskFailed || task.Status == domain.TaskChangesRequested)
+						(task.Status == domain.TaskReady || task.Status == domain.TaskBlocked || task.Status == domain.TaskFailed || task.Status == domain.TaskChangesRequested)
 					if exactTarget {
 						var reservedRuns, openIntents int
 						if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE task_id=? AND status IN ('requested','starting','active','blocked','stopping','lost')`, task.ID).Scan(&reservedRuns); err != nil {

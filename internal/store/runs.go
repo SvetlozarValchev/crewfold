@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"crewfold/internal/domain"
 	"crewfold/internal/store/dbgen"
@@ -804,7 +805,7 @@ func (s *Store) RecordRunRuntimeBinding(ctx context.Context, runID, runtimeHandl
 }
 
 func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID string) (domain.RunDetail, error) {
-	message = strings.TrimSpace(message)
+	message = boundedRunText(message, 1024)
 	if message == "" {
 		message = "runtime failed to start"
 	}
@@ -839,10 +840,12 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 	if err := appendRunTimeline(ctx, tx, run.ID, runStartFailedEvent, message, nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message, "logs_available": false, "logs_unavailable_reason": "runtime did not produce a trustworthy terminal capture"}); err != nil {
+	eventSequence, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runStartFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message, "logs_available": false, "logs_unavailable_reason": "runtime did not produce a trustworthy terminal capture"})
+	if err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := failOwnerExecutiveRunInTransaction(ctx, tx, run.ID, message, now); err != nil {
+	isExecutive, err := failOwnerExecutiveRunInTransaction(ctx, tx, run.ID, message, now)
+	if err != nil {
 		return domain.RunDetail{}, err
 	}
 	// A start failure may keep its accepted intent open only while the current
@@ -863,6 +866,11 @@ func (s *Store) FailRunStart(ctx context.Context, runID, message, correlationID 
 	if !retryAuthorized {
 		if err := terminalizeSchedulingIntentForRun(ctx, tx, run, "definite start failure has no enabled authorized retry", correlationID, now); err != nil {
 			return domain.RunDetail{}, err
+		}
+		if !isExecutive {
+			if err := enqueueOwnerManagerReview(ctx, tx, run.WorkspaceID, run.ProjectID, eventSequence, now); err != nil {
+				return domain.RunDetail{}, err
+			}
 		}
 	}
 	detail, err := runDetailInTransaction(ctx, tx, run)
@@ -1041,6 +1049,18 @@ func (s *Store) applyRunObservationInTransaction(ctx context.Context, tx *sql.Tx
 	}
 	if err := setRunJob(ctx, tx, run.ID, jobStatus, now); err != nil {
 		return domain.RunDetail{}, err
+	}
+	if !isExecutive {
+		// The project executive must observe the applied canonical outcome, not
+		// race the run worker after a report has merely arrived. Queue the review
+		// at the newest event produced by this same state-transition transaction.
+		var appliedEventSequence int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0) FROM events WHERE workspace_id=?`, run.WorkspaceID).Scan(&appliedEventSequence); err != nil {
+			return domain.RunDetail{}, storageFailure("read applied worker report event cut", err)
+		}
+		if err := enqueueOwnerManagerReview(ctx, tx, run.WorkspaceID, run.ProjectID, appliedEventSequence, now); err != nil {
+			return domain.RunDetail{}, err
+		}
 	}
 	detail, err := runDetailInTransaction(ctx, tx, *run)
 	if err != nil {
@@ -1429,6 +1449,7 @@ func (s *Store) LoseRun(ctx context.Context, runID, message, correlationID strin
 	if message == "" {
 		message = "runtime identity or outcome cannot be trusted"
 	}
+	message = boundedRunText(message, 1024)
 	run.Status, run.FailureCode, run.FailureMessage, run.Revision = domain.RunLost, "runtime_state_unknown", message, run.Revision+1
 	if err := updateRunProjectionForActor(ctx, tx, run, now, runWorkerActorID); err != nil {
 		return domain.RunDetail{}, err
@@ -1454,11 +1475,16 @@ func (s *Store) LoseRun(ctx context.Context, runID, message, correlationID strin
 	if err := appendRunTimeline(ctx, tx, run.ID, runLostEvent, message, nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runLostEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message, "capacity_retained": true, "logs_available": false, "logs_unavailable_reason": "runtime identity or outcome is not trusted"}); err != nil {
+	appliedEventSequence, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runLostEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"code": run.FailureCode, "message": message, "capacity_retained": true, "logs_available": false, "logs_unavailable_reason": "runtime identity or outcome is not trusted"})
+	if err != nil {
 		return domain.RunDetail{}, err
 	}
 	if !isExecutive {
-		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskBlocked, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": message, "status": task.Status}); err != nil {
+		appliedEventSequence, err = appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskBlocked, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": message, "status": task.Status})
+		if err != nil {
+			return domain.RunDetail{}, err
+		}
+		if err := enqueueOwnerManagerReview(ctx, tx, run.WorkspaceID, run.ProjectID, appliedEventSequence, now); err != nil {
 			return domain.RunDetail{}, err
 		}
 	}
@@ -1690,7 +1716,7 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message string, archiv
 		return domain.RunDetail{}, &Error{Code: CodeRunConflict, Message: "only an active run can fail during observation"}
 	}
 	now := s.nowText()
-	run.Status, run.FailureCode, run.FailureMessage, run.FinishedAt = domain.RunFailed, strings.TrimSpace(code), strings.TrimSpace(message), now
+	run.Status, run.FailureCode, run.FailureMessage, run.FinishedAt = domain.RunFailed, boundedRunText(code, 128), boundedRunText(message, 1024), now
 	if err := deleteRunRuntimeBinding(ctx, tx, run.ID); err != nil {
 		return domain.RunDetail{}, err
 	}
@@ -1728,16 +1754,23 @@ func (s *Store) FailRun(ctx context.Context, runID, code, message string, archiv
 	if err := appendRunTimeline(ctx, tx, run.ID, runFailedEvent, run.FailureMessage, nil, now); err != nil {
 		return domain.RunDetail{}, err
 	}
-	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, mergeEventData(map[string]any{"code": run.FailureCode, "message": run.FailureMessage}, terminalLogEventData(archive, logsUnavailableReason))); err != nil {
+	appliedEventSequence, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, mergeEventData(map[string]any{"code": run.FailureCode, "message": run.FailureMessage}, terminalLogEventData(archive, logsUnavailableReason)))
+	if err != nil {
 		return domain.RunDetail{}, err
 	}
 	if !isExecutive {
-		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": run.FailureMessage}); err != nil {
+		appliedEventSequence, err = appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskFailedEvent, correlationID, now, runWorkerActorID, domain.EventActorSubsystem, map[string]any{"run_id": run.ID, "reason": run.FailureMessage})
+		if err != nil {
 			return domain.RunDetail{}, err
 		}
 	}
 	if err := terminalizeSchedulingIntentForRun(ctx, tx, run, run.FailureMessage, correlationID, now); err != nil {
 		return domain.RunDetail{}, err
+	}
+	if !isExecutive {
+		if err := enqueueOwnerManagerReview(ctx, tx, run.WorkspaceID, run.ProjectID, appliedEventSequence, now); err != nil {
+			return domain.RunDetail{}, err
+		}
 	}
 	detail, err := runDetailInTransaction(ctx, tx, run)
 	if err != nil {
@@ -2038,10 +2071,22 @@ func appendRunTimeline(ctx context.Context, tx *sql.Tx, runID, kind, message str
 	if err != nil {
 		return storageFailure("encode run timeline evidence", err)
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO run_timeline(run_id, kind, message, evidence_json, recorded_at) VALUES (?, ?, NULLIF(?, ''), ?, ?)", runID, kind, strings.TrimSpace(message), string(evidenceJSON), now); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO run_timeline(run_id, kind, message, evidence_json, recorded_at) VALUES (?, ?, NULLIF(?, ''), ?, ?)", runID, kind, boundedRunText(message, 4096), string(evidenceJSON), now); err != nil {
 		return storageFailure("append run timeline", err)
 	}
 	return nil
+}
+
+func boundedRunText(value string, maximum int) string {
+	value = strings.TrimSpace(strings.ToValidUTF8(value, "�"))
+	if maximum <= 0 || len(value) <= maximum {
+		return value
+	}
+	end := maximum
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return strings.TrimSpace(value[:end])
 }
 
 func validStoredScenario(scenario domain.FakeScenario) bool {

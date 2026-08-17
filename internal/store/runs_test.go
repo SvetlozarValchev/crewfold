@@ -409,6 +409,34 @@ func TestLostRunRetainsAssignmentAndCheckoutCapacity(t *testing.T) {
 	}
 }
 
+func TestLostRunBoundsCanonicalProjectionAndTimelineDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, _, _, _, assigned := initializeRunTest(t, storage, "bounded lost run")
+	scenario := domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "bounded-lost-run", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "unknown"}}}
+	created := createRunTest(t, storage, workspace.ID, assigned, scenario, "start-bounded-lost-run")
+	if _, err := storage.MarkRunStarting(context.Background(), created.Run.ID, "bounded-lost-starting"); err != nil {
+		t.Fatal(err)
+	}
+	diagnostic := strings.Repeat("provider context mentions authentication and an unrelated command failed — ", 200)
+	lost, err := storage.LoseRun(context.Background(), created.Run.ID, diagnostic, "bounded-lost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if length := len(lost.Run.FailureMessage); length == 0 || length > 1024 {
+		t.Fatalf("lost failure message bytes = %d, want 1..1024", length)
+	}
+	if !strings.HasPrefix(diagnostic, lost.Run.FailureMessage) {
+		t.Fatalf("lost failure message is not a bounded prefix: %q", lost.Run.FailureMessage)
+	}
+	for _, entry := range lost.Timeline {
+		if len(entry.Message) > 4096 {
+			t.Fatalf("timeline %q message bytes = %d, want <=4096", entry.Kind, len(entry.Message))
+		}
+	}
+}
+
 func TestResolveLostRunReleasesExecutionAuthorityButLeavesTaskBlocked(t *testing.T) {
 	t.Parallel()
 

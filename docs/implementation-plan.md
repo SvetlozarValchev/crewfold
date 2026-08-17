@@ -1237,7 +1237,15 @@ repository, direct the executive, review and accept typed work, inspect its agen
 generate the exact project briefing. Commit `d1b5dd8` completes the missing
 event-driven orchestration seam: worker reports and agent messages now trigger one
 coalesced, restart-safe exchange with that same executive, which can publish a cited
-update, raise one owner decision, or submit successor work for explicit review.
+update, raise one genuinely consequential owner decision, or submit successor work
+for explicit review. The Crew page and secondary CLI add or disable implementation
+workers through one exact revisioned replacement of the project executive's
+launch-profile/grant/binding tuple. Proposal changes preserve the old draft as
+rejected history and request a new typed revision from the same durable executive.
+A real subscription-backed Codex/Herdr browser workflow has also been run through
+revised-plan acceptance, dependency-ordered execution, proactive executive review,
+automatic successor launch, completion, restart, and narrow-layout inspection
+without a spurious owner decision.
 
 **Question answered:** Can one developer start, direct, inspect, understand, and
 intervene in a real local crew from one owner interface instead of composing the

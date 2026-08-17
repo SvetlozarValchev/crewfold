@@ -157,6 +157,31 @@ WHERE project_id=? AND status='leased'`, status, reviewedEventSequence, now, tur
 	return nil
 }
 
+// DeferOwnerManagerReview returns a claimed cursor to the durable pending state
+// without consuming an attempt. Worker facts that arrive while an executive
+// exchange is live continue to advance requested_event_sequence on this same
+// row, so one later review observes the complete coalesced cut.
+func (s *Store) DeferOwnerManagerReview(ctx context.Context, projectID string) error {
+	tx, err := s.beginTx(ctx, nil)
+	if err != nil {
+		return storageFailure("begin owner manager review deferral", err)
+	}
+	defer tx.Rollback()
+	now := s.nowText()
+	available := s.clock().UTC().Add(time.Second).Format(time.RFC3339Nano)
+	result, err := tx.ExecContext(ctx, `UPDATE owner_manager_review_jobs SET
+status='pending',attempts=CASE WHEN attempts>0 THEN attempts-1 ELSE 0 END,
+available_at=?,lease_expires_at=NULL,last_error=NULL,updated_at=?
+WHERE project_id=? AND status='leased'`, available, now, strings.TrimSpace(projectID))
+	if err != nil {
+		return storageFailure("defer owner manager review", err)
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return &Error{Code: CodeOwnerTurnConflict, Message: "owner manager review changed before deferral"}
+	}
+	return tx.Commit()
+}
+
 // AdvanceOwnerManagerReviewCut binds a leased review to the exact newer
 // snapshot captured immediately before provider interpretation. This absorbs
 // unrelated canonical events without weakening the event-cut citation fence;

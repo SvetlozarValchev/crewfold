@@ -29,10 +29,14 @@ func (s *server) startOwnerExecutiveWorker() {
 				}
 				processed++
 				if err := s.dispatchOwnerExecutiveExchange(s.leaseReconcileCtx, exchange.ID); err != nil {
-					s.config.Logger.Error("owner executive exchange dispatch failed", "component", "owner_executive", "exchange_id", exchange.ID, "error", err)
-					if exchange.Attempts >= 3 {
+					if store.ManagerInvocationTemporarilyBusy(err) {
+						s.config.Logger.Info("owner executive exchange waits for the prior session or execution capacity", "component", "owner_executive", "exchange_id", exchange.ID)
+						_ = s.store.DeferOwnerExecutiveExchange(s.leaseReconcileCtx, exchange.ID, err)
+					} else if exchange.Attempts >= 3 {
+						s.config.Logger.Error("owner executive exchange dispatch failed", "component", "owner_executive", "exchange_id", exchange.ID, "error", err)
 						_ = s.store.FailOwnerExecutiveExchange(s.leaseReconcileCtx, exchange.ID, err)
 					} else {
+						s.config.Logger.Error("owner executive exchange dispatch failed", "component", "owner_executive", "exchange_id", exchange.ID, "error", err)
 						_ = s.store.RetryOwnerExecutiveExchange(s.leaseReconcileCtx, exchange.ID, err)
 					}
 				}

@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import {
-  Activity, AlertCircle, BookOpenText, Bot, Boxes, Check, CheckCircle2, ChevronDown, ChevronRight,
+  Activity, AlertCircle, AlertTriangle, BookOpenText, Bot, Boxes, Check, CheckCircle2, ChevronDown, ChevronRight,
   CircleDot, ClipboardCheck, Clock3, Code2, Command, Database, FileCheck2, GitBranch,
   GitCommitHorizontal, HeartPulse, Inbox, LayoutDashboard, ListChecks, LoaderCircle,
   Menu, MessageCircle, MessageSquareText, Network, Play, Plus, RefreshCw, RotateCcw,
@@ -22,7 +22,7 @@ type Page = { next_cursor: string; has_more: boolean; total: number };
 type Workspace = { id: string; name: string; revision: number; updated_at: string };
 type Project = { id: string; workspace_id: string; name: string; revision: number; updated_at: string };
 type Checkout = { id: string; project_id: string; path: string; write_mode: string; availability: string; branch?: string; head_commit?: string; dirty?: boolean; dirty_paths?: string[]; omitted_paths?: number; truncated?: boolean; diagnostic?: string };
-type Agent = { id: string; workspace_id: string; name: string; role: string; provider: string; runtime: string; enabled: boolean; revision: number };
+type Agent = { id: string; workspace_id: string; name: string; role: string; provider: string; runtime: string; enabled: boolean; max_concurrency: number; revision: number };
 type Objective = { id: string; project_id: string; title: string; status: string; revision: number; updated_at: string };
 type Task = { id: string; project_id: string; objective_id?: string; title: string; description?: string; status: string; blocked_reason?: string; priority: number; revision: number; assigned_agent_id?: string; updated_at: string };
 type TaskDetail = { task: Task; dependencies: Array<{ depends_on_task_id: string }>; assignment?: { agent_id: string }; readiness: { ready: boolean; reason: string } };
@@ -117,6 +117,12 @@ function displayTime(value?: string) {
 function latestRunForAgent(runs: Run[], agentID: string) {
   return runs.filter((run) => run.agent_id === agentID).sort((left, right) => right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id))[0] ?? null;
 }
+function pendingConsequentialDecisions(data: WorkbenchData) {
+  const actions = new Map(data.supervisorActions.map((action) => [action.id, action]));
+  const approvals = data.approvals.filter((approval) => approval.status === "pending" && actions.get(approval.action_id)?.response !== "request_owner");
+  const lostRuns = data.runs.filter((run) => run.status === "lost");
+  return data.proposals.filter((proposal) => proposal.status === "pending").length + approvals.length + lostRuns.length;
+}
 function statusTone(status: string) {
   if (["completed", "granted", "consumed", "available", "ready"].includes(status)) return "good";
   if (["failed", "start_failed", "lost", "denied"].includes(status)) return "bad";
@@ -127,6 +133,20 @@ function statusTone(status: string) {
 
 type RuntimeActivity = { key: string; kind: string; text: string; tone: "quiet" | "live" | "good" | "bad" };
 
+function readableCommand(value: unknown) {
+  let command = String(value ?? "Local command").trim();
+  for (const prefix of ["/bin/bash -lc ", "/bin/sh -lc "]) {
+    if (!command.startsWith(prefix)) continue;
+    command = command.slice(prefix.length).trim();
+    if (command.length >= 2 && ((command.startsWith("'") && command.endsWith("'")) || (command.startsWith('"') && command.endsWith('"')))) {
+      command = command.slice(1, -1);
+    }
+    command = command.replaceAll("'\"'\"'", "'");
+    break;
+  }
+  return command.replace(/\s+/g, " ").trim();
+}
+
 function readableRuntimeActivity(raw: string): RuntimeActivity[] {
   const clean = raw
     .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
@@ -134,6 +154,7 @@ function readableRuntimeActivity(raw: string): RuntimeActivity[] {
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n");
   const entries: RuntimeActivity[] = [];
+  const lifecycleEntries = new Map<string, number>();
   const message = (value: unknown): unknown => {
     if (!value || typeof value !== "object") return value;
     const candidate = value as Record<string, unknown>;
@@ -144,6 +165,17 @@ function readableRuntimeActivity(raw: string): RuntimeActivity[] {
     const value = text.trim();
     if (entries.at(-1)?.kind === kind && entries.at(-1)?.text === value) return;
     entries.push({ key: `${entries.length}-${kind}`, kind, text: value, tone });
+  };
+  const upsert = (identity: string, kind: string, text: unknown, tone: RuntimeActivity["tone"]) => {
+    if (typeof text !== "string" || !text.trim()) return;
+    const value = text.trim();
+    const prior = lifecycleEntries.get(identity);
+    if (prior !== undefined) {
+      entries[prior] = { key: identity, kind, text: value, tone };
+      return;
+    }
+    lifecycleEntries.set(identity, entries.length);
+    entries.push({ key: identity, kind, text: value, tone });
   };
   for (const original of clean.split("\n")) {
     const line = original.trim();
@@ -160,18 +192,20 @@ function readableRuntimeActivity(raw: string): RuntimeActivity[] {
         if (type === "turn.failed" || type === "error") { add("Error", message(value.error ?? value.message ?? line), "bad"); continue; }
         if ((type === "item.started" || type === "item.updated") && item) {
           const itemType = typeof item.type === "string" ? item.type : "item";
-          if (itemType === "mcp_tool_call") { add("Crewfold tool", `${String(item.tool ?? "tool").replaceAll("crewfold_", "").replaceAll("_", " ")} · running`, "live"); continue; }
-          if (itemType === "command_execution") { add("Command", String(item.command ?? item.text ?? "Local command started"), "live"); continue; }
+          const itemID = typeof item.id === "string" ? item.id : `${itemType}-${entries.length}`;
+          if (itemType === "mcp_tool_call") { upsert(itemID, "Crewfold tool", `${String(item.tool ?? "tool").replaceAll("crewfold_", "").replaceAll("_", " ")} · running`, "live"); continue; }
+          if (itemType === "command_execution") { upsert(itemID, "Command · running", readableCommand(item.command ?? item.text), "live"); continue; }
         }
         if (type === "item.completed" && item) {
           const itemType = typeof item.type === "string" ? item.type : "item";
           if (itemType === "agent_message") { add("Agent", item.text, "good"); continue; }
-          if (itemType === "mcp_tool_call") { add("Crewfold tool", `${String(item.tool ?? "tool").replaceAll("crewfold_", "").replaceAll("_", " ")} · ${String(item.status ?? "completed")}`, item.status === "failed" ? "bad" : "live"); continue; }
+          const itemID = typeof item.id === "string" ? item.id : `${itemType}-${entries.length}`;
+          if (itemType === "mcp_tool_call") { upsert(itemID, "Crewfold tool", `${String(item.tool ?? "tool").replaceAll("crewfold_", "").replaceAll("_", " ")} · ${String(item.status ?? "completed")}`, item.status === "failed" ? "bad" : "good"); continue; }
           if (itemType === "command_execution") {
             const failed = item.status === "failed" || typeof item.exit_code === "number" && item.exit_code !== 0;
-            const command = String(item.command ?? item.text ?? "Local command completed");
+            const command = readableCommand(item.command ?? item.text);
             const output = typeof item.aggregated_output === "string" ? item.aggregated_output.trim() : "";
-            add("Command", failed && output ? `${command}\n\n${output.slice(-1600)}` : command, failed ? "bad" : "quiet");
+            upsert(itemID, failed ? "Command · failed" : "Command · completed", failed && output ? `${command}\n\n${output.slice(-1600)}` : command, failed ? "bad" : "quiet");
             continue;
           }
         }
@@ -187,7 +221,13 @@ function readableRuntimeActivity(raw: string): RuntimeActivity[] {
     if (/"[A-Za-z0-9_]+"\s*:/.test(line)) continue;
     if (/bwrap:|failed to|error:|not permitted|usage limit|command not found/i.test(line)) add("Runtime", line, "bad");
   }
-  return entries.slice(-40);
+  const unique: RuntimeActivity[] = [];
+  for (const entry of entries) {
+    const prior = unique.at(-1);
+    if (prior?.kind === entry.kind && prior.text === entry.text && prior.tone === entry.tone) continue;
+    unique.push({ ...entry, key: `${unique.length}-${entry.kind}` });
+  }
+  return unique.slice(-40);
 }
 
 function RuntimeActivityFeed({ logs, empty }: { logs: string; empty: string }) {
@@ -196,8 +236,15 @@ function RuntimeActivityFeed({ logs, empty }: { logs: string; empty: string }) {
   return <div className="runtime-activity">{activity.map((entry) => <article className={entry.tone} key={entry.key}><span>{entry.kind}</span><p>{entry.text}</p></article>)}</div>;
 }
 
-function RuntimeOutput({ logs }: { logs: string }) {
-  return <><RuntimeActivityFeed logs={logs} empty={logs ? "No human-readable provider event was present in this bounded capture." : "Waiting for the first agent event."} />{logs && <details className="raw-runtime-output"><summary>Show raw bounded provider output</summary><pre>{logs}</pre></details>}</>;
+function RuntimeOutput({ logs, status }: { logs: string; status: string }) {
+  const empty = logs
+    ? "This bounded tail starts inside protocol data. Open live activity to combine it with the current stream."
+    : ["requested", "starting"].includes(status)
+      ? "The provider session is launching; no readable event has arrived yet."
+      : ["active", "blocked", "stopping"].includes(status)
+        ? "The provider is running, but no readable event is present in the retained tail yet."
+        : "No human-readable provider event was retained for this completed session.";
+  return <><RuntimeActivityFeed logs={logs} empty={empty} />{logs && <details className="raw-runtime-output"><summary>Show raw bounded provider output</summary><pre>{logs}</pre></details>}</>;
 }
 
 async function exchangeBootstrap(token: string): Promise<SessionResponse> {
@@ -326,6 +373,13 @@ function StatusPill({ value }: { value: string }) {
   return <span className={`status-pill ${statusTone(value)}`}><CircleDot size={12} aria-hidden="true" />{value.replaceAll("_", " ")}</span>;
 }
 
+function readableTaskReadiness(detail: TaskDetail, tasks: TaskDetail[]) {
+  if (detail.task.status === "changes_requested") return detail.task.blocked_reason || "Completion needs a reviewed retry.";
+  const prerequisites = detail.dependencies.map((dependency) => tasks.find((candidate) => candidate.task.id === dependency.depends_on_task_id)?.task).filter((task): task is Task => Boolean(task && task.status !== "completed"));
+  if (prerequisites.length > 0) return `Waiting for ${prerequisites.map((task) => `“${task.title}”`).join(", ")}`;
+  return detail.readiness.reason || "Waiting for Crewfold to make this task runnable.";
+}
+
 function EmptyState({ icon: Icon, title, detail }: { icon: typeof Inbox; title: string; detail: string }) {
   return <div className="empty-state"><Icon size={28} aria-hidden="true" /><h3>{title}</h3><p>{detail}</p></div>;
 }
@@ -367,7 +421,7 @@ function Onboarding({ apiBase, csrf, onComplete }: { apiBase: string; csrf: stri
       </div>
     </section>
     <form className="onboarding-form" onSubmit={submit}>
-      <div className="form-heading"><div className="step-mark">1</div><div><h2>Set up your workbench</h2><p>You can change worker policy later.</p></div></div>
+      <div className="form-heading"><div className="step-mark">1</div><div><h2>Set up your workbench</h2><p>Review the initial worker and runtime before creating canonical state.</p></div></div>
       <label><span>Repository path</span><input required value={path} onChange={(event) => updatePath(event.target.value)} placeholder="~/depot/dev/world-engine-2" autoComplete="off" /></label>
       <div className="field-grid">
         <label><span>Workspace</span><input required pattern="[a-z][a-z0-9-]{0,62}" value={workspace} onChange={(event) => setWorkspace(event.target.value)} /></label>
@@ -389,7 +443,7 @@ function ManagerDecisionCard({ detail, actionable, busy, mutable, choose }: { de
   return <section className={`manager-decision-card ${actionable ? "" : "resolved"}`}><header><span className="decision-icon">?</span><div><strong>{actionable ? "Executive needs your decision" : "Earlier decision"}</strong><small>{actionable ? "Your selection is sent back as a visible owner instruction. It does not silently accept proposals or execute effects." : "Later conversation activity superseded this question; its choices are now inert."}</small></div></header><h3>{detail.turn.interpretation.question}</h3><div className="manager-choices">{detail.turn.interpretation.choices.map((choice) => <button key={choice.key} disabled={!actionable || !mutable || busy} onClick={() => choose(choice)}><span><strong>{choice.label}</strong>{choice.recommended && <em>Recommended</em>}</span><small>{choice.description}</small><span className="choose-label">{actionable ? "Send this answer" : "Superseded"}</span></button>)}</div></section>;
 }
 
-function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, openDecisions, mutable }: { data: WorkbenchData; apiBase: string; csrf: string; reload: () => Promise<void>; selectTask: (task: TaskDetail) => void; selectRun: (run: Run) => void; openDecisions: () => void; mutable: boolean }) {
+function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, openDecisions, openCrew, mutable }: { data: WorkbenchData; apiBase: string; csrf: string; reload: () => Promise<void>; selectTask: (task: TaskDetail) => void; selectRun: (run: Run) => void; openDecisions: () => void; openCrew: () => void; mutable: boolean }) {
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -481,14 +535,22 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, ope
   const projectTasks = data.tasks.filter(({ task }) => task.id !== executive?.planning_task_id);
   const projectRuns = data.runs.filter((run) => run.task_id !== executive?.planning_task_id);
   const activeRuns = projectRuns.filter((run) => ["requested", "starting", "active", "blocked", "stopping"].includes(run.status));
-  const attentionRuns = projectRuns.filter((run) => ["requested", "starting", "active", "blocked", "stopping", "start_failed", "failed", "lost"].includes(run.status)).sort((left, right) => right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id));
+  const attentionRuns = projectRuns.filter((run) => ["requested", "starting", "active", "blocked", "stopping", "start_failed", "failed", "lost"].includes(run.status) || run.status === "review" && data.tasks.some((detail) => detail.task.id === run.task_id && detail.task.status === "changes_requested")).sort((left, right) => right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id));
   const openTasks = projectTasks.filter(({ task }) => !["completed", "failed", "cancelled"].includes(task.status));
   const exchangeByTurn = new Map(exchanges.map((exchange) => [exchange.turn_id, exchange]));
   const pendingProposalIDs = new Set(data.proposals.filter((proposal) => proposal.status === "pending").map((proposal) => proposal.id));
   const executiveAgent = executive ? data.agents.find((agent) => agent.id === executive.agent_id) : null;
+  const implementationAgents = data.agents.filter((agent) => agent.id !== executiveAgent?.id && agent.enabled);
+  const busyWorkerIDs = new Set(activeRuns.map((run) => run.agent_id));
+  const idleWorkers = implementationAgents.filter((agent) => !busyWorkerIDs.has(agent.id));
+  const readyTasks = openTasks.filter((detail) => detail.readiness.ready);
+  const dependencyWaiting = openTasks.filter((detail) => detail.dependencies.some((dependency) => {
+    const prerequisite = data.tasks.find((candidate) => candidate.task.id === dependency.depends_on_task_id)?.task;
+    return prerequisite && prerequisite.status !== "completed";
+  }));
   const exchangeMessage = (detail: OwnerTurnDetail, exchange?: OwnerExecutiveExchange) => {
     if (!exchange) return detail.turn.answer ?? detail.turn.interpretation.summary ?? "This historical turn predates the project executive exchange contract.";
-    if (exchange.status === "pending") return "Your instruction is durably queued for the project executive.";
+    if (exchange.status === "pending") return exchange.last_error?.startsWith("planning assignment already has live run ") ? "This review is durably queued behind the executive session that is still closing. It will start automatically when that short-lived session releases the planning assignment." : "Your instruction is durably queued for the project executive.";
     if (exchange.status === "leased") return "Crewfold is freezing the executive run and its exact authority context.";
     if (exchange.status === "running") return "The project executive is working in a short-lived Herdr session. Its answer and any typed proposals will appear here.";
     if (exchange.status === "failed") return exchange.last_error ?? "The executive session ended before recording a response.";
@@ -524,10 +586,11 @@ function WorkbenchView({ data, apiBase, csrf, reload, selectTask, selectRun, ope
       <div className="effect-note"><ShieldCheck size={16} /><span><strong>Conversation is not authority.</strong> The executive may use read-only Crewfold tools and submit typed proposals. Only explicit proposal acceptance or an existing deterministic policy can commit work.</span></div>
     </section>
     <aside className="right-stack">
-      <section className="panel metric-panel"><div className="panel-label"><Workflow size={16} />Current implementation</div><div className="metric-row"><div><strong>{openTasks.length}</strong><span>open tasks</span></div><div><strong>{activeRuns.length}</strong><span>worker runs</span></div><button onClick={openDecisions} aria-label="Open decisions"><strong>{data.approvals.filter((item) => item.status === "pending").length + data.proposals.filter((item) => item.status === "pending").length}</strong><span>need your review</span><ChevronRight size={14} /></button></div></section>
-      <section className="panel compact-list"><div className="panel-title"><h2>Agents and launch attention</h2><button onClick={() => void reload()} aria-label="Refresh workbench"><RefreshCw size={15} /></button></div>{attentionRuns.length === 0 ? <EmptyState icon={Bot} title="No worker run needs attention" detail="There is no live, failed, or unresolved implementation run in this project." /> : attentionRuns.slice(0, 5).map((run) => <button className="list-row" key={run.id} onClick={() => selectRun(run)}><span className="row-icon"><Bot size={16} /></span><span><strong>{data.agents.find((agent) => agent.id === run.agent_id)?.name ?? "Agent"}</strong><small>{run.status === "start_failed" ? run.failure_message ?? "Launch failed; inspect and retry." : run.status === "failed" ? `${data.tasks.find((task) => task.task.id === run.task_id)?.task.title ?? "Assigned work"} · inspect failure output` : run.status === "lost" ? "Runtime outcome is unknown; owner resolution is required." : data.tasks.find((task) => task.task.id === run.task_id)?.task.title ?? "Assigned work"}</small></span><StatusPill value={run.status} /></button>)}</section>
+      <section className="panel metric-panel"><div className="panel-label"><Workflow size={16} />Current implementation</div><div className="metric-row"><div><strong>{openTasks.length}</strong><span>open tasks</span></div><div><strong>{activeRuns.length}</strong><span>worker runs</span></div><button onClick={openDecisions} aria-label="Open decisions"><strong>{pendingConsequentialDecisions(data)}</strong><span>decisions</span><ChevronRight size={14} /></button></div></section>
+      <section className="panel capacity-panel"><div className="panel-label"><Users size={16} />Execution capacity</div><div className="capacity-summary"><strong>{implementationAgents.length} implementation {implementationAgents.length === 1 ? "agent" : "agents"} configured</strong><span>{activeRuns.length} active {activeRuns.length === 1 ? "run" : "runs"} · {busyWorkerIDs.size} busy {busyWorkerIDs.size === 1 ? "agent" : "agents"} · {idleWorkers.length} idle · {readyTasks.length} tasks ready now</span></div>{dependencyWaiting.length > 0 && <p><GitBranch size={14} />{dependencyWaiting.length} task{dependencyWaiting.length === 1 ? " is" : "s are"} waiting for prerequisite work, so another agent would not make {dependencyWaiting.length === 1 ? "it" : "them"} runnable yet.</p>}<button className="secondary-button compact" onClick={openCrew}><Users size={14} />Inspect configured crew</button></section>
+      <section className="panel compact-list attention-list"><div className="panel-title"><h2>Agents and launch attention</h2><button onClick={() => void reload()} aria-label="Refresh workbench"><RefreshCw size={15} /></button></div>{attentionRuns.length === 0 ? <EmptyState icon={Bot} title="No worker run needs attention" detail="There is no live, failed, unresolved, or changes-requested implementation run in this project." /> : attentionRuns.slice(0, 5).map((run) => { const task = data.tasks.find((detail) => detail.task.id === run.task_id)?.task; const agent = data.agents.find((candidate) => candidate.id === run.agent_id); return <button className="list-row" key={run.id} onClick={() => selectRun(run)}><span className="row-icon"><Bot size={16} /></span><span><strong>{task?.title ?? "Assigned work"}</strong><small>{agent?.name ?? "Agent"} · {run.status === "review" && task?.status === "changes_requested" ? task.blocked_reason || "completion needs a reviewed retry" : run.status === "start_failed" ? run.failure_message ?? "launch failed; inspect and retry" : run.status === "failed" ? "inspect failure output" : run.status === "lost" ? "runtime outcome is unknown; owner resolution is required" : run.status.replaceAll("_", " ")}</small></span><StatusPill value={run.status === "review" && task?.status === "changes_requested" ? "changes requested" : run.status} /></button>; })}</section>
     </aside>
-    <section className="panel task-strip full-span"><div className="panel-title"><div><h2>Implementation work</h2><p>{openTasks.length ? "Open tasks in their current canonical state." : projectTasks.length ? "All accepted tasks are currently terminal." : "Accepted executive proposals will create implementation work here."}</p></div><span>{openTasks.length} open · {projectTasks.length} total</span></div>{projectTasks.length === 0 ? <EmptyState icon={ListChecks} title="No implementation work accepted yet" detail="Ask the executive for a bounded plan or change, then review the exact proposal in Decisions." /> : <div className="task-cards">{(openTasks.length ? openTasks : projectTasks).slice(0, 6).map((detail) => <button key={detail.task.id} className="task-card" onClick={() => selectTask(detail)}><div><StatusPill value={detail.task.status} /><span className="priority">P{detail.task.priority}</span></div><strong>{detail.task.title}</strong><small>{data.agents.find((agent) => agent.id === detail.task.assigned_agent_id)?.name ?? (["completed", "failed", "cancelled"].includes(detail.task.status) ? "Assignment released" : "Unassigned")} · updated {displayTime(detail.task.updated_at)}</small><ChevronRight size={16} /></button>)}</div>}</section>
+    <section className="panel task-strip full-span"><div className="panel-title"><div><h2>Implementation work</h2><p>{openTasks.length ? "Open tasks in their current canonical state." : projectTasks.length ? "All accepted tasks are currently terminal." : "Accepted executive proposals will create implementation work here."}</p></div><span>{openTasks.length} open · {projectTasks.length} total</span></div>{projectTasks.length === 0 ? <EmptyState icon={ListChecks} title="No implementation work accepted yet" detail="Ask the executive for a bounded plan or change, then review the exact proposal in Decisions." /> : <div className="task-cards">{(openTasks.length ? openTasks : projectTasks).slice(0, 6).map((detail) => { const waiting = detail.task.status === "ready" && !detail.readiness.ready; return <button key={detail.task.id} className="task-card" onClick={() => selectTask(detail)}><div><StatusPill value={waiting ? "waiting" : detail.task.status} /><span className="priority">P{detail.task.priority}</span></div><strong>{detail.task.title}</strong><small>{waiting ? readableTaskReadiness(detail, projectTasks) : `${data.agents.find((agent) => agent.id === detail.task.assigned_agent_id)?.name ?? (["completed", "failed", "cancelled"].includes(detail.task.status) ? "Assignment released" : "Unassigned")} · updated ${displayTime(detail.task.updated_at)}`}</small><ChevronRight size={16} /></button>; })}</div>}</section>
   </div>;
 }
 
@@ -561,36 +624,67 @@ function GraphView({ data, selectTask }: { data: WorkbenchData; selectTask: (tas
       const dependencyTasks = detail.dependencies.map((dependency) => implementationTasks.find(({ task }) => task.id === dependency.depends_on_task_id)?.task).filter((task): task is Task => Boolean(task));
       const agent = data.agents.find((candidate) => candidate.id === detail.task.assigned_agent_id);
       const run = data.runs.filter((candidate) => candidate.task_id === detail.task.id).sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0];
-      const progress = detail.task.status === "completed" ? "Completed" : detail.task.status === "blocked" ? detail.task.blocked_reason || detail.readiness.reason || "Blocked" : detail.readiness.ready ? "Ready for Crewfold to schedule" : detail.readiness.reason || "Waiting";
+      const progress = detail.task.status === "completed" ? "Completed" : detail.task.status === "blocked" ? detail.task.blocked_reason || readableTaskReadiness(detail, implementationTasks) : detail.readiness.ready ? "Ready for Crewfold to schedule" : readableTaskReadiness(detail, implementationTasks);
       return <button className="work-item" key={detail.task.id} onClick={() => selectTask(detail)}><span className="work-order">{index + 1}</span><div className="work-item-main"><div><strong>{detail.task.title}</strong><StatusPill value={detail.task.status} /></div>{detail.task.description && <p>{detail.task.description}</p>}<div className="work-progress"><span className={detail.task.status === "blocked" ? "warn" : ""}>{progress}</span>{agent && <span><Bot size={13} />{agent.name}</span>}{run && <span><Activity size={13} />run {run.status.replaceAll("_", " ")}</span>}</div>{dependencyTasks.length > 0 && <div className="dependency-line"><GitBranch size={14} /><span>After {dependencyTasks.map((task) => `“${task.title}”`).join(", ")}</span></div>}</div><ChevronRight size={18} /></button>;
     })}</div></>}
   </section>;
 }
 
-function CrewView({ data, selectAgent }: { data: WorkbenchData; selectAgent: (agent: Agent) => void }) {
+function CrewView({ data, apiBase, csrf, reload, selectAgent, mutable }: { data: WorkbenchData; apiBase: string; csrf: string; reload: () => Promise<void>; selectAgent: (agent: Agent) => void; mutable: boolean }) {
   const executiveAgent = data.executive ? data.agents.find((agent) => agent.id === data.executive?.agent_id) : undefined;
   const workers = data.agents.filter((agent) => agent.id !== executiveAgent?.id);
-  const card = (agent: Agent, kind: "executive" | "worker") => { const run = latestRunForAgent(data.runs, agent.id); return <article className={`crew-card ${kind}`} key={agent.id}><div className="crew-card-top"><span className="agent-avatar">{kind === "executive" ? <Sparkles size={20} /> : <Code2 size={20} />}</span><StatusPill value={run?.status ?? (agent.enabled ? "ready" : "disabled")} /></div><span className="crew-kind">{kind === "executive" ? "Project direction" : "Implementation"}</span><h2>{agent.name}</h2><p>{kind === "executive" ? "Talks with you, reviews canonical project state, asks consequential questions, and submits typed proposals. It cannot accept its own proposals or edit the project." : "Executes tasks only after accepted graph changes and deterministic scheduling make them ready."}</p><dl className="fact-list"><div><dt>Provider</dt><dd>{agent.provider}</dd></div><div><dt>Runtime</dt><dd>{agent.runtime}</dd></div><div><dt>Latest session</dt><dd>{run?.status.replaceAll("_", " ") ?? "none"}</dd></div></dl><button className="secondary-button" onClick={() => selectAgent(agent)}><Search size={15} />Inspect {kind === "executive" ? "executive" : "worker"}{run ? " session" : ""}</button></article>; };
+  const activeWorkers = workers.filter((agent) => agent.enabled);
+  const defaultWorker = activeWorkers[0] ?? executiveAgent;
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [provider, setProvider] = useState(defaultWorker?.provider ?? "codex");
+  const [runtime, setRuntime] = useState(defaultWorker?.runtime ?? "herdr");
+  const [maxConcurrency, setMaxConcurrency] = useState(2);
+  const [disableID, setDisableID] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const configure = async (payload: Record<string, unknown>) => {
+    if (!data.workspace || !data.project || !data.executive) return;
+    setBusy(true); setFeedback("");
+    try {
+      await rpc(apiBase, csrf, "owner.crew.configure", { workspace: data.workspace.id, project: data.project.id, expected_binding_revision: data.executive.revision, idempotency_key: newKey("crew"), ...payload });
+      setFeedback(payload.action === "add" ? `${String(payload.name)} is now an authorized implementation worker.` : "The worker was disabled and removed from the executive’s launch authority.");
+      setAdding(false); setDisableID(""); setName("");
+      await reload();
+    } catch (reason) { setFeedback(reason instanceof Error ? reason.message : "Crew configuration failed before its authority change committed."); }
+    finally { setBusy(false); }
+  };
+  const card = (agent: Agent, kind: "executive" | "worker") => {
+    const run = latestRunForAgent(data.runs, agent.id);
+    const profile = data.launchProfiles.find((candidate) => candidate.agent_id === agent.id && candidate.status === "active" && !candidate.purpose?.includes("executive"));
+    return <article className={`crew-card ${kind}${agent.enabled ? "" : " disabled"}`} key={agent.id}><div className="crew-card-top"><span className="agent-avatar">{kind === "executive" ? <Sparkles size={20} /> : <Code2 size={20} />}</span><StatusPill value={run?.status ?? (agent.enabled ? "ready" : "disabled")} /></div><span className="crew-kind">{kind === "executive" ? "Project direction" : agent.enabled ? "Authorized implementation" : "Disabled implementation"}</span><h2>{agent.name}</h2><p>{kind === "executive" ? "Talks with you, reviews canonical project state, asks consequential questions, and submits typed proposals. It cannot accept its own proposals or edit the project." : agent.enabled ? "Executes tasks only after accepted graph changes and deterministic scheduling make them ready." : "Retained as canonical history. It cannot receive new work or be selected by the executive."}</p><dl className="fact-list"><div><dt>Provider</dt><dd>{agent.provider}</dd></div><div><dt>Runtime</dt><dd>{agent.runtime}</dd></div><div><dt>Concurrency</dt><dd>{agent.max_concurrency}</dd></div><div><dt>{kind === "worker" ? "Launch authority" : "Latest session"}</dt><dd>{kind === "worker" ? profile ? "active" : "none" : run?.status.replaceAll("_", " ") ?? "none"}</dd></div></dl><div className="crew-card-actions"><button className="secondary-button" onClick={() => selectAgent(agent)}><Search size={15} />Inspect {kind === "executive" ? "executive" : "worker"}{run ? " session" : ""}</button>{kind === "worker" && agent.enabled && <button className="danger-button" disabled={!mutable || busy || activeWorkers.length <= 1} title={activeWorkers.length <= 1 ? "Add a replacement before disabling the final worker." : "Disable this worker after its accepted work is complete."} onClick={() => setDisableID(agent.id)}><XCircle size={15} />Disable worker</button>}</div>{disableID === agent.id && <div className="crew-confirm" role="alert"><strong>Remove {agent.name} from future work?</strong><p>Crewfold will first prove this worker owns no accepted or live work, then replace the executive’s exact grant and disable this worker. It will not stop or reassign work implicitly.</p><div><button className="secondary-button" onClick={() => setDisableID("")}>Cancel</button><button className="danger-button" disabled={busy} onClick={() => void configure({ action: "disable", agent: agent.id })}>{busy ? <LoaderCircle className="spin" size={14} /> : <XCircle size={14} />}Disable exactly</button></div></div>}</article>;
+  };
   return <section className="panel page-panel"><div className="page-heading"><div><div className="eyebrow"><Users size={13} />Who does what</div><h1>Crew</h1><p>The executive coordinates and proposes. Workers implement accepted tasks. Crewfold—not either agent—is the authority that records state and applies permitted effects.</p></div><span>{data.agents.length} agents</span></div>
+    <div className="configuration-gap" role="note"><Settings size={17} /><div><strong>You own the implementation crew</strong><p>Adding or disabling a worker replaces the executive’s exact launch grant as one reviewed configuration change. It does not create tasks, start agents, bypass dependencies, or silently move accepted work.</p></div><button className="primary-button compact" disabled={!mutable || busy || !data.executive} onClick={() => setAdding(!adding)}><Plus size={15} />Add worker</button></div>
+    {adding && <form className="crew-editor" onSubmit={(event) => { event.preventDefault(); void configure({ action: "add", name, provider, runtime, max_concurrency: maxConcurrency }); }}><div><div className="eyebrow">New implementation authority</div><h2>Add a worker</h2><p>This creates one enabled agent, one immutable project launch profile, and a replacement executive grant that may assign accepted work to it.</p></div><label><span>Worker name</span><input required pattern="[a-z][a-z0-9-]{0,62}" value={name} onChange={(event) => setName(event.target.value)} placeholder="reviewer" /></label><label><span>Provider</span><select value={provider} onChange={(event) => setProvider(event.target.value)}><option value="codex">Codex subscription</option><option value="claude">Claude</option></select></label><label><span>Runtime</span><select value={runtime} onChange={(event) => setRuntime(event.target.value)}><option value="herdr">Herdr interactive</option><option value="direct">Direct headless</option></select></label><label><span>Maximum concurrent runs</span><input type="number" min={1} max={100} value={maxConcurrency} onChange={(event) => setMaxConcurrency(Number(event.target.value))} /></label><div className="crew-editor-effect"><ShieldCheck size={16} /><span><strong>Exact effect</strong> No implementation starts. The project executive may use this worker only in a future typed proposal that you accept.</span></div><div className="row-actions"><button type="button" className="secondary-button" onClick={() => setAdding(false)}>Cancel</button><button className="primary-button" disabled={busy || !name}>{busy ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}Authorize worker</button></div></form>}
+    {feedback && <div className={feedback.includes("now an authorized") || feedback.includes("was disabled") ? "inline-success" : "global-error"}>{feedback.includes("now an authorized") || feedback.includes("was disabled") ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}<span>{feedback}</span></div>}
     {data.agents.length === 0 ? <EmptyState icon={Bot} title="No agents configured" detail="Onboarding creates a project executive and the first implementation worker." /> : <><div className="crew-section-label"><Sparkles size={15} /><div><strong>Project executive</strong><small>Your persistent conversation, backed by short-lived provider sessions.</small></div></div><div className="crew-grid focused">{executiveAgent ? card(executiveAgent, "executive") : <div className="role-missing"><AlertCircle size={18} /><span>The exact executive binding is unavailable. Refresh before directing work.</span></div>}</div><div className="crew-section-label"><Code2 size={15} /><div><strong>Implementation workers</strong><small>Agents that execute accepted and ready work.</small></div></div>{workers.length ? <div className="crew-grid">{workers.map((agent) => card(agent, "worker"))}</div> : <EmptyState icon={Code2} title="No implementation worker" detail="Add a worker definition before accepting executable work." />}</>}
   </section>;
 }
 
-function supervisorResponseLabel(action?: SupervisorAction) {
+function supervisorResponseLabel(action?: SupervisorAction, executive = false) {
   if (!action) return "Supervisor action";
+  if (executive && action.response === "request_owner" && action.condition === "failed") return "Executive review session failed";
   if (action.response === "request_owner") return action.condition === "failed" ? "Acknowledge a failed run" : "Owner acknowledgement required";
   if (action.response === "resume_run") return "Resume a blocked run";
   return action.response.replaceAll("_", " ");
 }
 
-function supervisorDecisionLabels(action?: SupervisorAction) {
+function supervisorDecisionLabels(action?: SupervisorAction, executive = false) {
   if (action?.response === "resume_run") return { allow: "Resume this run", deny: "Keep blocked" };
-  if (action?.response === "request_owner") return { allow: "Acknowledge", deny: "Dismiss" };
+  if (executive && action?.response === "request_owner") return { allow: "Mark reviewed", deny: "Leave unresolved" };
+  if (action?.response === "request_owner") return { allow: "Mark seen", deny: "Leave open" };
   return { allow: "Allow", deny: "Deny" };
 }
 
-function supervisorConsequence(action?: SupervisorAction) {
+function supervisorConsequence(action?: SupervisorAction, executive = false) {
   if (action?.response === "resume_run") return "Resuming only releases this exact blocked run to continue in its existing runtime. It does not repair Herdr, replace the execution profile, or create a fresh sandbox.";
+  if (executive && action?.response === "request_owner") return "Marking this reviewed only records that you saw the failed executive session. It does not change implementation work, retry the review, or resume a worker.";
   if (action?.response === "request_owner") return "Acknowledging records that you reviewed this terminal failure. It does not retry the run or change the failed task.";
   return "Allowing commits only the exact requested supervisor response shown above.";
 }
@@ -614,7 +708,9 @@ function proposalActionDescription(action: ManagerProposalAction) {
   return action.type.replaceAll("_", " ");
 }
 
-function ProposalCard({ proposal, busy, mutable, decide }: { proposal: ManagerProposal; busy: boolean; mutable: boolean; decide: (decision: "accept" | "reject") => void }) {
+function ProposalCard({ proposal, busy, mutable, decide, requestChanges }: { proposal: ManagerProposal; busy: boolean; mutable: boolean; decide: (decision: "accept" | "reject") => void; requestChanges?: (instruction: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [changeRequest, setChangeRequest] = useState("");
   const tasks = proposal.actions.filter((action) => action.create_task).map((action) => action.create_task!);
   const dependencies = proposal.actions.filter((action) => action.add_dependency).map((action) => action.add_dependency!);
   const taskTitles = new Map(tasks.map((task) => [task.task_key, task.title]));
@@ -629,13 +725,15 @@ function ProposalCard({ proposal, busy, mutable, decide }: { proposal: ManagerPr
     {invalid && <div className="invalid-proposal-summary"><AlertCircle size={17} /><div><strong>This draft never reached owner review.</strong><p>{proposal.validation_issues.some((issue) => issue.code === "invalid_claim_requirement") ? "The executive requested coordination claims that were not present in its frozen grant. Crewfold rejected the draft and changed no project state." : "Crewfold rejected this draft because one or more typed operations were outside its exact contract. No project state changed."}</p></div></div>}
     <details className="technical-details"><summary>{invalid ? "Show validation details" : `Show ${proposal.actions.length} exact typed operations`}</summary>{!invalid && <ol>{proposal.actions.map((action) => <li key={action.id ?? `${proposal.id}-${action.ordinal}`}><span>{action.ordinal + 1}</span>{proposalActionDescription(action)}</li>)}</ol>}{proposal.validation_issues.length > 0 && <ul>{proposal.validation_issues.map((issue, index) => <li key={`${issue.path}-${issue.code}-${index}`}>{issue.message}</li>)}</ul>}</details>
     {!invalid && <p className="decision-consequence"><strong>Authority boundary:</strong> Accepting applies exactly this frozen revision transactionally. It does not let the executive edit files or launch arbitrary work.</p>}
-    {pending ? <div className="row-actions"><button className="secondary-button" disabled={!mutable || busy} onClick={() => decide("reject")}><XCircle size={15} />Reject proposal</button><button className="primary-button compact" disabled={!mutable || busy || proposal.validation_issues.some((issue) => issue.severity === "error")} onClick={() => decide("accept")}>{busy ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}Accept these tasks</button></div> : !invalid && <div className="decision-record"><CheckCircle2 size={16} /><span><strong>Recorded owner decision</strong>{proposal.decision_note ?? proposal.status.replaceAll("_", " ")} · {displayTime(proposal.decided_at ?? proposal.updated_at)}</span></div>}
+    {pending && editing && <div className="proposal-revision"><label><strong>What should change?</strong><span>Describe the task, dependency, worker, priority, or budget changes. The current draft stays inert; your executive must submit a new typed revision for review.</span><textarea value={changeRequest} onChange={(event) => setChangeRequest(event.target.value)} maxLength={2048} placeholder="For example: split verification from implementation, make it depend on the UI task, and assign it to reviewer." /></label><div className="row-actions"><button className="secondary-button" disabled={busy} onClick={() => { setEditing(false); setChangeRequest(""); }}>Cancel</button><button className="primary-button compact" disabled={!mutable || busy || !changeRequest.trim()} onClick={() => requestChanges?.(changeRequest.trim())}>{busy ? <LoaderCircle className="spin" size={15} /> : <MessageSquareText size={15} />}Send revision request</button></div></div>}
+    {pending && !editing ? <div className="row-actions"><button className="secondary-button" disabled={!mutable || busy} onClick={() => decide("reject")}><XCircle size={15} />Reject proposal</button>{requestChanges && <button className="secondary-button" disabled={!mutable || busy} onClick={() => setEditing(true)}><MessageSquareText size={15} />Request changes</button>}<button className="primary-button compact" disabled={!mutable || busy || proposal.validation_issues.some((issue) => issue.severity === "error")} onClick={() => decide("accept")}>{busy ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}Accept these tasks</button></div> : !pending && !invalid && <div className="decision-record"><CheckCircle2 size={16} /><span><strong>Recorded owner decision</strong>{proposal.decision_note ?? proposal.status.replaceAll("_", " ")} · {displayTime(proposal.decided_at ?? proposal.updated_at)}</span></div>}
   </article>;
 }
 
 function DecisionsView({ data, apiBase, csrf, reload, mutable }: { data: WorkbenchData; apiBase: string; csrf: string; reload: () => Promise<void>; mutable: boolean }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [retiredRuns, setRetiredRuns] = useState<Set<string>>(new Set());
   const approvals = data.approvals.filter((item) => !data.project || item.project_id === data.project.id);
   const proposals = data.proposals.filter((item) => !data.project || item.project_id === data.project.id);
   const decide = async (approval: Approval, action: SupervisorAction | undefined, decision: "allow" | "deny") => {
@@ -659,28 +757,73 @@ function DecisionsView({ data, apiBase, csrf, reload, mutable }: { data: Workben
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Executive proposal decision could not be committed."); }
     finally { setBusy(""); }
   };
+  const requestProposalChanges = async (proposal: ManagerProposal, instruction: string) => {
+    if (!mutable || !data.workspace || !data.project) return;
+    setBusy(proposal.id); setError("");
+    try {
+      const conversation = await loadOwnerConversation(apiBase, data.workspace.id, data.project.id);
+      const conversationID = conversation.turns.at(-1)?.conversation.id;
+      if (!conversationID) throw new Error("The durable project-executive conversation is unavailable; refresh before requesting a revision.");
+      await rpc(apiBase, csrf, "proposal.reject", { workspace: data.workspace.id, proposal: proposal.id, expected_revision: proposal.revision, decision_note: "Owner requested changes through the durable project executive.", idempotency_key: newKey("proposal-revise-reject") });
+      await submitOwnerIntent(apiBase, csrf, { workspace: data.workspace.id, project: data.project.id, conversation_id: conversationID, instruction: `Revise the rejected proposal “${proposal.summary}”. Owner changes: ${instruction}. Preserve only the still-valid parts, do not execute anything, and submit a new exact typed proposal for owner review.`, idempotency_key: newKey("proposal-revise-turn") });
+      await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "The proposal revision request could not be recorded."); }
+    finally { setBusy(""); }
+  };
   const pendingProposals = proposals.filter((item) => item.status === "pending");
   const proposalHistory = proposals.filter((item) => item.status !== "pending");
   const pendingApprovals = approvals.filter((item) => item.status === "pending");
   const approvalHistory = approvals.filter((item) => item.status !== "pending");
-  const pending = pendingApprovals.length + pendingProposals.length;
+  const actionForApproval = (approval: Approval) => data.supervisorActions.find((item) => item.id === approval.action_id);
+  const pendingNotices = pendingApprovals.filter((approval) => actionForApproval(approval)?.response === "request_owner");
+  const pendingEffectApprovals = pendingApprovals.filter((approval) => actionForApproval(approval)?.response !== "request_owner");
+  const lostRuns = data.runs.filter((run) => run.status === "lost");
+  const pendingDecisions = pendingEffectApprovals.length + pendingProposals.length + lostRuns.length;
+  const pendingReview = pendingDecisions + pendingNotices.length;
+  const resolveLost = async (run: Run) => {
+    if (!mutable || !data.workspace || !retiredRuns.has(run.id)) return;
+    setBusy(run.id); setError("");
+    try {
+      await rpc(apiBase, csrf, "run.lost.resolve", { workspace: data.workspace.id, run: run.id, expected_revision: run.revision, note: "Owner confirmed the native runtime has ended before releasing Crewfold capacity.", runtime_retired_confirmed: true, idempotency_key: newKey("resolve-lost") });
+      setRetiredRuns((current) => { const next = new Set(current); next.delete(run.id); return next; });
+      await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Lost runtime could not be resolved."); }
+    finally { setBusy(""); }
+  };
+  const lostRunCard = (run: Run) => {
+    const task = data.tasks.find((item) => item.task.id === run.task_id)?.task;
+    const agent = data.agents.find((item) => item.id === run.agent_id);
+    const executive = run.task_id === data.executive?.planning_task_id;
+    const confirmed = retiredRuns.has(run.id);
+    return <article className="decision-card lost-runtime-card" key={run.id}>
+      <header><span className="row-icon"><AlertTriangle size={18} /></span><div><strong>{executive ? "Confirm the interrupted executive session has ended" : "Confirm the lost worker runtime has ended"}</strong><small>{executive ? "Project direction session" : task?.title ?? "Exact lost implementation run"}</small></div><StatusPill value="owner confirmation required" /></header>
+      <div className="approval-effect"><strong>What you are deciding</strong><p>{executive ? "Crewfold no longer trusts this short-lived executive session’s native runtime. Confirming releases only its retained binding and capacity so the durable conversation and queued review can continue. It does not change project tasks or accept any proposal, and it does not stop the native process." : "Crewfold no longer trusts this worker runtime’s identity or outcome. Confirming transitions the lost run to failed, releases its retained binding and capacity, and leaves the task blocked for an explicit recovery plan. It does not stop the native process."}</p></div>
+      <dl className="decision-facts"><div><dt>Agent</dt><dd>{agent?.name ?? (executive ? "Project executive" : "Implementation worker")}</dd></div><div><dt>Current run state</dt><dd>Lost · capacity retained</dd></div><div><dt>Recorded diagnosis</dt><dd>{run.failure_message ?? run.failure_code ?? "Runtime identity or outcome is unknown"}</dd></div></dl>
+      <label className="retirement-confirmation"><input type="checkbox" checked={confirmed} onChange={(event) => setRetiredRuns((current) => { const next = new Set(current); if (event.target.checked) next.add(run.id); else next.delete(run.id); return next; })} /><span><strong>I independently confirmed the Herdr pane or native process has ended.</strong><small>Do not confirm this while the process may still be writing.</small></span></label>
+      <div className="row-actions"><button className="primary-button compact" disabled={!mutable || busy === run.id || !confirmed} onClick={() => void resolveLost(run)}>{busy === run.id ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}Release the lost runtime</button></div>
+    </article>;
+  };
   const approvalCard = (approval: Approval) => {
-    const action = data.supervisorActions.find((item) => item.id === approval.action_id);
+    const action = actionForApproval(approval);
     const task = data.tasks.find((item) => item.task.id === action?.task_id)?.task;
     const run = data.runs.find((item) => item.id === action?.run_id);
     const agent = data.agents.find((item) => item.id === action?.agent_id);
-    const labels = supervisorDecisionLabels(action);
+    const executiveTarget = Boolean(run && run.task_id === data.executive?.planning_task_id);
+    const acknowledgement = action?.response === "request_owner";
+    const labels = supervisorDecisionLabels(action, executiveTarget);
     const blockedQuestion = action ? snapshotText(action, "blocked_question") || snapshotText(action, "question") : "";
-    return <article className="decision-card" key={approval.id}>
-      <header><span className="row-icon"><ShieldCheck size={18} /></span><div><strong>{supervisorResponseLabel(action)}</strong><small>{task?.title ?? "Exact governed target unavailable in this bounded page"}</small></div><StatusPill value={approval.status} /></header>
-      {action ? <><div className="approval-effect"><strong>What you are deciding</strong><p>{supervisorConsequence(action)}</p></div><dl className="decision-facts"><div><dt>Trigger</dt><dd>{action.condition.replaceAll("_", " ")}</dd></div><div><dt>Requested action</dt><dd>{action.response.replaceAll("_", " ")}</dd></div>{agent && <div><dt>Agent</dt><dd>{agent.name}</dd></div>}{run && <div><dt>Current run state</dt><dd>{run.status.replaceAll("_", " ")}</dd></div>}</dl><details className="technical-details"><summary>Why Crewfold paused this effect</summary><ul>{action.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>{blockedQuestion && <><strong>Agent’s exact blocker</strong><p>{blockedQuestion}</p></>}</details></> : <p className="decision-unavailable">The action detail is outside this bounded page; refresh before deciding.</p>}
+    return <article className={`decision-card ${acknowledgement ? "notice-card" : ""}`} key={approval.id}>
+      <header><span className="row-icon"><ShieldCheck size={18} /></span><div><strong>{supervisorResponseLabel(action, executiveTarget)}</strong><small>{executiveTarget ? "Project direction review; implementation work is unchanged" : task?.title ?? "Exact governed target unavailable in this bounded page"}</small></div><StatusPill value={approval.status} /></header>
+      {action ? <><div className="approval-effect"><strong>{acknowledgement ? "What this records" : "What you are deciding"}</strong><p>{supervisorConsequence(action, executiveTarget)}</p></div><dl className="decision-facts"><div><dt>Trigger</dt><dd>{action.condition.replaceAll("_", " ")}</dd></div><div><dt>{acknowledgement ? "Record" : "Requested action"}</dt><dd>{acknowledgement ? "Owner reviewed the failure" : action.response.replaceAll("_", " ")}</dd></div>{agent && <div><dt>Agent</dt><dd>{agent.name}</dd></div>}{run && <div><dt>Current run state</dt><dd>{run.status.replaceAll("_", " ")}</dd></div>}</dl><details className="technical-details"><summary>{acknowledgement ? "Why this notice exists" : "Why Crewfold paused this effect"}</summary><ul>{action.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>{blockedQuestion && <><strong>Agent’s exact blocker</strong><p>{blockedQuestion}</p></>}</details></> : <p className="decision-unavailable">The action detail is outside this bounded page; refresh before deciding.</p>}
       {approval.status === "pending" ? <div className="row-actions"><button className="secondary-button" disabled={!mutable || busy === approval.id || !action} onClick={() => void decide(approval, action, "deny")}><XCircle size={15} />{labels.deny}</button><button className="primary-button compact" disabled={!mutable || busy === approval.id || !action} onClick={() => void decide(approval, action, "allow")}>{busy === approval.id ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{labels.allow}</button></div> : <div className="decision-record"><CheckCircle2 size={16} /><span><strong>Recorded owner decision</strong>{action?.decision ?? approval.decision_note ?? approval.status.replaceAll("_", " ")} · {displayTime(approval.decided_at ?? approval.updated_at)}</span></div>}
     </article>;
   };
   return <section className="panel page-panel">
-    <div className="page-heading"><div><div className="eyebrow"><ClipboardCheck size={14} />Owner authority boundary</div><h1>Decisions</h1><p>Only items in “Needs your review” can change state. Rejected drafts and earlier decisions are history, not work for you.</p></div><span>{pending} need{pending === 1 ? "s" : ""} review</span></div>
+    <div className="page-heading"><div><div className="eyebrow"><ClipboardCheck size={14} />Owner authority boundary</div><h1>Decisions</h1><p>Consequential proposals and policy-gated effects are decisions. Failure acknowledgements that change no project work are separated as notices.</p></div><span>{pendingReview} need{pendingReview === 1 ? "s" : ""} review</span></div>
     {error && <div className="form-error" role="alert"><AlertCircle size={16} />{error}</div>}
-    {pending === 0 ? <EmptyState icon={ShieldCheck} title="Nothing needs your decision" detail="New executive proposals and policy-gated runtime effects will appear here with a plain-language effect before any action." /> : <><div className="section-heading actionable"><div><ClipboardCheck size={18} /><span><strong>Needs your review</strong><small>These are the only items on this page that can apply an effect.</small></span></div><span>{pending}</span></div><div className="decision-list">{pendingProposals.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} busy={busy === proposal.id} mutable={mutable} decide={(decision) => void decideProposal(proposal, decision)} />)}{pendingApprovals.map(approvalCard)}</div></>}
+    {pendingReview === 0 && <EmptyState icon={ShieldCheck} title="Nothing needs your decision" detail="New executive proposals and policy-gated runtime effects will appear here with a plain-language effect before any action." />}
+    {pendingDecisions > 0 && <><div className="section-heading actionable"><div><ClipboardCheck size={18} /><span><strong>Decisions that change work</strong><small>Each item states the exact effect that acceptance applies.</small></span></div><span>{pendingDecisions}</span></div><div className="decision-list">{lostRuns.map(lostRunCard)}{pendingProposals.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} busy={busy === proposal.id} mutable={mutable} decide={(decision) => void decideProposal(proposal, decision)} requestChanges={(instruction) => void requestProposalChanges(proposal, instruction)} />)}{pendingEffectApprovals.map(approvalCard)}</div></>}
+    {pendingNotices.length > 0 && <><div className="section-heading notice"><div><AlertCircle size={18} /><span><strong>Attention, not a project decision</strong><small>These records explain terminal failures. Marking one seen does not retry, resume, reassign, or edit work.</small></span></div><span>{pendingNotices.length}</span></div><div className="decision-list">{pendingNotices.map(approvalCard)}</div></>}
     {(proposalHistory.length > 0 || approvalHistory.length > 0) && <details className="decision-history"><summary><Clock3 size={16} /><span><strong>Earlier decisions and rejected drafts</strong><small>{proposalHistory.length + approvalHistory.length} historical item{proposalHistory.length + approvalHistory.length === 1 ? "" : "s"}; nothing here is awaiting action.</small></span><ChevronDown size={16} /></summary><div className="decision-list">{proposalHistory.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} busy={false} mutable={false} decide={() => undefined} />)}{approvalHistory.map(approvalCard)}</div></details>}
   </section>;
 }
@@ -730,7 +873,7 @@ function HealthView({ apiBase, csrf, status }: { apiBase: string; csrf: string; 
   return <section className="panel page-panel"><div className="page-heading"><div><div className="eyebrow"><Stethoscope size={13} />Local service</div><h1>Health and recovery</h1><p>Read-only physical, canonical, queue, artifact, and resource diagnosis.</p></div><button className="primary-button compact" onClick={() => void inspect()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={14} /> : <HeartPulse size={14} />}Run full doctor</button></div><div className="health-overview"><div><strong>{status?.pid ?? "—"}</strong><span>daemon PID</span></div><div><strong>{Math.floor((status?.uptime_ms ?? 0) / 1000)}s</strong><span>uptime</span></div><div><strong>{doctor?.event_sequence ?? "—"}</strong><span>event high-water</span></div><div><strong>{doctor?.status ?? "not run"}</strong><span>full diagnosis</span></div></div>{error && <div className="form-error"><AlertCircle size={16} />{error}</div>}{doctor && <div className="doctor-grid">{doctor.checks.map((check) => <article key={check.code}><StatusPill value={check.status} /><strong>{check.code.replaceAll("_", " ")}</strong><p>{check.summary}</p><small>{check.issue_count} issues</small></article>)}</div>}</section>;
 }
 
-function LiveTerminal({ apiBase, csrf, workspace, run, close, mutable }: { apiBase: string; csrf: string; workspace: string; run: Run; close: () => void; mutable: boolean }) {
+function LiveTerminal({ apiBase, csrf, workspace, run, initialLogs, close, mutable }: { apiBase: string; csrf: string; workspace: string; run: Run; initialLogs: string; close: () => void; mutable: boolean }) {
   const [state, setState] = useState("connecting");
   const [input, setInput] = useState("");
   const [streamRaw, setStreamRaw] = useState("");
@@ -745,6 +888,7 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close, mutable }: { apiBa
   const controlsEnabled = useRef(mutable);
   const decoder = useRef(new TextDecoder());
   const rawBuffer = useRef("");
+  const readableLogs = useMemo(() => [initialLogs, streamRaw].filter(Boolean).join("\n"), [initialLogs, streamRaw]);
 
   useEffect(() => { controlsEnabled.current = mutable; }, [mutable]);
 
@@ -841,7 +985,7 @@ function LiveTerminal({ apiBase, csrf, workspace, run, close, mutable }: { apiBa
     <div className="section-title"><h3>Live provider activity</h3><span><CircleDot size={11} />{state}</span></div>
     <p>Codex protocol events are rendered into a readable live stream. Canonical Crewfold state and receipts remain above.</p>
     {!mutable && <div className="terminal-paused">Canonical state is refreshing; output remains connected while controls are temporarily disabled.</div>}
-    <div className="live-activity-scroll"><RuntimeActivityFeed logs={streamRaw} empty={state === "connected" ? "Connected. Waiting for the next structured agent event." : "Connecting to the current Herdr run…"} /></div>
+    <div className="live-activity-scroll"><RuntimeActivityFeed logs={readableLogs} empty={state === "connected" ? "Connected. No readable provider event has been emitted yet." : "Connecting to the current Herdr run…"} /></div>
     <details className="protocol-console" onToggle={(event) => setProtocolOpen(event.currentTarget.open)}>
       <summary><span><TerminalSquare size={13} />Advanced protocol console</span><small>Exact PTY bytes and direct terminal input</small></summary>
       {protocolOpen && <div className="protocol-console-body">
@@ -867,6 +1011,7 @@ function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspe
   const [busy, setBusy] = useState(false);
   const currentRun = run ? data.runs.find((candidate) => candidate.id === run.id) ?? run : null;
   const currentTask = currentRun ? data.tasks.find((item) => item.task.id === currentRun.task_id)?.task ?? null : null;
+  const executiveRun = Boolean(currentRun && currentRun.task_id === data.executive?.planning_task_id);
   const canRetryReview = currentRun?.status === "review" && currentTask?.status === "changes_requested";
   useEffect(() => {
     setLogs("");
@@ -907,7 +1052,7 @@ function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspe
   const refreshGit = async () => { if (!data.workspace || !data.project) return; setBusy(true); setNotice(""); try { const response = await fetch(`${apiBase}/git?workspace=${encodeURIComponent(data.workspace.id)}&project=${encodeURIComponent(data.project.id)}`, { credentials: "same-origin" }); const result = (await response.json()) as { observations?: Array<Omit<Checkout, "id" | "project_id" | "path" | "write_mode"> & { checkout_id: string }>; error?: { message: string } }; if (!response.ok || !result.observations) throw new Error(result.error?.message ?? "Git observation failed"); const observation = result.observations[0]; const canonical = data.checkouts.find((checkout) => checkout.id === observation?.checkout_id); setGit(observation && canonical ? { ...canonical, ...observation, id: observation.checkout_id } : null); setNotice("Repository status refreshed without persisting source or diff content."); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Git observation failed."); } finally { setBusy(false); } };
   const agentRun = agent ? latestRunForAgent(data.runs, agent.id) : null;
   return <div className="drawer-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><aside className={`inspector${terminalOpen ? " live-inspector" : ""}`} aria-label="Canonical inspector"><header><div><div className="eyebrow">Exact inspector</div><h2>{run ? data.agents.find((candidate) => candidate.id === run.agent_id)?.name ?? "Agent run" : agent?.name ?? task?.task.title}</h2></div><IconButton label="Close inspector" onClick={close}><X size={18} /></IconButton></header>
-    {currentRun ? <><div className="inspector-status"><StatusPill value={currentRun.status} /><span>{currentRun.provider} through {currentRun.runtime}</span></div><section><h3>Assigned work</h3><p>{currentTask?.title ?? "Task unavailable in this bounded page"}</p></section>{["start_failed", "failed", "lost"].includes(currentRun.status) && <section className="launch-failure" role="alert"><div className="section-title"><h3>{currentRun.status === "start_failed" ? "Launch failed" : currentRun.status === "lost" ? "Runtime outcome is unknown" : "Run failed"}</h3><AlertCircle size={16} /></div><p>{currentRun.failure_message ?? currentRun.failure_code ?? "Inspect the bounded runtime output for the exact provider diagnosis."}</p>{currentRun.status === "start_failed" && <button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry after preflight</button>}</section>}{canRetryReview && <section className="launch-failure review-retry" role="alert"><div className="section-title"><h3>Changes requested</h3><ClipboardCheck size={16} /></div><p>{currentTask?.blocked_reason ?? "The completion did not satisfy the task acceptance evidence."}</p><p>The prior review remains immutable. Retrying reopens this exact assignment and creates a fresh context-bound run.</p><button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry requested changes</button></section>}<section><div className="section-title"><h3>Readable agent activity</h3><Activity size={15} /></div><RuntimeOutput logs={logs} /></section>{terminalOpen && <LiveTerminal key={currentRun.id} apiBase={apiBase} csrf={csrf} workspace={data.workspace?.id ?? ""} run={currentRun} close={() => setTerminalOpen(false)} mutable={mutable} />}{["active", "blocked"].includes(currentRun.status) && <section className="runtime-control"><label htmlFor="runtime-prompt">Send a visible runtime prompt</label><div><input id="runtime-prompt" value={prompt} maxLength={4096} onChange={(event) => setPrompt(event.target.value)} placeholder="Clarify the next observable step…" /><button className="secondary-button" disabled={busy || !prompt.trim()} onClick={() => void sendPrompt()}><Send size={14} />Send</button></div><div className="runtime-buttons">{currentRun.can_attach && !terminalOpen && <button className="secondary-button" disabled={busy} onClick={() => setTerminalOpen(true)}><TerminalSquare size={14} />Open live activity</button>}{currentRun.status === "blocked" && <button className="secondary-button" disabled={busy} onClick={() => void resume()}><RotateCcw size={14} />Resume</button>}<button className="secondary-button" disabled={busy} onClick={() => void interrupt()}><AlertCircle size={14} />Interrupt</button><button className="danger-button" onClick={() => void stop()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <Square size={15} />}Stop · 5000 ms grace</button></div></section>}{notice && <div className="notice" role="status">{notice}</div>}<footer><span>Revision {currentRun.revision}</span><span>{currentRun.can_attach ? "Live activity and interactive controls available" : currentRun.status === "start_failed" ? "Retry available after diagnosis" : canRetryReview ? "Reviewed retry available" : "Bounded logs only"}</span></footer></> : agent ? <><div className="inspector-status"><StatusPill value={agentRun?.status ?? (agent.enabled ? "ready" : "disabled")} /><span>{agent.provider} through {agent.runtime}</span></div><section><h3>Authority-neutral role</h3><p>{agent.role}. Scheduling authority comes from policy, assignment, and receipts—not this label.</p></section><section><div className="section-title"><h3>Repository observation</h3><IconButton label="Refresh Git observation" onClick={() => void refreshGit()} disabled={busy}><RefreshCw className={busy ? "spin" : ""} size={14} /></IconButton></div>{git ? <><dl className="fact-list"><div><dt>Availability</dt><dd>{git.availability}</dd></div><div><dt>Branch</dt><dd>{git.branch || "detached"}</dd></div><div><dt>Working tree</dt><dd>{git.dirty ? `${git.dirty_paths?.length ?? 0}${git.omitted_paths ? `+${git.omitted_paths}` : ""} changed paths` : "clean"}</dd></div><div><dt>Write mode</dt><dd>{git.write_mode}</dd></div></dl>{git.dirty_paths && git.dirty_paths.length > 0 && <div className="changed-paths">{git.dirty_paths.slice(0, 16).map((path) => <code key={path}>{path}</code>)}{git.dirty_paths.length > 16 && <small>+{git.dirty_paths.length - 16 + (git.omitted_paths ?? 0)} paths omitted from this view</small>}</div>}</> : <p>No checkout is loaded in this bounded scope.</p>}</section>{notice && <div className="notice" role="status">{notice}</div>}{agentRun ? <button className="secondary-button" onClick={() => inspectRun(agentRun)}><TerminalSquare size={15} />Open run details</button> : <div className="quiet-line"><Clock3 size={14} />No current run</div>}<footer><span>Definition revision {agent.revision}</span><span>{agent.enabled ? "Enabled" : "Disabled"}</span></footer></> : task && <><div className="inspector-status"><StatusPill value={task.task.status} /><span>Priority {task.task.priority}</span></div><section><h3>Description</h3><p>{task.task.description || "No additional description."}</p></section><section><h3>Readiness</h3><p>{task.task.status === "completed" ? "Task completed. It is no longer awaiting scheduling." : task.readiness.ready ? "Ready for Crewfold to schedule." : task.readiness.reason || "Not ready."}</p></section><section><h3>Assignment</h3><p>{data.agents.find((candidate) => candidate.id === task.task.assigned_agent_id)?.name ?? (["completed", "failed", "cancelled"].includes(task.task.status) ? "Released after the task finished." : "Unassigned")}</p></section><footer><span>Revision {task.task.revision}</span><span>Updated {displayTime(task.task.updated_at)}</span></footer></>}
+    {currentRun ? <><div className="inspector-status"><StatusPill value={currentRun.status} /><span>{currentRun.provider} through {currentRun.runtime}</span></div><section><h3>{executiveRun ? "Session purpose" : "Assigned work"}</h3><p>{executiveRun ? "Review project direction and new worker activity" : currentTask?.title ?? "Task unavailable in this bounded page"}</p>{executiveRun && <div className="session-explanation"><strong>Why this session appears</strong><span>Crewfold starts one short-lived project-executive session when you send a message or new worker activity needs review. It closes after recording one durable response.</span></div>}</section>{["start_failed", "failed", "lost"].includes(currentRun.status) && <section className="launch-failure" role="alert"><div className="section-title"><h3>{currentRun.status === "start_failed" ? "Launch failed" : currentRun.status === "lost" ? "Runtime outcome is unknown" : "Run failed"}</h3><AlertCircle size={16} /></div><p>{currentRun.failure_message ?? currentRun.failure_code ?? "Inspect the bounded runtime output for the exact provider diagnosis."}</p>{currentRun.status === "start_failed" && <button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry after preflight</button>}</section>}{canRetryReview && <section className="launch-failure review-retry" role="alert"><div className="section-title"><h3>Changes requested</h3><ClipboardCheck size={16} /></div><p>{currentTask?.blocked_reason ?? "The completion did not satisfy the task acceptance evidence."}</p><p>The prior review remains immutable. Retrying reopens this exact assignment and creates a fresh context-bound run.</p><button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry requested changes</button></section>}<section><div className="section-title"><h3>Readable agent activity</h3><Activity size={15} /></div><RuntimeOutput logs={logs} status={currentRun.status} /></section>{terminalOpen && <LiveTerminal key={currentRun.id} apiBase={apiBase} csrf={csrf} workspace={data.workspace?.id ?? ""} run={currentRun} initialLogs={logs} close={() => setTerminalOpen(false)} mutable={mutable} />}{["active", "blocked"].includes(currentRun.status) && <section className="runtime-control"><label htmlFor="runtime-prompt">Send a visible runtime prompt</label><div><input id="runtime-prompt" value={prompt} maxLength={4096} onChange={(event) => setPrompt(event.target.value)} placeholder="Clarify the next observable step…" /><button className="secondary-button" disabled={busy || !prompt.trim()} onClick={() => void sendPrompt()}><Send size={14} />Send</button></div><div className="runtime-buttons">{currentRun.can_attach && !terminalOpen && <button className="secondary-button" disabled={busy} onClick={() => setTerminalOpen(true)}><TerminalSquare size={14} />Open live activity</button>}{currentRun.status === "blocked" && <button className="secondary-button" disabled={busy} onClick={() => void resume()}><RotateCcw size={14} />Resume</button>}<button className="secondary-button" disabled={busy} onClick={() => void interrupt()}><AlertCircle size={14} />Interrupt</button><button className="danger-button" onClick={() => void stop()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <Square size={15} />}Stop · 5000 ms grace</button></div></section>}{notice && <div className="notice" role="status">{notice}</div>}<footer><span>Revision {currentRun.revision}</span><span>{currentRun.can_attach ? "Live activity and interactive controls available" : currentRun.status === "start_failed" ? "Retry available after diagnosis" : canRetryReview ? "Reviewed retry available" : "Bounded logs only"}</span></footer></> : agent ? <><div className="inspector-status"><StatusPill value={agentRun?.status ?? (agent.enabled ? "ready" : "disabled")} /><span>{agent.provider} through {agent.runtime}</span></div><section><h3>Authority-neutral role</h3><p>{agent.role}. Scheduling authority comes from policy, assignment, and receipts—not this label.</p></section><section><div className="section-title"><h3>Repository observation</h3><IconButton label="Refresh Git observation" onClick={() => void refreshGit()} disabled={busy}><RefreshCw className={busy ? "spin" : ""} size={14} /></IconButton></div>{git ? <><dl className="fact-list"><div><dt>Availability</dt><dd>{git.availability}</dd></div><div><dt>Branch</dt><dd>{git.branch || "detached"}</dd></div><div><dt>Working tree</dt><dd>{git.dirty ? `${git.dirty_paths?.length ?? 0}${git.omitted_paths ? `+${git.omitted_paths}` : ""} changed paths` : "clean"}</dd></div><div><dt>Write mode</dt><dd>{git.write_mode}</dd></div></dl>{git.dirty_paths && git.dirty_paths.length > 0 && <div className="changed-paths">{git.dirty_paths.slice(0, 16).map((path) => <code key={path}>{path}</code>)}{git.dirty_paths.length > 16 && <small>+{git.dirty_paths.length - 16 + (git.omitted_paths ?? 0)} paths omitted from this view</small>}</div>}</> : <p>No checkout is loaded in this bounded scope.</p>}</section>{notice && <div className="notice" role="status">{notice}</div>}{agentRun ? <button className="secondary-button" onClick={() => inspectRun(agentRun)}><TerminalSquare size={15} />Open run details</button> : <div className="quiet-line"><Clock3 size={14} />No current run</div>}<footer><span>Definition revision {agent.revision}</span><span>{agent.enabled ? "Enabled" : "Disabled"}</span></footer></> : task && <><div className="inspector-status"><StatusPill value={task.task.status} /><span>Priority {task.task.priority}</span></div><section><h3>Description</h3><p>{task.task.description || "No additional description."}</p></section><section><h3>Readiness</h3><p>{task.task.status === "completed" ? "Task completed. It is no longer awaiting scheduling." : task.readiness.ready ? "Ready for Crewfold to schedule." : readableTaskReadiness(task, data.tasks)}</p></section><section><h3>Assignment</h3><p>{data.agents.find((candidate) => candidate.id === task.task.assigned_agent_id)?.name ?? (["completed", "failed", "cancelled"].includes(task.task.status) ? "Released after the task finished." : "Unassigned")}</p></section><footer><span>Revision {task.task.revision}</span><span>Updated {displayTime(task.task.updated_at)}</span></footer></>}
   </aside></div>;
 }
 
@@ -1031,16 +1176,16 @@ function App() {
       <div className="workspace-card"><div className="workspace-glyph"><Boxes size={18} /></div><div><strong>{data.workspace?.name ?? "Your workbench"}</strong><span>{data.project?.name ?? "Exact local state"}</span></div>{data.workspaces.length > 1 && <ChevronDown size={15} />}</div>
       {data.workspaces.length > 1 && <select className="scope-select" value={data.workspace?.id ?? ""} onChange={(event) => void selectWorkspace(event.target.value)} aria-label="Workspace">{data.workspaces.map((workspace) => <option value={workspace.id} key={workspace.id}>{workspace.name}</option>)}</select>}
       {data.projects.length > 1 && <select className="scope-select" value={data.project?.id ?? ""} onChange={(event) => void selectProject(event.target.value)} aria-label="Project">{data.projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select>}
-      <nav aria-label="Primary navigation">{navItems.map(({ id, label, icon: Icon }) => { const pendingDecisions = data.approvals.filter((item) => item.status === "pending").length + data.proposals.filter((item) => item.status === "pending").length; return <button key={id} className={view === id ? "active" : ""} onClick={() => { setView(id); setMobileNav(false); }}><Icon size={17} strokeWidth={1.8} aria-hidden="true" /><span>{label}</span>{id === "decisions" && pendingDecisions > 0 && <b>{pendingDecisions}</b>}</button>; })}</nav>
+      <nav aria-label="Primary navigation">{navItems.map(({ id, label, icon: Icon }) => { const pendingDecisions = pendingConsequentialDecisions(data); return <button key={id} className={view === id ? "active" : ""} onClick={() => { setView(id); setMobileNav(false); }}><Icon size={17} strokeWidth={1.8} aria-hidden="true" /><span>{label}</span>{id === "decisions" && pendingDecisions > 0 && <b>{pendingDecisions}</b>}</button>; })}</nav>
       <div className="sidebar-spacer" />
       <div className="health-card"><HeartPulse size={16} /><span><strong>Canonical state</strong><small>Journal #{data.highWater}</small></span><Check size={14} /></div>
       <button className="settings-button" onClick={() => setView("health")}><Settings size={16} />Service settings</button>
     </aside>
     {loading ? <main className="loading-main"><LoaderCircle className="spin" size={26} /><p>Loading exact local state…</p></main> : data.workspaces.length === 0 || data.projects.length === 0 || data.agents.length === 0 ? <Onboarding apiBase={apiBase} csrf={csrf} onComplete={reload} /> : <main className="content-main">
       {error && <div className="global-error"><AlertCircle size={17} /><span>{error}</span><button onClick={() => void reload()}><RefreshCw size={15} />Retry</button></div>}
-      {view === "workbench" && <WorkbenchView data={data} apiBase={apiBase} csrf={csrf} reload={reload} selectTask={inspectTask} selectRun={inspectRun} openDecisions={() => setView("decisions")} mutable={fresh} />}
+      {view === "workbench" && <WorkbenchView data={data} apiBase={apiBase} csrf={csrf} reload={reload} selectTask={inspectTask} selectRun={inspectRun} openDecisions={() => setView("decisions")} openCrew={() => setView("crew")} mutable={fresh} />}
       {view === "graph" && <GraphView data={data} selectTask={inspectTask} />}
-      {view === "crew" && <CrewView data={data} selectAgent={inspectAgent} />}
+      {view === "crew" && <CrewView data={data} apiBase={apiBase} csrf={csrf} reload={reload} selectAgent={inspectAgent} mutable={fresh} />}
       {view === "decisions" && <DecisionsView data={data} apiBase={apiBase} csrf={csrf} reload={reload} mutable={fresh} />}
       {view === "activity" && <ActivityView data={data} />}
       {view === "inbox" && <InboxView data={data} apiBase={apiBase} csrf={csrf} />}

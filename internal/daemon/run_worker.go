@@ -292,6 +292,9 @@ func (s *server) processRunWork(ctx context.Context, work store.RunWork) error {
 		} else {
 			_, err = s.store.ApplyRunObservation(ctx, run.ID, observation, accepted, missing, correlationID)
 		}
+		if err == nil {
+			s.signalOwnerManagerReviewWorker()
+		}
 		s.logRunWorkerStoreError(run.ID, "apply run observation", err)
 		return nil
 	case domain.RunStopping:

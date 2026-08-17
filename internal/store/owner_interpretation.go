@@ -158,8 +158,13 @@ func (s *Store) BuildOwnerInterpretationSnapshot(ctx context.Context, workspaceI
 			dependencies = append(dependencies, dependency)
 		}
 		dependencyRows.Close()
-		tasks = append(tasks, map[string]any{"id": id, "objective_id": objectiveID, "title": title, "description": description, "status": status, "blocked_reason": blocked, "priority": priority, "budget": domain.Budget{TokenLimit: tokens, CostCents: cost, TimeSeconds: seconds}, "revision": revision, "depends_on": dependencies})
-		addFact("task:"+id, "task", id, revision, title, map[string]any{"kind": "task", "id": id, "title": title, "status": status, "blocked_reason": blocked, "revision": revision})
+		readiness, err := taskReadiness(ctx, tx, domain.Task{ID: id, Status: status})
+		if err != nil {
+			taskRows.Close()
+			return OwnerInterpretationSnapshot{}, err
+		}
+		tasks = append(tasks, map[string]any{"id": id, "objective_id": objectiveID, "title": title, "description": description, "status": status, "readiness": readiness, "blocked_reason": blocked, "priority": priority, "budget": domain.Budget{TokenLimit: tokens, CostCents: cost, TimeSeconds: seconds}, "revision": revision, "depends_on": dependencies})
+		addFact("task:"+id, "task", id, revision, title, map[string]any{"kind": "task", "id": id, "title": title, "status": status, "readiness": readiness, "blocked_reason": blocked, "revision": revision})
 	}
 	taskRows.Close()
 

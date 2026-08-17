@@ -105,16 +105,44 @@ await waitFor("document.body.innerText.includes('No implementation work accepted
 await capture("02-executive-conversation");
 
 await evaluate(`(() => { [...document.querySelectorAll('nav button')].find((button) => button.textContent.includes('Decisions')).click(); return true; })()`);
-await waitFor("document.body.innerText.includes('Needs your review') && document.body.innerText.includes('Create one exact bounded implementation task for owner review.')", "exact executive proposal");
+await waitFor("document.body.innerText.includes('Decisions that change work') && document.body.innerText.includes('Create one exact bounded implementation task for owner review.')", "exact executive proposal");
 await waitFor("document.body.innerText.toLowerCase().includes('1 proposed implementation task') && document.body.innerText.includes('Implement the next bounded project step')", "plain-language proposal impact");
 await capture("03-decision-review");
+await evaluate(`(() => {
+  const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('Request changes') && !candidate.disabled);
+  if (button) button.click();
+  return Boolean(button);
+})()`);
+await waitFor("Boolean(document.querySelector('.proposal-revision textarea')) && document.body.innerText.includes('The current draft stays inert')", "proposal revision editor");
+await evaluate(`(() => {
+  const area = document.querySelector('.proposal-revision textarea');
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(area, 'Keep one bounded task, but make the new revision explicit and preserve the accepted worker profile.');
+  area.dispatchEvent(new Event('input', { bubbles: true }));
+  area.dispatchEvent(new Event('change', { bubbles: true }));
+  const button = [...document.querySelectorAll('.proposal-revision button')].find((candidate) => candidate.textContent.includes('Send revision request') && !candidate.disabled);
+  if (button) button.click();
+  return Boolean(button);
+})()`);
+await waitFor("Boolean(document.querySelector('.decision-history'))", "old proposal becomes inert history", 20000);
+await waitFor("document.body.innerText.includes('Decisions that change work') && Boolean(document.querySelector('.section-heading.actionable + .decision-list .proposal-card'))", "new typed proposal revision", 20000);
+await evaluate(`(() => {
+  const history = document.querySelector('.decision-history');
+  if (history && !history.open) history.querySelector('summary')?.click();
+  return Boolean(history);
+})()`);
+await waitFor("document.body.innerText.includes('Owner requested changes through the durable project executive.')", "immutable rejected proposal history");
+await capture("03c-revised-decision-review");
 await evaluate(`(() => {
   const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('Accept these tasks') && !candidate.disabled);
   if (button) button.click();
   return Boolean(button);
 })()`);
 await waitFor("document.body.innerText.includes('Nothing needs your decision') && document.body.innerText.includes('Earlier decisions and rejected drafts')", "recorded exact proposal acceptance", 20000);
-await evaluate(`(() => { document.querySelector('.decision-history > summary')?.click(); return true; })()`);
+await evaluate(`(() => {
+  const history = document.querySelector('.decision-history');
+  if (history && !history.open) history.querySelector('summary')?.click();
+  return Boolean(history);
+})()`);
 await waitFor("document.body.innerText.includes('Recorded owner decision') && document.body.innerText.includes('Accepted the exact reviewed executive proposal.')", "accepted proposal history");
 await capture("03b-decision-history");
 
@@ -157,7 +185,7 @@ const result = await evaluate(`(() => ({
   unnamedButtons: [...document.querySelectorAll('button')].filter((button) => !button.getAttribute('aria-label') && !button.textContent.trim()).length,
   unlabelledControls: [...document.querySelectorAll('input, textarea, select')].filter((control) => !control.getAttribute('aria-label') && !control.closest('label')).length,
   leakedHandle: ['runtime_handle', 'provider_handle', 'node.key', 'capability/', 'capabilities/'].some((value) => document.documentElement.innerHTML.includes(value)),
-  completedBrowserActions: ['onboarding', 'executive-exchange', 'proposal-review', 'proposal-acceptance', 'worker-review', 'crew-inspection', 'project-briefing'],
+  completedBrowserActions: ['onboarding', 'executive-exchange', 'proposal-review', 'proposal-revision', 'proposal-acceptance', 'worker-review', 'crew-inspection', 'project-briefing'],
 }))()`);
 if (result.title !== "Crewfold Workbench") throw new Error(`unexpected title ${result.title}`);
 if (result.iconCount < 8) throw new Error(`expected Lucide icon pack, found ${result.iconCount} rendered icons`);

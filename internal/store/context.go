@@ -1650,11 +1650,7 @@ request_hash, status, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?,
 	if _, err := tx.ExecContext(ctx, "UPDATE run_jobs SET status = 'pending', available_at = ?, lease_expires_at = NULL, updated_at = ? WHERE run_id = ? AND status = 'complete'", now, now, run.ID); err != nil {
 		return domain.RunReport{}, storageFailure("wake run for report", err)
 	}
-	reportEventSequence, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runReportReceivedEvent, "report-"+reportID, now, run.ID, domain.EventActorAgentRun, map[string]any{"report_id": reportID, "kind": kind})
-	if err != nil {
-		return domain.RunReport{}, err
-	}
-	if err := enqueueOwnerManagerReview(ctx, tx, run.WorkspaceID, run.ProjectID, reportEventSequence, now); err != nil {
+	if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runReportReceivedEvent, "report-"+reportID, now, run.ID, domain.EventActorAgentRun, map[string]any{"report_id": reportID, "kind": kind}); err != nil {
 		return domain.RunReport{}, err
 	}
 	if err := tx.Commit(); err != nil {

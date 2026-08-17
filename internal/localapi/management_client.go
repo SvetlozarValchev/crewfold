@@ -8,6 +8,7 @@ import (
 )
 
 var managementResultDiscriminators = map[string][2]string{
+	MethodOwnerCrewConfigure:        {OwnerCrewMutationSchema, "owner_crew_mutation"},
 	MethodManagerGrantCreate:        {ManagerGrantMutationSchema, "manager_grant_mutation"},
 	MethodManagerGrantRevoke:        {ManagerGrantMutationSchema, "manager_grant_mutation"},
 	MethodManagerGrantShow:          {ManagerGrantShowSchema, "manager_grant"},

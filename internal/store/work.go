@@ -124,7 +124,11 @@ func (s *Store) UpdateAgent(ctx context.Context, command UpdateAgentCommand) (Mu
 	if err := validateMutationMetadata(key, correlationID, CodeInvalidAgent); err != nil {
 		return MutationResult[domain.AgentDefinition]{}, err
 	}
-	requestHash, err := hashCommand("agent.update", command)
+	requestHash, err := hashCommand("agent.update", map[string]any{
+		"workspace": workspaceIdentifier, "agent": agentIdentifier, "role": command.Role,
+		"provider": command.Provider, "runtime": command.Runtime, "enabled": command.Enabled,
+		"max_concurrency": command.MaxConcurrency, "expected_revision": command.ExpectedRevision,
+	})
 	if err != nil {
 		return MutationResult[domain.AgentDefinition]{}, storageFailure("hash agent update", err)
 	}

@@ -1208,6 +1208,8 @@ type fakeDaemonClient struct {
 	eventsList                localapi.EventsListResult
 	eventsListErr             error
 	agentMutation             localapi.AgentMutationResult
+	ownerCrewMutation         localapi.OwnerCrewMutationResult
+	ownerCrewParams           localapi.OwnerCrewConfigureParams
 	agentShow                 localapi.AgentShowResult
 	agentList                 localapi.AgentListResult
 	objectiveMutation         localapi.ObjectiveMutationResult
@@ -1382,6 +1384,11 @@ func (client *fakeDaemonClient) CheckoutList(_ context.Context, workspace, proje
 func (client *fakeDaemonClient) AgentCreate(_ context.Context, params localapi.AgentCreateParams) (localapi.AgentMutationResult, error) {
 	client.agentCreateParams = params
 	return client.agentMutation, nil
+}
+
+func (client *fakeDaemonClient) OwnerCrewConfigure(_ context.Context, params localapi.OwnerCrewConfigureParams) (localapi.OwnerCrewMutationResult, error) {
+	client.ownerCrewParams = params
+	return client.ownerCrewMutation, nil
 }
 
 func (client *fakeDaemonClient) AgentUpdate(context.Context, localapi.AgentUpdateParams) (localapi.AgentMutationResult, error) {

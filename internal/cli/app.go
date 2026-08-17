@@ -86,6 +86,7 @@ type daemonClient interface {
 	AgentUpdate(context.Context, localapi.AgentUpdateParams) (localapi.AgentMutationResult, error)
 	AgentShow(context.Context, string, string) (localapi.AgentShowResult, error)
 	AgentList(context.Context, localapi.AgentListParams) (localapi.AgentListResult, error)
+	OwnerCrewConfigure(context.Context, localapi.OwnerCrewConfigureParams) (localapi.OwnerCrewMutationResult, error)
 	ObjectiveCreate(context.Context, localapi.ObjectiveCreateParams) (localapi.ObjectiveMutationResult, error)
 	ObjectiveUpdate(context.Context, localapi.ObjectiveUpdateParams) (localapi.ObjectiveMutationResult, error)
 	ObjectiveShow(context.Context, string, string) (localapi.ObjectiveShowResult, error)
@@ -269,6 +270,8 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runCheckout(ctx, mode, args[1:])
 	case "agent":
 		return a.runAgent(ctx, mode, args[1:])
+	case "crew":
+		return a.runCrew(ctx, mode, args[1:])
 	case "objective":
 		return a.runObjective(ctx, mode, args[1:])
 	case "task":
@@ -975,6 +978,8 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, checkoutHelp)
 	case "agent":
 		fmt.Fprint(a.stdout, agentHelp)
+	case "crew":
+		fmt.Fprint(a.stdout, crewHelp)
 	case "objective":
 		fmt.Fprint(a.stdout, objectiveHelp)
 	case "task":
@@ -1698,6 +1703,7 @@ Commands:
   project        Register or inspect a project and its source locations
   checkout       Register or list concrete repository directories
   agent          Define provider-neutral agents and roles
+  crew           Change a workbench project's implementation authority
   objective      Define project objectives and budgets
   task           Coordinate dependency-aware, leased work
   context        Build and inspect immutable run briefings

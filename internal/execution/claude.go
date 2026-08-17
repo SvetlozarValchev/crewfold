@@ -292,7 +292,8 @@ func (ClaudeProvider) Next(_ context.Context, _ domain.Run, scenario domain.Fake
 	if snapshot.State == RuntimeStateStarting || snapshot.State == RuntimeStateRunning {
 		return domain.RunObservation{}, false, nil
 	}
-	diagnostic := strings.TrimSpace(strings.Join([]string{snapshot.Diagnostic, snapshot.Stdout.Text, snapshot.Stderr.Text}, "\n"))
+	transcript := strings.TrimSpace(strings.Join([]string{snapshot.Diagnostic, snapshot.Stdout.Text, snapshot.Stderr.Text}, "\n"))
+	diagnostic := strings.Join(claudeStructuredFailures(transcript), "\n")
 	lower := strings.ToLower(diagnostic)
 	if boundaryMatch(lower, []string{"mcp server", "mcp connection", "mcp startup", "mcp initialization", "crewfold mcp"}) && boundaryMatch(lower, []string{"failed", "error", "unavailable", "timed out", "disconnected"}) {
 		return domain.RunObservation{}, false, fmt.Errorf("Claude MCP boundary failed: %s", boundedProviderDiagnostic(diagnostic))
@@ -308,6 +309,27 @@ func (ClaudeProvider) Next(_ context.Context, _ domain.Run, scenario domain.Fake
 		return domain.RunObservation{Kind: domain.ObservationBlocked, Message: message}, true, nil
 	}
 	return domain.RunObservation{}, false, nil
+}
+
+func claudeStructuredFailures(transcript string) []string {
+	result := make([]string, 0, 2)
+	for _, line := range strings.Split(transcript, "\n") {
+		start := strings.IndexByte(line, '{')
+		if start < 0 {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line[start:]), &event); err != nil {
+			continue
+		}
+		isError, _ := event["is_error"].(bool)
+		if isError {
+			if message := structuredProviderMessage(event); message != "" {
+				result = append(result, message)
+			}
+		}
+	}
+	return result
 }
 
 func NormalizeClaudeBudgetUSD(value string) (string, error) {
@@ -351,7 +373,7 @@ func claudeLaunchArguments(crewfoldExecutable string, access RunCapabilityAccess
 }
 
 func claudeExecutivePrompt() string {
-	return "You are the project's Crewfold executive. This is one short-lived exchange in a durable Crewfold conversation, not an implementation run. First call crewfold_get_briefing, then crewfold_get_executive_context. Treat the frozen owner instruction, canonical project context, manager grant, and cited records as your entire authority. Inspect the checkout read-only only. You may answer from evidence, ask one consequential owner decision, or submit bounded typed manager proposals through the granted crewfold_propose_* tools. In task proposals, include claim requirements only when the frozen manager grant lists exact allowed_claim_kinds; when that list is empty, omit claim-requirement actions entirely. Never edit files, execute project effects, accept your own proposals, launch work directly, or treat role text as authority. Finish by calling crewfold_respond_to_owner exactly once with an answer, update, decision, proposal summary, or refusal; include only citation refs and proposal IDs returned in this exchange. Terminal text is not the response."
+	return "You are the project's Crewfold executive. This is one short-lived exchange in a durable Crewfold conversation, not an implementation run. First call crewfold_get_briefing, then crewfold_get_executive_context. Treat the frozen owner instruction, canonical project context, manager grant, and cited records as your entire authority. Inspect the checkout read-only only. You may answer from evidence, ask one consequential owner decision, or submit bounded typed manager proposals through the granted crewfold_propose_* tools. A decision is consequential only when distinct owner choices can change authorized project state; never ask merely for acknowledgement, to resume before repair is proved, to bypass dependency order, or to choose an effect Crewfold cannot perform. A lost runtime must first be independently confirmed retired through Crewfold's exact lost-run recovery control; explain that prerequisite and do not propose around retained runtime authority. After exact retirement is recorded and no run or scheduling intent retains authority, recover a blocked task only with a reassign_task escalation naming the exact task revision and an authorized launch profile; retry_task is only for a definite start_failed run. In task proposals, include claim requirements only when the frozen manager grant lists exact allowed_claim_kinds; when that list is empty, omit claim-requirement actions entirely. Never edit files, execute project effects, accept your own proposals, launch work directly, or treat role text as authority. Finish by calling crewfold_respond_to_owner exactly once with an answer, update, decision, proposal summary, or refusal; include only citation refs and proposal IDs returned in this exchange. Terminal text is not the response."
 }
 
 func claudeRunSettings(checkoutPath string, externallySandboxed bool) map[string]any {

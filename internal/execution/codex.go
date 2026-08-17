@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -312,7 +313,8 @@ func (CodexProvider) Next(_ context.Context, _ domain.Run, scenario domain.FakeS
 	if snapshot.State == RuntimeStateStarting || snapshot.State == RuntimeStateRunning {
 		return domain.RunObservation{}, false, nil
 	}
-	diagnostic := strings.TrimSpace(strings.Join([]string{snapshot.Diagnostic, snapshot.Stdout.Text, snapshot.Stderr.Text}, "\n"))
+	transcript := strings.TrimSpace(strings.Join([]string{snapshot.Diagnostic, snapshot.Stdout.Text, snapshot.Stderr.Text}, "\n"))
+	diagnostic := strings.Join(codexStructuredFailures(transcript), "\n")
 	lower := strings.ToLower(diagnostic)
 	if codexBoundaryMatch(lower, []string{"mcp server", "mcp startup", "mcp initialization", "crewfold mcp"}) && codexBoundaryMatch(lower, []string{"failed", "error", "unavailable", "timed out"}) {
 		return domain.RunObservation{}, false, fmt.Errorf("Codex MCP boundary failed: %s", boundedCodexDiagnostic(diagnostic))
@@ -328,6 +330,52 @@ func (CodexProvider) Next(_ context.Context, _ domain.Run, scenario domain.FakeS
 		return domain.RunObservation{Kind: domain.ObservationBlocked, Message: message}, true, nil
 	}
 	return domain.RunObservation{}, false, nil
+}
+
+func codexStructuredFailures(transcript string) []string {
+	result := make([]string, 0, 2)
+	for _, line := range strings.Split(transcript, "\n") {
+		start := strings.IndexByte(line, '{')
+		if start < 0 {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line[start:]), &event); err != nil {
+			continue
+		}
+		typeName, _ := event["type"].(string)
+		switch typeName {
+		case "error", "turn.failed":
+			if message := structuredProviderMessage(event); message != "" {
+				result = append(result, message)
+			}
+		case "item.completed":
+			item, _ := event["item"].(map[string]any)
+			itemType, _ := item["type"].(string)
+			status, _ := item["status"].(string)
+			if itemType == "mcp_tool_call" && status == "failed" {
+				message := structuredProviderMessage(item)
+				server, _ := item["server"].(string)
+				tool, _ := item["tool"].(string)
+				result = append(result, strings.TrimSpace(strings.Join([]string{server, tool, message}, " ")))
+			}
+		}
+	}
+	return result
+}
+
+func structuredProviderMessage(value any) string {
+	switch current := value.(type) {
+	case string:
+		return strings.TrimSpace(current)
+	case map[string]any:
+		for _, key := range []string{"message", "error", "result"} {
+			if message := structuredProviderMessage(current[key]); message != "" {
+				return message
+			}
+		}
+	}
+	return ""
 }
 
 func codexBoundaryMatch(value string, candidates []string) bool {
@@ -373,7 +421,7 @@ func codexLaunchArguments(crewfoldExecutable string, run domain.Run, scenario do
 }
 
 func codexExecutivePrompt() string {
-	return "You are the project's Crewfold executive. This is one short-lived exchange in a durable Crewfold conversation, not a disposable form interpretation and not an implementation run. First call crewfold_get_briefing, then crewfold_get_executive_context. Treat the frozen owner instruction, canonical project context, manager grant, and cited records as your entire authority. You may inspect the checkout read-only, answer from evidence, ask one consequential owner decision, or submit bounded typed manager proposals through the granted crewfold_propose_* tools. In task proposals, include claim requirements only when the frozen manager grant lists exact allowed_claim_kinds; when that list is empty, omit claim-requirement actions entirely. Never edit files, execute project effects, accept your own proposals, launch work directly, or treat role text as authority. Finish by calling crewfold_respond_to_owner exactly once with an answer, update, decision, proposal summary, or refusal; include only citation refs and proposal IDs returned in this exchange. Your terminal text is not the response."
+	return "You are the project's Crewfold executive. This is one short-lived exchange in a durable Crewfold conversation, not a disposable form interpretation and not an implementation run. First call crewfold_get_briefing, then crewfold_get_executive_context. Treat the frozen owner instruction, canonical project context, manager grant, and cited records as your entire authority. You may inspect the checkout read-only, answer from evidence, ask one consequential owner decision, or submit bounded typed manager proposals through the granted crewfold_propose_* tools. A decision is consequential only when distinct owner choices can change authorized project state; never ask merely for acknowledgement, to resume before repair is proved, to bypass dependency order, or to choose an effect Crewfold cannot perform. A lost runtime must first be independently confirmed retired through Crewfold's exact lost-run recovery control; explain that prerequisite and do not propose around retained runtime authority. After exact retirement is recorded and no run or scheduling intent retains authority, recover a blocked task only with a reassign_task escalation naming the exact task revision and an authorized launch profile; retry_task is only for a definite start_failed run. In task proposals, include claim requirements only when the frozen manager grant lists exact allowed_claim_kinds; when that list is empty, omit claim-requirement actions entirely. Never edit files, execute project effects, accept your own proposals, launch work directly, or treat role text as authority. Finish by calling crewfold_respond_to_owner exactly once with an answer, update, decision, proposal summary, or refusal; include only citation refs and proposal IDs returned in this exchange. Your terminal text is not the response."
 }
 
 func codexInitialPrompt(requiredEvidence []string) string {

@@ -105,6 +105,84 @@ func TestManagerEscalationAcceptanceAndApprovalMatrix(t *testing.T) {
 	}
 }
 
+func TestResolvedLostTaskCanBeExplicitlyReassignedButNotWhileRuntimeAuthorityRemains(t *testing.T) {
+	fixture := newEscalationAcceptanceFixture(t, "resolved-lost-reassign")
+	ctx := context.Background()
+	created, err := fixture.storage.CreateTask(ctx, CreateTaskCommand{
+		WorkspaceIdentifier: fixture.base.workspace.ID,
+		ProjectIdentifier:   fixture.base.project.ID,
+		ObjectiveID:         fixture.base.objective.ID,
+		Title:               "Recover work only after lost runtime retirement",
+		Budget:              domain.Budget{TokenLimit: 10, CostCents: 1, TimeSeconds: 10},
+		IdempotencyKey:      "resolved-lost-reassign-task",
+		CorrelationID:       "request-resolved-lost-reassign-task",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(resolved lost target) = %v", err)
+	}
+	assigned, err := fixture.storage.AssignTask(ctx, AssignTaskCommand{
+		WorkspaceIdentifier: fixture.base.workspace.ID,
+		TaskID:              created.Detail.Task.ID,
+		AgentIdentifier:     fixture.base.target.AgentID,
+		LeaseSeconds:        900,
+		ExpectedRevision:    created.Detail.Task.Revision,
+		IdempotencyKey:      "resolved-lost-reassign-assignment",
+		CorrelationID:       "request-resolved-lost-reassign-assignment",
+	})
+	if err != nil {
+		t.Fatalf("AssignTask(resolved lost target) = %v", err)
+	}
+	run := createRunTest(t, fixture.storage, fixture.base.workspace.ID, assigned.Detail,
+		managementProgressScenario("resolved-lost-reassign"), "resolved-lost-reassign-run")
+	if _, err := fixture.storage.MarkRunStarting(ctx, run.Run.ID, "request-resolved-lost-reassign-starting"); err != nil {
+		t.Fatalf("MarkRunStarting(resolved lost target) = %v", err)
+	}
+	if _, err := fixture.storage.MarkRunStarted(ctx, run.Run.ID, "runtime-resolved-lost-reassign", "provider-resolved-lost-reassign", "request-resolved-lost-reassign-started"); err != nil {
+		t.Fatalf("MarkRunStarted(resolved lost target) = %v", err)
+	}
+	lost, err := fixture.storage.LoseRun(ctx, run.Run.ID, "runtime identity became uncertain", "request-resolved-lost-reassign-lost")
+	if err != nil || lost.Run.Status != domain.RunLost || lost.Task.Status != domain.TaskBlocked {
+		t.Fatalf("LoseRun(resolved lost target) = %#v, %v", lost, err)
+	}
+	whileLost := domain.ProposalRequestAction{
+		Response: domain.ProposalResponseReassignTask, TargetTaskID: lost.Task.ID, LaunchProfileID: fixture.base.target.ID,
+		Reason: "Start a new bounded run only after the uncertain runtime is retired.", ExpectedRevision: lost.Task.Revision,
+	}
+	invalid, err := fixture.storage.SubmitManagerProposal(ctx, SubmitManagerProposalCommand{
+		RunID: fixture.managerRunID, ManagerGrantID: fixture.grant.ID, ExpectedGrantRevision: fixture.grant.Revision,
+		Kind: domain.ManagerProposalEscalation, Summary: "This must remain inert while lost runtime authority exists.",
+		AsOfEventSequence: fixture.packetSequence, Actions: []domain.ManagerProposalAction{{
+			Type: domain.ProposalActionRequestAction, RequestAction: &whileLost,
+		}}, IdempotencyKey: "resolved-lost-reassign-before-retirement", CorrelationID: "request-resolved-lost-reassign-before-retirement",
+	})
+	if err != nil || invalid.Proposal.Status != domain.ManagerProposalInvalid {
+		t.Fatalf("SubmitManagerProposal(reassign while lost) = %#v, %v; want invalid", invalid, err)
+	}
+	resolved, err := fixture.storage.ResolveLostRun(ctx, ResolveLostRunCommand{
+		WorkspaceIdentifier: fixture.base.workspace.ID, RunID: lost.Run.ID, ExpectedRevision: lost.Run.Revision,
+		Note: "The native runtime is independently confirmed retired.", RuntimeRetiredConfirmed: true,
+		IdempotencyKey: "resolved-lost-reassign-retirement", CorrelationID: "request-resolved-lost-reassign-retirement",
+	})
+	if err != nil || resolved.Detail.Run.FailureCode != "runtime_retired_by_owner" || resolved.Detail.Task.Status != domain.TaskBlocked || resolved.Detail.Task.AssignmentID != "" {
+		t.Fatalf("ResolveLostRun(reassign target) = %#v, %v", resolved, err)
+	}
+	target := escalationAcceptanceTarget{taskID: resolved.Detail.Task.ID, runID: resolved.Detail.Run.ID, request: domain.ProposalRequestAction{
+		Response: domain.ProposalResponseReassignTask, TargetTaskID: resolved.Detail.Task.ID, LaunchProfileID: fixture.base.target.ID,
+		Reason: "Start a fresh bounded run after exact runtime retirement.", ExpectedRevision: resolved.Detail.Task.Revision,
+	}}
+	_, action, approval := fixture.acceptEscalation(t, target.request, "resolved-lost-reassign-after-retirement")
+	decided, err := fixture.storage.AllowApproval(ctx, DecideApprovalCommand{
+		WorkspaceIdentifier: fixture.base.workspace.ID, ApprovalRequestID: approval.ID, ExpectedRevision: approval.Revision,
+		DecisionNote:   "Allow only this exact recovered task and launch profile.",
+		IdempotencyKey: "resolved-lost-reassign-allow", CorrelationID: "request-resolved-lost-reassign-allow",
+	})
+	if err != nil || decided.Approval.Status != domain.ApprovalConsumed || decided.Action.Status != domain.SupervisorActionApplied {
+		t.Fatalf("AllowApproval(resolved lost reassign) = %#v, %v", decided, err)
+	}
+	fixture.assertAllowedTarget(t, target, action)
+	assertManagementRowCount(t, fixture.storage, 1, `SELECT COUNT(*) FROM runs WHERE id=? AND status='failed' AND failure_code='runtime_retired_by_owner'`, lost.Run.ID)
+}
+
 func TestApprovedRunControlsRejectUnavailableBindingsWithoutConsumingApproval(t *testing.T) {
 	for _, response := range []string{domain.ProposalResponseResumeRun, domain.ProposalResponseStopRun} {
 		response := response

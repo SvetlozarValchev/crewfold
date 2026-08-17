@@ -15,8 +15,8 @@ func TestManagementResultDiscriminatorsRejectWrongSchemaAndType(t *testing.T) {
 		Schema string
 		Type   string
 	}
-	if len(managementResultDiscriminators) != 23 {
-		t.Fatalf("management discriminator method count = %d, want 23", len(managementResultDiscriminators))
+	if len(managementResultDiscriminators) != 24 {
+		t.Fatalf("management discriminator method count = %d, want 24", len(managementResultDiscriminators))
 	}
 	for method, expected := range managementResultDiscriminators {
 		method, expected := method, expected
@@ -40,6 +40,10 @@ func TestManagementResultDiscriminatorsRejectWrongSchemaAndType(t *testing.T) {
 func TestManagementClientsRejectWrongResultDiscriminators(t *testing.T) {
 	t.Parallel()
 	calls := map[string]func(*Client) error{
+		MethodOwnerCrewConfigure: func(client *Client) error {
+			_, err := client.OwnerCrewConfigure(context.Background(), OwnerCrewConfigureParams{})
+			return err
+		},
 		MethodManagerGrantCreate: func(client *Client) error {
 			_, err := client.ManagerGrantCreate(context.Background(), ManagerGrantCreateParams{})
 			return err

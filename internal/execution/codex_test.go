@@ -188,6 +188,16 @@ func TestCodexProviderNormalizesOnlyExplicitBoundaries(t *testing.T) {
 	if found || err != nil {
 		t.Fatalf("Next(unreported success) found=%t error=%v", found, err)
 	}
+	_, found, err = provider.Next(context.Background(), domain.Run{}, codexScenario(), RuntimeSnapshot{
+		State: RuntimeStateExited, ExitKnown: true, ExitCode: 0, Stdout: domain.CapturedLog{Text: strings.Join([]string{
+			`{"type":"item.completed","item":{"id":"message","type":"agent_message","text":"The project excludes authentication and the earlier check failed."}}`,
+			`{"type":"item.completed","item":{"id":"command","type":"command_execution","command":"rg files","aggregated_output":"rg: command not found","exit_code":127,"status":"failed"}}`,
+			`{"type":"turn.completed"}`,
+		}, "\n")},
+	})
+	if found || err != nil {
+		t.Fatalf("Next(project text and command failure) found=%t error=%v; want no fabricated provider boundary", found, err)
+	}
 }
 
 func TestMCPStdioBridgeInjectsCapabilityWithoutWritingItToStdio(t *testing.T) {

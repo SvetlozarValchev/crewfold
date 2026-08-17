@@ -22,6 +22,7 @@ management briefings are implemented. M21 adds private XDG defaults,
 `crewfold service install|start|stop|status`, and `crewfold open`, plus the
 embedded authenticated workbench for repository/provider onboarding, durable
 conversation with a provider-backed project executive, explicit typed-proposal review,
+revisioned implementation-crew configuration,
 crew/work/inbox/decision/evidence/activity/briefing views, bounded Git and logs,
 full health, and a separately authorized live terminal. The Go-native operator dashboard is launched with
 `crewfold ui`; ordinary commands continue to support text and JSON output. M20
@@ -68,6 +69,22 @@ HttpOnly/SameSite-Strict session and opens the primary owner workflow. Normal
 repository setup and work orchestration happen in that browser; the CLI remains
 the complete typed automation, recovery, conformance, and advanced-administration
 surface.
+
+The web Crew page is the ordinary owner path. Automation and diagnosis can use
+the same exact authority mutation without manually composing grants and profiles:
+
+```sh
+crewfold crew add reviewer --workspace personal --project world-engine \
+  --provider codex --runtime herdr --max-concurrency 2 \
+  --expected-binding-revision 1 --idempotency-key add-reviewer \
+  --socket /path/to/crewfold.sock
+crewfold crew disable agent_0123456789abcdef0123456789abcdef \
+  --workspace personal --project world-engine --expected-binding-revision 2 \
+  --idempotency-key disable-reviewer --socket /path/to/crewfold.sock
+```
+
+Adding starts no work. Disabling is rejected while the worker owns accepted or
+live work and cannot remove the final implementation worker.
 
 ## Operator dashboard
 
@@ -416,6 +433,10 @@ native control surface, then use `run resolve-lost` with the exact revision, not
 and `--confirm-runtime-retired`. Crewfold does not attempt an external stop; it
 records one `run.lost_resolved`, clears the node binding, releases capacity, and
 leaves the task blocked for an explicit retry/reassignment decision.
+In a project with a workbench executive, that recovery is an exact
+`reassign_task` proposal against the blocked task revision and an authorized
+launch profile after all reserved run and scheduling-intent authority is gone;
+`retry_task` remains specific to a definite `start_failed` run.
 
 Opaque runtime/provider handles are internal node-bound live state and do not
 appear in run/check records, briefings, or events. Terminalization clears them.

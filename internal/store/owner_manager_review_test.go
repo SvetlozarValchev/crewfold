@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -36,11 +37,21 @@ func TestM21WorkerReportsAndMessagesCoalesceIntoDurableManagerReviews(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	active, err := storage.MarkRunStarted(context.Background(), starting.ID, "manager-review-runtime", "manager-review-provider", "manager-review-started")
+	if err != nil {
+		t.Fatal(err)
+	}
 	report, err := storage.SubmitRunReport(context.Background(), CreateRunReportCommand{
-		RunID: starting.ID, Kind: domain.ObservationProgress, Message: "The implementation boundary is understood.",
+		RunID: active.Run.ID, Kind: domain.ObservationProgress, Message: "The implementation boundary is understood.",
 		Payload: map[string]any{"next": "wire the first slice"}, IdempotencyKey: "manager-review-progress",
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if premature, found, err := storage.OwnerManagerReview(context.Background(), workspace.ID, project.ID); err != nil || found {
+		t.Fatalf("OwnerManagerReview(before report application) = %#v, %t, %v; want no review", premature, found, err)
+	}
+	if _, err := storage.ApplyQueuedRunReport(context.Background(), active.Run.ID, report.ID, true, nil, nil, "", "manager-review-progress-applied"); err != nil {
 		t.Fatal(err)
 	}
 	job, found, err := storage.OwnerManagerReview(context.Background(), workspace.ID, project.ID)
@@ -48,7 +59,7 @@ func TestM21WorkerReportsAndMessagesCoalesceIntoDurableManagerReviews(t *testing
 		t.Fatalf("OwnerManagerReview(after report) = %#v, %t, %v", job, found, err)
 	}
 	replayedReport, err := storage.SubmitRunReport(context.Background(), CreateRunReportCommand{
-		RunID: starting.ID, Kind: domain.ObservationProgress, Message: "The implementation boundary is understood.",
+		RunID: active.Run.ID, Kind: domain.ObservationProgress, Message: "The implementation boundary is understood.",
 		Payload: map[string]any{"next": "wire the first slice"}, IdempotencyKey: "manager-review-progress",
 	})
 	if err != nil || replayedReport.ID != report.ID {
@@ -61,6 +72,24 @@ func TestM21WorkerReportsAndMessagesCoalesceIntoDurableManagerReviews(t *testing
 	claimed, found, err := storage.ClaimOwnerManagerReview(context.Background(), time.Minute)
 	if err != nil || !found || claimed.Status != "leased" || claimed.ProjectID != project.ID {
 		t.Fatalf("ClaimOwnerManagerReview() = %#v, %t, %v", claimed, found, err)
+	}
+	if err := storage.DeferOwnerManagerReview(context.Background(), project.ID); err != nil {
+		t.Fatal(err)
+	}
+	deferred, found, err := storage.OwnerManagerReview(context.Background(), workspace.ID, project.ID)
+	if err != nil || !found || deferred.Status != "pending" || deferred.Attempts != 0 || deferred.RequestedEventSequence != claimed.RequestedEventSequence {
+		t.Fatalf("DeferOwnerManagerReview() = %#v, %t, %v", deferred, found, err)
+	}
+	storage.clock = func() time.Time {
+		available, parseErr := time.Parse(time.RFC3339Nano, deferred.AvailableAt)
+		if parseErr != nil {
+			t.Fatalf("parse deferred review availability = %v", parseErr)
+		}
+		return available
+	}
+	claimed, found, err = storage.ClaimOwnerManagerReview(context.Background(), time.Minute)
+	if err != nil || !found || claimed.Status != "leased" || claimed.Attempts != 1 {
+		t.Fatalf("ClaimOwnerManagerReview(after deferral) = %#v, %t, %v", claimed, found, err)
 	}
 	snapshot, err := storage.BuildOwnerInterpretationSnapshot(context.Background(), workspace.ID, project.ID)
 	if err != nil {
@@ -96,10 +125,13 @@ func TestM21WorkerReportsAndMessagesCoalesceIntoDurableManagerReviews(t *testing
 		t.Fatalf("OwnerTurnReplay(executive crash boundary) = %#v, %t, %v", replayedReview, found, err)
 	}
 	lateReport, err := storage.SubmitRunReport(context.Background(), CreateRunReportCommand{
-		RunID: starting.ID, Kind: domain.ObservationProgress, Message: "A newer worker update arrived after the frozen review cut.",
+		RunID: active.Run.ID, Kind: domain.ObservationProgress, Message: "A newer worker update arrived after the frozen review cut.",
 		Payload: map[string]any{"next": "include it in one follow-up pass"}, IdempotencyKey: "manager-review-late-progress",
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.ApplyQueuedRunReport(context.Background(), active.Run.ID, lateReport.ID, true, nil, nil, "", "manager-review-late-progress-applied"); err != nil {
 		t.Fatal(err)
 	}
 	lateQueued, found, err := storage.OwnerManagerReview(context.Background(), workspace.ID, project.ID)
@@ -155,7 +187,7 @@ func TestM21WorkerReportsAndMessagesCoalesceIntoDurableManagerReviews(t *testing
 		t.Fatal(err)
 	}
 	message, err := storage.SendMessage(context.Background(), SendMessageCommand{
-		WorkspaceIdentifier: workspace.ID, SenderRunID: starting.ID, RecipientAgent: reviewer.Value.ID,
+		WorkspaceIdentifier: workspace.ID, SenderRunID: active.Run.ID, RecipientAgent: reviewer.Value.ID,
 		Kind: domain.MessageQuestion, Subject: "Boundary review", Body: "Please verify the implementation boundary.",
 		IdempotencyKey: "manager-review-worker-message", CorrelationID: "manager-review-worker-message",
 	})
@@ -167,7 +199,7 @@ func TestM21WorkerReportsAndMessagesCoalesceIntoDurableManagerReviews(t *testing
 		t.Fatalf("OwnerManagerReview(after agent message) = %#v, %t, %v", messageJob, found, err)
 	}
 	messageReplay, err := storage.SendMessage(context.Background(), SendMessageCommand{
-		WorkspaceIdentifier: workspace.ID, SenderRunID: starting.ID, RecipientAgent: reviewer.Value.ID,
+		WorkspaceIdentifier: workspace.ID, SenderRunID: active.Run.ID, RecipientAgent: reviewer.Value.ID,
 		Kind: domain.MessageQuestion, Subject: "Boundary review", Body: "Please verify the implementation boundary.",
 		IdempotencyKey: "manager-review-worker-message", CorrelationID: "manager-review-worker-message",
 	})
@@ -195,6 +227,34 @@ func TestM21WorkerReportsAndMessagesCoalesceIntoDurableManagerReviews(t *testing
 	failed, found, err := storage.OwnerManagerReview(context.Background(), workspace.ID, project.ID)
 	if err != nil || !found || failed.Status != "failed" || failed.LastError == "" {
 		t.Fatalf("OwnerManagerReview(failed) = %#v, %t, %v", failed, found, err)
+	}
+	blockedReport, err := storage.SubmitRunReport(context.Background(), CreateRunReportCommand{
+		RunID: active.Run.ID, Kind: domain.ObservationBlocked,
+		Message: "The required package mirror is unavailable; owner recovery direction is required.",
+		Payload: map[string]any{"blocked": true}, IdempotencyKey: "manager-review-blocked",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stillFailed, found, err := storage.OwnerManagerReview(context.Background(), workspace.ID, project.ID)
+	if err != nil || !found || stillFailed.Status != "failed" || stillFailed.RequestedEventSequence != failed.RequestedEventSequence {
+		t.Fatalf("pending blocked report prematurely advanced review = %#v, %t, %v", stillFailed, found, err)
+	}
+	if _, err := storage.ApplyQueuedRunReport(context.Background(), active.Run.ID, blockedReport.ID, true, nil, nil, "", "manager-review-blocked-applied"); err != nil {
+		t.Fatal(err)
+	}
+	blockedJob, found, err := storage.OwnerManagerReview(context.Background(), workspace.ID, project.ID)
+	if err != nil || !found || blockedJob.Status != "pending" || blockedJob.RequestedEventSequence <= failed.RequestedEventSequence {
+		t.Fatalf("applied blocked report did not queue review = %#v, %t, %v", blockedJob, found, err)
+	}
+	blockedSnapshot, err := storage.BuildOwnerInterpretationSnapshot(context.Background(), workspace.ID, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blockedSnapshot.EventSequence != blockedJob.RequestedEventSequence ||
+		!bytes.Contains(blockedSnapshot.CanonicalContext, []byte(`"status":"blocked"`)) ||
+		!bytes.Contains(blockedSnapshot.CanonicalContext, []byte("package mirror is unavailable")) {
+		t.Fatalf("executive snapshot does not expose applied blocked truth at cut %d/%d: %s", blockedSnapshot.EventSequence, blockedJob.RequestedEventSequence, blockedSnapshot.CanonicalContext)
 	}
 	if profile.Value.ID == "" {
 		t.Fatal("launch profile fixture was not created")

@@ -15,6 +15,8 @@ import (
 
 const ownerExecutiveExchangeLease = 2 * time.Minute
 
+const ownerExecutiveReviewBusyMessage = "project executive is still processing an earlier exchange"
+
 type CreateOwnerExecutiveBindingCommand struct {
 	WorkspaceIdentifier string
 	ProjectIdentifier   string
@@ -23,6 +25,22 @@ type CreateOwnerExecutiveBindingCommand struct {
 	AgentID             string
 	ManagerGrantID      string
 	LaunchProfileID     string
+}
+
+// ReconfigureOwnerExecutiveCommand atomically moves the durable project
+// executive to a newly-created exact grant/profile pair. The new authority must
+// already exist and remain inert until this mutation commits. The prior pair is
+// retired in the same transaction, so no exchange can observe a mixed crew plan.
+type ReconfigureOwnerExecutiveCommand struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	ExpectedRevision    int64
+	ManagerGrantID      string
+	LaunchProfileID     string
+	ConfigurationHash   string
+	Reason              string
+	IdempotencyKey      string
+	CorrelationID       string
 }
 
 type RequestOwnerExecutiveTurnCommand struct {
@@ -101,6 +119,133 @@ func (s *Store) CreateOwnerExecutiveBinding(ctx context.Context, command CreateO
 	return value, nil
 }
 
+func (s *Store) ReconfigureOwnerExecutive(ctx context.Context, command ReconfigureOwnerExecutiveCommand) (MutationResult[domain.OwnerExecutiveBinding], error) {
+	command.WorkspaceIdentifier = strings.TrimSpace(command.WorkspaceIdentifier)
+	command.ProjectIdentifier = strings.TrimSpace(command.ProjectIdentifier)
+	command.ManagerGrantID = strings.TrimSpace(command.ManagerGrantID)
+	command.LaunchProfileID = strings.TrimSpace(command.LaunchProfileID)
+	command.ConfigurationHash = strings.TrimSpace(command.ConfigurationHash)
+	command.Reason = strings.TrimSpace(command.Reason)
+	command.IdempotencyKey = strings.TrimSpace(command.IdempotencyKey)
+	command.CorrelationID = strings.TrimSpace(command.CorrelationID)
+	if command.WorkspaceIdentifier == "" || command.ProjectIdentifier == "" || command.ExpectedRevision < 1 || command.ManagerGrantID == "" || command.LaunchProfileID == "" || len(command.ConfigurationHash) != 64 || strings.Trim(command.ConfigurationHash, "0123456789abcdef") != "" || !validDecisionNote(command.Reason) {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, &Error{Code: CodeInvalidOwnerConversation, Message: "executive reconfiguration requires exact scope, binding revision, replacement grant/profile, and reason"}
+	}
+	if err := validateMutationMetadata(command.IdempotencyKey, command.CorrelationID, CodeInvalidOwnerConversation); err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	requestHash, err := hashCommand("owner.executive.reconfigure", map[string]any{
+		"workspace": command.WorkspaceIdentifier, "project": command.ProjectIdentifier,
+		"expected_revision": command.ExpectedRevision, "configuration_hash": command.ConfigurationHash,
+	})
+	if err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, storageFailure("hash owner executive reconfiguration", err)
+	}
+	tx, err := s.beginTx(ctx, nil)
+	if err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, storageFailure("begin owner executive reconfiguration", err)
+	}
+	defer tx.Rollback()
+	var replay MutationResult[domain.OwnerExecutiveBinding]
+	if found, err := lookupIdempotency(ctx, tx, command.IdempotencyKey, "owner.executive.reconfigure", requestHash, &replay); err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	} else if found {
+		return replay, nil
+	}
+	workspace, err := workspaceInTransaction(ctx, tx, command.WorkspaceIdentifier)
+	if err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	project, err := projectInTransaction(ctx, tx, workspace.ID, command.ProjectIdentifier)
+	if err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	binding, found, err := ownerExecutiveBindingInTransaction(ctx, tx, project.ID)
+	if err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	if !found || binding.Status != "active" {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, &Error{Code: CodeOwnerConversationNotFound, Message: "project executive is not configured"}
+	}
+	if binding.Revision != command.ExpectedRevision {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, revisionConflict("owner executive binding", binding.ID, command.ExpectedRevision, binding.Revision)
+	}
+	if binding.ManagerGrantID == command.ManagerGrantID || binding.LaunchProfileID == command.LaunchProfileID {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, &Error{Code: CodeInvalidOwnerConversation, Message: "executive reconfiguration requires a new exact grant and management launch profile"}
+	}
+	var busy int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+SELECT 1 FROM owner_executive_exchanges exchange
+WHERE exchange.binding_id=? AND exchange.status IN ('pending','leased','running')
+) OR EXISTS(
+SELECT 1 FROM runs run WHERE run.task_id=? AND run.status IN ('requested','starting','active','blocked','stopping','lost')
+)`, binding.ID, binding.PlanningTaskID).Scan(&busy); err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, storageFailure("check owner executive reconfiguration activity", err)
+	}
+	if busy != 0 {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, &Error{Code: CodeOwnerTurnConflict, Message: "project executive authority cannot change while an executive exchange is live"}
+	}
+	grant, err := queryManagerGrant(ctx, tx, workspace.ID, command.ManagerGrantID)
+	if err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	profile, err := queryLaunchProfile(ctx, tx, workspace.ID, command.LaunchProfileID)
+	if err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	if grant.Status != domain.ManagerGrantActive || grant.ProjectID != binding.ProjectID || grant.ObjectiveID != binding.ObjectiveID || grant.TaskID != binding.PlanningTaskID || grant.AgentID != binding.AgentID ||
+		profile.Status != domain.LaunchProfileActive || profile.ProjectID != binding.ProjectID || profile.AgentID != binding.AgentID || profile.ManagerGrantID != grant.ID {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, &Error{Code: CodeInvalidOwnerConversation, Message: "replacement executive grant/profile does not match the current project authority tuple"}
+	}
+	priorGrant, err := queryManagerGrant(ctx, tx, workspace.ID, binding.ManagerGrantID)
+	if err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	priorProfile, err := queryLaunchProfile(ctx, tx, workspace.ID, binding.LaunchProfileID)
+	if err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	if priorGrant.Status != domain.ManagerGrantActive || priorProfile.Status != domain.LaunchProfileActive {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, &Error{Code: CodeOwnerTurnConflict, Message: "current executive authority was already retired"}
+	}
+	now := s.nowText()
+	binding.ManagerGrantID = grant.ID
+	binding.LaunchProfileID = profile.ID
+	binding.Revision++
+	binding.UpdatedAt = now
+	if _, err := tx.ExecContext(ctx, `UPDATE owner_executive_bindings SET manager_grant_id=?,launch_profile_id=?,revision=?,updated_at=?,updated_by='local-owner' WHERE id=?`, binding.ManagerGrantID, binding.LaunchProfileID, binding.Revision, now, binding.ID); err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, storageFailure("replace owner executive binding", err)
+	}
+	priorGrant.Status, priorGrant.Revision, priorGrant.UpdatedAt, priorGrant.UpdatedBy = domain.ManagerGrantRevoked, priorGrant.Revision+1, now, localOwnerActorID
+	if _, err := tx.ExecContext(ctx, `UPDATE manager_grants SET status='revoked',revision=?,updated_at=?,updated_by=? WHERE id=?`, priorGrant.Revision, now, localOwnerActorID, priorGrant.ID); err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, storageFailure("retire prior executive grant", err)
+	}
+	priorProfile.Status, priorProfile.Revision, priorProfile.UpdatedAt, priorProfile.UpdatedBy = domain.LaunchProfileRetired, priorProfile.Revision+1, now, localOwnerActorID
+	if _, err := tx.ExecContext(ctx, `UPDATE launch_profiles SET status='retired',revision=?,updated_at=?,updated_by=? WHERE id=?`, priorProfile.Revision, now, localOwnerActorID, priorProfile.ID); err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, storageFailure("retire prior executive profile", err)
+	}
+	if _, err := appendEvent(ctx, tx, workspace.ID, "manager_grant", priorGrant.ID, priorGrant.Revision, managerGrantRevokedEvent, command.CorrelationID, now, map[string]any{"reason": command.Reason}); err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	if _, err := appendEvent(ctx, tx, workspace.ID, "launch_profile", priorProfile.ID, priorProfile.Revision, launchProfileRetiredEvent, command.CorrelationID, now, map[string]any{"reason": command.Reason}); err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	sequence, err := appendEvent(ctx, tx, workspace.ID, "owner_executive_binding", binding.ID, binding.Revision, ownerExecutiveReconfiguredEvent, command.CorrelationID, now, map[string]any{
+		"project_id": binding.ProjectID, "manager_grant_id": binding.ManagerGrantID, "launch_profile_id": binding.LaunchProfileID, "reason": command.Reason,
+	})
+	if err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	result := MutationResult[domain.OwnerExecutiveBinding]{Value: binding, EventSequence: sequence}
+	if err := recordIdempotency(ctx, tx, command.IdempotencyKey, "owner.executive.reconfigure", requestHash, result, now); err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return MutationResult[domain.OwnerExecutiveBinding]{}, storageFailure("commit owner executive reconfiguration", err)
+	}
+	return result, nil
+}
+
 func (s *Store) OwnerExecutiveBinding(ctx context.Context, workspaceIdentifier, projectIdentifier string) (domain.OwnerExecutiveBinding, error) {
 	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -123,6 +268,53 @@ func (s *Store) OwnerExecutiveBinding(ctx context.Context, workspaceIdentifier, 
 		return domain.OwnerExecutiveBinding{}, &Error{Code: CodeOwnerConversationNotFound, Message: "project executive is not configured"}
 	}
 	return value, nil
+}
+
+// EnsureImplementationWorkerCanDisable proves that removing a worker cannot
+// strand accepted work or detach a live runtime. The owner must first let the
+// existing work finish or explicitly replan it.
+func (s *Store) EnsureImplementationWorkerCanDisable(ctx context.Context, workspaceIdentifier, projectIdentifier, agentIdentifier string) error {
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return storageFailure("begin worker disable check", err)
+	}
+	defer tx.Rollback()
+	workspace, err := workspaceInTransaction(ctx, tx, strings.TrimSpace(workspaceIdentifier))
+	if err != nil {
+		return err
+	}
+	project, err := projectInTransaction(ctx, tx, workspace.ID, strings.TrimSpace(projectIdentifier))
+	if err != nil {
+		return err
+	}
+	agent, err := queryAgent(ctx, tx, workspace.ID, strings.TrimSpace(agentIdentifier))
+	if err != nil {
+		return err
+	}
+	if !agent.Enabled {
+		return &Error{Code: CodeInvalidAgent, Message: "implementation worker is already disabled"}
+	}
+	var executive int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM owner_executive_bindings WHERE project_id=? AND agent_id=? AND status='active')`, project.ID, agent.ID).Scan(&executive); err != nil {
+		return storageFailure("check worker executive authority", err)
+	}
+	if executive != 0 {
+		return &Error{Code: CodeInvalidAgent, Message: "the project executive cannot be removed as an implementation worker"}
+	}
+	var retained int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+SELECT 1 FROM task_assignments assignment JOIN tasks task ON task.id=assignment.task_id
+WHERE assignment.agent_id=? AND assignment.status='active' AND task.project_id=?
+) OR EXISTS(
+SELECT 1 FROM runs run WHERE run.agent_id=? AND run.project_id=?
+ AND run.status IN ('requested','starting','active','blocked','stopping','lost')
+)`, agent.ID, project.ID, agent.ID, project.ID).Scan(&retained); err != nil {
+		return storageFailure("check worker retained work", err)
+	}
+	if retained != 0 {
+		return &Error{Code: CodeInvalidAgent, Message: "implementation worker still owns accepted or live work; finish or replan that work before disabling it"}
+	}
+	return nil
 }
 
 func (s *Store) OwnerExecutiveBindingForExchange(ctx context.Context, exchangeID string) (domain.OwnerExecutiveBinding, error) {
@@ -155,6 +347,19 @@ func ownerExecutiveBindingInTransaction(ctx context.Context, tx *sql.Tx, project
 		return domain.OwnerExecutiveBinding{}, false, storageFailure("read owner executive binding", err)
 	}
 	return value, true, nil
+}
+
+func ownerExecutiveReviewEnabledInTransaction(ctx context.Context, tx *sql.Tx, projectID string) (bool, error) {
+	var enabled int
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+SELECT 1 FROM owner_executive_bindings binding
+JOIN owner_conversations conversation ON conversation.project_id=binding.project_id
+WHERE binding.project_id=? AND binding.status='active' AND conversation.status='open'
+)`, projectID).Scan(&enabled)
+	if err != nil {
+		return false, storageFailure("check owner executive review route", err)
+	}
+	return enabled == 1, nil
 }
 
 func (s *Store) RequestOwnerExecutiveTurn(ctx context.Context, command RequestOwnerExecutiveTurnCommand) (OwnerExecutiveTurnResult, error) {
@@ -221,6 +426,21 @@ func (s *Store) RequestOwnerExecutiveTurn(ctx context.Context, command RequestOw
 	if !found || binding.Status != "active" {
 		return OwnerExecutiveTurnResult{}, &Error{Code: CodeOwnerConversationNotFound, Message: "project executive is not configured"}
 	}
+	if validReview {
+		var busy int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+SELECT 1 FROM owner_executive_exchanges exchange
+WHERE exchange.binding_id=? AND exchange.status IN ('pending','leased','running')
+) OR EXISTS(
+SELECT 1 FROM runs run
+WHERE run.task_id=? AND run.status IN ('requested','starting','active','blocked','stopping','lost')
+)`, binding.ID, binding.PlanningTaskID).Scan(&busy); err != nil {
+			return OwnerExecutiveTurnResult{}, storageFailure("check owner executive review serialization", err)
+		}
+		if busy != 0 {
+			return OwnerExecutiveTurnResult{}, &Error{Code: CodeOwnerTurnConflict, Message: ownerExecutiveReviewBusyMessage}
+		}
+	}
 	conversation, err := ownerConversationForCommand(ctx, tx, workspace.ID, project.ID, command.ConversationID, command.Instruction, "owner")
 	if err != nil {
 		return OwnerExecutiveTurnResult{}, err
@@ -272,6 +492,14 @@ func (s *Store) RequestOwnerExecutiveTurn(ctx context.Context, command RequestOw
 		return OwnerExecutiveTurnResult{}, storageFailure("commit owner executive turn", err)
 	}
 	return s.OwnerExecutiveTurn(ctx, workspace.ID, turnID)
+}
+
+// OwnerExecutiveReviewTemporarilyBusy identifies a coalescing boundary, not a
+// failed interpretation. The durable manager-review cursor must remain pending
+// until the earlier short-lived executive exchange has finished.
+func OwnerExecutiveReviewTemporarilyBusy(err error) bool {
+	var typed *Error
+	return ErrorCode(err) == CodeOwnerTurnConflict && errors.As(err, &typed) && typed.Message == ownerExecutiveReviewBusyMessage
 }
 
 func ownerExecutiveTurnReplayInTransaction(ctx context.Context, tx *sql.Tx, key, requestHash, workspaceID, projectID string) (OwnerExecutiveTurnResult, bool, error) {
@@ -407,6 +635,29 @@ func (s *Store) RetryOwnerExecutiveExchange(ctx context.Context, exchangeID stri
 	return tx.Commit()
 }
 
+// DeferOwnerExecutiveExchange returns an otherwise-valid exchange to the
+// durable queue without consuming the claim attempt. This is used when the
+// one project-executive assignment is still occupied by its previous
+// short-lived session or a bounded admission ceiling.
+func (s *Store) DeferOwnerExecutiveExchange(ctx context.Context, exchangeID string, cause error) error {
+	message := managerReviewDiagnostic(cause)
+	tx, err := s.beginTx(ctx, nil)
+	if err != nil {
+		return storageFailure("begin owner executive deferral", err)
+	}
+	defer tx.Rollback()
+	now := s.nowText()
+	available := s.clock().UTC().Add(time.Second).Format(time.RFC3339Nano)
+	result, err := tx.ExecContext(ctx, `UPDATE owner_executive_exchanges SET status='pending',attempts=CASE WHEN attempts>0 THEN attempts-1 ELSE 0 END,available_at=?,lease_expires_at=NULL,last_error=?,updated_at=? WHERE id=? AND status='leased'`, available, message, now, strings.TrimSpace(exchangeID))
+	if err != nil {
+		return storageFailure("defer owner executive exchange", err)
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return &Error{Code: CodeOwnerTurnConflict, Message: "owner executive exchange changed while being deferred"}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) FailOwnerExecutiveExchange(ctx context.Context, exchangeID string, cause error) error {
 	message := managerReviewDiagnostic(cause)
 	tx, err := s.beginTx(ctx, nil)
@@ -479,17 +730,17 @@ func (s *Store) RespondOwnerExecutive(ctx context.Context, command RespondOwnerE
 	interpretation := domain.OwnerInterpretation{Summary: command.Summary, Choices: []domain.OwnerChoice{}, Tasks: []domain.OwnerPlanTask{}, CitationRefs: citationRefs}
 	switch command.ResponseKind {
 	case "answer", "update", "proposal":
-		if !validManagerText(command.Answer, 8192) || command.Question != "" || len(command.Choices) != 0 {
+		if !validOwnerExecutiveResponseText(command.Answer, 8192) || command.Question != "" || len(command.Choices) != 0 {
 			return OwnerExecutiveTurnResult{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner executive answer is malformed"}
 		}
 		interpretation.Disposition, interpretation.Answer = "answer", command.Answer
 	case "decision":
-		if !validManagerText(command.Question, 2048) || command.Answer != "" || validateOwnerChoices(command.Choices) != nil {
+		if !validOwnerExecutiveDecision(command.Question, command.Answer, command.Choices) {
 			return OwnerExecutiveTurnResult{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner executive decision is malformed"}
 		}
 		interpretation.Disposition, interpretation.Question, interpretation.Choices = "clarify", command.Question, append([]domain.OwnerChoice(nil), command.Choices...)
 	case "refusal":
-		if !validManagerText(command.Answer, 8192) || command.Question != "" || len(command.Choices) != 0 {
+		if !validOwnerExecutiveResponseText(command.Answer, 8192) || command.Question != "" || len(command.Choices) != 0 {
 			return OwnerExecutiveTurnResult{}, &Error{Code: CodeInvalidOwnerConversation, Message: "owner executive refusal is malformed"}
 		}
 		interpretation.Disposition, interpretation.Answer = "refuse", command.Answer
@@ -594,6 +845,17 @@ func (s *Store) RespondOwnerExecutive(ctx context.Context, command RespondOwnerE
 	return s.OwnerExecutiveTurn(ctx, workspaceID, exchange.TurnID)
 }
 
+// Executive answers are durable human-readable conversation, not compact
+// manager identifiers. Preserve bounded paragraph breaks while rejecting NUL
+// and malformed UTF-8 at the Store boundary.
+func validOwnerExecutiveResponseText(value string, maximum int) bool {
+	return validMessageText(value, maximum)
+}
+
+func validOwnerExecutiveDecision(question, answer string, choices []domain.OwnerChoice) bool {
+	return validManagerText(question, 2048) && answer == "" && len(choices) >= 2 && validateOwnerChoices(choices) == nil
+}
+
 func failOwnerExecutiveRunInTransaction(ctx context.Context, tx *sql.Tx, runID, message, now string) (bool, error) {
 	var exchangeID, turnID, status string
 	err := tx.QueryRowContext(ctx, `SELECT id,turn_id,status FROM owner_executive_exchanges WHERE run_id=?`, runID).Scan(&exchangeID, &turnID, &status)
@@ -608,10 +870,7 @@ func failOwnerExecutiveRunInTransaction(ctx context.Context, tx *sql.Tx, runID, 
 	if status == "responded" {
 		return true, nil
 	}
-	message = strings.TrimSpace(message)
-	if message == "" {
-		message = "project executive exchange ended before a response was recorded"
-	}
+	message = managerReviewDiagnostic(errors.New(message))
 	result, err := tx.ExecContext(ctx, `UPDATE owner_executive_exchanges SET status='failed',lease_expires_at=NULL,last_error=?,updated_at=? WHERE id=? AND status IN ('leased','running')`, message, now, exchangeID)
 	if err != nil {
 		return true, storageFailure("fail owner executive run exchange", err)
