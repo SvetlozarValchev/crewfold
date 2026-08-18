@@ -107,6 +107,26 @@ redundant owner decision. Expansion beyond it, provider credential changes,
 external publication, destructive effects, and authority/budget changes stop at
 the existing owner boundary.
 
+Task classes are exact lowercase authority labels, but the owner interface
+presents the common implementation, review, verification, coordination,
+knowledge-maintenance, and integration classes as explained selections. A custom
+class remains available for domain-specific work. Each token, cost, and time
+budget dimension can be finite or unlimited. The existing canonical value zero
+means unlimited: an unlimited child allocation is valid only beneath an
+unlimited parent dimension, while finite allocations remain cumulatively
+bounded.
+
+Durable organization is retired, never erased. Retiring an agent membership
+removes it from the active hierarchy while preserving its definition,
+conversation, receipts, assignments, runs, and events as history. The Store
+refuses retirement while the agent has active children, nonterminal assigned
+work, unresolved runs, or active staffing grants. Cancelling an objective-backed
+workstream likewise preserves history and never cascades to its tasks or agent
+placement. The web console conservatively withholds that organizational action
+while scoped agents or nonterminal tasks remain, keeps those prerequisites
+visible, and moves successful transitions into a compact retired/closed history
+rather than pretending to delete canonical records.
+
 Provider-local subagents remain distinct. A bounded helper used for one turn may
 be rendered in its parent's activity but is not automatically promoted to a
 durable Crewfold identity. A child becomes durable when it owns a continuing

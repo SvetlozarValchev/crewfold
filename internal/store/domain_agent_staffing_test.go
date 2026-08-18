@@ -123,6 +123,63 @@ func TestM22OwnerStaffingGrantBoundsTypedDurableChildCreation(t *testing.T) {
 	}
 }
 
+func TestM22StaffingBudgetZeroMeansUnlimitedWithoutEscapingFiniteGrants(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, project := initializeWorkTestProject(t, storage)
+	manager := createDomainTestAgent(t, storage, workspace.ID, "budget-manager", "arbitrary coordinator")
+	attached, err := storage.AttachDomainAgent(ctx, AttachDomainAgentCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: manager.Value.ID,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
+		PreferredEntry: true, IdempotencyKey: "attach-budget-manager", CorrelationID: "attach-budget-manager",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.BindDomainAgentSession(ctx, BindDomainAgentSessionCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: manager.Value.ID,
+		Provider: "codex", ThreadID: "budget-manager-thread", CWD: "/work/budget",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	createGrant := func(key string, budget domain.Budget) MutationResult[domain.DomainAgentStaffingGrant] {
+		grant, createErr := storage.CreateDomainAgentStaffingGrant(ctx, CreateDomainAgentStaffingGrantCommand{
+			WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, ManagerAgentIdentifier: manager.Value.ID,
+			ExpectedMembershipRevision: attached.Value.Revision,
+			Profiles:                   []domain.DomainAgentStaffingProfile{{Provider: "codex", Runtime: "herdr", MaxConcurrency: 1}},
+			TaskClasses:                []string{"implementation"}, MaxDescendants: 4, MaxConcurrency: 4,
+			Budget: budget, IdempotencyKey: key, CorrelationID: key,
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return grant
+	}
+	createChild := func(grantID, name, key string, budget domain.Budget) error {
+		_, createErr := storage.CreateDomainAgentChild(ctx, CreateDomainAgentChildCommand{
+			ThreadID: "budget-manager-thread", GrantID: grantID, Name: name, Role: "implementation specialist",
+			Provider: "codex", Runtime: "herdr", MaxConcurrency: 1, OperatingCharter: testDomainAgentCharter,
+			DelegationPolicy: domain.DomainAgentAdaptive, TaskClass: "implementation", Budget: budget,
+			IdempotencyKey: key, CorrelationID: key,
+		})
+		return createErr
+	}
+
+	unlimited := createGrant("unlimited-staffing", domain.Budget{})
+	if err := createChild(unlimited.Value.ID, "unlimited-child", "unlimited-child", domain.Budget{}); err != nil {
+		t.Fatalf("unlimited child under unlimited grant: %v", err)
+	}
+	if err := createChild(unlimited.Value.ID, "finite-child", "finite-child", domain.Budget{TokenLimit: 100, CostCents: 25, TimeSeconds: 60}); err != nil {
+		t.Fatalf("finite child under unlimited grant: %v", err)
+	}
+
+	finite := createGrant("finite-staffing", domain.Budget{TokenLimit: 100, CostCents: 25, TimeSeconds: 60})
+	if err := createChild(finite.Value.ID, "escaping-child", "escaping-child", domain.Budget{}); ErrorCode(err) != CodeDomainStaffingCapacity {
+		t.Fatalf("unlimited child under finite grant error = %v, code %q", err, ErrorCode(err))
+	}
+}
+
 func TestM22ExpiredStaffingGrantIsVisibleAndCannotCreateAChild(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -171,5 +228,14 @@ func TestM22ExpiredStaffingGrantIsVisibleAndCannotCreateAChild(t *testing.T) {
 	}
 	if eventsAfter := testWorkspaceEvents(t, storage, workspace.ID, 0, 1000); len(eventsAfter) != len(eventsBefore) {
 		t.Fatalf("expired child request appended events: %d -> %d", len(eventsBefore), len(eventsAfter))
+	}
+	retired := domain.DomainAgentRetired
+	retirement, err := storage.UpdateDomainAgent(ctx, UpdateDomainAgentCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: manager.Value.ID,
+		Status: &retired, ExpectedRevision: attached.Value.Revision,
+		IdempotencyKey: "retire-after-staffing-expiry", CorrelationID: "retire-after-staffing-expiry",
+	})
+	if err != nil || retirement.Value.Status != domain.DomainAgentRetired {
+		t.Fatalf("retirement after staffing expiry = %#v, %v", retirement, err)
 	}
 }

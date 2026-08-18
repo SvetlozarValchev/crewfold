@@ -214,6 +214,62 @@ func TestM22DomainAgentHierarchyRejectsCrossScopeCycleAndImplicitCardinality(t *
 	}
 }
 
+func TestM22DomainAgentRetirementRequiresReleasedDurableResponsibility(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, project := initializeWorkTestProject(t, storage)
+	parent := createDomainTestAgent(t, storage, workspace.ID, "lifecycle-lead", "workstream coordinator")
+	child := createDomainTestAgent(t, storage, workspace.ID, "lifecycle-reviewer", "independent reviewer")
+	for _, command := range []AttachDomainAgentCommand{
+		{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: parent.Value.ID, OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive, PreferredEntry: true, IdempotencyKey: "m22-lifecycle-parent", CorrelationID: "m22-lifecycle-parent"},
+		{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: child.Value.ID, ParentAgentIdentifier: parent.Value.ID, OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive, IdempotencyKey: "m22-lifecycle-child", CorrelationID: "m22-lifecycle-child"},
+	} {
+		if _, err := storage.AttachDomainAgent(ctx, command); err != nil {
+			t.Fatal(err)
+		}
+	}
+	retired := domain.DomainAgentRetired
+	eventsBefore := len(testWorkspaceEvents(t, storage, workspace.ID, 0, 1000))
+	if _, err := storage.UpdateDomainAgent(ctx, UpdateDomainAgentCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: parent.Value.ID,
+		Status: &retired, ExpectedRevision: 1, IdempotencyKey: "m22-retire-with-child", CorrelationID: "m22-retire-with-child",
+	}); ErrorCode(err) != CodeInvalidDomainAgent {
+		t.Fatalf("retire with active child error = %v, code %q", err, ErrorCode(err))
+	}
+	objective, err := storage.CreateObjective(ctx, CreateObjectiveCommand{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, Title: "Lifecycle review", IdempotencyKey: "m22-lifecycle-objective", CorrelationID: "m22-lifecycle-objective"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := storage.CreateTask(ctx, CreateTaskCommand{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, ObjectiveID: objective.Value.ID, Title: "Review lifecycle", Priority: 1, IdempotencyKey: "m22-lifecycle-task", CorrelationID: "m22-lifecycle-task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assigned, err := storage.AssignTask(ctx, AssignTaskCommand{WorkspaceIdentifier: workspace.ID, TaskID: task.Detail.Task.ID, AgentIdentifier: child.Value.ID, LeaseSeconds: 300, ExpectedRevision: task.Detail.Task.Revision, IdempotencyKey: "m22-lifecycle-assign", CorrelationID: "m22-lifecycle-assign"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.UpdateDomainAgent(ctx, UpdateDomainAgentCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: child.Value.ID,
+		Status: &retired, ExpectedRevision: 1, IdempotencyKey: "m22-retire-with-assignment", CorrelationID: "m22-retire-with-assignment",
+	}); ErrorCode(err) != CodeInvalidDomainAgent {
+		t.Fatalf("retire with active assignment error = %v, code %q", err, ErrorCode(err))
+	}
+	if _, err := storage.TransitionTask(ctx, TransitionTaskCommand{WorkspaceIdentifier: workspace.ID, TaskID: assigned.Detail.Task.ID, Action: "cancel", Reason: "owner closed lifecycle proof", ExpectedRevision: assigned.Detail.Task.Revision, IdempotencyKey: "m22-lifecycle-cancel-task", CorrelationID: "m22-lifecycle-cancel-task"}); err != nil {
+		t.Fatal(err)
+	}
+	retirement, err := storage.UpdateDomainAgent(ctx, UpdateDomainAgentCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: child.Value.ID,
+		Status: &retired, ExpectedRevision: 1, IdempotencyKey: "m22-retire-released", CorrelationID: "m22-retire-released",
+	})
+	if err != nil || retirement.Value.Status != domain.DomainAgentRetired || retirement.Value.PreferredEntry {
+		t.Fatalf("released retirement = %#v, %v", retirement, err)
+	}
+	if got := len(testWorkspaceEvents(t, storage, workspace.ID, 0, 1000)); got != eventsBefore+5 {
+		t.Fatalf("event count after two rejected and five committed mutations = %d; want %d", got, eventsBefore+5)
+	}
+}
+
 func createDomainTestAgent(t *testing.T, storage *Store, workspaceID, name, role string) MutationResult[domain.AgentDefinition] {
 	t.Helper()
 	result, err := storage.CreateAgent(context.Background(), CreateAgentCommand{

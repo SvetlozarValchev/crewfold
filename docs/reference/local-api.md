@@ -1491,6 +1491,21 @@ profile, task class, descendant count, concurrency, budget, domain, and
 idempotency are checked together in the child-creation transaction. Revocation
 racing a child request therefore yields either one fully recorded child under the
 still-current grant or a denial with no partial agent/membership/allocation.
+Budget dimensions use the existing Crewfold convention: zero is unlimited. An
+unlimited requested child dimension is denied beneath a finite grant; a finite
+grant otherwise accounts exact cumulative child allocations. Human-facing
+clients should explain common task classes rather than require owners to memorize
+slugs, while still submitting the exact selected or custom class.
+
+Setting a domain membership to `retired` is a history-preserving lifecycle
+transition, not deletion. It is refused while that membership owns active child
+memberships, nonterminal assigned tasks, unresolved runs, or active staffing
+grants. Setting an objective-backed workstream to `cancelled` is the existing
+objective status mutation: it preserves references and never cascades to agents
+or tasks. The owner web lifecycle review withholds cancellation while it
+observes active scoped agents or nonterminal tasks so normal organization does
+not hide live work. Neither mutation silently reparents agents, revokes grants,
+cancels tasks, or deletes journal history.
 
 Every opened durable Codex thread is advertised exactly three Crewfold dynamic
 tools:

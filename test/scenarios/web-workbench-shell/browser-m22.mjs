@@ -228,23 +228,83 @@ await evaluate(`(() => {
 await waitFor("document.body.innerText.includes('This agent cannot create durable children')", "empty explicit staffing authority");
 await waitFor("[...document.querySelectorAll('.m22-staffing button')].some((candidate) => candidate.textContent.includes('grant staffing') && !candidate.disabled)", "mutable staffing control");
 await clickUntil("[...document.querySelectorAll('.m22-staffing button')].find((candidate) => candidate.textContent.includes('grant staffing'))", "document.querySelector('.m22-staffing-form') && document.body.innerText.includes('Exact effect')", "staffing grant review form");
+await waitFor("document.body.innerText.includes('Implementation') && document.body.innerText.includes('Independent review') && document.body.innerText.includes('Turn a limit off')", "human-readable staffing classes and budgets");
+if (await evaluate("document.querySelectorAll('.m22-task-classes > label:not(.m22-custom-class) input:checked').length") !== 3) throw new Error("default staffing classes were not represented as three explicit selections");
+if (await evaluate("[...document.querySelectorAll('.m22-budget label')].find((label) => label.textContent.includes('limit cost'))?.querySelector('input').checked")) throw new Error("unlimited cost dimension was not visibly disabled");
+if (!await evaluate("[...document.querySelectorAll('.m22-budget label')].find((label) => label.textContent.includes('limit cost'))?.textContent.includes('unlimited')")) throw new Error("disabled cost dimension was not labelled unlimited");
+await evaluate("document.querySelector('.m22-budget').scrollIntoView({ block: 'center' }); true");
 await capture("05-staffing-review");
 await evaluate("document.querySelector('.m22-staffing-form').requestSubmit(); true");
-await waitFor("document.querySelector('.m22-grant') && document.body.innerText.includes('active · up to 4 descendants')", "active exact staffing grant");
+await waitFor("document.querySelector('.m22-grant') && document.body.innerText.includes('active · up to 4 descendants') && document.querySelector('.m22-grant').textContent.includes('unlimited cost')", "active exact staffing grant with visible unlimited dimension");
 await capture("06-staffing-active");
 
+// Retirement is a reviewed lifecycle transition. An active staffing grant is
+// a Store-owned blocker even when the current browser snapshot has no task or
+// run, so the refusal must be visible and leave the agent active.
+await waitFor("document.querySelector('.m22-lifecycle-entry button') && !document.querySelector('.m22-lifecycle-entry button').disabled", "fresh lifecycle control after staffing invalidation");
+await evaluate("document.querySelector('.m22-lifecycle-entry button').click(); true");
+await waitFor("document.querySelector('.m22-lifecycle-review') && document.body.innerText.includes('Retire orchid')", "agent retirement review");
+await evaluate("document.querySelector('.m22-confirm input').click(); document.querySelector('.m22-lifecycle-review form').requestSubmit(); true");
+await waitFor("document.querySelector('.m22-lifecycle-review [role=alert]')?.textContent.includes('active staffing grants cannot retire')", "transactional staffing-grant retirement refusal");
+await capture("07-retirement-refused");
+await evaluate("document.querySelector('.m22-lifecycle-review button[aria-label=\"Close retirement review\"]').click(); true");
+
+// The independent reviewer has no retained responsibility and can retire.
 await evaluate(`(() => {
+  const button = [...document.querySelectorAll('.m22-agent-row')].find((candidate) => candidate.textContent.includes('moss-reviewer'));
+  button?.click(); return Boolean(button);
+})()`);
+await waitFor("document.querySelector('.m22-context h2')?.textContent.includes('moss-reviewer')", "reviewer selection before retirement");
+await waitFor("document.querySelector('.m22-lifecycle-entry button') && !document.querySelector('.m22-lifecycle-entry button').disabled", "fresh reviewer lifecycle control");
+await evaluate("document.querySelector('.m22-lifecycle-entry button').click(); true");
+await waitFor("document.body.innerText.includes('Retire moss-reviewer') && document.querySelector('.m22-confirm input')", "unblocked reviewer retirement review");
+await evaluate("document.querySelector('.m22-confirm input').click(); document.querySelector('.m22-lifecycle-review form').requestSubmit(); true");
+await waitFor("document.body.innerText.includes('was retired') && ![...document.querySelectorAll('.m22-agent-row')].some((candidate) => candidate.textContent.includes('moss-reviewer'))", "retired agent removed from active hierarchy");
+await evaluate("document.querySelector('.m22-history summary').click(); true");
+await waitFor("document.querySelector('.m22-history')?.textContent.includes('retired agent') && document.querySelector('.m22-history')?.textContent.includes('moss-reviewer')", "retired agent preserved as history");
+await capture("08-retired-history");
+
+// The workstream still owns orchid, so cancellation is explained rather than
+// silently detaching it. After an explicit placement change, cancellation can
+// commit and the workstream moves to closed history.
+await evaluate(`(() => { const row = [...document.querySelectorAll('.m22-line')].find((candidate) => candidate.textContent.includes('Independent review') && candidate.textContent.includes('open lifecycle')); row?.click(); return Boolean(row); })()`);
+await waitFor("document.body.innerText.includes('Cancellation is blocked') && document.body.innerText.includes('active durable agent')", "scoped-agent workstream cancellation refusal");
+await capture("09-workstream-cancel-blocked");
+await evaluate("document.querySelector('.m22-lifecycle-review button[aria-label=\"Close workstream lifecycle\"]').click(); true");
+await evaluate(`(() => { const button = [...document.querySelectorAll('.m22-agent-row')].find((candidate) => candidate.textContent.includes('orchid')); button?.click(); return Boolean(button); })()`);
+await clickUntil("document.querySelector('.m22-placement .m22-command')", "document.querySelector('.m22-placement form')", "placement editor for workstream release");
+await evaluate(`(() => {
+  const form = document.querySelector('.m22-placement form');
+  const workstream = form.querySelectorAll('select')[1];
+  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(workstream, '');
+  workstream.dispatchEvent(new Event('change', { bubbles: true }));
+  form.requestSubmit(); return true;
+})()`);
+await waitFor("document.body.innerText.includes('Placement updated in the canonical hierarchy.')", "agent released from workstream");
+await evaluate("document.querySelector('.m22-domain-row').click(); true");
+await waitFor("document.querySelector('.m22-domain-home')", "domain home after placement release");
+await evaluate(`(() => { const row = [...document.querySelectorAll('.m22-line')].find((candidate) => candidate.textContent.includes('Independent review') && candidate.textContent.includes('open lifecycle')); row?.click(); return Boolean(row); })()`);
+await waitFor("document.querySelector('.m22-lifecycle-review') && document.body.innerText.includes('cancel workstream') && document.querySelector('.m22-confirm input')", "unblocked workstream cancellation review");
+await evaluate("document.querySelector('.m22-confirm input').click(); document.querySelector('.m22-lifecycle-review form').requestSubmit(); true");
+await waitFor("document.body.innerText.includes('was cancelled and moved to closed history') && ![...document.querySelectorAll('.m22-workstream-group')].some((group) => group.textContent.includes('Independent review'))", "cancelled workstream removed from active hierarchy");
+await evaluate("if (!document.querySelector('.m22-history[open]')) document.querySelector('.m22-history summary').click(); true");
+await waitFor("document.querySelector('.m22-history')?.textContent.includes('closed workstream') && document.querySelector('.m22-history')?.textContent.includes('Independent review')", "cancelled workstream preserved as history");
+await capture("10-closed-history");
+
+await evaluate(`(() => {
+  const agent = [...document.querySelectorAll('.m22-agent-row')].find((candidate) => candidate.textContent.includes('orchid'));
+  agent?.click();
   const button = [...document.querySelectorAll('.m22-tabs button')].find((candidate) => candidate.textContent.trim() === 'assignment');
-  button?.click();
-  return Boolean(button);
+  setTimeout(() => [...document.querySelectorAll('.m22-tabs button')].find((candidate) => candidate.textContent.trim() === 'assignment')?.click(), 50);
+  return Boolean(agent);
 })()`);
 await waitFor("document.body.innerText.includes('No task is assigned to this agent.')", "empty exact assignment");
-await capture("07-agent-assignment");
+await capture("11-agent-assignment");
 
 await command("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 await evaluate("window.scrollTo(0, 0)");
 await waitFor("getComputedStyle(document.querySelector('.m22-context')).display === 'none'", "narrow context rail collapse");
-await capture("08-narrow-console");
+await capture("12-narrow-console");
 
 const result = await evaluate(`(() => ({
   title: document.title,
@@ -255,10 +315,10 @@ const result = await evaluate(`(() => ({
   unlabelledControls: [...document.querySelectorAll('input, textarea, select')].filter((control) => !control.getAttribute('aria-label') && !control.closest('label')).length,
   leakedHandle: ['runtime_handle', 'provider_handle', 'node.key', 'capability/', 'capabilities/'].some((value) => document.documentElement.innerHTML.includes(value)),
   legacyExecutive: document.body.innerText.includes('project-executive'),
-  completedBrowserActions: ['domain-onboarding', 'domain-home', 'durable-agent-selection', 'literal-assignment-view', 'narrow-layout'],
+  completedBrowserActions: ['domain-onboarding', 'domain-home', 'durable-agent-selection', 'staffing-refusal', 'agent-retirement', 'workstream-cancellation', 'literal-assignment-view', 'narrow-layout'],
 }))()`);
 if (result.title !== "Crewfold Workbench") throw new Error(`unexpected title ${result.title}`);
-if (result.domains !== 1 || result.durableAgents !== 2) throw new Error(`unexpected domain console cardinality: ${JSON.stringify(result)}`);
+if (result.domains !== 1 || result.durableAgents !== 1) throw new Error(`unexpected active domain console cardinality: ${JSON.stringify(result)}`);
 if (result.unnamedButtons || result.unlabelledControls || result.leakedHandle || result.legacyExecutive) throw new Error(`M22 browser invariant failed: ${JSON.stringify(result)}`);
 if (browserExceptions.length) throw new Error(`browser exceptions: ${browserExceptions.join(" | ")}`);
 if (failedResources.length) throw new Error(`failed browser resources: ${failedResources.join(" | ")}`);

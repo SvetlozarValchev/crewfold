@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import {
-  Activity, AlertCircle, Bot, Boxes, ChevronDown, ChevronRight, CircleDot, ClipboardCheck,
+  Activity, AlertCircle, Archive, Bot, Boxes, ChevronDown, ChevronRight, CircleDot, ClipboardCheck,
   Clock3, Command, FileCheck2, GitBranch, Inbox, LoaderCircle, MessageSquareText, Network, Play,
   Plus, RefreshCw, RotateCcw, Send, ShieldCheck, Sparkles, Square, TerminalSquare, Users, X,
 } from "lucide-react";
@@ -33,13 +33,23 @@ const agentOwnershipTemplates = [
   { key: "knowledge-maintainer", label: "Knowledge maintainer", intent: "Maintain shared domain knowledge from accepted evidence, connect decisions and interface constraints across workstreams, identify stale or contradictory guidance, and request owner review before treating disputed conclusions as current." },
   { key: "integration-release", label: "Integration / release coordinator", intent: "Coordinate cross-repository interfaces, upstream changes, dependency compatibility, and release readiness; route required work to the owning agents, track verification gaps, and never publish or deploy without explicit authority." },
 ] as const;
+const staffingTaskClasses = [
+  { value: "implementation", label: "Implementation", description: "Build or modify bounded product/code work." },
+  { value: "review", label: "Independent review", description: "Inspect changes and report findings without owning implementation." },
+  { value: "verification", label: "Verification / QA", description: "Run checks or realistic scenarios and preserve evidence." },
+  { value: "coordination", label: "Coordination", description: "Lead one bounded workstream or cross-agent dependency." },
+  { value: "knowledge", label: "Knowledge maintenance", description: "Curate shared domain context from accepted evidence." },
+  { value: "integration", label: "Integration / release", description: "Coordinate repository interfaces and release readiness." },
+] as const;
+const staffingTaskClassLabel = (value: string) => staffingTaskClasses.find((item) => item.value === value)?.label ?? value;
+const staffingBudgetLabel = (value: number, finiteUnit: string) => value === 0 ? `unlimited ${finiteUnit}` : `${value.toLocaleString()} ${finiteUnit}`;
 type DomainAgentSession = { project_id: string; agent_id: string; provider?: string; state: "unbound" | "ready" | "detached"; cwd?: string; has_conversation: boolean; revision: number; created_at?: string; updated_at?: string };
 type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "reasoning"; text?: string; command?: string; status?: string };
 type DomainAgentSessionTurn = { id: string; status: string; items: DomainAgentSessionItem[] };
 type DomainAgentSessionResult = { schema: string; type: "domain_agent_session"; view: { session: DomainAgentSession; thread_status: string; turns: DomainAgentSessionTurn[] }; accepted_turn?: DomainAgentSessionTurn };
 type DomainStaffingProfile = { provider: string; runtime: string; max_concurrency: number };
 type DomainStaffingGrant = { id: string; project_id: string; manager_agent_id: string; manager_membership_revision: number; profiles: DomainStaffingProfile[]; task_classes: string[]; max_descendants: number; max_concurrency: number; budget: Budget; expires_at?: string; status: "active" | "revoked" | "expired"; revision: number; created_at: string; updated_at: string };
-type Objective = { id: string; project_id: string; title: string; status: string; revision: number; updated_at: string };
+type Objective = { id: string; project_id: string; title: string; status: "active" | "completed" | "cancelled"; revision: number; updated_at: string };
 type Task = { id: string; project_id: string; objective_id?: string; title: string; description?: string; status: string; blocked_reason?: string; priority: number; revision: number; assigned_agent_id?: string; updated_at: string };
 type TaskDetail = { task: Task; dependencies: Array<{ depends_on_task_id: string }>; assignment?: { agent_id: string }; readiness: { ready: boolean; reason: string } };
 type Run = { id: string; project_id: string; task_id: string; agent_id: string; runtime: string; provider: string; status: string; can_attach: boolean; revision: number; updated_at: string; result_summary?: string; blocked_question?: string; failure_code?: string; failure_message?: string };
@@ -418,6 +428,8 @@ type DomainConsoleView = "domain" | "session" | "assignment" | "changes" | "brie
 
 function DomainAgentTreeList({ agents, objectives, selected, choose }: { agents: DomainAgent[]; objectives: Objective[]; selected: string; choose: (agent: DomainAgent) => void }) {
   const active = agents.filter((agent) => agent.membership.status === "active");
+  const activeObjectives = objectives.filter((objective) => objective.status === "active");
+  const closedObjectives = objectives.filter((objective) => objective.status !== "active");
   const children = new Map<string, DomainAgent[]>();
   for (const agent of active) {
     const parent = agent.membership.parent_agent_id ?? "";
@@ -435,15 +447,16 @@ function DomainAgentTreeList({ agents, objectives, selected, choose }: { agents:
     </div>;
   };
   const roots = active.filter((agent) => !agent.membership.parent_agent_id);
-  if (!roots.length) return <p className="m22-rail-empty">No durable agents are attached to this domain.</p>;
   const domainWide = roots.filter((agent) => !agent.membership.workstream_id);
-  const titleCounts = objectives.reduce((counts, objective) => {
+  const titleCounts = activeObjectives.reduce((counts, objective) => {
     const key = objective.title.trim().toLocaleLowerCase();
     counts.set(key, (counts.get(key) ?? 0) + 1);
     return counts;
   }, new Map<string, number>());
-  const scoped = objectives.map((objective) => ({ objective, agents: roots.filter((agent) => agent.membership.workstream_id === objective.id) }));
-  return <div className="m22-agent-tree">{domainWide.map((agent) => row(agent, 0))}{scoped.map((group) => <section className="m22-workstream-group" key={group.objective.id}><h3>{group.objective.title}{(titleCounts.get(group.objective.title.trim().toLocaleLowerCase()) ?? 0) > 1 && <span>duplicate title · r{group.objective.revision}</span>}</h3>{group.agents.length ? group.agents.map((agent) => row(agent, 0)) : <p>no agents</p>}</section>)}</div>;
+  const scoped = activeObjectives.map((objective) => ({ objective, agents: roots.filter((agent) => agent.membership.workstream_id === objective.id) }));
+  const closedScoped = closedObjectives.map((objective) => ({ objective, agents: roots.filter((agent) => agent.membership.workstream_id === objective.id) })).filter((group) => group.agents.length > 0);
+  if (!roots.length && !activeObjectives.length) return <p className="m22-rail-empty">No active durable agents or workstreams are attached to this domain.</p>;
+  return <div className="m22-agent-tree">{domainWide.map((agent) => row(agent, 0))}{scoped.map((group) => <section className="m22-workstream-group" key={group.objective.id}><h3>{group.objective.title}{(titleCounts.get(group.objective.title.trim().toLocaleLowerCase()) ?? 0) > 1 && <span>duplicate title · r{group.objective.revision}</span>}</h3>{group.agents.length ? group.agents.map((agent) => row(agent, 0)) : <p>no agents</p>}</section>)}{closedScoped.map((group) => <section className="m22-workstream-group closed" key={group.objective.id}><h3>{group.objective.title}<span>closed · {group.objective.status}</span></h3>{group.agents.map((agent) => row(agent, 0))}</section>)}</div>;
 }
 
 function DomainAgentCreatePanel({ data, suggestedParent, apiBase, csrf, mutable, close, created, reload }: { data: WorkbenchData; suggestedParent: string; apiBase: string; csrf: string; mutable: boolean; close: () => void; created: (agent: DomainAgent) => void; reload: () => Promise<void> }) {
@@ -497,7 +510,7 @@ function DomainAgentCreatePanel({ data, suggestedParent, apiBase, csrf, mutable,
       <label><span>owner-reviewed operating charter</span><textarea required maxLength={8192} value={operatingCharter} onChange={(event) => setOperatingCharter(event.target.value)} placeholder="Describe durable ownership, communication, delegation, reporting, and escalation behavior." /></label>
       <label><span>operating mode</span><select value={delegationPolicy} onChange={(event) => setDelegationPolicy(event.target.value as DelegationPolicy)}><option value="hands_on">Hands-on by default</option><option value="adaptive">Choose direct work or delegation</option><option value="delegation_first">Delegate durable responsibilities first</option></select></label>
       {draftRationale && <div className="m22-draft-rationale"><strong>Why Codex suggested this</strong>{draftRationale}</div>}
-      <div className="m22-form-grid"><label><span>parent in attention tree</span><select value={parent} onChange={(event) => setParent(event.target.value)}><option value="">domain root</option>{data.domainAgents.filter((agent) => agent.membership.status === "active").map((agent) => <option key={agent.definition.id} value={agent.definition.id}>{agent.definition.name}</option>)}</select></label><label><span>workstream scope</span><select value={workstream} onChange={(event) => setWorkstream(event.target.value)}><option value="">domain-wide</option>{data.objectives.filter((objective) => objective.project_id === data.project?.id).map((objective) => <option key={objective.id} value={objective.id}>{objective.title}</option>)}</select></label></div>
+      <div className="m22-form-grid"><label><span>parent in attention tree</span><select value={parent} onChange={(event) => setParent(event.target.value)}><option value="">domain root</option>{data.domainAgents.filter((agent) => agent.membership.status === "active").map((agent) => <option key={agent.definition.id} value={agent.definition.id}>{agent.definition.name}</option>)}</select></label><label><span>workstream scope</span><select value={workstream} onChange={(event) => setWorkstream(event.target.value)}><option value="">domain-wide</option>{data.objectives.filter((objective) => objective.project_id === data.project?.id && objective.status === "active").map((objective) => <option key={objective.id} value={objective.id}>{objective.title}</option>)}</select></label></div>
       <div className="m22-form-grid"><label><span>provider</span><select value={provider} onChange={(event) => setProvider(event.target.value)}><option value="codex">Codex subscription</option><option value="claude">Claude subscription</option><option value="fixture-mcp">Local fixture</option></select></label><label><span>runtime host</span><select value={runtime} onChange={(event) => setRuntime(event.target.value)}><option value="herdr">Herdr interactive</option><option value="direct">Direct headless</option></select></label></div>
       <label><span>maximum concurrent runs</span><input type="number" min={1} max={100} value={maxConcurrency} onChange={(event) => setMaxConcurrency(Number(event.target.value))} /></label>
       <div className="m22-exact-effect"><ShieldCheck size={15} /><span><strong>Exact effect</strong> Create the definition and hierarchy membership only. No session, task, run, grant, or child is started.</span></div>
@@ -515,7 +528,11 @@ function StaffingPanel({ data, agent, apiBase, csrf, mutable }: { data: Workbenc
   const [childConcurrency, setChildConcurrency] = useState(1);
   const [maxDescendants, setMaxDescendants] = useState(4);
   const [maxConcurrency, setMaxConcurrency] = useState(4);
-  const [taskClasses, setTaskClasses] = useState("implementation,review,verification");
+  const [taskClasses, setTaskClasses] = useState<string[]>(["implementation", "review", "verification"]);
+  const [customTaskClass, setCustomTaskClass] = useState("");
+  const [limitTokens, setLimitTokens] = useState(true);
+  const [limitCost, setLimitCost] = useState(false);
+  const [limitTime, setLimitTime] = useState(true);
   const [tokenLimit, setTokenLimit] = useState(250000);
   const [costCents, setCostCents] = useState(0);
   const [timeSeconds, setTimeSeconds] = useState(14400);
@@ -532,14 +549,15 @@ function StaffingPanel({ data, agent, apiBase, csrf, mutable }: { data: Workbenc
   useEffect(() => { setEditing(false); setProvider(agent.definition.provider); setRuntime(agent.definition.runtime); void load(); }, [agent.definition.id, load]);
   const create = async (event: React.FormEvent) => {
     event.preventDefault();
-    const classes = [...new Set(taskClasses.split(",").map((value) => value.trim()).filter(Boolean))];
+    const custom = customTaskClass.trim();
+    const classes = [...new Set([...taskClasses, ...(custom ? [custom] : [])])];
     setBusy(true); setError("");
     try {
       await rpc(apiBase, csrf, "domain.agent.staffing_grant.create", {
         ...scope, expected_membership_revision: agent.membership.revision,
         profiles: [{ provider, runtime, max_concurrency: childConcurrency }], task_classes: classes,
         max_descendants: maxDescendants, max_concurrency: maxConcurrency,
-        budget: { token_limit: tokenLimit, cost_cents: costCents, time_seconds: timeSeconds },
+        budget: { token_limit: limitTokens ? tokenLimit : 0, cost_cents: limitCost ? costCents : 0, time_seconds: limitTime ? timeSeconds : 0 },
         idempotency_key: newKey("domain-staffing-grant"),
       });
       setEditing(false); await load();
@@ -555,19 +573,23 @@ function StaffingPanel({ data, agent, apiBase, csrf, mutable }: { data: Workbenc
     finally { setBusy(false); }
   };
   return <div className="m22-block m22-staffing"><header><div><h2>owner staffing grants</h2><p>Hierarchy is not authority. These exact grants let this agent create bounded durable descendants through Crewfold’s structured tool.</p></div><button className="m22-command" disabled={!mutable || busy} onClick={() => setEditing(!editing)}><Plus size={13} /> grant staffing</button></header>
-    {grants.length ? grants.map((grant) => <article className="m22-grant" key={grant.id}><div><strong>{grant.status} · up to {grant.max_descendants} descendants / {grant.max_concurrency} concurrent</strong><small>{grant.profiles.map((profile) => `${profile.provider}/${profile.runtime} ≤${profile.max_concurrency}`).join(", ")} · {grant.task_classes.join(", ")}</small><small>{grant.budget.token_limit.toLocaleString()} tokens · {grant.budget.time_seconds}s · {grant.budget.cost_cents} cost cents</small></div>{grant.status === "active" && <button disabled={!mutable || busy} onClick={() => void revoke(grant)}>revoke</button>}</article>) : <p className="m22-empty">This agent cannot create durable children. You can still create and attach agents directly as owner.</p>}
-    {editing && <form className="m22-staffing-form" onSubmit={create}><div className="m22-form-grid"><label><span>child provider</span><select value={provider} onChange={(event) => setProvider(event.target.value)}><option value="codex">Codex subscription</option><option value="claude">Claude subscription</option><option value="fixture-mcp">Local fixture</option></select></label><label><span>child runtime</span><select value={runtime} onChange={(event) => setRuntime(event.target.value)}><option value="herdr">Herdr interactive</option><option value="direct">Direct headless</option></select></label></div><div className="m22-form-grid"><label><span>maximum descendants</span><input type="number" min={1} max={1000} value={maxDescendants} onChange={(event) => setMaxDescendants(Number(event.target.value))} /></label><label><span>total concurrent capacity</span><input type="number" min={1} max={100} value={maxConcurrency} onChange={(event) => setMaxConcurrency(Number(event.target.value))} /></label></div><label><span>maximum concurrency per child</span><input type="number" min={1} max={100} value={childConcurrency} onChange={(event) => setChildConcurrency(Number(event.target.value))} /></label><label><span>allowed task classes · comma-separated slugs</span><input required value={taskClasses} onChange={(event) => setTaskClasses(event.target.value)} /></label><details><summary>cumulative child budget</summary><div className="m22-form-grid three"><label><span>tokens</span><input type="number" min={0} value={tokenLimit} onChange={(event) => setTokenLimit(Number(event.target.value))} /></label><label><span>cost cents</span><input type="number" min={0} value={costCents} onChange={(event) => setCostCents(Number(event.target.value))} /></label><label><span>time seconds</span><input type="number" min={0} value={timeSeconds} onChange={(event) => setTimeSeconds(Number(event.target.value))} /></label></div></details><div className="m22-exact-effect"><ShieldCheck size={15} /><span><strong>Exact effect</strong> This records authority only. The agent must later request each child through the typed Crewfold tool; every request is checked against this revision and budget.</span></div><div className="m22-form-actions"><button type="button" onClick={() => setEditing(false)}>cancel</button><button className="m22-send" disabled={!mutable || busy || !taskClasses.trim()}>{busy ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />} create exact grant</button></div></form>}
+    {grants.length ? grants.map((grant) => <article className="m22-grant" key={grant.id}><div><strong>{grant.status} · up to {grant.max_descendants} descendants / {grant.max_concurrency} concurrent</strong><small>{grant.profiles.map((profile) => `${profile.provider}/${profile.runtime} ≤${profile.max_concurrency}`).join(", ")} · {grant.task_classes.map(staffingTaskClassLabel).join(", ")}</small><small>{staffingBudgetLabel(grant.budget.token_limit, "tokens")} · {staffingBudgetLabel(grant.budget.time_seconds, "seconds")} · {staffingBudgetLabel(grant.budget.cost_cents, "cost")}</small></div>{grant.status === "active" && <button disabled={!mutable || busy} onClick={() => void revoke(grant)}>revoke</button>}</article>) : <p className="m22-empty">This agent cannot create durable children. You can still create and attach agents directly as owner.</p>}
+    {editing && <form className="m22-staffing-form" onSubmit={create}><div className="m22-form-grid"><label><span>child provider</span><select value={provider} onChange={(event) => setProvider(event.target.value)}><option value="codex">Codex subscription</option><option value="claude">Claude subscription</option><option value="fixture-mcp">Local fixture</option></select></label><label><span>child runtime</span><select value={runtime} onChange={(event) => setRuntime(event.target.value)}><option value="herdr">Herdr interactive</option><option value="direct">Direct headless</option></select></label></div><div className="m22-form-grid"><label><span>maximum descendants</span><input type="number" min={1} max={1000} value={maxDescendants} onChange={(event) => setMaxDescendants(Number(event.target.value))} /></label><label><span>total concurrent capacity</span><input type="number" min={1} max={100} value={maxConcurrency} onChange={(event) => setMaxConcurrency(Number(event.target.value))} /></label></div><label><span>maximum concurrency per child</span><input type="number" min={1} max={100} value={childConcurrency} onChange={(event) => setChildConcurrency(Number(event.target.value))} /></label><fieldset className="m22-task-classes"><legend>work the agent may staff</legend><p>Choose familiar work types below. The exact class is matched when this agent later requests a child; role names alone never grant authority.</p>{staffingTaskClasses.map(({ value, label, description }) => <label key={value}><input type="checkbox" checked={taskClasses.includes(value)} onChange={(event) => setTaskClasses((current) => event.target.checked ? [...current, value] : current.filter((item) => item !== value))} /><span><strong>{label}</strong><small>{description}</small></span></label>)}<label className="m22-custom-class"><span>Advanced custom class</span><input pattern="[a-z][-a-z0-9]{0,62}" value={customTaskClass} onChange={(event) => setCustomTaskClass(event.target.value)} placeholder="for example: scenario-validation" /></label></fieldset><fieldset className="m22-budget"><legend>cumulative child budget</legend><p>Turn a limit off to allow that dimension without a ceiling. Crewfold records this using its canonical unlimited value, <code>0</code>.</p><div className="m22-form-grid three"><label><span><input type="checkbox" checked={limitTokens} onChange={(event) => setLimitTokens(event.target.checked)} /> limit tokens</span>{limitTokens ? <input type="number" min={1} value={tokenLimit} onChange={(event) => setTokenLimit(Number(event.target.value))} /> : <strong className="m22-unlimited">unlimited</strong>}</label><label><span><input type="checkbox" checked={limitCost} onChange={(event) => setLimitCost(event.target.checked)} /> limit cost (cents)</span>{limitCost ? <input type="number" min={1} value={costCents || 1} onChange={(event) => setCostCents(Number(event.target.value))} /> : <strong className="m22-unlimited">unlimited</strong>}</label><label><span><input type="checkbox" checked={limitTime} onChange={(event) => setLimitTime(event.target.checked)} /> limit time (seconds)</span>{limitTime ? <input type="number" min={1} value={timeSeconds} onChange={(event) => setTimeSeconds(Number(event.target.value))} /> : <strong className="m22-unlimited">unlimited</strong>}</label></div></fieldset><div className="m22-exact-effect"><ShieldCheck size={15} /><span><strong>Exact effect</strong> This records authority only. The agent must later request each child through the typed Crewfold tool; every request is checked against this revision and budget.</span></div><div className="m22-form-actions"><button type="button" onClick={() => setEditing(false)}>cancel</button><button className="m22-send" disabled={!mutable || busy || taskClasses.length === 0 && !customTaskClass.trim()}>{busy ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />} create exact grant</button></div></form>}
     {error && <p className="m22-session-error">{error}</p>}
   </div>;
 }
 
-function DomainHome({ data, chooseAgent, inspectRun, notice = "" }: { data: WorkbenchData; chooseAgent: (agent: DomainAgent) => void; inspectRun: (run: Run) => void; notice?: string }) {
+function DomainHome({ data, chooseAgent, reviewWorkstream, inspectRun, notice = "" }: { data: WorkbenchData; chooseAgent: (agent: DomainAgent) => void; reviewWorkstream: (objective: Objective) => void; inspectRun: (run: Run) => void; notice?: string }) {
   const projectObjectives = data.objectives.filter((objective) => objective.project_id === data.project?.id);
+  const activeObjectives = projectObjectives.filter((objective) => objective.status === "active");
+  const closedObjectives = projectObjectives.filter((objective) => objective.status !== "active");
+  const activeAgents = data.domainAgents.filter((agent) => agent.membership.status === "active");
+  const retiredAgents = data.domainAgents.filter((agent) => agent.membership.status === "retired");
   const projectTasks = data.tasks.filter((detail) => detail.task.project_id === data.project?.id);
   const projectRuns = data.runs.filter((run) => run.project_id === data.project?.id);
   const attention = projectTasks.filter((detail) => ["blocked", "changes_requested", "failed"].includes(detail.task.status));
   const activeRuns = projectRuns.filter((run) => ["requested", "starting", "active", "blocked", "stopping", "lost"].includes(run.status));
-  const objectiveTitleCounts = projectObjectives.reduce((counts, objective) => {
+  const objectiveTitleCounts = activeObjectives.reduce((counts, objective) => {
     const key = objective.title.trim().toLocaleLowerCase();
     counts.set(key, (counts.get(key) ?? 0) + 1);
     return counts;
@@ -576,19 +598,20 @@ function DomainHome({ data, chooseAgent, inspectRun, notice = "" }: { data: Work
     <header>
       <p className="m22-kicker">domain</p>
       <h1>{data.project?.name}</h1>
-      <p>{projectObjectives.length ? `${projectObjectives.length} workstream${projectObjectives.length === 1 ? "" : "s"}, ${data.domainAgents.filter((agent) => agent.membership.status === "active").length} durable agent${data.domainAgents.filter((agent) => agent.membership.status === "active").length === 1 ? "" : "s"}, and ${data.checkouts.length} attached checkout${data.checkouts.length === 1 ? "" : "s"}.` : "A durable coordination and knowledge boundary. No workstream has been recorded yet."}</p>
+      <p>{activeObjectives.length ? `${activeObjectives.length} active workstream${activeObjectives.length === 1 ? "" : "s"}, ${activeAgents.length} durable agent${activeAgents.length === 1 ? "" : "s"}, and ${data.checkouts.length} attached checkout${data.checkouts.length === 1 ? "" : "s"}.` : "A durable coordination and knowledge boundary. No active workstream is recorded yet."}</p>
     </header>
     {notice && <div className="m22-success"><ShieldCheck size={14} />{notice}</div>}
     {attention.length > 0 && <section className="m22-block"><h2>needs attention</h2>{attention.map((detail) => <button key={detail.task.id} className="m22-line"><span><strong>{detail.task.title}</strong><small>{detail.task.blocked_reason || detail.task.status.replaceAll("_", " ")}</small></span><StatusPill value={detail.task.status} /></button>)}</section>}
     <div className="m22-columns">
-      <section className="m22-block"><h2>workstreams</h2>{projectObjectives.length ? projectObjectives.map((objective) => <div className="m22-line static" key={objective.id}><span><strong>{objective.title}</strong><small>{projectTasks.filter((detail) => detail.task.objective_id === objective.id && detail.task.status !== "completed").length} open tasks{(objectiveTitleCounts.get(objective.title.trim().toLocaleLowerCase()) ?? 0) > 1 ? ` · duplicate title · revision ${objective.revision}` : ""}</small></span><StatusPill value={objective.status} /></div>) : <p className="m22-empty">No canonical workstreams.</p>}</section>
+      <section className="m22-block"><h2>active workstreams</h2>{activeObjectives.length ? activeObjectives.map((objective) => <button className="m22-line" key={objective.id} onClick={() => reviewWorkstream(objective)}><span><strong>{objective.title}</strong><small>{projectTasks.filter((detail) => detail.task.objective_id === objective.id && !["completed", "failed", "cancelled"].includes(detail.task.status)).length} open tasks{(objectiveTitleCounts.get(objective.title.trim().toLocaleLowerCase()) ?? 0) > 1 ? ` · duplicate title · revision ${objective.revision}` : ""} · open lifecycle</small></span><StatusPill value={objective.status} /></button>) : <p className="m22-empty">No active workstreams.</p>}</section>
       <section className="m22-block"><h2>attached checkouts</h2>{data.checkouts.map((checkout) => <div className="m22-line static" key={checkout.id}><span><strong>{checkout.path}</strong><small>{checkout.branch || "detached"} · {checkout.write_mode}</small></span><StatusPill value={checkout.availability} /></div>)}</section>
     </div>
     <div className="m22-columns">
-      <section className="m22-block"><h2>durable agents</h2>{data.domainAgents.filter((agent) => agent.membership.status === "active").map((agent) => <button className="m22-line" key={agent.definition.id} onClick={() => chooseAgent(agent)}><span><strong>{agent.definition.name}</strong><small>{agent.definition.role} · {agent.definition.provider} through {agent.definition.runtime}</small></span><StatusPill value={latestRunForAgent(projectRuns, agent.definition.id)?.status ?? "idle"} /></button>)}</section>
+      <section className="m22-block"><h2>durable agents</h2>{activeAgents.length ? activeAgents.map((agent) => <button className="m22-line" key={agent.definition.id} onClick={() => chooseAgent(agent)}><span><strong>{agent.definition.name}</strong><small>{agent.definition.role} · {agent.definition.provider} through {agent.definition.runtime}</small></span><StatusPill value={latestRunForAgent(projectRuns, agent.definition.id)?.status ?? "idle"} /></button>) : <p className="m22-empty">No active durable agents.</p>}</section>
       <section className="m22-block"><h2>current runs</h2>{activeRuns.length ? activeRuns.map((run) => <button className="m22-line" key={run.id} onClick={() => inspectRun(run)}><span><strong>{projectTasks.find((detail) => detail.task.id === run.task_id)?.task.title ?? run.id}</strong><small>{data.agents.find((agent) => agent.id === run.agent_id)?.name ?? run.agent_id}</small></span><StatusPill value={run.status} /></button>) : <p className="m22-empty">No live or unresolved run.</p>}</section>
     </div>
     <section className="m22-block"><h2>domain home</h2><p className="m22-empty">No attributed domain note or pinned shared-memory item has been recorded. M22 will only render authored, revisioned pins here; it will not invent a project summary.</p></section>
+    {(retiredAgents.length > 0 || closedObjectives.length > 0) && <details className="m22-history"><summary><Archive size={14} /> retired and closed history <span>{retiredAgents.length + closedObjectives.length}</span></summary><div>{retiredAgents.map((agent) => <div className="m22-line static" key={agent.definition.id}><span><strong>{agent.definition.name}</strong><small>retired agent · {agent.definition.role} · updated {displayTime(agent.membership.updated_at)}</small></span><StatusPill value="retired" /></div>)}{closedObjectives.map((objective) => <div className="m22-line static" key={objective.id}><span><strong>{objective.title}</strong><small>closed workstream · revision {objective.revision} · updated {displayTime(objective.updated_at)}</small></span><StatusPill value={objective.status} /></div>)}</div></details>}
   </section>;
 }
 
@@ -601,8 +624,8 @@ function DomainWorkstreamCreatePanel({ data, apiBase, csrf, mutable, close, crea
     event.preventDefault();
     if (!data.workspace || !data.project || submitting.current) return;
     const exactTitle = title.trim();
-    if (data.objectives.some((objective) => objective.project_id === data.project?.id && objective.title.trim().toLocaleLowerCase() === exactTitle.toLocaleLowerCase())) {
-      setError(`A workstream named “${exactTitle}” already exists in this domain.`);
+    if (data.objectives.some((objective) => objective.project_id === data.project?.id && objective.status === "active" && objective.title.trim().toLocaleLowerCase() === exactTitle.toLocaleLowerCase())) {
+      setError(`An active workstream named “${exactTitle}” already exists in this domain.`);
       return;
     }
     submitting.current = true; setBusy(true); setError("");
@@ -640,7 +663,76 @@ function DomainAgentPlacementEditor({ data, agent, apiBase, csrf, mutable, reloa
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update agent placement."); }
     finally { setBusy(false); }
   };
-  return <section className="m22-placement"><h3>hierarchy placement</h3>{editing ? <form onSubmit={submit}><label><span>parent</span><select value={parent} onChange={(event) => setParent(event.target.value)}><option value="">domain root</option>{data.domainAgents.filter((candidate) => candidate.membership.status === "active" && candidate.definition.id !== agent.definition.id).map((candidate) => <option key={candidate.definition.id} value={candidate.definition.id}>{candidate.definition.name}</option>)}</select></label><label><span>workstream</span><select value={workstream} onChange={(event) => setWorkstream(event.target.value)}><option value="">domain-wide</option>{data.objectives.filter((objective) => objective.project_id === data.project?.id).map((objective) => <option key={objective.id} value={objective.id}>{objective.title}</option>)}</select></label><small>Placement routes owner attention only. It grants no authority.</small>{error && <p className="m22-session-error" role="alert">{error}</p>}<div><button type="button" onClick={() => setEditing(false)}>cancel</button><button disabled={!mutable || busy}>{busy ? "saving…" : "save placement"}</button></div></form> : <button className="m22-command" disabled={!mutable} onClick={() => setEditing(true)}>edit placement</button>}{notice && <p className="m22-placement-notice">{notice}</p>}</section>;
+  return <section className="m22-placement"><h3>hierarchy placement</h3>{editing ? <form onSubmit={submit}><label><span>parent</span><select value={parent} onChange={(event) => setParent(event.target.value)}><option value="">domain root</option>{data.domainAgents.filter((candidate) => candidate.membership.status === "active" && candidate.definition.id !== agent.definition.id).map((candidate) => <option key={candidate.definition.id} value={candidate.definition.id}>{candidate.definition.name}</option>)}</select></label><label><span>workstream</span><select value={workstream} onChange={(event) => setWorkstream(event.target.value)}><option value="">domain-wide</option>{data.objectives.filter((objective) => objective.project_id === data.project?.id && objective.status === "active").map((objective) => <option key={objective.id} value={objective.id}>{objective.title}</option>)}</select></label><small>Placement routes owner attention only. It grants no authority.</small>{error && <p className="m22-session-error" role="alert">{error}</p>}<div><button type="button" onClick={() => setEditing(false)}>cancel</button><button disabled={!mutable || busy}>{busy ? "saving…" : "save placement"}</button></div></form> : <button className="m22-command" disabled={!mutable} onClick={() => setEditing(true)}>edit placement</button>}{notice && <p className="m22-placement-notice">{notice}</p>}</section>;
+}
+
+function DomainAgentRetirementPanel({ data, agent, apiBase, csrf, mutable, close, retired, reload }: { data: WorkbenchData; agent: DomainAgent; apiBase: string; csrf: string; mutable: boolean; close: () => void; retired: () => void; reload: () => Promise<void> }) {
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const children = data.domainAgents.filter((candidate) => candidate.membership.status === "active" && candidate.membership.parent_agent_id === agent.definition.id);
+  const assignments = data.tasks.filter((detail) => detail.task.assigned_agent_id === agent.definition.id && !["completed", "failed", "cancelled"].includes(detail.task.status));
+  const runs = data.runs.filter((run) => run.agent_id === agent.definition.id && ["requested", "starting", "active", "blocked", "stopping", "lost"].includes(run.status));
+  const blockers = [
+    ...(children.length ? [`${children.length} active child agent${children.length === 1 ? "" : "s"} must be moved or retired first`] : []),
+    ...(assignments.length ? [`${assignments.length} nonterminal assignment${assignments.length === 1 ? "" : "s"} must be completed, cancelled, or reassigned first`] : []),
+    ...(runs.length ? [`${runs.length} live or unresolved run${runs.length === 1 ? "" : "s"} must be settled first`] : []),
+  ];
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!data.workspace || !data.project || blockers.length || !confirmed) return;
+    setBusy(true); setError("");
+    try {
+      await rpc(apiBase, csrf, "domain.agent.update", { workspace: data.workspace.id, project: data.project.id, agent: agent.definition.id, status: "retired", expected_revision: agent.membership.revision, idempotency_key: newKey("domain-agent-retire") });
+      await reload(); retired();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not retire the durable agent."); }
+    finally { setBusy(false); }
+  };
+  return <section className="m22-agent-create m22-lifecycle-review">
+    <header><div><p className="m22-kicker">review lifecycle change</p><h1>Retire {agent.definition.name}</h1><p>Retirement removes this agent from the active hierarchy and prevents its durable session from exercising Crewfold tool authority. Its definition, conversation, receipts, assignments, runs, and events remain inspectable history.</p></div><button onClick={close} aria-label="Close retirement review"><X size={15} /></button></header>
+    <form onSubmit={submit}>
+      <dl className="m22-review-facts"><div><dt>agent</dt><dd>{agent.definition.name}</dd></div><div><dt>role</dt><dd>{agent.definition.role}</dd></div><div><dt>membership revision</dt><dd>{agent.membership.revision}</dd></div><div><dt>historical record</dt><dd>preserved</dd></div></dl>
+      {blockers.length ? <div className="m22-lifecycle-blockers" role="alert"><strong>Retirement is blocked</strong><ul>{blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul><p>Tree placement, task state, and runtime state must be resolved explicitly; retirement will not rewrite them.</p></div> : <div className="m22-exact-effect"><Archive size={15} /><span><strong>Exact effect</strong> Set this domain membership to retired and clear its default-entry flag. The underlying agent definition and all canonical history remain.</span></div>}
+      {!blockers.length && <label className="m22-confirm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span>I understand this retires the membership; it does not erase history or stop unrelated work.</span></label>}
+      <p className="m22-caveat">The Store rechecks active children, assignments, unresolved runs, and staffing grants in the same transaction. A concurrent change fails without a partial effect.</p>
+      {error && <p className="m22-session-error" role="alert">{error}</p>}
+      <div className="m22-form-actions"><button type="button" onClick={close}>keep active</button><button className="m22-danger" disabled={!mutable || busy || blockers.length > 0 || !confirmed}>{busy ? <LoaderCircle className="spin" size={14} /> : <Archive size={14} />} {busy ? "retiring…" : "retire agent"}</button></div>
+    </form>
+  </section>;
+}
+
+function DomainWorkstreamLifecyclePanel({ data, objective, apiBase, csrf, mutable, close, cancelled, reload }: { data: WorkbenchData; objective: Objective; apiBase: string; csrf: string; mutable: boolean; close: () => void; cancelled: () => void; reload: () => Promise<void> }) {
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const agents = data.domainAgents.filter((agent) => agent.membership.status === "active" && agent.membership.workstream_id === objective.id);
+  const tasks = data.tasks.filter((detail) => detail.task.objective_id === objective.id && !["completed", "failed", "cancelled"].includes(detail.task.status));
+  const runs = data.runs.filter((run) => tasks.some((detail) => detail.task.id === run.task_id) && ["requested", "starting", "active", "blocked", "stopping", "lost"].includes(run.status));
+  const blockers = [
+    ...(agents.length ? [`${agents.length} active durable agent${agents.length === 1 ? " is" : "s are"} scoped here`] : []),
+    ...(tasks.length ? [`${tasks.length} nonterminal task${tasks.length === 1 ? " remains" : "s remain"}`] : []),
+    ...(runs.length ? [`${runs.length} live or unresolved run${runs.length === 1 ? " remains" : "s remain"}`] : []),
+  ];
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!data.workspace || blockers.length || !confirmed || objective.status !== "active") return;
+    setBusy(true); setError("");
+    try {
+      await rpc(apiBase, csrf, "objective.update", { workspace: data.workspace.id, objective: objective.id, status: "cancelled", expected_revision: objective.revision, idempotency_key: newKey("domain-workstream-cancel") });
+      await reload(); cancelled();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not cancel the workstream."); }
+    finally { setBusy(false); }
+  };
+  return <section className="m22-agent-create m22-lifecycle-review">
+    <header><div><p className="m22-kicker">workstream lifecycle</p><h1>{objective.title}</h1><p>Review the exact dependencies before closing this objective-backed workstream. Cancellation removes it from active organization; it never deletes tasks, events, or prior agent placement.</p></div><button onClick={close} aria-label="Close workstream lifecycle"><X size={15} /></button></header>
+    <form onSubmit={submit}>
+      <dl className="m22-review-facts"><div><dt>status</dt><dd>{objective.status}</dd></div><div><dt>revision</dt><dd>{objective.revision}</dd></div><div><dt>active agents</dt><dd>{agents.length}</dd></div><div><dt>open tasks</dt><dd>{tasks.length}</dd></div></dl>
+      {blockers.length ? <div className="m22-lifecycle-blockers" role="alert"><strong>Cancellation is blocked</strong><ul>{blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul><p>Move or retire scoped agents and resolve every task/run first. Crewfold will not detach or cancel them implicitly.</p></div> : <div className="m22-exact-effect"><Archive size={15} /><span><strong>Exact effect</strong> Change this objective from active to cancelled. It moves to closed history; all contained canonical records remain available.</span></div>}
+      {!blockers.length && objective.status === "active" && <label className="m22-confirm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span>I understand this closes the workstream without erasing its history.</span></label>}
+      {error && <p className="m22-session-error" role="alert">{error}</p>}
+      <div className="m22-form-actions"><button type="button" onClick={close}>back to domain</button>{objective.status === "active" && <button className="m22-danger" disabled={!mutable || busy || blockers.length > 0 || !confirmed}>{busy ? <LoaderCircle className="spin" size={14} /> : <Archive size={14} />} {busy ? "cancelling…" : "cancel workstream"}</button>}</div>
+    </form>
+  </section>;
 }
 
 function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csrf }: { data: WorkbenchData; agent: DomainAgent; currentRun: Run | null; inspectRun: (run: Run) => void; apiBase: string; csrf: string }) {
@@ -754,25 +846,29 @@ function DomainConsole({ data, selectedAgentID, selectAgent, selectProject, insp
   const [view, setView] = useState<DomainConsoleView>("domain");
   const [creating, setCreating] = useState(false);
   const [creatingWorkstream, setCreatingWorkstream] = useState(false);
+  const [retiringAgentID, setRetiringAgentID] = useState("");
+  const [reviewingWorkstreamID, setReviewingWorkstreamID] = useState("");
   const [workstreamNotice, setWorkstreamNotice] = useState("");
   const selected = data.domainAgents.find((agent) => agent.definition.id === selectedAgentID) ?? null;
-  useEffect(() => { setView(selected ? "session" : "domain"); setCreating(false); setCreatingWorkstream(false); }, [selected?.definition.id, data.project?.id]);
-  useEffect(() => { setWorkstreamNotice(""); }, [data.project?.id]);
+  const retiringAgent = data.domainAgents.find((agent) => agent.definition.id === retiringAgentID) ?? null;
+  const reviewingWorkstream = data.objectives.find((objective) => objective.id === reviewingWorkstreamID) ?? null;
+  useEffect(() => { setView(selected ? "session" : "domain"); setCreating(false); setCreatingWorkstream(false); setRetiringAgentID(""); setReviewingWorkstreamID(""); }, [selected?.definition.id, data.project?.id]);
+  useEffect(() => { setWorkstreamNotice(""); setReviewingWorkstreamID(""); setRetiringAgentID(""); }, [data.project?.id]);
   return <div className="m22-console">
     <aside className="m22-domain-rail">
       <p className="m22-rail-label">domains</p>
       {data.projects.map((project) => <button key={project.id} className={`m22-domain-row ${project.id === data.project?.id && !selected ? "selected" : ""}`} onClick={() => { if (project.id !== data.project?.id) selectProject(project.id); selectAgent(null); }}><Boxes size={14} /><span><strong>{project.name}</strong><small>{project.id === data.project?.id ? `${data.domainAgents.filter((agent) => agent.membership.status === "active").length} durable agents` : "select domain"}</small></span></button>)}
       {data.project && <><p className="m22-rail-label agents">agent hierarchy</p><DomainAgentTreeList agents={data.domainAgents} objectives={data.objectives.filter((objective) => objective.project_id === data.project?.id)} selected={selectedAgentID} choose={selectAgent} /></>}
       <div className="m22-rail-spacer" />
-      {data.project && <button className="m22-add-agent" disabled={!mutable} onClick={() => { setCreating(false); setWorkstreamNotice(""); setCreatingWorkstream(true); }}><Plus size={13} /> new workstream</button>}
-      {data.project && <button className="m22-add-agent" disabled={!mutable} onClick={() => { setCreatingWorkstream(false); setWorkstreamNotice(""); setCreating(true); }}><Plus size={13} /> add durable agent</button>}
+      {data.project && <button className="m22-add-agent" disabled={!mutable} onClick={() => { setCreating(false); setRetiringAgentID(""); setReviewingWorkstreamID(""); setWorkstreamNotice(""); setCreatingWorkstream(true); }}><Plus size={13} /> new workstream</button>}
+      {data.project && <button className="m22-add-agent" disabled={!mutable} onClick={() => { setCreatingWorkstream(false); setRetiringAgentID(""); setReviewingWorkstreamID(""); setWorkstreamNotice(""); setCreating(true); }}><Plus size={13} /> add durable agent</button>}
       <div className="m22-cut">canonical through event {data.highWater}</div>
     </aside>
-    <main className="m22-center">{creatingWorkstream ? <DomainWorkstreamCreatePanel data={data} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setCreatingWorkstream(false)} created={(title) => { setCreatingWorkstream(false); setWorkstreamNotice(`Workstream “${title}” was created. It is empty until you place durable agents or work inside it.`); selectAgent(null); }} reload={reload} /> : creating ? <DomainAgentCreatePanel data={data} suggestedParent={selected?.definition.id ?? ""} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setCreating(false)} created={(agent) => { setCreating(false); selectAgent(agent); }} reload={reload} /> : selected ? <DomainAgentCenter data={data} agent={selected} view={view} setView={setView} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} mutable={mutable} /> : <DomainHome data={data} chooseAgent={selectAgent} inspectRun={inspectRun} notice={workstreamNotice} />}</main>
+    <main className="m22-center">{retiringAgent ? <DomainAgentRetirementPanel data={data} agent={retiringAgent} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setRetiringAgentID("")} retired={() => { setRetiringAgentID(""); selectAgent(null); setWorkstreamNotice(`Agent “${retiringAgent.definition.name}” was retired. Its canonical history remains under retired and closed history.`); }} reload={reload} /> : reviewingWorkstream ? <DomainWorkstreamLifecyclePanel data={data} objective={reviewingWorkstream} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setReviewingWorkstreamID("")} cancelled={() => { setReviewingWorkstreamID(""); selectAgent(null); setWorkstreamNotice(`Workstream “${reviewingWorkstream.title}” was cancelled and moved to closed history.`); }} reload={reload} /> : creatingWorkstream ? <DomainWorkstreamCreatePanel data={data} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setCreatingWorkstream(false)} created={(title) => { setCreatingWorkstream(false); setWorkstreamNotice(`Workstream “${title}” was created. It is empty until you place durable agents or work inside it.`); selectAgent(null); }} reload={reload} /> : creating ? <DomainAgentCreatePanel data={data} suggestedParent={selected?.definition.id ?? ""} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setCreating(false)} created={(agent) => { setCreating(false); selectAgent(agent); }} reload={reload} /> : selected ? <DomainAgentCenter data={data} agent={selected} view={view} setView={setView} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} mutable={mutable} /> : <DomainHome data={data} chooseAgent={selectAgent} reviewWorkstream={(objective) => { setWorkstreamNotice(""); setReviewingWorkstreamID(objective.id); }} inspectRun={inspectRun} notice={workstreamNotice} />}</main>
     <aside className="m22-context">
       <p className="m22-rail-label">selected {selected ? "agent" : "domain"}</p>
       <h2>{selected?.definition.name ?? data.project?.name}</h2>
-      {selected ? <><dl className="m22-facts"><div><dt>role</dt><dd>{selected.definition.role}</dd></div><div><dt>operating mode</dt><dd>{selected.membership.delegation_policy.replaceAll("_", " ")}</dd></div><div><dt>status</dt><dd>{selected.membership.status}</dd></div><div><dt>opens by default</dt><dd>{selected.membership.preferred_entry ? "yes" : "no"}</dd></div><div><dt>revision</dt><dd>{selected.membership.revision}</dd></div></dl><section><h3>operating charter</h3><p>{selected.membership.operating_charter}</p></section><DomainAgentPlacementEditor data={data} agent={selected} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} /><section><h3>authority boundary</h3><p>Tree placement and charter organize behavior only. Grants, assignments, claims, budgets, and capabilities authorize effects.</p></section></> : <><dl className="m22-facts"><div><dt>workstreams</dt><dd>{data.objectives.length}</dd></div><div><dt>agents</dt><dd>{data.domainAgents.filter((agent) => agent.membership.status === "active").length}</dd></div><div><dt>checkouts</dt><dd>{data.checkouts.length}</dd></div><div><dt>open tasks</dt><dd>{data.tasks.filter((detail) => !["completed", "cancelled", "failed"].includes(detail.task.status)).length}</dd></div></dl><section><h3>domain boundary</h3><p>A domain coordinates related work and knowledge. It is not a repository or folder.</p></section></>}
+      {selected ? <><dl className="m22-facts"><div><dt>role</dt><dd>{selected.definition.role}</dd></div><div><dt>operating mode</dt><dd>{selected.membership.delegation_policy.replaceAll("_", " ")}</dd></div><div><dt>status</dt><dd>{selected.membership.status}</dd></div><div><dt>opens by default</dt><dd>{selected.membership.preferred_entry ? "yes" : "no"}</dd></div><div><dt>revision</dt><dd>{selected.membership.revision}</dd></div></dl><section><h3>operating charter</h3><p>{selected.membership.operating_charter}</p></section><DomainAgentPlacementEditor data={data} agent={selected} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} /><section><h3>authority boundary</h3><p>Tree placement and charter organize behavior only. Grants, assignments, claims, budgets, and capabilities authorize effects.</p></section>{selected.membership.status === "active" && <section className="m22-lifecycle-entry"><h3>lifecycle</h3><p>Retirement preserves this agent’s history and refuses while it retains active responsibility.</p><button className="m22-danger subtle" disabled={!mutable} onClick={() => { setCreating(false); setCreatingWorkstream(false); setReviewingWorkstreamID(""); setRetiringAgentID(selected.definition.id); }}><Archive size={13} /> review retirement</button></section>}</> : <><dl className="m22-facts"><div><dt>active workstreams</dt><dd>{data.objectives.filter((objective) => objective.status === "active").length}</dd></div><div><dt>active agents</dt><dd>{data.domainAgents.filter((agent) => agent.membership.status === "active").length}</dd></div><div><dt>checkouts</dt><dd>{data.checkouts.length}</dd></div><div><dt>open tasks</dt><dd>{data.tasks.filter((detail) => !["completed", "cancelled", "failed"].includes(detail.task.status)).length}</dd></div></dl><section><h3>domain boundary</h3><p>A domain coordinates related work and knowledge. It is not a repository or folder.</p></section></>}
     </aside>
   </div>;
 }

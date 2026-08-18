@@ -275,9 +275,9 @@ SELECT COUNT(*),COALESCE(SUM(agent.max_concurrency),0) FROM descendants JOIN age
 FROM domain_agent_staffing_allocations WHERE grant_id=?`, grant.ID).Scan(&spent.TokenLimit, &spent.CostCents, &spent.TimeSeconds); err != nil {
 		return domain.DomainAgentChildCreation{}, storageFailure("sum staffing allocation budget", err)
 	}
-	if spent.TokenLimit+command.Budget.TokenLimit > grant.Budget.TokenLimit ||
-		spent.CostCents+command.Budget.CostCents > grant.Budget.CostCents ||
-		spent.TimeSeconds+command.Budget.TimeSeconds > grant.Budget.TimeSeconds {
+	if !staffingBudgetDimensionAllows(grant.Budget.TokenLimit, spent.TokenLimit, command.Budget.TokenLimit) ||
+		!staffingBudgetDimensionAllows(grant.Budget.CostCents, spent.CostCents, command.Budget.CostCents) ||
+		!staffingBudgetDimensionAllows(grant.Budget.TimeSeconds, spent.TimeSeconds, command.Budget.TimeSeconds) {
 		return domain.DomainAgentChildCreation{}, domainAgentError(CodeDomainStaffingCapacity, "durable child would exceed the staffing budget")
 	}
 	var existing string
@@ -370,6 +370,19 @@ budget_time_seconds,request_sha256,event_sequence,created_at,created_by) VALUES(
 		return domain.DomainAgentChildCreation{}, storageFailure("commit durable child creation", err)
 	}
 	return result, nil
+}
+
+// A zero budget is the canonical unlimited value. An unlimited child may only
+// be created under an unlimited parent dimension; finite grants must retain a
+// finite, cumulatively bounded allocation.
+func staffingBudgetDimensionAllows(limit, spent, requested int64) bool {
+	if limit == 0 {
+		return true
+	}
+	if requested == 0 || requested > limit {
+		return false
+	}
+	return spent <= limit-requested
 }
 
 func (s *Store) DomainAgentStaffingGrants(ctx context.Context, workspaceIdentifier, projectIdentifier, managerIdentifier string) ([]domain.DomainAgentStaffingGrant, error) {

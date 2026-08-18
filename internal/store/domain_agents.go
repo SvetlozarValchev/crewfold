@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"crewfold/internal/domain"
 )
@@ -331,13 +332,59 @@ func (s *Store) UpdateDomainAgent(ctx context.Context, command UpdateDomainAgent
 		membership.Status = strings.TrimSpace(*command.Status)
 		if membership.Status == domain.DomainAgentRetired {
 			membership.PreferredEntry = false
-			var children int
+			var children, assignments, runs, staffingGrants int
 			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM domain_agent_memberships
 WHERE project_id=? AND parent_agent_id=? AND status='active'`, project.ID, agent.ID).Scan(&children); err != nil {
 				return MutationResult[domain.DomainAgentMembership]{}, storageFailure("count active domain children", err)
 			}
 			if children != 0 {
 				return MutationResult[domain.DomainAgentMembership]{}, domainAgentError(CodeInvalidDomainAgent, "domain agent with active children cannot retire")
+			}
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_assignments assignment
+JOIN tasks task ON task.id=assignment.task_id
+WHERE assignment.agent_id=? AND assignment.status='active'
+  AND task.status NOT IN ('completed','failed','cancelled')`, agent.ID).Scan(&assignments); err != nil {
+				return MutationResult[domain.DomainAgentMembership]{}, storageFailure("count active domain agent assignments", err)
+			}
+			if assignments != 0 {
+				return MutationResult[domain.DomainAgentMembership]{}, domainAgentError(CodeInvalidDomainAgent, "domain agent with active assignments cannot retire")
+			}
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs
+WHERE agent_id=? AND status IN ('requested','starting','active','blocked','stopping','lost')`, agent.ID).Scan(&runs); err != nil {
+				return MutationResult[domain.DomainAgentMembership]{}, storageFailure("count unresolved domain agent runs", err)
+			}
+			if runs != 0 {
+				return MutationResult[domain.DomainAgentMembership]{}, domainAgentError(CodeInvalidDomainAgent, "domain agent with live or unresolved runs cannot retire")
+			}
+			grantRows, err := tx.QueryContext(ctx, `SELECT COALESCE(expires_at,'') FROM domain_agent_staffing_grants
+WHERE project_id=? AND manager_agent_id=? AND status='active'`, project.ID, agent.ID)
+			if err != nil {
+				return MutationResult[domain.DomainAgentMembership]{}, storageFailure("query active domain agent staffing grants", err)
+			}
+			for grantRows.Next() {
+				var expiresAt string
+				if err := grantRows.Scan(&expiresAt); err != nil {
+					grantRows.Close()
+					return MutationResult[domain.DomainAgentMembership]{}, storageFailure("scan active domain agent staffing grant", err)
+				}
+				if expiresAt == "" {
+					staffingGrants++
+					continue
+				}
+				expires, err := time.Parse(time.RFC3339Nano, expiresAt)
+				if err != nil {
+					grantRows.Close()
+					return MutationResult[domain.DomainAgentMembership]{}, storageFailure("parse active domain agent staffing grant expiry", err)
+				}
+				if expires.After(s.clock().UTC()) {
+					staffingGrants++
+				}
+			}
+			if err := grantRows.Close(); err != nil {
+				return MutationResult[domain.DomainAgentMembership]{}, storageFailure("close active domain agent staffing grants", err)
+			}
+			if staffingGrants != 0 {
+				return MutationResult[domain.DomainAgentMembership]{}, domainAgentError(CodeInvalidDomainAgent, "domain agent with active staffing grants cannot retire")
 			}
 		}
 	}
