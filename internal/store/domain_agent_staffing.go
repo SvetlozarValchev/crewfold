@@ -13,10 +13,152 @@ import (
 )
 
 const (
-	domainStaffingGrantCreated = "domain.staffing_grant_created"
-	domainStaffingGrantRevoked = "domain.staffing_grant_revoked"
-	domainChildCreated         = "domain.child_created"
+	domainStaffingGrantCreated   = "domain.staffing_grant_created"
+	domainStaffingGrantDelegated = "domain.staffing_grant_delegated"
+	domainStaffingGrantRevoked   = "domain.staffing_grant_revoked"
+	domainChildCreated           = "domain.child_created"
 )
+
+func (s *Store) DelegateDomainAgentStaffingGrant(ctx context.Context, command DelegateDomainAgentStaffingGrantCommand) (MutationResult[domain.DomainAgentStaffingGrant], error) {
+	command.ThreadID = strings.TrimSpace(command.ThreadID)
+	command.ParentGrantID = strings.TrimSpace(command.ParentGrantID)
+	command.SourceAllocationID = strings.TrimSpace(command.SourceAllocationID)
+	command.ManagerAgentIdentifier = strings.TrimSpace(command.ManagerAgentIdentifier)
+	command.ExpiresAt = strings.TrimSpace(command.ExpiresAt)
+	command.IdempotencyKey = strings.TrimSpace(command.IdempotencyKey)
+	command.CorrelationID = strings.TrimSpace(command.CorrelationID)
+	profiles, err := normalizeDomainStaffingProfiles(command.Profiles)
+	if err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, err
+	}
+	taskClasses, err := normalizeDomainTaskClasses(command.TaskClasses)
+	if err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, err
+	}
+	if command.ThreadID == "" || command.ParentGrantID == "" || command.SourceAllocationID == "" || command.ManagerAgentIdentifier == "" ||
+		command.ExpectedMembershipRevision < 1 || len(profiles) == 0 || len(taskClasses) == 0 || command.MaxDescendants < 1 || command.MaxDescendants > 1000 ||
+		command.MaxConcurrency < 1 || command.MaxConcurrency > 100 || !validBudget(command.Budget) ||
+		(command.ExpiresAt != "" && !canonicalTimestampText(command.ExpiresAt)) {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, domainAgentError(CodeDomainStaffingDenied, "delegated staffing grant is outside the typed subset contract")
+	}
+	if err := validateMutationMetadata(command.IdempotencyKey, command.CorrelationID, CodeDomainStaffingDenied); err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, err
+	}
+	requestHash, err := hashCommand("domain.staffing-grant.delegate", command)
+	if err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, storageFailure("hash delegated staffing grant", err)
+	}
+	tx, err := s.beginTx(ctx, nil)
+	if err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, storageFailure("begin delegated staffing grant", err)
+	}
+	defer tx.Rollback()
+	scope, err := s.domainAgentSessionScopeInTransaction(ctx, tx, command.ThreadID)
+	if err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, err
+	}
+	scopedKey := "domain-staffing-delegate:" + scope.Agent.ID + ":" + command.IdempotencyKey
+	var replay MutationResult[domain.DomainAgentStaffingGrant]
+	if found, lookupErr := lookupIdempotency(ctx, tx, scopedKey, "domain.staffing-grant.delegate", requestHash, &replay); lookupErr != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, lookupErr
+	} else if found {
+		return replay, nil
+	}
+	parent, err := queryDomainAgentStaffingGrant(ctx, tx, command.ParentGrantID)
+	if err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, err
+	}
+	if parent.ProjectID != scope.Project.ID || parent.ManagerAgentID != scope.Agent.ID || parent.ManagerMembershipRevision != scope.Membership.Revision || parent.Status != domain.DomainStaffingGrantActive {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, domainAgentError(CodeDomainStaffingDenied, "parent staffing grant is not current for this durable agent")
+	}
+	if parent.ExpiresAt != "" {
+		parentExpiry, _ := time.Parse(time.RFC3339Nano, parent.ExpiresAt)
+		if !parentExpiry.After(s.clock().UTC()) {
+			return MutationResult[domain.DomainAgentStaffingGrant]{}, domainAgentError(CodeDomainStaffingDenied, "parent staffing grant has expired")
+		}
+		if command.ExpiresAt == "" {
+			return MutationResult[domain.DomainAgentStaffingGrant]{}, domainAgentError(CodeDomainStaffingDenied, "delegated expiry cannot outlive its parent")
+		}
+		childExpiry, _ := time.Parse(time.RFC3339Nano, command.ExpiresAt)
+		if childExpiry.After(parentExpiry) {
+			return MutationResult[domain.DomainAgentStaffingGrant]{}, domainAgentError(CodeDomainStaffingDenied, "delegated expiry cannot outlive its parent")
+		}
+	}
+	manager, err := queryAgent(ctx, tx, scope.Workspace.ID, command.ManagerAgentIdentifier)
+	if err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, err
+	}
+	membership, err := queryDomainAgentMembership(ctx, tx, scope.Project.ID, manager.ID)
+	if err != nil || membership.ParentAgentID != scope.Agent.ID || membership.Status != domain.DomainAgentActive || membership.Revision != command.ExpectedMembershipRevision {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, domainAgentError(CodeDomainStaffingDenied, "delegated manager must be one exact current direct child membership")
+	}
+	var allocation domain.DomainAgentStaffingAllocation
+	err = tx.QueryRowContext(ctx, `SELECT id,grant_id,project_id,parent_agent_id,child_agent_id,provider,runtime,task_class,budget_tokens,budget_cost_cents,budget_time_seconds,event_sequence,created_at,created_by FROM domain_agent_staffing_allocations WHERE id=?`, command.SourceAllocationID).Scan(
+		&allocation.ID, &allocation.GrantID, &allocation.ProjectID, &allocation.ParentAgentID, &allocation.ChildAgentID, &allocation.Provider, &allocation.Runtime, &allocation.TaskClass,
+		&allocation.Budget.TokenLimit, &allocation.Budget.CostCents, &allocation.Budget.TimeSeconds, &allocation.EventSequence, &allocation.CreatedAt, &allocation.CreatedBy)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (allocation.GrantID != parent.ID || allocation.ProjectID != scope.Project.ID || allocation.ParentAgentID != scope.Agent.ID || allocation.ChildAgentID != manager.ID) {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, domainAgentError(CodeDomainStaffingDenied, "delegation must use the exact parent allocation for this direct child")
+	}
+	if err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, storageFailure("read delegated staffing allocation", err)
+	}
+	for _, profile := range profiles {
+		if !staffingProfileAllows(parent.Profiles, profile.Provider, profile.Runtime, profile.MaxConcurrency) {
+			return MutationResult[domain.DomainAgentStaffingGrant]{}, domainAgentError(CodeDomainStaffingDenied, "delegated profile exceeds its parent")
+		}
+	}
+	for _, taskClass := range taskClasses {
+		if !containsExact(parent.TaskClasses, taskClass) {
+			return MutationResult[domain.DomainAgentStaffingGrant]{}, domainAgentError(CodeDomainStaffingDenied, "delegated task class exceeds its parent")
+		}
+	}
+	if command.MaxDescendants > parent.MaxDescendants || command.MaxConcurrency > parent.MaxConcurrency || command.MaxConcurrency > manager.MaxConcurrency ||
+		!delegatedBudgetAllows(allocation.Budget, command.Budget) {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, domainAgentError(CodeDomainStaffingDenied, "delegated capacity or budget exceeds the allocated child envelope")
+	}
+	id, err := randomID("staffgrant_")
+	if err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, storageFailure("generate delegated staffing grant", err)
+	}
+	now, actor := s.nowText(), "agent:"+scope.Agent.ID
+	grant := domain.DomainAgentStaffingGrant{ID: id, ProjectID: scope.Project.ID, ManagerAgentID: manager.ID, ManagerMembershipRevision: membership.Revision,
+		ParentGrantID: parent.ID, SourceAllocationID: allocation.ID, DelegatedByAgentID: scope.Agent.ID, Profiles: profiles, TaskClasses: taskClasses,
+		MaxDescendants: command.MaxDescendants, MaxConcurrency: command.MaxConcurrency, Budget: command.Budget, ExpiresAt: command.ExpiresAt,
+		Status: domain.DomainStaffingGrantActive, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: actor, UpdatedBy: actor}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO domain_agent_staffing_grants(id,project_id,manager_agent_id,manager_membership_revision,parent_grant_id,source_allocation_id,delegated_by_agent_id,max_descendants,max_concurrency,budget_tokens,budget_cost_cents,budget_time_seconds,expires_at,status,revision,created_at,updated_at,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?,''),?,1,?,?,?,?)`, grant.ID, grant.ProjectID, grant.ManagerAgentID, grant.ManagerMembershipRevision, grant.ParentGrantID, grant.SourceAllocationID, grant.DelegatedByAgentID, grant.MaxDescendants, grant.MaxConcurrency, grant.Budget.TokenLimit, grant.Budget.CostCents, grant.Budget.TimeSeconds, grant.ExpiresAt, grant.Status, grant.CreatedAt, grant.UpdatedAt, grant.CreatedBy, grant.UpdatedBy); err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, storageFailure("insert delegated staffing grant", err)
+	}
+	for _, profile := range profiles {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO domain_agent_staffing_profiles(grant_id,provider,runtime,max_concurrency) VALUES(?,?,?,?)`, grant.ID, profile.Provider, profile.Runtime, profile.MaxConcurrency); err != nil {
+			return MutationResult[domain.DomainAgentStaffingGrant]{}, storageFailure("insert delegated staffing profile", err)
+		}
+	}
+	for _, taskClass := range taskClasses {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO domain_agent_staffing_task_classes(grant_id,task_class) VALUES(?,?)`, grant.ID, taskClass); err != nil {
+			return MutationResult[domain.DomainAgentStaffingGrant]{}, storageFailure("insert delegated staffing task class", err)
+		}
+	}
+	sequence, err := appendEventForActor(ctx, tx, scope.Workspace.ID, "domain_staffing_grant", grant.ID, 1, domainStaffingGrantDelegated, command.CorrelationID, now, scope.Agent.ID, domain.EventActorIntegration, domainStaffingGrantEventData(grant))
+	if err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, err
+	}
+	result := MutationResult[domain.DomainAgentStaffingGrant]{Value: grant, EventSequence: sequence}
+	if err := recordIdempotency(ctx, tx, scopedKey, "domain.staffing-grant.delegate", requestHash, result, now); err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return MutationResult[domain.DomainAgentStaffingGrant]{}, storageFailure("commit delegated staffing grant", err)
+	}
+	return result, nil
+}
+
+func delegatedBudgetAllows(parent, child domain.Budget) bool {
+	return staffingBudgetDimensionSubset(parent.TokenLimit, child.TokenLimit) && staffingBudgetDimensionSubset(parent.CostCents, child.CostCents) && staffingBudgetDimensionSubset(parent.TimeSeconds, child.TimeSeconds)
+}
+
+func staffingBudgetDimensionSubset(parent, child int64) bool {
+	return parent == 0 || child != 0 && child <= parent
+}
 
 func (s *Store) CreateDomainAgentStaffingGrant(ctx context.Context, command CreateDomainAgentStaffingGrantCommand) (MutationResult[domain.DomainAgentStaffingGrant], error) {
 	workspaceIdentifier := strings.TrimSpace(command.WorkspaceIdentifier)
@@ -441,10 +583,10 @@ func (s *Store) DomainAgentStaffingGrants(ctx context.Context, workspaceIdentifi
 
 func queryDomainAgentStaffingGrant(ctx context.Context, database messageQueryContext, id string) (domain.DomainAgentStaffingGrant, error) {
 	var grant domain.DomainAgentStaffingGrant
-	err := database.QueryRowContext(ctx, `SELECT id,project_id,manager_agent_id,manager_membership_revision,max_descendants,max_concurrency,
+	err := database.QueryRowContext(ctx, `SELECT id,project_id,manager_agent_id,manager_membership_revision,COALESCE(parent_grant_id,''),COALESCE(source_allocation_id,''),COALESCE(delegated_by_agent_id,''),max_descendants,max_concurrency,
 budget_tokens,budget_cost_cents,budget_time_seconds,COALESCE(expires_at,''),status,revision,created_at,updated_at,created_by,updated_by
 FROM domain_agent_staffing_grants WHERE id=?`, strings.TrimSpace(id)).Scan(&grant.ID, &grant.ProjectID, &grant.ManagerAgentID,
-		&grant.ManagerMembershipRevision, &grant.MaxDescendants, &grant.MaxConcurrency, &grant.Budget.TokenLimit,
+		&grant.ManagerMembershipRevision, &grant.ParentGrantID, &grant.SourceAllocationID, &grant.DelegatedByAgentID, &grant.MaxDescendants, &grant.MaxConcurrency, &grant.Budget.TokenLimit,
 		&grant.Budget.CostCents, &grant.Budget.TimeSeconds, &grant.ExpiresAt, &grant.Status, &grant.Revision,
 		&grant.CreatedAt, &grant.UpdatedAt, &grant.CreatedBy, &grant.UpdatedBy)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -543,6 +685,7 @@ func containsExact(values []string, target string) bool {
 func domainStaffingGrantEventData(grant domain.DomainAgentStaffingGrant) map[string]any {
 	return map[string]any{
 		"project_id": grant.ProjectID, "manager_agent_id": grant.ManagerAgentID,
+		"parent_grant_id": grant.ParentGrantID, "source_allocation_id": grant.SourceAllocationID, "delegated_by_agent_id": grant.DelegatedByAgentID,
 		"manager_membership_revision": grant.ManagerMembershipRevision, "profiles": grant.Profiles,
 		"task_classes": grant.TaskClasses, "max_descendants": grant.MaxDescendants,
 		"max_concurrency": grant.MaxConcurrency, "budget": grant.Budget,

@@ -7,7 +7,7 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M21 are complete. M22 is next.** M21 proved the
+Current status: **M0 through M22 are complete. M23 is next.** M21 proved the
 owner-local service, browser security, canonical web transport, Herdr stream, and
 first complete browser workflow. Real use showed that its singular short-lived
 project executive and page-oriented navigation are not the intended owner model.
@@ -108,6 +108,12 @@ and the provider-free end-to-end scenario. Its implementation commit is
 `6116b5d0b21bfba48007da464ff3bae0c8543416`; the Herdr-first service, preflight,
 diagnosis, and retry correction is `a6a8f82`.
 
+M22's [passed domain-agent-console review](reviews/domain-agent-console.md)
+records the corrected domain/workstream organization, arbitrary-depth durable
+agent tree, resumable Codex conversations, owner-bounded staffing delegation,
+inert coordinator work proposals, serialized durable wake delivery, governed
+knowledge, and the real subscription-backed browser workflow.
+
 ## Sequence
 
 | Milestone | Increment | Demonstrable outcome | Depends on |
@@ -134,7 +140,7 @@ diagnosis, and retry correction is `a6a8f82`.
 | M19 ✓ | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
 | M20 ✓ | Personal beta | Back up, restore, verify current-baseline integrity, and load-test 100 registered agent definitions | M19 |
 | M21 ✓ | Local web workbench | Orchestrate, inspect, understand, and intervene from one owner-local browser interface | M20 |
-| M22 | Domain-oriented durable-agent console | Direct resumable agents and coordinate cross-workstream knowledge from one domain tree | M21 |
+| M22 ✓ | Domain-oriented durable-agent console | Direct resumable agents and coordinate cross-workstream knowledge from one domain tree | M21 |
 | M23 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M22 |
 
 ## Capability ladder
@@ -318,11 +324,10 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M22 is next: the domain-oriented durable-agent console. It replaces M21's
-singular short-lived executive with the accepted domain, workstream, durable-agent
-tree, and resumable-provider-session model. The public open-source release
-candidate follows as M23; packaging and publication must build on the corrected
-owner workflow rather than preserving the superseded harness.
+M23 is next: the public open-source release candidate. Packaging, extension
+conformance, tutorials, licensing, security contacts, and publication must build
+on M22's passed domain, workstream, durable-agent tree, and resumable-provider
+workflow rather than restoring the superseded M21 executive harness.
 
 M21's service/browser foundation is recorded at commit
 `6116b5d0b21bfba48007da464ff3bae0c8543416`; its

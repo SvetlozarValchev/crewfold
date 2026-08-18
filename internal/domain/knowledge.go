@@ -27,12 +27,17 @@ const (
 	KnowledgeSourceTask            = "task"
 	KnowledgeSourceMeeting         = "meeting"
 	KnowledgeSourceMeetingProposal = "meeting_proposal"
+	KnowledgeSourceDomainAgent     = "domain_agent"
 	KnowledgeSourcePrimary         = "primary"
 	KnowledgeSourceSupporting      = "supporting"
 
 	KnowledgeActorHuman     = "human"
 	KnowledgeActorAgentRun  = "agent_run"
 	KnowledgeActorSubsystem = "subsystem"
+	// KnowledgeActorIntegration is used by an authenticated durable-agent
+	// session. The agent's active domain membership is still validated by the
+	// store; this label never grants owner governance authority.
+	KnowledgeActorIntegration = "integration"
 
 	KnowledgeAuthorityAccept    = "accept"
 	KnowledgeAuthorityReject    = "reject"
@@ -254,7 +259,7 @@ func ValidKnowledgeFreshnessPolicy(value string) bool {
 }
 
 func ValidKnowledgeSourceType(value string) bool {
-	return value == KnowledgeSourceTask || value == KnowledgeSourceMeeting || value == KnowledgeSourceMeetingProposal
+	return value == KnowledgeSourceTask || value == KnowledgeSourceMeeting || value == KnowledgeSourceMeetingProposal || value == KnowledgeSourceDomainAgent
 }
 
 func ValidKnowledgeSourceRole(value string) bool {
@@ -262,5 +267,5 @@ func ValidKnowledgeSourceRole(value string) bool {
 }
 
 func ValidKnowledgeActorType(value string) bool {
-	return value == KnowledgeActorHuman || value == KnowledgeActorAgentRun || value == KnowledgeActorSubsystem
+	return value == KnowledgeActorHuman || value == KnowledgeActorAgentRun || value == KnowledgeActorSubsystem || value == KnowledgeActorIntegration
 }

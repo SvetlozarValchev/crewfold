@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 
 	"crewfold/internal/domain"
 )
@@ -49,27 +50,34 @@ func TestM22DurableAgentMessagesAreSameDomainScopedDeliveredAndReplaySafe(t *tes
 	}
 	if sent.Value.Message.SenderType != "durable_agent" || sent.Value.Message.SenderID != sender.Value.ID ||
 		sent.Value.Message.SenderAgentID != sender.Value.ID || sent.Value.Message.ProjectID != project.ID ||
-		sent.Value.Message.TaskID != "" || sent.Value.Recipient.Status != domain.DeliveryQueued {
+		sent.Value.Message.TaskID != "" || sent.Value.Recipient.Status != domain.DeliveryQueued || sent.Value.Recipient.WakeStatus != domain.WakePending {
 		t.Fatalf("durable message = %#v", sent)
 	}
 	replayed, err := storage.SendMessage(ctx, command)
 	if err != nil || replayed.Value.Message.ID != sent.Value.Message.ID || replayed.EventSequence != sent.EventSequence {
 		t.Fatalf("durable message replay = %#v, %v; want %#v", replayed, err, sent)
 	}
+	wake, found, err := storage.ClaimMessageWakeJob(ctx, time.Minute)
+	if err != nil || !found || wake.TargetRunID != "" || wake.TargetDomainThreadID != "recipient-private-thread" || wake.RecipientAgentID != recipient.Value.ID {
+		t.Fatalf("durable session wake = %#v, %t, %v", wake, found, err)
+	}
+	if err := storage.SettleMessageWakeJob(ctx, wake.ID, domain.WakeSucceeded, ""); err != nil {
+		t.Fatal(err)
+	}
 	queued, err := storage.DomainAgentInbox(ctx, workspace.ID, project.ID, recipient.Value.ID, 20)
-	if err != nil || len(queued) != 1 || queued[0].Delivery.Status != domain.DeliveryQueued {
-		t.Fatalf("queued domain inbox = %#v, %v", queued, err)
+	if err != nil || len(queued) != 1 || queued[0].Delivery.Status != domain.DeliveryDelivered {
+		t.Fatalf("woken domain inbox = %#v, %v", queued, err)
 	}
 	delivered, err := storage.DeliverDomainAgentSessionInbox(ctx, "recipient-private-thread", 20)
 	if err != nil || len(delivered) != 1 || delivered[0].Delivery.Status != domain.DeliveryDelivered || delivered[0].Delivery.DeliveredRunID != "" {
 		t.Fatalf("delivered domain inbox = %#v, %v", delivered, err)
 	}
 	eventsAfterDelivery := testWorkspaceEvents(t, storage, workspace.ID, 0, 1000)
-	if len(eventsAfterDelivery) != len(eventsBefore)+3 {
+	if len(eventsAfterDelivery) != len(eventsBefore)+4 {
 		t.Fatalf("message send+delivery events = %d -> %d", len(eventsBefore), len(eventsAfterDelivery))
 	}
 	deliveryEvent := eventsAfterDelivery[len(eventsAfterDelivery)-1]
-	if deliveryEvent.Type != messageDeliveredEvent || deliveryEvent.Actor.ActorType != domain.EventActorIntegration || deliveryEvent.Actor.ActorID != recipient.Value.ID {
+	if deliveryEvent.Type != messageDeliveredEvent || deliveryEvent.Actor.ActorType != domain.EventActorSubsystem || deliveryEvent.Actor.ActorID != messageWakeActorID {
 		t.Fatalf("durable delivery event = %#v", deliveryEvent)
 	}
 	secondDelivery, err := storage.DeliverDomainAgentSessionInbox(ctx, "recipient-private-thread", 20)

@@ -189,6 +189,8 @@ CREATE TABLE domain_agent_session_bindings (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE (project_id, agent_id),
+	UNIQUE (project_id, agent_id, thread_id),
+	UNIQUE (thread_id),
     UNIQUE (node_fingerprint, provider, thread_id),
     FOREIGN KEY (project_id, agent_id)
       REFERENCES domain_agent_memberships(project_id, agent_id)
@@ -242,6 +244,9 @@ CREATE TABLE domain_agent_staffing_grants (
     project_id TEXT NOT NULL,
     manager_agent_id TEXT NOT NULL,
     manager_membership_revision INTEGER NOT NULL CHECK (manager_membership_revision > 0),
+	parent_grant_id TEXT REFERENCES domain_agent_staffing_grants(id),
+	source_allocation_id TEXT UNIQUE REFERENCES domain_agent_staffing_allocations(id) DEFERRABLE INITIALLY DEFERRED,
+	delegated_by_agent_id TEXT REFERENCES agents(id),
     max_descendants INTEGER NOT NULL CHECK (max_descendants BETWEEN 1 AND 1000),
     max_concurrency INTEGER NOT NULL CHECK (max_concurrency BETWEEN 1 AND 100),
     budget_tokens INTEGER NOT NULL CHECK (budget_tokens >= 0),
@@ -252,11 +257,13 @@ CREATE TABLE domain_agent_staffing_grants (
     revision INTEGER NOT NULL CHECK (revision > 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    created_by TEXT NOT NULL CHECK (created_by = 'local-owner'),
-    updated_by TEXT NOT NULL CHECK (updated_by = 'local-owner'),
+	created_by TEXT NOT NULL CHECK (created_by = 'local-owner' OR substr(created_by,1,6) = 'agent:'),
+	updated_by TEXT NOT NULL CHECK (updated_by = 'local-owner' OR substr(updated_by,1,6) = 'agent:'),
     UNIQUE (id, project_id, manager_agent_id),
     FOREIGN KEY (project_id, manager_agent_id)
-      REFERENCES domain_agent_memberships(project_id, agent_id)
+	  REFERENCES domain_agent_memberships(project_id, agent_id),
+	CHECK ((parent_grant_id IS NULL AND source_allocation_id IS NULL AND delegated_by_agent_id IS NULL)
+	    OR (parent_grant_id IS NOT NULL AND source_allocation_id IS NOT NULL AND delegated_by_agent_id IS NOT NULL))
 ) STRICT;
 
 CREATE TABLE domain_agent_staffing_profiles (
@@ -307,6 +314,31 @@ CREATE TABLE domain_agent_staffing_allocations (
       REFERENCES domain_agent_staffing_profiles(grant_id, provider, runtime),
     FOREIGN KEY (grant_id, task_class)
       REFERENCES domain_agent_staffing_task_classes(grant_id, task_class)
+) STRICT;
+
+CREATE TABLE domain_work_proposals (
+	id TEXT PRIMARY KEY CHECK(length(id)=41 AND substr(id,1,9)='workprop_' AND substr(id,10) NOT GLOB '*[^0-9a-f]*'),
+	workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+	project_id TEXT NOT NULL REFERENCES projects(id),
+	source_agent_id TEXT NOT NULL REFERENCES agents(id),
+	source_thread_id TEXT NOT NULL,
+	staffing_grant_id TEXT NOT NULL REFERENCES domain_agent_staffing_grants(id),
+	staffing_grant_revision INTEGER NOT NULL CHECK(staffing_grant_revision>0),
+	summary TEXT NOT NULL CHECK(length(CAST(summary AS BLOB)) BETWEEN 1 AND 2048),
+	as_of_event_sequence INTEGER NOT NULL CHECK(as_of_event_sequence>=0),
+	content_json TEXT NOT NULL CHECK(json_valid(content_json) AND json_type(content_json)='object' AND length(CAST(content_json AS BLOB))<=131072),
+	content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+	status TEXT NOT NULL CHECK(status IN ('pending','accepted','rejected','stale')),
+	decision_note TEXT CHECK(decision_note IS NULL OR length(CAST(decision_note AS BLOB)) BETWEEN 1 AND 2048),
+	revision INTEGER NOT NULL CHECK(revision>0),
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	created_by TEXT NOT NULL,
+	updated_by TEXT NOT NULL,
+	decided_at TEXT,
+	decided_by TEXT,
+	FOREIGN KEY(project_id,source_agent_id) REFERENCES domain_agent_memberships(project_id,agent_id),
+	FOREIGN KEY(project_id,source_agent_id,source_thread_id) REFERENCES domain_agent_session_bindings(project_id,agent_id,thread_id)
 ) STRICT;
 
 CREATE TABLE tasks (
@@ -732,7 +764,7 @@ CREATE TABLE knowledge_items (
     type TEXT NOT NULL CHECK (type IN ('decision', 'finding')),
     created_at TEXT NOT NULL,
     created_by TEXT NOT NULL,
-    created_by_type TEXT NOT NULL CHECK (created_by_type IN ('human', 'agent_run', 'subsystem'))
+    created_by_type TEXT NOT NULL CHECK (created_by_type IN ('human', 'agent_run', 'subsystem', 'integration'))
 ) STRICT;
 
 CREATE TABLE knowledge_revisions (
@@ -755,16 +787,16 @@ CREATE TABLE knowledge_revisions (
     supersedes_revision_id TEXT REFERENCES knowledge_revisions(id),
     proposed_at TEXT NOT NULL,
     proposed_by TEXT NOT NULL,
-    proposed_by_type TEXT NOT NULL CHECK (proposed_by_type IN ('human', 'agent_run', 'subsystem')),
+    proposed_by_type TEXT NOT NULL CHECK (proposed_by_type IN ('human', 'agent_run', 'subsystem', 'integration')),
     accepted_at TEXT,
     accepted_by TEXT,
-    accepted_by_type TEXT CHECK (accepted_by_type IN ('human', 'agent_run', 'subsystem')),
+    accepted_by_type TEXT CHECK (accepted_by_type IN ('human', 'agent_run', 'subsystem', 'integration')),
     rejected_at TEXT,
     rejected_by TEXT,
-    rejected_by_type TEXT CHECK (rejected_by_type IN ('human', 'agent_run', 'subsystem')),
+    rejected_by_type TEXT CHECK (rejected_by_type IN ('human', 'agent_run', 'subsystem', 'integration')),
     stale_at TEXT,
     stale_by TEXT,
-    stale_by_type TEXT CHECK (stale_by_type IN ('human', 'agent_run', 'subsystem')),
+    stale_by_type TEXT CHECK (stale_by_type IN ('human', 'agent_run', 'subsystem', 'integration')),
     decision_note TEXT CHECK (decision_note IS NULL OR length(decision_note) <= 1024),
     stale_reason TEXT CHECK (stale_reason IS NULL OR length(stale_reason) BETWEEN 1 AND 1024),
     UNIQUE (item_id, revision_number),
@@ -795,7 +827,7 @@ CREATE TABLE knowledge_revisions (
 CREATE TABLE knowledge_sources (
     revision_id TEXT NOT NULL REFERENCES knowledge_revisions(id),
     ordinal INTEGER NOT NULL CHECK (ordinal >= 0 AND ordinal < 16),
-    source_type TEXT NOT NULL CHECK (source_type IN ('task', 'meeting', 'meeting_proposal')),
+    source_type TEXT NOT NULL CHECK (source_type IN ('task', 'meeting', 'meeting_proposal', 'domain_agent')),
     source_id TEXT NOT NULL,
     source_revision INTEGER NOT NULL CHECK (source_revision > 0),
     role TEXT NOT NULL CHECK (role IN ('primary', 'supporting')),
@@ -812,7 +844,7 @@ CREATE TABLE knowledge_authority_checks (
     revision_id TEXT NOT NULL REFERENCES knowledge_revisions(id),
     action TEXT NOT NULL CHECK (action IN ('accept', 'reject', 'mark_stale', 'supersede')),
     actor_id TEXT NOT NULL,
-    actor_type TEXT NOT NULL CHECK (actor_type IN ('human', 'agent_run', 'subsystem')),
+    actor_type TEXT NOT NULL CHECK (actor_type IN ('human', 'agent_run', 'subsystem', 'integration')),
     outcome TEXT NOT NULL CHECK (outcome IN ('allowed', 'denied')),
     reason TEXT NOT NULL CHECK (reason IN ('workspace_owner', 'actor_not_workspace_owner', 'state_policy')),
     note TEXT CHECK (note IS NULL OR length(note) <= 1024),
@@ -1615,7 +1647,8 @@ CREATE TABLE "message_wake_jobs" (
     id TEXT NOT NULL UNIQUE,
     message_id TEXT NOT NULL REFERENCES "messages"(id),
     recipient_agent_id TEXT NOT NULL REFERENCES agents(id),
-    target_run_id TEXT NOT NULL REFERENCES runs(id),
+    target_run_id TEXT REFERENCES runs(id),
+    target_domain_thread_id TEXT REFERENCES domain_agent_session_bindings(thread_id),
     status TEXT NOT NULL CHECK(status IN ('pending','leased','succeeded','failed','failed_unknown')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0),
     available_at TEXT NOT NULL,
@@ -1623,7 +1656,9 @@ CREATE TABLE "message_wake_jobs" (
     diagnostic TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE(message_id,recipient_agent_id,target_run_id)
+    UNIQUE(message_id,recipient_agent_id,target_run_id),
+    UNIQUE(message_id,recipient_agent_id,target_domain_thread_id),
+    CHECK ((target_run_id IS NOT NULL) <> (target_domain_thread_id IS NOT NULL))
 ) STRICT;
 
 CREATE TABLE check_definitions (
@@ -1846,16 +1881,18 @@ CREATE TABLE "scheduling_intents" (
     source_proposal_id TEXT REFERENCES manager_proposals(id), source_action_id TEXT,
     source_check_repair_proposal_id TEXT REFERENCES check_repair_proposals(id),
     source_owner_turn_id TEXT REFERENCES owner_turns(id), source_owner_operation_id TEXT UNIQUE REFERENCES owner_turn_operations(id),
+	source_domain_work_proposal_id TEXT REFERENCES domain_work_proposals(id), source_domain_task_key TEXT,
     status TEXT NOT NULL CHECK(status IN ('pending','deferred','awaiting_approval','run_requested','satisfied','failed','cancelled')),
     reason TEXT, assignment_id TEXT REFERENCES task_assignments(id), run_id TEXT REFERENCES runs(id), supervisor_action_id TEXT,
     attempts INTEGER NOT NULL CHECK(attempts BETWEEN 0 AND 100), last_evaluated_event_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_evaluated_event_sequence>=0),
     revision INTEGER NOT NULL CHECK(revision>0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, next_attempt_at TEXT,
     created_by TEXT NOT NULL, updated_by TEXT NOT NULL,
-    UNIQUE(source_proposal_id,source_action_id), UNIQUE(source_check_repair_proposal_id), UNIQUE(source_owner_turn_id,source_owner_operation_id),
+	UNIQUE(source_proposal_id,source_action_id), UNIQUE(source_check_repair_proposal_id), UNIQUE(source_owner_turn_id,source_owner_operation_id), UNIQUE(source_domain_work_proposal_id,source_domain_task_key),
     FOREIGN KEY(source_action_id,source_proposal_id) REFERENCES manager_proposal_actions(id,proposal_id),
-    CHECK((source_proposal_id IS NOT NULL AND source_action_id IS NOT NULL AND source_check_repair_proposal_id IS NULL AND source_owner_turn_id IS NULL AND source_owner_operation_id IS NULL)
-       OR (source_proposal_id IS NULL AND source_action_id IS NULL AND source_check_repair_proposal_id IS NOT NULL AND source_owner_turn_id IS NULL AND source_owner_operation_id IS NULL)
-       OR (source_proposal_id IS NULL AND source_action_id IS NULL AND source_check_repair_proposal_id IS NULL AND source_owner_turn_id IS NOT NULL AND source_owner_operation_id IS NOT NULL))
+	CHECK((source_proposal_id IS NOT NULL AND source_action_id IS NOT NULL AND source_check_repair_proposal_id IS NULL AND source_owner_turn_id IS NULL AND source_owner_operation_id IS NULL AND source_domain_work_proposal_id IS NULL AND source_domain_task_key IS NULL)
+	   OR (source_proposal_id IS NULL AND source_action_id IS NULL AND source_check_repair_proposal_id IS NOT NULL AND source_owner_turn_id IS NULL AND source_owner_operation_id IS NULL AND source_domain_work_proposal_id IS NULL AND source_domain_task_key IS NULL)
+	   OR (source_proposal_id IS NULL AND source_action_id IS NULL AND source_check_repair_proposal_id IS NULL AND source_owner_turn_id IS NOT NULL AND source_owner_operation_id IS NOT NULL AND source_domain_work_proposal_id IS NULL AND source_domain_task_key IS NULL)
+	   OR (source_proposal_id IS NULL AND source_action_id IS NULL AND source_check_repair_proposal_id IS NULL AND source_owner_turn_id IS NULL AND source_owner_operation_id IS NULL AND source_domain_work_proposal_id IS NOT NULL AND source_domain_task_key IS NOT NULL))
 ) STRICT;
 
 CREATE TABLE check_watch_state (
@@ -1936,6 +1973,9 @@ BEGIN
     SELECT CASE WHEN NEW.id<>OLD.id OR NEW.project_id<>OLD.project_id
       OR NEW.manager_agent_id<>OLD.manager_agent_id
       OR NEW.manager_membership_revision<>OLD.manager_membership_revision
+	  OR NEW.parent_grant_id IS NOT OLD.parent_grant_id
+	  OR NEW.source_allocation_id IS NOT OLD.source_allocation_id
+	  OR NEW.delegated_by_agent_id IS NOT OLD.delegated_by_agent_id
       OR NEW.max_descendants<>OLD.max_descendants OR NEW.max_concurrency<>OLD.max_concurrency
       OR NEW.budget_tokens<>OLD.budget_tokens OR NEW.budget_cost_cents<>OLD.budget_cost_cents
       OR NEW.budget_time_seconds<>OLD.budget_time_seconds OR NEW.expires_at IS NOT OLD.expires_at
@@ -1958,6 +1998,17 @@ BEGIN
           crewfold_timestamp_canonical(NEW.expires_at)<>1
           OR crewfold_timestamp_key(NEW.expires_at)<=crewfold_timestamp_key(NEW.created_at)
       ))
+	  OR ((NEW.parent_grant_id IS NULL)<>(NEW.source_allocation_id IS NULL))
+	  OR ((NEW.parent_grant_id IS NULL)<>(NEW.delegated_by_agent_id IS NULL))
+	  OR (NEW.parent_grant_id IS NOT NULL AND NOT EXISTS (
+	      SELECT 1 FROM domain_agent_staffing_allocations allocation
+	      JOIN domain_agent_staffing_grants parent ON parent.id=allocation.grant_id
+	      WHERE parent.id=NEW.parent_grant_id AND parent.project_id=NEW.project_id
+	        AND parent.manager_agent_id=NEW.delegated_by_agent_id
+	        AND allocation.id=NEW.source_allocation_id
+	        AND allocation.child_agent_id=NEW.manager_agent_id
+	        AND allocation.parent_agent_id=NEW.delegated_by_agent_id
+	  ))
       THEN RAISE(ABORT, 'domain staffing grant scope or lifecycle is invalid') END;
 END;
 
@@ -2011,6 +2062,30 @@ BEGIN
           AND event.occurred_at=NEW.created_at
     ) OR crewfold_timestamp_canonical(NEW.created_at)<>1
       THEN RAISE(ABORT, 'domain staffing allocation scope or receipt is invalid') END;
+END;
+
+CREATE TRIGGER domain_work_proposal_validate_insert BEFORE INSERT ON domain_work_proposals BEGIN
+ SELECT CASE WHEN NEW.status<>'pending' OR NEW.revision<>1 OR NEW.updated_at<>NEW.created_at OR NEW.decision_note IS NOT NULL OR NEW.decided_at IS NOT NULL OR NEW.decided_by IS NOT NULL
+  OR crewfold_timestamp_canonical(NEW.created_at)<>1 OR NEW.created_by<>'agent:'||NEW.source_agent_id OR NEW.updated_by<>NEW.created_by
+  OR NEW.content_sha256<>lower(hex(sha256(CAST(NEW.content_json AS BLOB))))
+  OR json_type(NEW.content_json,'$.objective_title')<>'text' OR json_type(NEW.content_json,'$.objective_budget')<>'object'
+  OR json_type(NEW.content_json,'$.tasks')<>'array' OR json_array_length(NEW.content_json,'$.tasks') NOT BETWEEN 1 AND 16
+  OR NOT EXISTS(SELECT 1 FROM domain_agent_session_bindings binding WHERE binding.project_id=NEW.project_id AND binding.agent_id=NEW.source_agent_id AND binding.thread_id=NEW.source_thread_id)
+  OR NOT EXISTS(SELECT 1 FROM domain_agent_staffing_grants grant WHERE grant.id=NEW.staffing_grant_id AND grant.project_id=NEW.project_id AND grant.manager_agent_id=NEW.source_agent_id AND grant.revision=NEW.staffing_grant_revision AND grant.status='active')
+ THEN RAISE(ABORT,'domain work proposal is not an exact current typed proposal') END;
+END;
+
+CREATE TRIGGER domain_work_proposal_validate_update BEFORE UPDATE ON domain_work_proposals BEGIN
+ SELECT CASE WHEN NEW.id<>OLD.id OR NEW.workspace_id<>OLD.workspace_id OR NEW.project_id<>OLD.project_id OR NEW.source_agent_id<>OLD.source_agent_id OR NEW.source_thread_id<>OLD.source_thread_id
+  OR NEW.staffing_grant_id<>OLD.staffing_grant_id OR NEW.staffing_grant_revision<>OLD.staffing_grant_revision OR NEW.summary<>OLD.summary OR NEW.as_of_event_sequence<>OLD.as_of_event_sequence
+  OR NEW.content_json<>OLD.content_json OR NEW.content_sha256<>OLD.content_sha256 OR NEW.created_at<>OLD.created_at OR NEW.created_by<>OLD.created_by
+  OR OLD.status<>'pending' OR NEW.status NOT IN ('accepted','rejected','stale') OR NEW.revision<>2 OR NEW.updated_by<>'local-owner' OR NEW.decided_by<>'local-owner'
+  OR NEW.decision_note IS NULL OR NEW.decided_at IS NULL OR NEW.updated_at<>NEW.decided_at OR crewfold_timestamp_canonical(NEW.updated_at)<>1
+ THEN RAISE(ABORT,'domain work proposal decision is not exact') END;
+END;
+
+CREATE TRIGGER domain_work_proposal_reject_delete BEFORE DELETE ON domain_work_proposals BEGIN
+ SELECT RAISE(ABORT,'domain work proposals are durable decisions');
 END;
 
 CREATE TRIGGER domain_agent_membership_validate_insert
@@ -4554,7 +4629,8 @@ BEGIN SELECT RAISE(ABORT,'message recipient binding is immutable'); END;
 
 CREATE TRIGGER participant_wake_validate_insert
 BEFORE INSERT ON message_wake_jobs
-WHEN (SELECT th.kind FROM messages m JOIN message_threads th ON th.id=m.thread_id WHERE m.id=NEW.message_id)='participant_bound'
+WHEN NEW.target_run_id IS NOT NULL
+ AND (SELECT th.kind FROM messages m JOIN message_threads th ON th.id=m.thread_id WHERE m.id=NEW.message_id)='participant_bound'
 BEGIN
     SELECT CASE WHEN NOT EXISTS (
         SELECT 1 FROM message_recipients mr JOIN messages m ON m.id=mr.message_id
@@ -4570,9 +4646,33 @@ BEGIN
     ) THEN RAISE(ABORT,'participant wake target is outside its bound scope') END;
 END;
 
+CREATE TRIGGER durable_agent_wake_validate_insert
+BEFORE INSERT ON message_wake_jobs
+WHEN NEW.target_domain_thread_id IS NOT NULL
+BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1
+        FROM messages m
+        JOIN message_threads th ON th.id=m.thread_id
+        JOIN message_recipients recipient
+          ON recipient.message_id=m.id AND recipient.recipient_agent_id=NEW.recipient_agent_id
+        JOIN domain_agent_session_bindings binding
+          ON binding.thread_id=NEW.target_domain_thread_id
+         AND binding.agent_id=NEW.recipient_agent_id
+         AND binding.project_id=m.project_id
+        JOIN domain_agent_memberships membership
+          ON membership.project_id=binding.project_id AND membership.agent_id=binding.agent_id
+        JOIN agents agent ON agent.id=binding.agent_id
+        WHERE m.id=NEW.message_id AND th.kind='direct'
+          AND membership.status='active' AND agent.enabled=1
+    ) THEN RAISE(ABORT,'durable agent wake target is outside its bound domain') END;
+END;
+
 CREATE TRIGGER message_wake_binding_reject_update
-BEFORE UPDATE OF message_id,recipient_agent_id,target_run_id ON message_wake_jobs
-WHEN NEW.message_id<>OLD.message_id OR NEW.recipient_agent_id<>OLD.recipient_agent_id OR NEW.target_run_id<>OLD.target_run_id
+BEFORE UPDATE OF message_id,recipient_agent_id,target_run_id,target_domain_thread_id ON message_wake_jobs
+WHEN NEW.message_id<>OLD.message_id OR NEW.recipient_agent_id<>OLD.recipient_agent_id
+ OR NEW.target_run_id IS NOT OLD.target_run_id
+ OR NEW.target_domain_thread_id IS NOT OLD.target_domain_thread_id
 BEGIN SELECT RAISE(ABORT,'message wake binding is immutable'); END;
 
 CREATE TRIGGER immutable_artifact_validate_insert
@@ -5401,7 +5501,25 @@ CREATE TRIGGER scheduling_intent_validate_insert BEFORE INSERT ON scheduling_int
       AND created_task.type='create_task' AND created_task.status='applied' AND created_task.result_entity_type='task' AND created_task.result_entity_id=NEW.task_id
       AND profile.workspace_id=NEW.workspace_id AND profile.project_id=NEW.project_id AND profile.agent_id=NEW.agent_id AND profile.status='active' AND profile.manager_grant_id IS NULL
       AND agent.enabled=1 AND agent.revision=profile.agent_revision AND task.workspace_id=NEW.workspace_id AND task.project_id=NEW.project_id AND task.objective_id=NEW.objective_id
-   )))
+   ))
+	OR
+	(NEW.source_domain_work_proposal_id IS NOT NULL AND EXISTS(
+	 SELECT 1 FROM domain_work_proposals proposal
+	 JOIN json_each(proposal.content_json,'$.tasks') item
+	 JOIN launch_profiles profile ON profile.id=NEW.launch_profile_id
+	 JOIN agents agent ON agent.id=profile.agent_id
+	 JOIN tasks task ON task.id=NEW.task_id
+	 WHERE proposal.id=NEW.source_domain_work_proposal_id AND proposal.status='accepted'
+	   AND proposal.workspace_id=NEW.workspace_id AND proposal.project_id=NEW.project_id
+	   AND json_extract(item.value,'$.key')=NEW.source_domain_task_key
+	   AND json_extract(item.value,'$.launch_profile_id')=NEW.launch_profile_id
+	   AND profile.workspace_id=NEW.workspace_id AND profile.project_id=NEW.project_id AND profile.agent_id=NEW.agent_id AND profile.status='active' AND profile.manager_grant_id IS NULL
+	   AND agent.enabled=1 AND agent.revision=profile.agent_revision
+	   AND task.workspace_id=NEW.workspace_id AND task.project_id=NEW.project_id AND task.objective_id=NEW.objective_id
+	   AND task.title=json_extract(item.value,'$.title') AND COALESCE(task.description,'')=COALESCE(json_extract(item.value,'$.description'),'')
+	   AND task.priority=json_extract(item.value,'$.priority')
+	   AND task.budget_tokens=json_extract(item.value,'$.budget.token_limit') AND task.budget_cost_cents=json_extract(item.value,'$.budget.cost_cents') AND task.budget_time_seconds=json_extract(item.value,'$.budget.time_seconds')
+	)))
  THEN RAISE(ABORT,'scheduling intent lacks exact accepted typed origin and profile') END;
 END;
 
@@ -5410,6 +5528,7 @@ CREATE TRIGGER scheduling_intent_validate_update BEFORE UPDATE ON scheduling_int
   OR NEW.task_id IS NOT OLD.task_id OR NEW.agent_id IS NOT OLD.agent_id OR NEW.launch_profile_id IS NOT OLD.launch_profile_id
   OR NEW.source_proposal_id IS NOT OLD.source_proposal_id OR NEW.source_action_id IS NOT OLD.source_action_id OR NEW.source_check_repair_proposal_id IS NOT OLD.source_check_repair_proposal_id
   OR NEW.source_owner_turn_id IS NOT OLD.source_owner_turn_id OR NEW.source_owner_operation_id IS NOT OLD.source_owner_operation_id
+	OR NEW.source_domain_work_proposal_id IS NOT OLD.source_domain_work_proposal_id OR NEW.source_domain_task_key IS NOT OLD.source_domain_task_key
   OR NEW.created_at IS NOT OLD.created_at OR NEW.created_by IS NOT OLD.created_by OR NEW.last_evaluated_event_sequence<OLD.last_evaluated_event_sequence
   OR NEW.last_evaluated_event_sequence>COALESCE((SELECT MAX(event.sequence) FROM events event WHERE event.workspace_id=NEW.workspace_id),0)
   OR (NEW.last_evaluated_event_sequence>0 AND NOT EXISTS(SELECT 1 FROM events event WHERE event.workspace_id=NEW.workspace_id AND event.sequence=NEW.last_evaluated_event_sequence))

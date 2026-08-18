@@ -668,6 +668,15 @@ func resolveKnowledgeSources(ctx context.Context, queries *dbgen.Queries, worksp
 				resolved.WorkspaceID, resolved.ProjectID, resolved.Revision = row.WorkspaceID, row.ProjectID, row.Revision
 			}
 			err = queryErr
+		case domain.KnowledgeSourceDomainAgent:
+			row, queryErr := queries.GetKnowledgeSourceDomainAgent(ctx, input.ID)
+			if queryErr == nil {
+				if row.Status != domain.DomainAgentActive || row.Enabled != 1 {
+					return nil, "", knowledgeInvalid("durable-agent knowledge sources must be active")
+				}
+				resolved.WorkspaceID, resolved.ProjectID, resolved.Revision = row.WorkspaceID, row.ProjectID, row.Revision
+			}
+			err = queryErr
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", knowledgeInvalid(fmt.Sprintf("knowledge source %s %q was not found", input.Type, input.ID))
@@ -790,15 +799,20 @@ func validKnowledgeActor(actor domain.KnowledgeActor) bool {
 }
 
 func validateKnowledgeActorWorkspace(ctx context.Context, queries *dbgen.Queries, actor domain.KnowledgeActor, workspaceID string) error {
-	if actor.Type != domain.KnowledgeActorAgentRun {
+	if actor.Type != domain.KnowledgeActorAgentRun && actor.Type != domain.KnowledgeActorIntegration {
 		return nil
 	}
-	runWorkspaceID, err := queries.GetKnowledgeActorRunWorkspace(ctx, actor.ID)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && runWorkspaceID != workspaceID) {
-		return knowledgeInvalid("agent-run actor does not belong to the knowledge workspace")
+	actorWorkspaceID, err := queries.GetKnowledgeActorRunWorkspace(ctx, actor.ID)
+	label := "agent-run"
+	if actor.Type == domain.KnowledgeActorIntegration {
+		actorWorkspaceID, err = queries.GetKnowledgeActorDomainAgentWorkspace(ctx, actor.ID)
+		label = "durable-agent"
+	}
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && actorWorkspaceID != workspaceID) {
+		return knowledgeInvalid(label + " actor does not belong to the knowledge workspace")
 	}
 	if err != nil {
-		return storageFailure("validate knowledge actor run", err)
+		return storageFailure("validate knowledge actor", err)
 	}
 	return nil
 }

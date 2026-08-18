@@ -617,6 +617,22 @@ type CreateDomainAgentStaffingGrantCommand struct {
 	CorrelationID              string
 }
 
+type DelegateDomainAgentStaffingGrantCommand struct {
+	ThreadID                   string
+	ParentGrantID              string
+	SourceAllocationID         string
+	ManagerAgentIdentifier     string
+	ExpectedMembershipRevision int64
+	Profiles                   []domain.DomainAgentStaffingProfile
+	TaskClasses                []string
+	MaxDescendants             int
+	MaxConcurrency             int
+	Budget                     domain.Budget
+	ExpiresAt                  string
+	IdempotencyKey             string
+	CorrelationID              string
+}
+
 type RevokeDomainAgentStaffingGrantCommand struct {
 	WorkspaceIdentifier string
 	GrantID             string
@@ -640,6 +656,24 @@ type CreateDomainAgentChildCommand struct {
 	Budget           domain.Budget
 	IdempotencyKey   string
 	CorrelationID    string
+}
+
+type SubmitDomainWorkProposalCommand struct {
+	ThreadID        string
+	StaffingGrantID string
+	Summary         string
+	Content         domain.DomainWorkProposalContent
+	IdempotencyKey  string
+	CorrelationID   string
+}
+
+type DecideDomainWorkProposalCommand struct {
+	WorkspaceIdentifier string
+	ProposalID          string
+	ExpectedRevision    int64
+	DecisionNote        string
+	IdempotencyKey      string
+	CorrelationID       string
 }
 
 type CreateObjectiveCommand struct {

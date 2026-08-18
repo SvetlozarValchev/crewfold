@@ -1286,6 +1286,8 @@ func validPortableKnowledgeSourceID(sourceType, id string) bool {
 		return validPortableID(id, "meet_", 37)
 	case domain.KnowledgeSourceMeetingProposal:
 		return validPortableID(id, "proposal_", 41)
+	case domain.KnowledgeSourceDomainAgent:
+		return validPortableID(id, "agent_", 38)
 	default:
 		return false
 	}
@@ -1301,6 +1303,8 @@ func validPortableProposalActor(id, actorType string) bool {
 		return id == localOwnerActorID
 	case domain.KnowledgeActorAgentRun:
 		return validPortableID(id, "run_", 36)
+	case domain.KnowledgeActorIntegration:
+		return validPortableID(id, "agent_", 38)
 	case domain.KnowledgeActorSubsystem:
 		return id == "subsystem:curator"
 	default:

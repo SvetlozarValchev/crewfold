@@ -1141,11 +1141,11 @@ VALUES(?1,?2,?3,?4,'pending',0,?5,?5,?5)
 `
 
 type InsertCheckNotificationWakeParams struct {
-	ID               string `json:"id"`
-	MessageID        string `json:"message_id"`
-	RecipientAgentID string `json:"recipient_agent_id"`
-	TargetRunID      string `json:"target_run_id"`
-	CreatedAt        string `json:"created_at"`
+	ID               string  `json:"id"`
+	MessageID        string  `json:"message_id"`
+	RecipientAgentID string  `json:"recipient_agent_id"`
+	TargetRunID      *string `json:"target_run_id"`
+	CreatedAt        string  `json:"created_at"`
 }
 
 func (q *Queries) InsertCheckNotificationWake(ctx context.Context, arg InsertCheckNotificationWakeParams) error {

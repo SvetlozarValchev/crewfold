@@ -32,6 +32,9 @@ type DomainAgentStaffingGrant struct {
 	ProjectID                 string                       `json:"project_id"`
 	ManagerAgentID            string                       `json:"manager_agent_id"`
 	ManagerMembershipRevision int64                        `json:"manager_membership_revision"`
+	ParentGrantID             string                       `json:"parent_grant_id,omitempty"`
+	SourceAllocationID        string                       `json:"source_allocation_id,omitempty"`
+	DelegatedByAgentID        string                       `json:"delegated_by_agent_id,omitempty"`
 	Profiles                  []DomainAgentStaffingProfile `json:"profiles"`
 	TaskClasses               []string                     `json:"task_classes"`
 	MaxDescendants            int                          `json:"max_descendants"`
@@ -66,6 +69,7 @@ type DomainAgentChildCreation struct {
 	Membership     DomainAgentMembership         `json:"membership"`
 	Grant          DomainAgentStaffingGrant      `json:"grant"`
 	Allocation     DomainAgentStaffingAllocation `json:"allocation"`
+	LaunchProfile  *LaunchProfile                `json:"launch_profile,omitempty"`
 	EventSequences []int64                       `json:"event_sequences"`
 }
 
@@ -137,6 +141,7 @@ type DomainAgentSession struct {
 type DomainAgentSessionItem struct {
 	ID             string                            `json:"id"`
 	Type           string                            `json:"type"`
+	Origin         string                            `json:"origin,omitempty"`
 	Text           string                            `json:"text,omitempty"`
 	Command        string                            `json:"command,omitempty"`
 	Status         string                            `json:"status,omitempty"`

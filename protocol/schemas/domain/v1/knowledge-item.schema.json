@@ -13,6 +13,6 @@
     "type": {"enum": ["decision", "finding"]},
     "created_at": {"type": "string", "format": "date-time"},
     "created_by": {"type": "string", "minLength": 1, "maxLength": 128},
-    "created_by_type": {"enum": ["human", "agent_run", "subsystem"]}
+    "created_by_type": {"enum": ["human", "agent_run", "subsystem", "integration"]}
   }
 }

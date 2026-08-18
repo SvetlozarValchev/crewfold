@@ -26,37 +26,54 @@ func (s *server) handleDomainAgentSessionOpen(request localapi.Request) localapi
 	host := s.ensureDomainSessionHost()
 	host.operationMu.Lock()
 	defer host.operationMu.Unlock()
-	session, err := s.store.DomainAgentSession(ctx, params.Workspace, params.Project, params.Agent)
+	session, err := s.ensureDomainAgentSessionBound(ctx, params.Workspace, params.Project, params.Agent, params.Checkout)
 	if err != nil {
 		return storeErrorResponse(request, err)
-	}
-	if session.State == domain.DomainAgentSessionDetached {
-		return storeErrorResponse(request, &store.Error{Code: store.CodeDomainAgentSessionDetached, Message: "durable agent session belongs to another Crewfold node and must be explicitly replaced"})
-	}
-	if session.State == domain.DomainAgentSessionUnbound {
-		checkoutPath, agent, project, resolveErr := s.resolveDomainSessionStart(ctx, params.Workspace, params.Project, params.Agent, params.Checkout)
-		if resolveErr != nil {
-			return storeErrorResponse(request, resolveErr)
-		}
-		instructions := durableDomainAgentInstructions(agent, project.Name)
-		thread, startErr := host.startThread(ctx, checkoutPath, domainSessionThreadName(agent.Definition.Name), instructions)
-		if startErr != nil {
-			return domainSessionHostErrorResponse(request, "start durable Codex session", startErr)
-		}
-		session, err = s.store.BindDomainAgentSession(ctx, store.BindDomainAgentSessionCommand{
-			WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, AgentIdentifier: params.Agent,
-			Provider: "codex", ThreadID: thread.ID, CWD: thread.CWD,
-		})
-		if err != nil {
-			_ = host.deleteThread(ctx, thread.ID)
-			return storeErrorResponse(request, err)
-		}
 	}
 	view, err := s.readDomainAgentSessionView(ctx, session)
 	if err != nil {
 		return domainSessionHostErrorResponse(request, "resume durable Codex session", err)
 	}
 	return marshalDomainAgentSessionResult(request, view, nil)
+}
+
+// ensureDomainAgentSessionBound turns one durable definition into a reachable
+// provider conversation without inventing a bootstrap message. Binding has a
+// dedicated lock: a provider may create a child from inside an in-flight owner
+// turn, so reusing the ordinary conversation-operation lock would deadlock the
+// app-server request/response cycle. The store's unique membership binding is
+// the final durable duplicate guard.
+func (s *server) ensureDomainAgentSessionBound(ctx context.Context, workspace, project, agentIdentifier, checkoutIdentifier string) (domain.DomainAgentSession, error) {
+	host := s.ensureDomainSessionHost()
+	host.bindingMu.Lock()
+	defer host.bindingMu.Unlock()
+	session, err := s.store.DomainAgentSession(ctx, workspace, project, agentIdentifier)
+	if err != nil {
+		return domain.DomainAgentSession{}, err
+	}
+	if session.State == domain.DomainAgentSessionDetached {
+		return domain.DomainAgentSession{}, &store.Error{Code: store.CodeDomainAgentSessionDetached, Message: "durable agent session belongs to another Crewfold node and must be explicitly replaced"}
+	}
+	if session.State != domain.DomainAgentSessionUnbound {
+		return session, nil
+	}
+	checkoutPath, agent, selectedProject, err := s.resolveDomainSessionStart(ctx, workspace, project, agentIdentifier, checkoutIdentifier)
+	if err != nil {
+		return domain.DomainAgentSession{}, err
+	}
+	thread, err := host.startThread(ctx, checkoutPath, domainSessionThreadName(agent.Definition.Name), durableDomainAgentInstructions(agent, selectedProject.Name))
+	if err != nil {
+		return domain.DomainAgentSession{}, &store.Error{Code: store.CodeAdapterUnavailable, Message: "start durable Codex session failed: " + safeDomainSessionDiagnostic(err), Cause: err}
+	}
+	session, err = s.store.BindDomainAgentSession(ctx, store.BindDomainAgentSessionCommand{
+		WorkspaceIdentifier: workspace, ProjectIdentifier: project, AgentIdentifier: agentIdentifier,
+		Provider: "codex", ThreadID: thread.ID, CWD: thread.CWD,
+	})
+	if err != nil {
+		_ = host.deleteThread(ctx, thread.ID)
+		return domain.DomainAgentSession{}, err
+	}
+	return session, nil
 }
 
 func (s *server) handleDomainAgentSessionShow(request localapi.Request) localapi.Response {
@@ -209,7 +226,7 @@ func durableDomainAgentInstructions(agent domain.DomainAgent, projectName string
 	case domain.DomainAgentDelegationFirst:
 		policy = "Coordinate and delegate durable implementation, review, or verification responsibilities first whenever a current staffing grant permits it. Never substitute provider-local temporary helpers for those named durable responsibilities. If delegation is unavailable, explain the exact missing authority; owner conversation alone cannot authorize repository effects."
 	}
-	return fmt.Sprintf("You are the durable Crewfold agent %q in domain %q. Your descriptive role is %q; that label grants no authority. Your owner-reviewed operating charter is:\n\n%s\n\nYour reviewed delegation policy is %q. %s Continue one real resumable provider conversation in the attached checkout. First call %s to read your exact current domain scope, staffing grants, assignments, and delivered messages. Call Crewfold dynamic tools directly; never invoke them from exec, JavaScript, programmatic tool calling, or another tool wrapper. Each Crewfold result may change your next decision and its side effects require direct auditable receipts. The charter and conversation describe behavior but do not grant authority. Only exact Crewfold grants, accepted proposals, tasks, claims, budgets, capabilities, and tool receipts authorize effects.", agent.Definition.Name, projectName, agent.Definition.Role, agent.Membership.OperatingCharter, agent.Membership.DelegationPolicy, policy, domainToolContext)
+	return fmt.Sprintf("You are the durable Crewfold agent %q in domain %q. Your descriptive role is %q; that label grants no authority. Your owner-reviewed operating charter is:\n\n%s\n\nYour reviewed delegation policy is %q. %s Continue one real resumable provider conversation in the attached checkout. First call %s to read your exact current domain scope, staffing grants, assignments, and delivered messages. Use the advertised Crewfold dynamic tool itself. If the current Codex host exposes it through code mode, call its tools.crewfold__ entry from the exec cell; that remains the structured app-server client-tool path. Never invoke the crewfold CLI, raw socket, HTTP surface, or a shell substitute. Each Crewfold result may change your next decision and its side effects require exact auditable receipts. The charter and conversation describe behavior but do not grant authority. Only exact Crewfold grants, accepted proposals, tasks, claims, budgets, capabilities, and tool receipts authorize effects.", agent.Definition.Name, projectName, agent.Definition.Role, agent.Membership.OperatingCharter, agent.Membership.DelegationPolicy, policy, domainToolContext)
 }
 
 func domainSessionThreadName(agentName string) string {

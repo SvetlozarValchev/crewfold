@@ -46,11 +46,14 @@ const staffingBudgetLabel = (value: number, finiteUnit: string) => value === 0 ?
 type DomainAgentSession = { project_id: string; agent_id: string; provider?: string; state: "unbound" | "ready" | "detached"; cwd?: string; has_conversation: boolean; revision: number; created_at?: string; updated_at?: string };
 type DomainAgentSessionCommandAction = { type: "read" | "listFiles" | "search" | "unknown"; command?: string; name?: string; path?: string; query?: string };
 type DomainAgentSessionFileChange = { path: string; kind: "add" | "delete" | "update"; diff?: string };
-type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "mcpToolCall" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "webSearch" | "subAgentActivity" | "reasoning" | "error"; text?: string; command?: string; status?: string; cwd?: string; process_id?: string; exit_code?: number; duration_ms?: number; command_actions?: DomainAgentSessionCommandAction[]; changes?: DomainAgentSessionFileChange[] };
+type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "mcpToolCall" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "webSearch" | "subAgentActivity" | "reasoning" | "error"; origin?: "owner" | "crewfold_delivery"; text?: string; command?: string; status?: string; cwd?: string; process_id?: string; exit_code?: number; duration_ms?: number; command_actions?: DomainAgentSessionCommandAction[]; changes?: DomainAgentSessionFileChange[] };
 type DomainAgentSessionTurn = { id: string; status: string; items: DomainAgentSessionItem[] };
 type DomainAgentSessionResult = { schema: string; type: "domain_agent_session"; view: { session: DomainAgentSession; thread_status: string; turns: DomainAgentSessionTurn[] }; accepted_turn?: DomainAgentSessionTurn };
 type DomainStaffingProfile = { provider: string; runtime: string; max_concurrency: number };
 type DomainStaffingGrant = { id: string; project_id: string; manager_agent_id: string; manager_membership_revision: number; profiles: DomainStaffingProfile[]; task_classes: string[]; max_descendants: number; max_concurrency: number; budget: Budget; expires_at?: string; status: "active" | "revoked" | "expired"; revision: number; created_at: string; updated_at: string };
+type LaunchProfile = { id: string; project_id: string; agent_id: string; runtime: string; provider: string; checkout_id?: string; status: string; revision: number };
+type DomainWorkProposalTask = { key: string; title: string; description: string; task_class: string; priority: number; budget: Budget; launch_profile_id: string; depends_on: string[] };
+type DomainWorkProposal = { id: string; workspace_id: string; project_id: string; source_agent_id: string; source_thread_id: string; staffing_grant_id: string; staffing_grant_revision: number; summary: string; as_of_event_sequence: number; content: { objective_title: string; objective_budget: Budget; tasks: DomainWorkProposalTask[] }; content_sha256: string; status: "pending" | "accepted" | "rejected" | "stale"; decision_note?: string; revision: number; created_at: string; updated_at: string; decided_at?: string };
 type KnowledgeRevision = { id: string; item_id: string; project_id: string; task_scope_id?: string; type: "decision" | "finding"; revision_number: number; state_revision: number; title: string; body: string; review_status: "proposed" | "accepted" | "rejected"; currency_status: "pending" | "current" | "stale" | "superseded"; confidence: string; verification_status: string; proposed_at: string; proposed_by: string; proposed_by_type: string; accepted_at?: string; sources: Array<{ type: string; id: string; revision: number; role: string; ordinal: number }> };
 type MessageThread = { id: string; workspace_id: string; project_id?: string; task_id?: string; subject: string; status: "open" | "closed"; revision: number; created_at: string; updated_at: string; created_by: string; updated_by: string };
 type ThreadSummary = { thread: MessageThread; message_count: number; agent_ids: string[] };
@@ -80,6 +83,8 @@ type WorkbenchData = {
   checks: CheckRunItem[];
   knowledge: KnowledgeRevision[];
   threads: ThreadSummary[];
+  launchProfiles: LaunchProfile[];
+  workProposals: DomainWorkProposal[];
   highWater: number;
 };
 
@@ -106,7 +111,7 @@ type SessionResponse = {
 
 const expectedStatusSchema = "urn:crewfold:schema:web:workbench-status:v1";
 const expectedSessionSchema = "urn:crewfold:schema:web:workbench-session:v1";
-const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], domainAgents: [], objectives: [], tasks: [], runs: [], checks: [], knowledge: [], threads: [], highWater: 0 };
+const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], domainAgents: [], objectives: [], tasks: [], runs: [], checks: [], knowledge: [], threads: [], launchProfiles: [], workProposals: [], highWater: 0 };
 
 class RPCFailure extends Error {
   readonly apiError: APIError;
@@ -315,13 +320,15 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
     rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: eventAfter, limit: 200 }),
   ]);
   const project = projectPage.projects.find((item) => item.id === preferredProject) ?? projectPage.projects[0] ?? null;
-  const [checkouts, checks, domainAgents, knowledge, threads] = project ? await Promise.all([
+  const [checkouts, checks, domainAgents, knowledge, threads, launchProfiles, workProposals] = project ? await Promise.all([
     rpc<{ checkouts: Checkout[] }>(apiBase, csrf, "checkout.list", { workspace: workspace.id, project: project.id }).then((value) => value.checkouts),
     rpc<{ runs: CheckRunItem[] } & Page>(apiBase, csrf, "check.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.runs),
     rpc<{ project_id: string; agents: DomainAgent[] }>(apiBase, csrf, "domain.agent.tree", { workspace: workspace.id, project: project.id }).then((value) => value.agents),
     rpc<{ list: { revisions: KnowledgeRevision[] } }>(apiBase, csrf, "knowledge.list", { workspace: workspace.id, project: project.id }).then((value) => value.list.revisions),
     rpc<{ threads: ThreadSummary[] }>(apiBase, csrf, "thread.list", { workspace: workspace.id, project: project.id, limit: 50 }).then((value) => value.threads),
-  ]) : [[], [], [], [], []];
+    rpc<{ profiles: LaunchProfile[] }>(apiBase, csrf, "launch_profile.list", { workspace: workspace.id, project: project.id, limit: 100 }).then((value) => value.profiles),
+    rpc<{ proposals: DomainWorkProposal[] }>(apiBase, csrf, "domain.work_proposal.list", { workspace: workspace.id, project: project.id }).then((value) => value.proposals),
+  ]) : [[], [], [], [], [], [], []];
   const after = await rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: before.high_water, limit: 1 });
   if (after.high_water !== before.high_water) {
     if (attempt >= 2) throw new Error("Canonical state kept changing during refresh; retry when the current event cut settles.");
@@ -330,7 +337,7 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
   return {
     workspaces: workspacePage.workspaces, workspace, projects: projectPage.projects, project, checkouts,
     agents: agentPage.agents, domainAgents, objectives: objectivePage.objectives, tasks: taskPage.tasks,
-    runs: runPage.runs, checks, knowledge, threads,
+    runs: runPage.runs, checks, knowledge, threads, launchProfiles, workProposals,
     highWater: eventPage.high_water,
   };
 }
@@ -430,7 +437,7 @@ function Onboarding({ apiBase, csrf, status, onComplete }: { apiBase: string; cs
       {error && <div className="form-error" role="alert"><AlertCircle size={17} />{error}</div>}
       <button className="primary-button" disabled={busy || draftBusy || !operatingCharter.trim()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Command size={17} />} {busy ? "Inspecting and recording…" : "Create domain"}</button>
       <div className="role-preview"><div><Boxes size={16} /><span><strong>{project || "Domain"}</strong>Shared knowledge and coordination boundary.</span></div><ChevronRight size={15} /><div><Bot size={16} /><span><strong>{agent || "Durable agent"}</strong>{role || "Owner-defined role"} through {runtime === "herdr" ? "Herdr" : "Direct"}.</span></div></div>
-      <p className="form-note">One replay-safe submission records the workspace, domain, checkout, first agent definition, launch profile, and hierarchy membership.</p>
+      <p className="form-note">One replay-safe submission records the workspace, domain, checkout, first agent definition, launch profile, hierarchy membership, and a visible starter staffing grant for up to 12 durable descendants across coordination, implementation, integration, knowledge, review, and verification. Its cumulative token, time, and cost dimensions start unlimited; you can narrow or revoke it from Staffing.</p>
     </form>
   </main>;
 }
@@ -621,6 +628,69 @@ function CheckoutAttach({ data, apiBase, csrf, mutable, reload }: { data: Workbe
   </div>;
 }
 
+function DomainWorkProposalReview({ data, proposal, apiBase, csrf, mutable, reload }: { data: WorkbenchData; proposal: DomainWorkProposal; apiBase: string; csrf: string; mutable: boolean; reload: () => Promise<void> }) {
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState<"accept" | "reject" | "">("");
+  const [error, setError] = useState("");
+  const source = data.agents.find((agent) => agent.id === proposal.source_agent_id);
+  const taskByKey = new Map(proposal.content.tasks.map((task) => [task.key, task]));
+  const decide = async (accept: boolean) => {
+    if (!data.workspace || proposal.status !== "pending") return;
+    setBusy(accept ? "accept" : "reject"); setError("");
+    try {
+      await rpc(apiBase, csrf, accept ? "domain.work_proposal.accept" : "domain.work_proposal.reject", {
+        workspace: data.workspace.id, proposal_id: proposal.id, expected_revision: proposal.revision,
+        decision_note: note.trim() || (accept ? "Owner reviewed and accepted the exact proposed work graph." : "Owner rejected the proposed work graph."),
+        idempotency_key: newKey(accept ? "domain-work-accept" : "domain-work-reject"),
+      });
+      await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "The proposal decision failed without a diagnosis."); }
+    finally { setBusy(""); }
+  };
+  return <article className={`m22-work-proposal ${proposal.status}`}>
+    <header><div><p className="m22-kicker">coordinator proposal · frozen at event {proposal.as_of_event_sequence}</p><h3>{proposal.content.objective_title}</h3><p>{proposal.summary}</p></div><StatusPill value={proposal.status} /></header>
+    <dl className="m22-proposal-facts"><div><dt>proposed by</dt><dd>{source?.name ?? proposal.source_agent_id}</dd></div><div><dt>owner effect</dt><dd>1 workstream · {proposal.content.tasks.length} tasks · {proposal.content.tasks.reduce((count, task) => count + task.depends_on.length, 0)} dependencies · {proposal.content.tasks.length} scheduling intents</dd></div><div><dt>objective budget</dt><dd>{staffingBudgetLabel(proposal.content.objective_budget.token_limit, "tokens")} · {staffingBudgetLabel(proposal.content.objective_budget.time_seconds, "seconds")}</dd></div></dl>
+    <ol className="m22-proposal-tasks">{proposal.content.tasks.map((task) => {
+      const profile = data.launchProfiles.find((candidate) => candidate.id === task.launch_profile_id);
+      const assignee = data.agents.find((candidate) => candidate.id === profile?.agent_id);
+      return <li key={task.key}><div><strong>{task.title}</strong><small>{task.task_class.replaceAll("-", " ")} · priority {task.priority} · assigned to {assignee?.name ?? "unknown profile"}</small><p>{task.description}</p>{task.depends_on.length > 0 && <span>after {task.depends_on.map((key) => taskByKey.get(key)?.title ?? key).join(", ")}</span>}</div><code>{task.key}</code></li>;
+    })}</ol>
+    <div className="m22-exact-effect"><ShieldCheck size={15} /><span><strong>Exact effect</strong> Accepting atomically creates only the workstream, tasks, dependencies, and scheduling intents shown above. Eligible tasks may then launch under the existing supervisor policy; no repository file is changed by this decision itself.</span></div>
+    {proposal.status === "pending" ? <><label className="m22-proposal-note"><span>owner decision note</span><input value={note} maxLength={2048} onChange={(event) => setNote(event.target.value)} placeholder="Optional rationale recorded with the exact decision" /></label><div className="m22-proposal-actions"><button disabled={!mutable || Boolean(busy)} onClick={() => void decide(false)}>{busy === "reject" ? <LoaderCircle className="spin" size={14} /> : <X size={14} />} reject</button><button className="m22-send" disabled={!mutable || Boolean(busy)} onClick={() => void decide(true)}>{busy === "accept" ? <LoaderCircle className="spin" size={14} /> : <Play size={14} />} accept exact graph</button></div></> : <footer>decided {displayTime(proposal.decided_at)} · {proposal.decision_note || "No decision note recorded."}</footer>}
+    {error && <p className="m22-session-error" role="alert">{error}</p>}
+  </article>;
+}
+
+function KnowledgeProposalReview({ data, revision, apiBase, csrf, mutable, reload }: { data: WorkbenchData; revision: KnowledgeRevision; apiBase: string; csrf: string; mutable: boolean; reload: () => Promise<void> }) {
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState<"accept" | "reject" | "">("");
+  const [error, setError] = useState("");
+  const primary = revision.sources.find((source) => source.role === "primary");
+  const sourceAgent = primary?.type === "domain_agent" ? data.agents.find((agent) => agent.id === primary.id) : null;
+  const decide = async (accept: boolean) => {
+    if (!data.workspace || revision.review_status !== "proposed") return;
+    setBusy(accept ? "accept" : "reject"); setError("");
+    try {
+      await rpc(apiBase, csrf, accept ? "knowledge.accept" : "knowledge.reject", {
+        workspace: data.workspace.id, knowledge_revision: revision.id, expected_state_revision: revision.state_revision,
+        decision_note: note.trim() || (accept ? "Owner reviewed and accepted this exact sourced domain knowledge revision." : "Owner rejected this domain knowledge proposal."),
+        idempotency_key: newKey(accept ? "knowledge-accept" : "knowledge-reject"),
+      });
+      await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "The knowledge decision failed without a diagnosis."); }
+    finally { setBusy(""); }
+  };
+  return <article className="m22-knowledge-review">
+    <header><div><p className="m22-kicker">knowledge proposal · no current authority yet</p><h3>{revision.title}</h3></div><StatusPill value="proposed" /></header>
+    <p className="m22-knowledge-body">{revision.body}</p>
+    <dl className="m22-proposal-facts"><div><dt>proposed by</dt><dd>{sourceAgent?.name ?? revision.proposed_by}</dd></div><div><dt>quality claim</dt><dd>{revision.confidence} confidence · {revision.verification_status}</dd></div><div><dt>provenance</dt><dd>{primary ? `${primary.type.replaceAll("_", " ")} ${sourceAgent?.name ?? primary.id} at revision ${primary.revision}` : "missing primary source"} · {revision.sources.length - (primary ? 1 : 0)} supporting</dd></div></dl>
+    <div className="m22-exact-effect"><ShieldCheck size={15} /><span><strong>Exact effect</strong> Accepting makes only this immutable sourced revision current domain knowledge. It does not edit a checkout, start an agent, or authorize implementation.</span></div>
+    <label className="m22-proposal-note"><span>owner decision note</span><input value={note} maxLength={1024} onChange={(event) => setNote(event.target.value)} placeholder="Optional acceptance rationale; rejection records the default reason" /></label>
+    <div className="m22-proposal-actions"><button disabled={!mutable || Boolean(busy)} onClick={() => void decide(false)}>{busy === "reject" ? <LoaderCircle className="spin" size={14} /> : <X size={14} />} reject</button><button className="m22-send" disabled={!mutable || Boolean(busy)} onClick={() => void decide(true)}>{busy === "accept" ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />} accept as current knowledge</button></div>
+    {error && <p className="m22-session-error" role="alert">{error}</p>}
+  </article>;
+}
+
 function DomainHome({ data, chooseAgent, reviewWorkstream, inspectRun, notice = "", apiBase, csrf, mutable, reload }: { data: WorkbenchData; chooseAgent: (agent: DomainAgent) => void; reviewWorkstream: (objective: Objective) => void; inspectRun: (run: Run) => void; notice?: string; apiBase: string; csrf: string; mutable: boolean; reload: () => Promise<void> }) {
   const projectObjectives = data.objectives.filter((objective) => objective.project_id === data.project?.id);
   const activeObjectives = projectObjectives.filter((objective) => objective.status === "active");
@@ -633,6 +703,8 @@ function DomainHome({ data, chooseAgent, reviewWorkstream, inspectRun, notice = 
   const activeRuns = projectRuns.filter((run) => ["requested", "starting", "active", "blocked", "stopping", "lost"].includes(run.status));
   const currentKnowledge = data.knowledge.filter((revision) => revision.review_status === "accepted" && revision.currency_status === "current");
   const proposedKnowledge = data.knowledge.filter((revision) => revision.review_status === "proposed");
+  const pendingWork = data.workProposals.filter((proposal) => proposal.status === "pending");
+  const decidedWork = data.workProposals.filter((proposal) => proposal.status !== "pending");
   const objectiveTitleCounts = activeObjectives.reduce((counts, objective) => {
     const key = objective.title.trim().toLocaleLowerCase();
     counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -645,6 +717,7 @@ function DomainHome({ data, chooseAgent, reviewWorkstream, inspectRun, notice = 
       <p>{activeObjectives.length ? `${activeObjectives.length} active workstream${activeObjectives.length === 1 ? "" : "s"}, ${activeAgents.length} durable agent${activeAgents.length === 1 ? "" : "s"}, and ${data.checkouts.length} attached checkout${data.checkouts.length === 1 ? "" : "s"}.` : "A durable coordination and knowledge boundary. No active workstream is recorded yet."}</p>
     </header>
     {notice && <div className="m22-success"><ShieldCheck size={14} />{notice}</div>}
+    {pendingWork.length > 0 && <section className="m22-block m22-work-proposals"><header><div><h2>needs your review</h2><p>{pendingWork.length} typed coordinator proposal{pendingWork.length === 1 ? "" : "s"}. Conversation alone has changed nothing.</p></div><span>{pendingWork.length}</span></header>{pendingWork.map((proposal) => <DomainWorkProposalReview key={proposal.id} data={data} proposal={proposal} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />)}</section>}
     {attention.length > 0 && <section className="m22-block"><h2>needs attention</h2>{attention.map((detail) => <button key={detail.task.id} className="m22-line"><span><strong>{detail.task.title}</strong><small>{detail.task.blocked_reason || detail.task.status.replaceAll("_", " ")}</small></span><StatusPill value={detail.task.status} /></button>)}</section>}
     <div className="m22-columns">
       <section className="m22-block"><h2>active workstreams</h2>{activeObjectives.length ? activeObjectives.map((objective) => <button className="m22-line" key={objective.id} onClick={() => reviewWorkstream(objective)}><span><strong>{objective.title}</strong><small>{projectTasks.filter((detail) => detail.task.objective_id === objective.id && !["completed", "failed", "cancelled"].includes(detail.task.status)).length} open tasks{(objectiveTitleCounts.get(objective.title.trim().toLocaleLowerCase()) ?? 0) > 1 ? ` · duplicate title · revision ${objective.revision}` : ""} · open lifecycle</small></span><StatusPill value={objective.status} /></button>) : <p className="m22-empty">No active workstreams.</p>}</section>
@@ -655,11 +728,12 @@ function DomainHome({ data, chooseAgent, reviewWorkstream, inspectRun, notice = 
       <section className="m22-block"><h2>current runs</h2>{activeRuns.length ? activeRuns.map((run) => <button className="m22-line" key={run.id} onClick={() => inspectRun(run)}><span><strong>{projectTasks.find((detail) => detail.task.id === run.task_id)?.task.title ?? run.id}</strong><small>{data.agents.find((agent) => agent.id === run.agent_id)?.name ?? run.agent_id}</small></span><StatusPill value={run.status} /></button>) : <p className="m22-empty">No live or unresolved run.</p>}</section>
     </div>
     <section className="m22-block"><h2>shared domain knowledge</h2>
+      {proposedKnowledge.length > 0 && <div className="m22-knowledge-proposals"><p><strong>{proposedKnowledge.length} sourced proposal{proposedKnowledge.length === 1 ? "" : "s"} need owner review.</strong> Agent conversation and coordination threads do not become knowledge by themselves.</p>{proposedKnowledge.map((revision) => <KnowledgeProposalReview key={revision.id} data={data} revision={revision} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />)}</div>}
       {currentKnowledge.length ? currentKnowledge.map((revision) => <details className="m22-knowledge" key={revision.id}><summary><span><strong>{revision.title}</strong><small>{revision.type} · {revision.verification_status} · revision {revision.revision_number} · accepted {displayTime(revision.accepted_at)}</small></span><StatusPill value="current" /></summary><p>{revision.body}</p><footer>proposed by {revision.proposed_by_type} {revision.proposed_by} · {revision.sources.length} exact source{revision.sources.length === 1 ? "" : "s"}</footer></details>) : <p className="m22-empty">No accepted current knowledge is recorded for this domain.</p>}
-      {proposedKnowledge.length > 0 && <div className="m22-knowledge-pending"><strong>{proposedKnowledge.length} knowledge proposal{proposedKnowledge.length === 1 ? "" : "s"} await owner governance.</strong>{proposedKnowledge.map((revision) => <span key={revision.id}>{revision.title} · {revision.verification_status} · proposed {displayTime(revision.proposed_at)}</span>)}</div>}
       {!currentKnowledge.length && !proposedKnowledge.length && <p className="m22-caveat">Durable messages and participant threads are coordination records, not canonical knowledge. A conversation must not claim it updated shared memory unless a sourced knowledge revision was actually proposed and accepted.</p>}
     </section>
     <CoordinationThreads data={data} apiBase={apiBase} csrf={csrf} />
+    {decidedWork.length > 0 && <details className="m22-history"><summary><ClipboardCheck size={14} /> coordinator proposal history <span>{decidedWork.length}</span></summary><div className="m22-proposal-history">{decidedWork.map((proposal) => <DomainWorkProposalReview key={proposal.id} data={data} proposal={proposal} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />)}</div></details>}
     {(retiredAgents.length > 0 || closedObjectives.length > 0) && <details className="m22-history"><summary><Archive size={14} /> retired and closed history <span>{retiredAgents.length + closedObjectives.length}</span></summary><div>{retiredAgents.map((agent) => <div className="m22-line static" key={agent.definition.id}><span><strong>{agent.definition.name}</strong><small>retired agent · {agent.definition.role} · updated {displayTime(agent.membership.updated_at)}</small></span><StatusPill value="retired" /></div>)}{closedObjectives.map((objective) => <div className="m22-line static" key={objective.id}><span><strong>{objective.title}</strong><small>closed workstream · revision {objective.revision} · updated {displayTime(objective.updated_at)}</small></span><StatusPill value={objective.status} /></div>)}</div></details>}
   </section>;
 }
@@ -811,7 +885,7 @@ function DomainWorkstreamLifecyclePanel({ data, objective, apiBase, csrf, mutabl
 }
 
 function sessionItemLabel(item: DomainAgentSessionItem, agentName: string) {
-  if (item.type === "userMessage") return "you";
+  if (item.type === "userMessage") return item.origin === "crewfold_delivery" ? "crewfold delivery" : "you";
   if (item.type === "agentMessage") return agentName;
   if (item.type === "commandExecution") return "command";
   if (item.type === "dynamicToolCall") return item.command?.startsWith("crewfold_") ? "crewfold tool" : "provider tool";
@@ -829,6 +903,9 @@ function sessionItemCommand(item: DomainAgentSessionItem) {
     crewfold_get_domain_context: "read domain context",
     crewfold_send_message: "send durable message",
     crewfold_create_durable_child: "create durable child",
+    crewfold_delegate_staffing_grant: "delegate staffing grant",
+    crewfold_propose_work: "submit work proposal",
+    crewfold_propose_knowledge: "submit knowledge proposal",
   } as Record<string, string>)[item.command ?? ""] ?? item.command;
 }
 
@@ -913,7 +990,7 @@ function SessionThreadItem({ item, agentName }: { item: DomainAgentSessionItem; 
       {changes.map((change) => { const changeStats = diffStats(change); return <details className="m22-file-change" key={`${change.kind}-${change.path}`}><summary><span>{change.path}</span><small><em>+{changeStats.added}</em> <del>-{changeStats.removed}</del></small></summary>{change.diff ? <DiffLines change={change} /> : <p>Patch content has not arrived yet.</p>}</details>; })}
     </article>;
   }
-  return <article className={`m22-thread-item ${item.type}`}>
+  return <article className={`m22-thread-item ${item.type} ${item.status === "failed" ? "failed" : ""}`}>
     <span>{sessionItemLabel(item, agentName)}</span>
     {command && <code>{command}</code>}
     {item.text && <p>{item.text}</p>}

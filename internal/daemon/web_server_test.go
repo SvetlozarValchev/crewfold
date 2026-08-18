@@ -312,12 +312,13 @@ func TestM22WorkbenchOnboardingCreatesOneArbitraryPreferredDomainAgent(t *testin
 		t.Fatalf("onboarding response schema = %v: %s", err, onboardingRaw)
 	}
 	var onboarding struct {
-		Workspace  domain.Workspace             `json:"workspace"`
-		Project    domain.Project               `json:"project"`
-		Agent      domain.AgentDefinition       `json:"agent"`
-		Membership domain.DomainAgentMembership `json:"domain_membership"`
-		Executive  domain.AgentDefinition       `json:"executive"`
-		Binding    domain.OwnerExecutiveBinding `json:"executive_binding"`
+		Workspace  domain.Workspace                `json:"workspace"`
+		Project    domain.Project                  `json:"project"`
+		Agent      domain.AgentDefinition          `json:"agent"`
+		Membership domain.DomainAgentMembership    `json:"domain_membership"`
+		Staffing   domain.DomainAgentStaffingGrant `json:"staffing_grant"`
+		Executive  domain.AgentDefinition          `json:"executive"`
+		Binding    domain.OwnerExecutiveBinding    `json:"executive_binding"`
 	}
 	if err := json.Unmarshal(onboardingRaw, &onboarding); err != nil {
 		t.Fatal(err)
@@ -325,6 +326,12 @@ func TestM22WorkbenchOnboardingCreatesOneArbitraryPreferredDomainAgent(t *testin
 	if onboarding.Agent.Name != "builder" || onboarding.Agent.Role != "arbitrary coordinator" || onboarding.Membership.AgentID != onboarding.Agent.ID ||
 		onboarding.Membership.ProjectID != onboarding.Project.ID || !onboarding.Membership.PreferredEntry {
 		t.Fatalf("onboarding agent = %#v, membership = %#v", onboarding.Agent, onboarding.Membership)
+	}
+	if onboarding.Staffing.ManagerAgentID != onboarding.Agent.ID || onboarding.Staffing.Status != domain.DomainStaffingGrantActive ||
+		onboarding.Staffing.MaxDescendants != 12 || onboarding.Staffing.MaxConcurrency != 4 ||
+		len(onboarding.Staffing.Profiles) != 1 || onboarding.Staffing.Profiles[0].Provider != onboarding.Agent.Provider ||
+		strings.Join(onboarding.Staffing.TaskClasses, ",") != "coordination,implementation,integration,knowledge,review,verification" {
+		t.Fatalf("onboarding staffing grant = %#v", onboarding.Staffing)
 	}
 	tree, err := api.DomainAgentTree(context.Background(), onboarding.Workspace.ID, onboarding.Project.ID)
 	if err != nil || len(tree.Agents) != 1 || tree.Agents[0].Definition.ID != onboarding.Agent.ID {

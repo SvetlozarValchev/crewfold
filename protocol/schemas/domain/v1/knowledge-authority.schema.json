@@ -19,7 +19,7 @@
       "required": ["id", "type"],
       "properties": {
         "id": {"type": "string", "minLength": 1, "maxLength": 128},
-        "type": {"enum": ["human", "agent_run", "subsystem"]}
+        "type": {"enum": ["human", "agent_run", "subsystem", "integration"]}
       }
     },
     "outcome": {"enum": ["allowed", "denied"]},

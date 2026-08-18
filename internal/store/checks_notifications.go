@@ -136,7 +136,7 @@ func (s *Store) materializeCheckNotificationsForTriggers(ctx context.Context, tx
 			}
 			if targetRunID, err := queries.GetCheckNotificationWakeTarget(ctx, dbgen.GetCheckNotificationWakeTargetParams{WorkspaceID: work.Run.WorkspaceID, AgentID: plan.receipt.RecipientAgentID, ProjectID: work.Run.ProjectID}); err == nil {
 				wakeID, _ := randomID("wake_")
-				if err := queries.InsertCheckNotificationWake(ctx, dbgen.InsertCheckNotificationWakeParams{ID: wakeID, MessageID: plan.receipt.MessageID, RecipientAgentID: plan.receipt.RecipientAgentID, TargetRunID: targetRunID, CreatedAt: now}); err != nil {
+				if err := queries.InsertCheckNotificationWake(ctx, dbgen.InsertCheckNotificationWakeParams{ID: wakeID, MessageID: plan.receipt.MessageID, RecipientAgentID: plan.receipt.RecipientAgentID, TargetRunID: &targetRunID, CreatedAt: now}); err != nil {
 					return err
 				}
 			} else if !errors.Is(err, sql.ErrNoRows) {

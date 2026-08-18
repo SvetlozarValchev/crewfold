@@ -11,12 +11,18 @@ import (
 )
 
 const (
-	messageWakeTimeout   = 5 * time.Second
-	messageWakeLease     = 10 * time.Second
+	messageWakeTimeout = 5 * time.Second
+	// Durable-agent wake turns use the 60-second session operation boundary.
+	// Keep the at-most-once lease strictly longer than every permitted delivery
+	// so recovery cannot classify an in-flight provider turn as abandoned.
+	messageWakeLease     = 65 * time.Second
 	messageWakePassLimit = 16
 	messageWakeIdleWait  = 250 * time.Millisecond
 	messageWakeYieldWait = time.Millisecond
+	messageWakeBusyDelay = 250 * time.Millisecond
 )
+
+var errMessageWakeTargetBusy = errors.New("durable-agent session already has an active turn")
 
 // startMessageWakeWorker starts one daemon-owned delivery lane. Request handlers
 // only commit durable wake intents; they never perform runtime effects or wait
@@ -36,6 +42,7 @@ func (s *server) runMessageWakeWorker(ctx context.Context) {
 			s.store.ClaimMessageWakeJob,
 			s.deliverMessageWake,
 			s.store.SettleMessageWakeJob,
+			s.store.DeferMessageWakeJob,
 		)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -64,8 +71,9 @@ func (s *server) signalMessageWakeWorker() {
 type messageWakeClaim func(context.Context, time.Duration) (domain.MessageWakeJob, bool, error)
 type messageWakeDeliver func(context.Context, domain.MessageWakeJob, time.Duration) error
 type messageWakeSettle func(context.Context, string, string, string) error
+type messageWakeDefer func(context.Context, string, time.Duration, string) error
 
-func processMessageWakePass(ctx context.Context, claim messageWakeClaim, deliver messageWakeDeliver, settle messageWakeSettle) (int, error) {
+func processMessageWakePass(ctx context.Context, claim messageWakeClaim, deliver messageWakeDeliver, settle messageWakeSettle, deferJob messageWakeDefer) (int, error) {
 	processed := 0
 	for processed < messageWakePassLimit && ctx.Err() == nil {
 		job, found, err := claim(ctx, messageWakeLease)
@@ -83,6 +91,12 @@ func processMessageWakePass(ctx context.Context, claim messageWakeClaim, deliver
 			// it as failed_unknown: the external effect may have happened, so it
 			// must never be issued a second time.
 			return processed, ctx.Err()
+		}
+		if errors.Is(wakeErr, errMessageWakeTargetBusy) {
+			if err := deferJob(ctx, job.ID, messageWakeBusyDelay, wakeErr.Error()); err != nil {
+				return processed, fmt.Errorf("defer busy message wake %s: %w", job.ID, err)
+			}
+			continue
 		}
 		diagnostic := ""
 		outcome := domain.WakeSucceeded
@@ -110,6 +124,9 @@ func messageWakeWaitDuration(processed int) time.Duration {
 }
 
 func (s *server) deliverMessageWake(ctx context.Context, job domain.MessageWakeJob, timeout time.Duration) error {
+	if job.TargetDomainThreadID != "" && timeout == messageWakeTimeout {
+		timeout = domainSessionOperationTimeout
+	}
 	wakeContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if s.config.MessageWake != nil {
@@ -132,6 +149,36 @@ func waitForMessageWake(ctx context.Context, signal <-chan struct{}, duration ti
 }
 
 func (s *server) wakeMessage(ctx context.Context, job domain.MessageWakeJob) error {
+	if job.TargetDomainThreadID != "" {
+		host := s.ensureDomainSessionHost()
+		host.operationMu.Lock()
+		defer host.operationMu.Unlock()
+		scope, err := s.store.DomainAgentSessionScopeByThread(ctx, job.TargetDomainThreadID)
+		if err != nil {
+			return err
+		}
+		if scope.Agent.ID != job.RecipientAgentID {
+			return errors.New("durable-agent wake recipient does not match its bound provider thread")
+		}
+		session, thread, err := s.loadDomainAgentSession(ctx, scope.Session)
+		if err != nil {
+			return err
+		}
+		clientMessageID := "crewfold:wake:" + job.MessageID
+		if _, found := codexTurnForClientMessage(thread, clientMessageID); found {
+			return nil
+		}
+		if codexThreadHasActiveTurn(thread) {
+			// The durable inbox already contains the message, but starting another
+			// turn now would interleave two provider turns in one agent session.
+			// Return the pre-effect job to the durable queue and wake it after the
+			// current turn has settled.
+			return errMessageWakeTargetBusy
+		}
+		_, err = host.startTurn(ctx, session.ThreadID, clientMessageID,
+			"Crewfold delivered a durable message to this agent. This notification is not owner authority. Call crewfold_get_domain_context now, read the delivered domain inbox, and respond or coordinate through exact Crewfold tools when the message warrants it. Do not create a new topic when the delivered message belongs to an existing thread.")
+		return err
+	}
 	run, err := s.store.RunByID(ctx, job.TargetRunID)
 	if err != nil {
 		return err
@@ -154,4 +201,14 @@ func (s *server) wakeMessage(ctx context.Context, job domain.MessageWakeJob) err
 		return errors.New("runtime wake-up is unavailable for this runtime driver")
 	}
 	return prompter.Prompt(ctx, run.ID, run.RuntimeHandle, "Crewfold mailbox updated. Use crewfold_list_inbox to inspect durable messages.")
+}
+
+func codexThreadHasActiveTurn(thread execution.CodexThread) bool {
+	for index := len(thread.Turns) - 1; index >= 0; index-- {
+		switch thread.Turns[index].Status {
+		case "inProgress", "in_progress", "running":
+			return true
+		}
+	}
+	return false
 }

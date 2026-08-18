@@ -102,6 +102,7 @@ func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *test
 		t.Fatal(err)
 	}
 	fixture.setGrantID(grant.Grant.ID)
+	fixture.setCheckoutID(project.Checkout.ID)
 
 	unbound, err := client.DomainAgentSessionShow(ctx, workspace.Workspace.Name, project.Project.Name, agent.Agent.Name)
 	if err != nil {
@@ -163,7 +164,11 @@ func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *test
 		}
 	}
 	if !fixture.sawArbitraryAgentInstructions() {
-		t.Fatal("thread/start did not bind the arbitrary orchid agent and its authority-neutral role")
+		fixture.mu.Lock()
+		params := fixture.startedParams
+		toolChecks := fixture.toolChecks
+		fixture.mu.Unlock()
+		t.Fatalf("thread/start did not bind the arbitrary orchid agent and its authority-neutral role: params=%#v tool_checks=%d", params, toolChecks)
 	}
 	inbox, err := client.InboxList(ctx, workspace.Workspace.Name, recipient.Agent.Name, 20)
 	if err != nil {
@@ -430,6 +435,7 @@ type codexDomainSessionFixture struct {
 	turnExists        bool
 	toolChecks        int
 	grantID           string
+	checkoutID        string
 	resumeCount       int
 	unloadedReadCount int
 }
@@ -572,10 +578,17 @@ func (fixture *codexDomainSessionFixture) setGrantID(value string) {
 	fixture.grantID = value
 }
 
+func (fixture *codexDomainSessionFixture) setCheckoutID(value string) {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	fixture.checkoutID = value
+}
+
 func (fixture *codexDomainSessionFixture) requireDomainChildToolResponse(scanner *bufio.Scanner, encoder *json.Encoder, id int64) {
 	fixture.t.Helper()
 	fixture.mu.Lock()
 	grantID := fixture.grantID
+	checkoutID := fixture.checkoutID
 	fixture.mu.Unlock()
 	if err := encoder.Encode(map[string]any{
 		"id": id, "method": "item/tool/call", "params": map[string]any{
@@ -584,6 +597,7 @@ func (fixture *codexDomainSessionFixture) requireDomainChildToolResponse(scanner
 				"provider": "codex-subscription", "runtime": "herdr", "max_concurrency": 1,
 				"operating_charter": daemonTestDomainCharter, "delegation_policy": domain.DomainAgentHandsOn,
 				"task_class": "reviewer", "budget": map[string]any{"token_limit": 50, "cost_cents": 50, "time_seconds": 120},
+				"checkout": checkoutID,
 			},
 			"callId": "call-child-one", "threadId": "thread-private-019",
 			"tool": domainToolCreateChild, "turnId": "turn-new",
@@ -595,6 +609,41 @@ func (fixture *codexDomainSessionFixture) requireDomainChildToolResponse(scanner
 	if !scanner.Scan() {
 		fixture.t.Errorf("read app-server child tool response: %v", scanner.Err())
 		return
+	}
+	var possibleRequest map[string]any
+	if err := json.Unmarshal(scanner.Bytes(), &possibleRequest); err == nil && possibleRequest["method"] == "thread/start" {
+		params, _ := possibleRequest["params"].(map[string]any)
+		if !strings.Contains(fmt.Sprint(params["developerInstructions"]), `"moss-reviewer"`) {
+			fixture.t.Errorf("durable child thread/start params = %#v", params)
+			return
+		}
+		if err := encoder.Encode(map[string]any{"id": possibleRequest["id"], "result": map[string]any{"thread": map[string]any{
+			"id": "thread-private-child", "cwd": "/work", "ephemeral": false, "modelProvider": "openai",
+			"status": map[string]any{"type": "idle"}, "turns": []any{},
+		}}}); err != nil {
+			return
+		}
+		if !scanner.Scan() {
+			fixture.t.Errorf("read durable child thread name request: %v", scanner.Err())
+			return
+		}
+		var nameRequest map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &nameRequest); err != nil || nameRequest["method"] != "thread/name/set" {
+			fixture.t.Errorf("durable child thread name request = %#v, error = %v", nameRequest, err)
+			return
+		}
+		nameParams, _ := nameRequest["params"].(map[string]any)
+		if nameParams["threadId"] != "thread-private-child" || nameParams["name"] != "Crewfold: moss-reviewer" {
+			fixture.t.Errorf("durable child thread/name/set params = %#v", nameParams)
+			return
+		}
+		if err := encoder.Encode(map[string]any{"id": nameRequest["id"], "result": map[string]any{}}); err != nil {
+			return
+		}
+		if !scanner.Scan() {
+			fixture.t.Errorf("read app-server child tool response after activation: %v", scanner.Err())
+			return
+		}
 	}
 	var response struct {
 		ID     int64 `json:"id"`
@@ -741,14 +790,14 @@ func (fixture *codexDomainSessionFixture) requireDomainToolResponse(scanner *buf
 			CoordinationThreads []domain.ThreadSummary            `json:"coordination_threads"`
 			KnowledgeAuthoring  struct {
 				Available bool   `json:"available"`
-				Reason    string `json:"reason"`
+				Operation string `json:"operation"`
 			} `json:"knowledge_authoring"`
 		}
 		if err := json.Unmarshal([]byte(response.Result.ContentItems[0].Text), &contextResult); err != nil {
 			fixture.t.Errorf("decode exact durable-agent context: %v", err)
 			return
 		}
-		if contextResult.Schema != "urn:crewfold:schema:domain:durable-agent-context:v1" || contextResult.Domain.Name != "garden" || contextResult.Agent.Name != "orchid" || contextResult.Agent.Role != "owner-defined-whatever" || len(contextResult.StaffingGrants) != 1 || !strings.Contains(contextResult.AuthorityNote, "do not grant authority") || contextResult.KnowledgeAuthoring.Available || !strings.Contains(contextResult.KnowledgeAuthoring.Reason, "no sourced knowledge-proposal") {
+		if contextResult.Schema != "urn:crewfold:schema:domain:durable-agent-context:v1" || contextResult.Domain.Name != "garden" || contextResult.Agent.Name != "orchid" || contextResult.Agent.Role != "owner-defined-whatever" || len(contextResult.StaffingGrants) != 1 || !strings.Contains(contextResult.AuthorityNote, "do not grant authority") || !contextResult.KnowledgeAuthoring.Available || contextResult.KnowledgeAuthoring.Operation != domainToolProposeKnowledge {
 			fixture.t.Errorf("durable-agent context = %#v", contextResult)
 			return
 		}
@@ -826,19 +875,22 @@ func (fixture *codexDomainSessionFixture) sawArbitraryAgentInstructions() bool {
 	}
 	namespace, _ := dynamicTools[0].(map[string]any)
 	tools, _ := namespace["tools"].([]any)
-	if namespace["name"] != "crewfold" || namespace["type"] != "namespace" || len(tools) != 3 {
+	if namespace["name"] != "crewfold" || namespace["type"] != "namespace" || len(tools) != 6 {
 		return false
 	}
-	tool, _ := tools[0].(map[string]any)
-	messageTool, _ := tools[1].(map[string]any)
-	childTool, _ := tools[2].(map[string]any)
+	expectedTools := []string{domainToolContext, domainToolSendMessage, domainToolCreateChild, domainToolDelegateStaffing, domainToolProposeWork, domainToolProposeKnowledge}
+	for index, expected := range expectedTools {
+		tool, _ := tools[index].(map[string]any)
+		if tool["name"] != expected || tool["type"] != "function" {
+			return false
+		}
+	}
 	config, _ := fixture.startedParams["config"].(map[string]any)
 	directNamespaces, _ := config["code_mode.direct_only_tool_namespaces"].([]any)
 	toolChecks := fixture.toolChecks
 	return fixture.startedParams["sandbox"] == execution.CodexSandboxReadOnly && fixture.startedParams["approvalPolicy"] == "never" &&
-		strings.Contains(baseInstructions, "coordination and inspection surface") && strings.Contains(baseInstructions, "direct crewfold namespace") && strings.Contains(baseInstructions, "not canonical knowledge") && strings.Contains(baseInstructions, "Never edit repository files") && strings.Contains(instructions, `"orchid"`) && strings.Contains(instructions, `"owner-defined-whatever"`) && strings.Contains(instructions, daemonTestDomainCharter) && strings.Contains(instructions, domain.DomainAgentAdaptive) && strings.Contains(instructions, "grants no authority") &&
-		tool["name"] == domainToolContext && tool["type"] == "function" && messageTool["name"] == domainToolSendMessage && messageTool["type"] == "function" &&
-		childTool["name"] == domainToolCreateChild && childTool["type"] == "function" && len(directNamespaces) == 1 && directNamespaces[0] == "crewfold" && toolChecks == 4
+		strings.Contains(baseInstructions, "real continuing coordination agent") && strings.Contains(baseInstructions, "code-mode tools object") && strings.Contains(baseInstructions, "never shell out to the crewfold binary") && strings.Contains(baseInstructions, "not canonical knowledge") && strings.Contains(baseInstructions, "Never edit repository files") && strings.Contains(instructions, `"orchid"`) && strings.Contains(instructions, `"owner-defined-whatever"`) && strings.Contains(instructions, daemonTestDomainCharter) && strings.Contains(instructions, domain.DomainAgentAdaptive) && strings.Contains(instructions, "grants no authority") && strings.Contains(instructions, "tools.crewfold__") && strings.Contains(instructions, "Never invoke the crewfold CLI") &&
+		len(directNamespaces) == 1 && directNamespaces[0] == "crewfold" && toolChecks == 4
 }
 
 func (fixture *codexDomainSessionFixture) sawCurrentReadOnlyResumeBoundary() bool {

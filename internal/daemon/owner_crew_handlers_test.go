@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"crewfold/internal/domain"
 	"crewfold/internal/execution"
 	"crewfold/internal/localapi"
 )
@@ -67,6 +68,7 @@ func TestM22OnboardingDoesNotCreateLegacyExecutiveAuthority(t *testing.T) {
 		Agent struct {
 			ID string `json:"id"`
 		} `json:"agent"`
+		Staffing  domain.DomainAgentStaffingGrant `json:"staffing_grant"`
 		Objective struct {
 			ID string `json:"id"`
 		} `json:"executive_objective"`
@@ -77,7 +79,7 @@ func TestM22OnboardingDoesNotCreateLegacyExecutiveAuthority(t *testing.T) {
 	if err := json.Unmarshal(raw, &onboarded); err != nil {
 		t.Fatal(err)
 	}
-	if onboarded.Agent.ID == "" || onboarded.Objective.ID != "" || onboarded.Binding.Revision != 0 {
+	if onboarded.Agent.ID == "" || onboarded.Staffing.ManagerAgentID != onboarded.Agent.ID || onboarded.Staffing.Status != domain.DomainStaffingGrantActive || onboarded.Objective.ID != "" || onboarded.Binding.Revision != 0 {
 		t.Fatalf("M22 onboarding retained legacy executive state: %#v", onboarded)
 	}
 	tree, err := api.DomainAgentTree(context.Background(), onboarded.Workspace.ID, onboarded.Project.ID)

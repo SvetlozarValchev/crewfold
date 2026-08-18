@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"crewfold/internal/domain"
@@ -17,9 +18,12 @@ import (
 )
 
 const (
-	domainToolContext     = "crewfold_get_domain_context"
-	domainToolSendMessage = "crewfold_send_message"
-	domainToolCreateChild = "crewfold_create_durable_child"
+	domainToolContext          = "crewfold_get_domain_context"
+	domainToolSendMessage      = "crewfold_send_message"
+	domainToolCreateChild      = "crewfold_create_durable_child"
+	domainToolDelegateStaffing = "crewfold_delegate_staffing_grant"
+	domainToolProposeWork      = "crewfold_propose_work"
+	domainToolProposeKnowledge = "crewfold_propose_knowledge"
 )
 
 type domainSessionToolCall struct {
@@ -53,6 +57,47 @@ type domainSessionCreateChildArguments struct {
 	DelegationPolicy string        `json:"delegation_policy"`
 	TaskClass        string        `json:"task_class"`
 	Budget           domain.Budget `json:"budget"`
+	Checkout         string        `json:"checkout"`
+}
+
+type domainSessionDelegateStaffingArguments struct {
+	ParentGrantID              string                              `json:"parent_grant_id"`
+	SourceAllocationID         string                              `json:"source_allocation_id"`
+	ManagerAgent               string                              `json:"manager_agent"`
+	ExpectedMembershipRevision int64                               `json:"expected_membership_revision"`
+	Profiles                   []domain.DomainAgentStaffingProfile `json:"profiles"`
+	TaskClasses                []string                            `json:"task_classes"`
+	MaxDescendants             int                                 `json:"max_descendants"`
+	MaxConcurrency             int                                 `json:"max_concurrency"`
+	Budget                     domain.Budget                       `json:"budget"`
+	ExpiresAt                  string                              `json:"expires_at,omitempty"`
+}
+
+type domainSessionProposeWorkArguments struct {
+	StaffingGrantID string                          `json:"staffing_grant_id"`
+	Summary         string                          `json:"summary"`
+	ObjectiveTitle  string                          `json:"objective_title"`
+	ObjectiveBudget domain.Budget                   `json:"objective_budget"`
+	Tasks           []domain.DomainWorkProposalTask `json:"tasks"`
+}
+
+type domainSessionProposeKnowledgeArguments struct {
+	TaskScopeID          string                        `json:"task_scope_id,omitempty"`
+	Type                 string                        `json:"type"`
+	Title                string                        `json:"title"`
+	Body                 string                        `json:"body"`
+	Confidence           string                        `json:"confidence"`
+	VerificationStatus   string                        `json:"verification_status"`
+	FreshnessPolicy      string                        `json:"freshness_policy"`
+	FreshUntil           string                        `json:"fresh_until,omitempty"`
+	SupportingSources    []domain.KnowledgeSourceInput `json:"supporting_sources,omitempty"`
+	SupersedesRevisionID string                        `json:"supersedes_revision_id,omitempty"`
+}
+
+func domainStaffingBudgetSchema() map[string]any {
+	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"token_limit", "cost_cents", "time_seconds"}, "properties": map[string]any{
+		"token_limit": map[string]any{"type": "integer", "minimum": 0}, "cost_cents": map[string]any{"type": "integer", "minimum": 0}, "time_seconds": map[string]any{"type": "integer", "minimum": 0},
+	}}
 }
 
 func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
@@ -81,10 +126,10 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 		},
 		{
 			Type: "function", Name: domainToolCreateChild,
-			Description: "Create one continuing durable child only through a current owner-authored Crewfold staffing grant. This creates the durable definition and hierarchy membership only; it does not assign a task, reserve a checkout, or start a run. The grant, not hierarchy or role text, bounds the domain, provider/runtime, task class, descendants, concurrency, budget, and expiry.",
+			Description: "Create one continuing durable child and its exact inactive execution profile through a current Crewfold staffing grant. Use an exact checkout ID from crewfold_get_domain_context, never a path. workstream is optional and accepts only an existing objective ID (obj_...) returned by current context; omit it while staffing a team before the work proposal exists. It does not create a task, assign work, reserve the checkout, or start a run. The grant, not hierarchy or role text, bounds the domain, provider/runtime, task class, descendants, concurrency, budget, and expiry.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
-				"required": []string{"grant_id", "name", "role", "operating_charter", "delegation_policy", "provider", "runtime", "max_concurrency", "task_class", "budget"},
+				"required": []string{"grant_id", "name", "role", "operating_charter", "delegation_policy", "provider", "runtime", "max_concurrency", "task_class", "budget", "checkout"},
 				"properties": map[string]any{
 					"grant_id":          map[string]any{"type": "string", "pattern": "^staffgrant_[0-9a-f]{32}$"},
 					"name":              map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
@@ -94,8 +139,9 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 					"provider":          map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
 					"runtime":           map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
 					"max_concurrency":   map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
-					"workstream":        map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+					"workstream":        map[string]any{"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
 					"task_class":        map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+					"checkout":          map[string]any{"type": "string", "pattern": "^co_[0-9a-f]{32}$"},
 					"budget": map[string]any{
 						"type": "object", "additionalProperties": false,
 						"required": []string{"token_limit", "cost_cents", "time_seconds"},
@@ -108,10 +154,77 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 				},
 			},
 		},
+		{
+			Type: "function", Name: domainToolDelegateStaffing,
+			Description: "Delegate a strict subset of this durable agent's current staffing authority to one direct durable child created from the named allocation. Crewfold rejects any broader provider/runtime, task class, concurrency, descendant, budget, or expiry scope. The delegated grant is durable and independently inspectable.",
+			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
+				"required": []string{"parent_grant_id", "source_allocation_id", "manager_agent", "expected_membership_revision", "profiles", "task_classes", "max_descendants", "max_concurrency", "budget"},
+				"properties": map[string]any{
+					"parent_grant_id": map[string]any{"type": "string", "pattern": "^staffgrant_[0-9a-f]{32}$"}, "source_allocation_id": map[string]any{"type": "string", "pattern": "^staffalloc_[0-9a-f]{32}$"},
+					"manager_agent": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "expected_membership_revision": map[string]any{"type": "integer", "minimum": 1},
+					"profiles":     map[string]any{"type": "array", "minItems": 1, "maxItems": 32, "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"provider", "runtime", "max_concurrency"}, "properties": map[string]any{"provider": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "runtime": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "max_concurrency": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}}}},
+					"task_classes": map[string]any{"type": "array", "minItems": 1, "maxItems": 32, "items": map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"}}, "max_descendants": map[string]any{"type": "integer", "minimum": 1, "maximum": 1000}, "max_concurrency": map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
+					"budget": domainStaffingBudgetSchema(), "expires_at": map[string]any{"type": "string", "format": "date-time"},
+				},
+			},
+		},
+		{
+			Type: "function", Name: domainToolProposeWork,
+			Description: "Submit one inert, owner-reviewable workstream graph using exact active launch profiles for durable agents in this agent's subtree. Crewfold validates the task classes, aggregate budgets, dependencies, profiles, hierarchy, staffing grant, and frozen event cut. Submission starts nothing. One later owner acceptance atomically creates the objective, tasks, dependencies, and scheduling intents; the supervisor then launches eligible work under current policy.",
+			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
+				"required": []string{"staffing_grant_id", "summary", "objective_title", "objective_budget", "tasks"},
+				"properties": map[string]any{
+					"staffing_grant_id": map[string]any{"type": "string", "pattern": "^staffgrant_[0-9a-f]{32}$"},
+					"summary":           map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
+					"objective_title":   map[string]any{"type": "string", "minLength": 1, "maxLength": 256},
+					"objective_budget":  domainStaffingBudgetSchema(),
+					"tasks": map[string]any{"type": "array", "minItems": 1, "maxItems": 16, "items": map[string]any{
+						"type": "object", "additionalProperties": false,
+						"required": []string{"key", "title", "description", "task_class", "priority", "budget", "launch_profile_id", "depends_on"},
+						"properties": map[string]any{
+							"key":               map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+							"title":             map[string]any{"type": "string", "minLength": 1, "maxLength": 256},
+							"description":       map[string]any{"type": "string", "maxLength": 4096},
+							"task_class":        map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+							"priority":          map[string]any{"type": "integer", "minimum": 0, "maximum": 1000},
+							"budget":            domainStaffingBudgetSchema(),
+							"launch_profile_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+							"depends_on":        map[string]any{"type": "array", "maxItems": 15, "uniqueItems": true, "items": map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"}},
+						},
+					}},
+				},
+			},
+		},
+		{
+			Type: "function", Name: domainToolProposeKnowledge,
+			Description: "Propose one canonical domain knowledge revision for explicit owner review. Crewfold injects this authenticated durable agent as the exact primary source and proposer; the caller cannot forge provenance or acceptance. Optional supporting task/meeting sources must already exist in the same domain. This does not edit repository Markdown and does not make the proposal current until the owner accepts its exact state revision.",
+			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
+				"required": []string{"type", "title", "body", "confidence", "verification_status", "freshness_policy"},
+				"properties": map[string]any{
+					"task_scope_id":          map[string]any{"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+					"type":                   map[string]any{"type": "string", "enum": []string{domain.KnowledgeTypeDecision, domain.KnowledgeTypeFinding}},
+					"title":                  map[string]any{"type": "string", "minLength": 1, "maxLength": 160},
+					"body":                   map[string]any{"type": "string", "minLength": 1, "maxLength": 16384},
+					"confidence":             map[string]any{"type": "string", "enum": []string{domain.KnowledgeConfidenceLow, domain.KnowledgeConfidenceMedium, domain.KnowledgeConfidenceHigh}},
+					"verification_status":    map[string]any{"type": "string", "enum": []string{domain.KnowledgeVerificationUnverified, domain.KnowledgeVerificationSupported, domain.KnowledgeVerificationVerified}},
+					"freshness_policy":       map[string]any{"type": "string", "enum": []string{domain.KnowledgeFreshUntilSuperseded, domain.KnowledgeFreshExpiresAt}},
+					"fresh_until":            map[string]any{"type": "string", "format": "date-time"},
+					"supersedes_revision_id": map[string]any{"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+					"supporting_sources": map[string]any{"type": "array", "maxItems": 15, "uniqueItems": true, "items": map[string]any{
+						"type": "object", "additionalProperties": false, "required": []string{"type", "id", "role"},
+						"properties": map[string]any{
+							"type": map[string]any{"type": "string", "enum": []string{domain.KnowledgeSourceTask, domain.KnowledgeSourceMeeting, domain.KnowledgeSourceMeetingProposal}},
+							"id":   map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+							"role": map[string]any{"type": "string", "const": domain.KnowledgeSourceSupporting},
+						},
+					}},
+				},
+			},
+		},
 	}
 	return []execution.CodexDynamicToolSpec{{
 		Type: "namespace", Name: "crewfold",
-		Description: "Canonical Crewfold domain context, durable messaging, and owner-bounded staffing. These tools are direct audited calls rather than programmatic code-mode tools.",
+		Description: "Canonical Crewfold domain context, durable messaging, owner-bounded staffing and work proposals, and sourced knowledge proposals. Direct namespace calls and Codex code-mode tools-object calls both use the same audited app-server client-tool boundary.",
 		Tools:       tools,
 	}}
 }
@@ -132,7 +245,7 @@ func (s *server) handleDomainSessionToolRequest(ctx context.Context, request exe
 	var result map[string]any
 	if call.Namespace != nil && *call.Namespace != "" && *call.Namespace != "crewfold" {
 		result = domainToolFailure("tool namespace is not Crewfold")
-	} else if call.Tool != domainToolContext && call.Tool != domainToolSendMessage && call.Tool != domainToolCreateChild {
+	} else if call.Tool != domainToolContext && call.Tool != domainToolSendMessage && call.Tool != domainToolCreateChild && call.Tool != domainToolDelegateStaffing && call.Tool != domainToolProposeWork && call.Tool != domainToolProposeKnowledge {
 		result = domainToolFailure("Crewfold did not advertise this durable-agent tool")
 	} else if call.Tool == domainToolContext {
 		if err := decodeEmptyDomainToolArguments(call.Arguments); err != nil {
@@ -146,16 +259,107 @@ func (s *server) handleDomainSessionToolRequest(ctx context.Context, request exe
 		} else {
 			result = s.domainSendMessageToolResult(ctx, call, arguments)
 		}
-	} else if arguments, err := decodeDomainCreateChildArguments(call.Arguments); err != nil {
-		result = domainToolFailure("durable child arguments are invalid: " + safeDomainSessionDiagnostic(err))
+	} else if call.Tool == domainToolCreateChild {
+		arguments, err := decodeDomainCreateChildArguments(call.Arguments)
+		if err != nil {
+			result = domainToolFailure("durable child arguments are invalid: " + safeDomainSessionDiagnostic(err))
+		} else {
+			result = s.domainCreateChildToolResult(ctx, call, arguments)
+		}
+	} else if call.Tool == domainToolDelegateStaffing {
+		if arguments, err := decodeDomainDelegateStaffingArguments(call.Arguments); err != nil {
+			result = domainToolFailure("delegated staffing arguments are invalid: " + safeDomainSessionDiagnostic(err))
+		} else {
+			result = s.domainDelegateStaffingToolResult(ctx, call, arguments)
+		}
+	} else if call.Tool == domainToolProposeWork {
+		if arguments, err := decodeDomainProposeWorkArguments(call.Arguments); err != nil {
+			result = domainToolFailure("work proposal arguments are invalid: " + safeDomainSessionDiagnostic(err))
+		} else {
+			result = s.domainProposeWorkToolResult(ctx, call, arguments)
+		}
+	} else if arguments, err := decodeDomainProposeKnowledgeArguments(call.Arguments); err != nil {
+		result = domainToolFailure("knowledge proposal arguments are invalid: " + safeDomainSessionDiagnostic(err))
 	} else {
-		result = s.domainCreateChildToolResult(ctx, call, arguments)
+		result = s.domainProposeKnowledgeToolResult(ctx, call, arguments)
 	}
 	receipt, err := s.store.RecordDomainAgentToolReceipt(ctx, receiptCommand, result, result["success"] == true)
 	if err != nil {
 		return nil, fmt.Errorf("record durable agent tool receipt: %w", err)
 	}
 	return receipt.Response, nil
+}
+
+func (s *server) domainProposeKnowledgeToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionProposeKnowledgeArguments) map[string]any {
+	scope, err := s.store.DomainAgentSessionScopeByThread(ctx, call.ThreadID)
+	if err != nil {
+		return domainToolFailure("durable session authority is unavailable: " + safeDomainSessionDiagnostic(err))
+	}
+	sources := make([]domain.KnowledgeSourceInput, 0, len(arguments.SupportingSources)+1)
+	sources = append(sources, domain.KnowledgeSourceInput{Type: domain.KnowledgeSourceDomainAgent, ID: scope.Agent.ID, Role: domain.KnowledgeSourcePrimary})
+	sources = append(sources, arguments.SupportingSources...)
+	digest := sha256.Sum256([]byte(call.CallID))
+	key := fmt.Sprintf("domain-tool-%x", digest[:])
+	result, err := s.store.ProposeKnowledge(ctx, store.ProposeKnowledgeCommand{
+		WorkspaceIdentifier: scope.Workspace.ID, ProjectIdentifier: scope.Project.ID, TaskScopeID: arguments.TaskScopeID,
+		Type: arguments.Type, Title: arguments.Title, Body: arguments.Body, Confidence: arguments.Confidence,
+		VerificationStatus: arguments.VerificationStatus, FreshnessPolicy: arguments.FreshnessPolicy, FreshUntil: arguments.FreshUntil,
+		Sources: sources, SupersedesRevisionID: arguments.SupersedesRevisionID,
+		Actor:          domain.KnowledgeActor{ID: scope.Agent.ID, Type: domain.KnowledgeActorIntegration},
+		IdempotencyKey: key, CorrelationID: key,
+	})
+	if err != nil {
+		return domainToolFailure("submit knowledge proposal: " + safeDomainSessionDiagnostic(err))
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"schema": "urn:crewfold:schema:domain:knowledge-proposal-result:v1", "revision": result.Revision,
+		"event_sequence": result.EventSequence, "effect": "pending_owner_governance",
+	})
+	if err != nil {
+		return domainToolFailure("encode knowledge proposal result: " + safeDomainSessionDiagnostic(err))
+	}
+	return domainToolSuccess(string(encoded))
+}
+
+func (s *server) domainProposeWorkToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionProposeWorkArguments) map[string]any {
+	digest := sha256.Sum256([]byte(call.CallID))
+	key := fmt.Sprintf("domain-tool-%x", digest[:])
+	result, err := s.store.SubmitDomainWorkProposal(ctx, store.SubmitDomainWorkProposalCommand{
+		ThreadID: call.ThreadID, StaffingGrantID: arguments.StaffingGrantID, Summary: arguments.Summary,
+		Content:        domain.DomainWorkProposalContent{ObjectiveTitle: arguments.ObjectiveTitle, ObjectiveBudget: arguments.ObjectiveBudget, Tasks: arguments.Tasks},
+		IdempotencyKey: key, CorrelationID: key,
+	})
+	if err != nil {
+		return domainToolFailure("submit work proposal: " + safeDomainSessionDiagnostic(err))
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"schema": "urn:crewfold:schema:domain:work-proposal-result:v1", "proposal": result.Value,
+		"event_sequence": result.EventSequence, "effect": "none_until_owner_acceptance",
+	})
+	if err != nil {
+		return domainToolFailure("encode work proposal: " + safeDomainSessionDiagnostic(err))
+	}
+	return domainToolSuccess(string(encoded))
+}
+
+func (s *server) domainDelegateStaffingToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionDelegateStaffingArguments) map[string]any {
+	digest := sha256.Sum256([]byte(call.CallID))
+	key := fmt.Sprintf("domain-tool-%x", digest[:])
+	result, err := s.store.DelegateDomainAgentStaffingGrant(ctx, store.DelegateDomainAgentStaffingGrantCommand{
+		ThreadID: call.ThreadID, ParentGrantID: arguments.ParentGrantID, SourceAllocationID: arguments.SourceAllocationID,
+		ManagerAgentIdentifier: arguments.ManagerAgent, ExpectedMembershipRevision: arguments.ExpectedMembershipRevision,
+		Profiles: arguments.Profiles, TaskClasses: arguments.TaskClasses, MaxDescendants: arguments.MaxDescendants,
+		MaxConcurrency: arguments.MaxConcurrency, Budget: arguments.Budget, ExpiresAt: arguments.ExpiresAt,
+		IdempotencyKey: key, CorrelationID: key,
+	})
+	if err != nil {
+		return domainToolFailure("delegate staffing grant: " + safeDomainSessionDiagnostic(err))
+	}
+	encoded, err := json.Marshal(map[string]any{"schema": "urn:crewfold:schema:domain:delegated-staffing-grant-result:v1", "grant": result.Value, "event_sequence": result.EventSequence})
+	if err != nil {
+		return domainToolFailure("encode delegated staffing grant: " + safeDomainSessionDiagnostic(err))
+	}
+	return domainToolSuccess(string(encoded))
 }
 
 func (s *server) domainCreateChildToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionCreateChildArguments) map[string]any {
@@ -171,10 +375,27 @@ func (s *server) domainCreateChildToolResult(ctx context.Context, call domainSes
 	if err != nil {
 		return domainToolFailure("create durable child: " + safeDomainSessionDiagnostic(err))
 	}
+	profile, err := s.store.CreateLaunchProfile(ctx, store.CreateLaunchProfileCommand{
+		WorkspaceIdentifier: result.Agent.WorkspaceID, ProjectIdentifier: result.Membership.ProjectID,
+		AgentIdentifier: result.Agent.ID, ExpectedAgentRevision: result.Agent.Revision, Purpose: arguments.TaskClass,
+		Runtime: result.Agent.Runtime, Provider: result.Agent.Provider, CheckoutIdentifier: arguments.Checkout,
+		Scenario: ownerWorkbenchScenario(), AssignmentLeaseSeconds: 3600, CapabilityTTLSeconds: 3600,
+		IdempotencyKey: idempotencyKey + "-profile", CorrelationID: idempotencyKey,
+	})
+	if err != nil {
+		return domainToolFailure("prepare durable child execution profile: " + safeDomainSessionDiagnostic(err))
+	}
+	result.LaunchProfile = &profile.Value
+	result.EventSequences = append(result.EventSequences, profile.EventSequence)
+	session, sessionErr := s.ensureDomainAgentSessionBound(ctx, result.Agent.WorkspaceID, result.Membership.ProjectID, result.Agent.ID, arguments.Checkout)
+	if sessionErr != nil {
+		return domainToolFailure("activate durable child conversation: " + safeDomainSessionDiagnostic(sessionErr))
+	}
 	encoded, err := json.Marshal(map[string]any{
 		"schema": "urn:crewfold:schema:domain:durable-agent-child-result:v1",
 		"agent":  result.Agent, "membership": result.Membership, "grant": result.Grant,
-		"allocation": result.Allocation, "event_sequences": result.EventSequences,
+		"allocation": result.Allocation, "launch_profile": result.LaunchProfile, "session": session,
+		"event_sequences": result.EventSequences,
 	})
 	if err != nil {
 		return domainToolFailure("encode durable child result: " + safeDomainSessionDiagnostic(err))
@@ -197,6 +418,9 @@ func (s *server) domainSendMessageToolResult(ctx context.Context, call domainSes
 	})
 	if err != nil {
 		return domainToolFailure("send durable domain message: " + safeDomainSessionDiagnostic(err))
+	}
+	if result.Value.Recipient.WakeStatus == domain.WakePending {
+		s.signalMessageWakeWorker()
 	}
 	encoded, err := json.Marshal(map[string]any{
 		"schema": "urn:crewfold:schema:domain:durable-agent-message-result:v1",
@@ -240,6 +464,21 @@ func (s *server) domainContextToolResult(ctx context.Context, threadID string) m
 	if err != nil {
 		return domainToolFailure("read durable staffing grants: " + safeDomainSessionDiagnostic(err))
 	}
+	launchProfiles, err := s.store.LaunchProfiles(ctx, store.ListLaunchProfilesQuery{WorkspaceIdentifier: scope.Workspace.ID, ProjectIdentifier: scope.Project.ID, Status: domain.LaunchProfileActive, Limit: 100})
+	if err != nil {
+		return domainToolFailure("read exact launch profiles: " + safeDomainSessionDiagnostic(err))
+	}
+	workProposals, err := s.store.DomainWorkProposals(ctx, scope.Workspace.ID, scope.Project.ID)
+	if err != nil {
+		return domainToolFailure("read work proposals: " + safeDomainSessionDiagnostic(err))
+	}
+	knowledge, err := s.store.ListKnowledge(ctx, store.ListKnowledgeQuery{
+		WorkspaceIdentifier: scope.Workspace.ID,
+		ProjectIdentifier:   scope.Project.ID,
+	})
+	if err != nil {
+		return domainToolFailure("read domain knowledge: " + safeDomainSessionDiagnostic(err))
+	}
 	inbox, err := s.store.DeliverDomainAgentSessionInbox(ctx, threadID, 20)
 	if err != nil {
 		return domainToolFailure("read durable domain inbox: " + safeDomainSessionDiagnostic(err))
@@ -265,16 +504,21 @@ func (s *server) domainContextToolResult(ctx context.Context, threadID string) m
 		"domain": scope.Project, "agent": scope.Agent, "membership": scope.Membership,
 		"agent_tree": tree.Agents, "attached_repositories": inspection.Repositories, "attached_checkouts": inspection.Checkouts,
 		"workstreams": objectives.Objectives, "assigned_work": assigned, "staffing_grants": staffingGrants, "inbox": inbox,
+		"launch_profiles":      launchProfiles,
+		"work_proposals":       workProposals,
+		"knowledge_revisions":  knowledge,
 		"coordination_threads": coordinationThreads,
 		"bounds": map[string]any{
 			"workstreams_total": objectives.Total, "workstreams_truncated": objectives.HasMore,
 			"tasks_examined": len(tasks.Tasks), "project_tasks_total": tasks.Total, "project_tasks_truncated": tasks.HasMore,
-			"inbox_items": len(inbox), "inbox_limit": 20, "staffing_grants": len(staffingGrants),
+			"inbox_items": len(inbox), "inbox_limit": 20, "staffing_grants": len(staffingGrants), "work_proposals": len(workProposals),
+			"knowledge_revisions":  len(knowledge),
 			"coordination_threads": len(coordinationThreads), "coordination_thread_limit": 20,
 		},
 		"knowledge_authoring": map[string]any{
-			"available": false,
-			"reason":    "this durable conversation has no sourced knowledge-proposal or domain-home mutation tool; messages and participant threads remain coordination records",
+			"available":  true,
+			"operation":  domainToolProposeKnowledge,
+			"governance": "proposals are inert until the owner accepts the exact revision; this authenticated agent is recorded as primary source and proposer",
 		},
 		"authority_note": "Hierarchy, names, roles, and conversation text do not grant authority. Only Crewfold grants, assignments, claims, budgets, capabilities, and accepted typed operations authorize effects.",
 	}
@@ -396,9 +640,10 @@ func decodeDomainCreateChildArguments(data json.RawMessage) (domainSessionCreate
 	value.GrantID, value.Name, value.Role = strings.TrimSpace(value.GrantID), strings.TrimSpace(value.Name), strings.TrimSpace(value.Role)
 	value.Provider, value.Runtime = strings.TrimSpace(value.Provider), strings.TrimSpace(value.Runtime)
 	value.Workstream, value.TaskClass = strings.TrimSpace(value.Workstream), strings.TrimSpace(value.TaskClass)
+	value.Checkout = strings.TrimSpace(value.Checkout)
 	if !validDomainToolText(value.GrantID, 128) || !validDomainToolText(value.Name, 63) ||
 		!validDomainToolText(value.Role, 128) || !validDomainToolText(value.Provider, 128) ||
-		!validDomainToolText(value.Runtime, 128) || !validDomainToolText(value.TaskClass, 63) ||
+		!validDomainToolText(value.Runtime, 128) || !validDomainToolText(value.TaskClass, 63) || !validDomainToolIdentifier(value.Checkout, "co_") ||
 		(value.Workstream != "" && !validDomainToolText(value.Workstream, 128)) || value.MaxConcurrency < 1 || value.MaxConcurrency > 100 ||
 		value.Budget.TokenLimit < 0 || value.Budget.CostCents < 0 || value.Budget.TimeSeconds < 0 {
 		return value, errors.New("child fields are missing or outside their bounded types")
@@ -406,8 +651,124 @@ func decodeDomainCreateChildArguments(data json.RawMessage) (domainSessionCreate
 	return value, nil
 }
 
+func decodeDomainDelegateStaffingArguments(data json.RawMessage) (domainSessionDelegateStaffingArguments, error) {
+	var value domainSessionDelegateStaffingArguments
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		return value, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("unexpected trailing JSON")
+		}
+		return value, err
+	}
+	value.ParentGrantID = strings.TrimSpace(value.ParentGrantID)
+	value.SourceAllocationID = strings.TrimSpace(value.SourceAllocationID)
+	value.ManagerAgent = strings.TrimSpace(value.ManagerAgent)
+	value.ExpiresAt = strings.TrimSpace(value.ExpiresAt)
+	if !validDomainToolText(value.ParentGrantID, 128) || !validDomainToolText(value.SourceAllocationID, 128) || !validDomainToolText(value.ManagerAgent, 128) || value.ExpectedMembershipRevision < 1 || len(value.Profiles) < 1 || len(value.Profiles) > 32 || len(value.TaskClasses) < 1 || len(value.TaskClasses) > 32 || value.MaxDescendants < 1 || value.MaxConcurrency < 1 || value.Budget.TokenLimit < 0 || value.Budget.CostCents < 0 || value.Budget.TimeSeconds < 0 {
+		return value, errors.New("delegated staffing fields are missing or outside their bounded types")
+	}
+	return value, nil
+}
+
+func decodeDomainProposeWorkArguments(data json.RawMessage) (domainSessionProposeWorkArguments, error) {
+	var value domainSessionProposeWorkArguments
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		return value, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("unexpected trailing JSON")
+		}
+		return value, err
+	}
+	value.StaffingGrantID = strings.TrimSpace(value.StaffingGrantID)
+	value.Summary = strings.TrimSpace(value.Summary)
+	value.ObjectiveTitle = strings.TrimSpace(value.ObjectiveTitle)
+	if !validDomainToolText(value.StaffingGrantID, 128) || !validDomainToolText(value.Summary, 2048) || !validDomainToolText(value.ObjectiveTitle, 256) || len(value.Tasks) < 1 || len(value.Tasks) > 16 {
+		return value, errors.New("work proposal fields are missing or outside their bounded types")
+	}
+	return value, nil
+}
+
+func decodeDomainProposeKnowledgeArguments(data json.RawMessage) (domainSessionProposeKnowledgeArguments, error) {
+	var value domainSessionProposeKnowledgeArguments
+	if len(data) == 0 {
+		return value, errors.New("arguments are required")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		return value, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("unexpected trailing JSON")
+		}
+		return value, err
+	}
+	value.TaskScopeID = strings.TrimSpace(value.TaskScopeID)
+	value.Type = strings.TrimSpace(value.Type)
+	value.Title = strings.TrimSpace(value.Title)
+	value.Body = strings.TrimSpace(value.Body)
+	value.Confidence = strings.TrimSpace(value.Confidence)
+	value.VerificationStatus = strings.TrimSpace(value.VerificationStatus)
+	value.FreshnessPolicy = strings.TrimSpace(value.FreshnessPolicy)
+	value.FreshUntil = strings.TrimSpace(value.FreshUntil)
+	value.SupersedesRevisionID = strings.TrimSpace(value.SupersedesRevisionID)
+	if (value.TaskScopeID != "" && !validDomainToolText(value.TaskScopeID, 128)) ||
+		!domain.ValidKnowledgeType(value.Type) || !validDomainToolText(value.Title, 160) || !validDomainToolText(value.Body, 16*1024) ||
+		!domain.ValidKnowledgeConfidence(value.Confidence) || !domain.ValidKnowledgeVerification(value.VerificationStatus) ||
+		!domain.ValidKnowledgeFreshnessPolicy(value.FreshnessPolicy) || len(value.SupportingSources) > 15 ||
+		(value.SupersedesRevisionID != "" && !validDomainToolText(value.SupersedesRevisionID, 128)) {
+		return value, errors.New("knowledge fields are missing or outside their bounded types")
+	}
+	if value.FreshnessPolicy == domain.KnowledgeFreshUntilSuperseded && value.FreshUntil != "" {
+		return value, errors.New("until_superseded knowledge cannot set fresh_until")
+	}
+	if value.FreshnessPolicy == domain.KnowledgeFreshExpiresAt {
+		if _, err := time.Parse(time.RFC3339Nano, value.FreshUntil); err != nil {
+			return value, errors.New("expires_at knowledge requires an RFC3339 fresh_until")
+		}
+	}
+	seenSources := make(map[string]struct{}, len(value.SupportingSources))
+	for index := range value.SupportingSources {
+		source := &value.SupportingSources[index]
+		source.Type = strings.TrimSpace(source.Type)
+		source.ID = strings.TrimSpace(source.ID)
+		source.Role = strings.TrimSpace(source.Role)
+		if (source.Type != domain.KnowledgeSourceTask && source.Type != domain.KnowledgeSourceMeeting && source.Type != domain.KnowledgeSourceMeetingProposal) ||
+			!validDomainToolText(source.ID, 128) || source.Role != domain.KnowledgeSourceSupporting {
+			return value, errors.New("supporting knowledge sources must be bounded task or meeting references")
+		}
+		key := source.Type + "\x00" + source.ID
+		if _, exists := seenSources[key]; exists {
+			return value, errors.New("supporting knowledge sources must be unique")
+		}
+		seenSources[key] = struct{}{}
+	}
+	return value, nil
+}
+
 func validDomainToolText(value string, maximum int) bool {
 	return value != "" && utf8.ValidString(value) && len(value) <= maximum && !strings.ContainsRune(value, '\x00')
+}
+
+func validDomainToolIdentifier(value, prefix string) bool {
+	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	for _, character := range value[len(prefix):] {
+		if character < '0' || character > '9' && character < 'a' || character > 'f' {
+			return false
+		}
+	}
+	return true
 }
 
 func domainToolSuccess(text string) map[string]any {

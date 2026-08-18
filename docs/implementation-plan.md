@@ -1409,10 +1409,10 @@ interfaces, upstream impact, documents, services, and owner attention.
 **Contract**
 
 The accepted product and architecture boundary is
-[ADR-0021](decisions/0021-domain-oriented-durable-agent-console.md). The
-interaction reference is
-[`../web/domain-agent-console-mock.html`](../web/domain-agent-console-mock.html).
-M21 remains historical evidence for the local web/service security boundary; its
+[ADR-0021](decisions/0021-domain-oriented-durable-agent-console.md). The built
+M22 console and its public schemas are the interaction reference; the discarded
+exploratory HTML mock is not a second product contract. M21 remains historical
+evidence for the local web/service security boundary; its
 one-response executive interaction is not retained as a compatibility path.
 
 **Delivery slices**
@@ -1444,6 +1444,15 @@ one-response executive interaction is not retained as a compatibility path.
 9. Replace peer administrative pages with contextual drill-downs while retaining
    exact canonical API coverage, keyboard access, responsive layouts, and
    operational CLI/TUI fallbacks.
+10. Let a granted coordinator create its durable specialists, message their
+    responsibilities, and submit one inert owner-reviewed workstream graph. Exact
+    acceptance creates tasks, dependencies, and scheduling intents atomically;
+    the deterministic supervisor starts only ready work and preserves the
+    implementer-to-reviewer-to-knowledge dependency chain.
+11. Serialize durable message wakes behind an active owner/provider turn so child
+    replies are delivered as later provenance-labeled turns rather than injected
+    into an in-progress instruction. Keep work and knowledge proposals inert
+    until their respective explicit owner decisions.
 
 **Automated acceptance**
 
@@ -1465,6 +1474,12 @@ one-response executive interaction is not retained as a compatibility path.
 - Desktop and narrow-browser runs prove readable text, stable tree selection,
   keyboard/focus order, bounded virtualization, reconnect behavior, structured
   activity rendering, and advanced-console isolation.
+- A real granted coordinator creates an implementer and independent verifier,
+  sends both exact responsibilities, submits a bounded dependency graph, and
+  receives their acknowledgements only after its owner turn settles. Owner
+  acceptance launches the ready implementation; verification starts only after
+  implementation completes, and proposed domain knowledge stays pending until
+  owner acceptance.
 
 **Failure injection**
 

@@ -69,6 +69,7 @@ func ReadableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool
 		Prompt           string `json:"prompt"`
 		Kind             string `json:"kind"`
 		Tool             string `json:"tool"`
+		ClientID         string `json:"clientId"`
 		Error            *struct {
 			Message string `json:"message"`
 		} `json:"error"`
@@ -94,6 +95,10 @@ func ReadableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool
 	item := domain.DomainAgentSessionItem{ID: boundedCodexText(envelope.ID), Type: boundedCodexText(envelope.Type), Status: boundedCodexText(envelope.Status)}
 	switch envelope.Type {
 	case "userMessage":
+		item.Origin = "owner"
+		if strings.HasPrefix(envelope.ClientID, "crewfold:wake:") {
+			item.Origin = "crewfold_delivery"
+		}
 		var contentItems []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`

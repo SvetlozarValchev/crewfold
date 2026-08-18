@@ -79,6 +79,20 @@ func (q *Queries) FindLiveKnowledgeSuccessor(ctx context.Context, supersedesRevi
 	return id, err
 }
 
+const getKnowledgeActorDomainAgentWorkspace = `-- name: GetKnowledgeActorDomainAgentWorkspace :one
+SELECT agent.workspace_id
+FROM domain_agent_memberships membership
+JOIN agents agent ON agent.id = membership.agent_id
+WHERE membership.agent_id = ? AND membership.status = 'active' AND agent.enabled = 1
+`
+
+func (q *Queries) GetKnowledgeActorDomainAgentWorkspace(ctx context.Context, agentID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getKnowledgeActorDomainAgentWorkspace, agentID)
+	var workspace_id string
+	err := row.Scan(&workspace_id)
+	return workspace_id, err
+}
+
 const getKnowledgeActorRunWorkspace = `-- name: GetKnowledgeActorRunWorkspace :one
 SELECT workspace_id
 FROM runs
@@ -226,6 +240,34 @@ func (q *Queries) GetKnowledgeRevision(ctx context.Context, arg GetKnowledgeRevi
 		&i.StaleByType,
 		&i.DecisionNote,
 		&i.StaleReason,
+	)
+	return i, err
+}
+
+const getKnowledgeSourceDomainAgent = `-- name: GetKnowledgeSourceDomainAgent :one
+SELECT agent.workspace_id, membership.project_id, membership.revision, membership.status, agent.enabled
+FROM domain_agent_memberships membership
+JOIN agents agent ON agent.id = membership.agent_id
+WHERE membership.agent_id = ?
+`
+
+type GetKnowledgeSourceDomainAgentRow struct {
+	WorkspaceID string `json:"workspace_id"`
+	ProjectID   string `json:"project_id"`
+	Revision    int64  `json:"revision"`
+	Status      string `json:"status"`
+	Enabled     int64  `json:"enabled"`
+}
+
+func (q *Queries) GetKnowledgeSourceDomainAgent(ctx context.Context, agentID string) (GetKnowledgeSourceDomainAgentRow, error) {
+	row := q.db.QueryRowContext(ctx, getKnowledgeSourceDomainAgent, agentID)
+	var i GetKnowledgeSourceDomainAgentRow
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Revision,
+		&i.Status,
+		&i.Enabled,
 	)
 	return i, err
 }

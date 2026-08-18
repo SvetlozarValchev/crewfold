@@ -1474,6 +1474,9 @@ The strict domain-agent methods are:
 | `domain.agent.staffing_grant.create` | owner grants one agent bounded authority to create continuing durable descendants |
 | `domain.agent.staffing_grant.list` | list the manager's exact active, revoked, and derived-expired grants |
 | `domain.agent.staffing_grant.revoke` | revoke one exact current grant revision |
+| `domain.work_proposal.list` | list bounded coordinator-authored pending and historical workstream graphs for owner review |
+| `domain.work_proposal.accept` | owner accepts one exact pending revision and atomically creates its workstream, tasks, dependencies, and scheduling intents |
+| `domain.work_proposal.reject` | owner rejects one exact pending revision without creating graph state |
 
 `domain.agent.spec.draft` accepts either an exact existing domain/checkout scope
 or a pre-onboarding repository path/domain name plus bounded owner intent. It uses
@@ -1515,15 +1518,32 @@ observes active scoped agents or nonterminal tasks so normal organization does
 not hide live work. Neither mutation silently reparents agents, revokes grants,
 cancels tasks, or deletes journal history.
 
-Every opened durable Codex thread is advertised exactly three Crewfold dynamic
-tools:
+Every opened durable Codex thread is advertised the following closed Crewfold
+dynamic-tool set:
 
 - `crewfold_get_domain_context`: bounded domain, hierarchy, attached resources,
   workstreams, assignment, delivered inbox, and current staffing grants;
 - `crewfold_send_message`: one immutable typed message to another active durable
   agent in the same domain; and
 - `crewfold_create_durable_child`: one typed child request under an explicit
-  current staffing grant.
+  current staffing grant;
+- `crewfold_propose_work`: one bounded inert objective/task/dependency graph under
+  the coordinator's current staffing grant; and
+- `crewfold_propose_knowledge`: one sourced proposed domain-knowledge revision
+  whose governance state remains pending until an owner decision.
+
+A work proposal freezes its source agent/thread, staffing-grant revision,
+canonical event cut, content hash, objective budget, task keys/classes/budgets,
+exact launch profiles, and dependency keys. Accept and reject require its exact
+current revision plus an idempotency key. Acceptance returns every applied
+objective/task/dependency/scheduling-intent effect and its event sequence. If
+the grant, membership, launch profile, or graph is no longer current, the
+proposal becomes `stale`; the daemon never partially applies it.
+
+Message delivery to a durable session never races an owner turn. A wake targeting
+a thread with an active provider turn is returned to pending with a bounded
+retry time. Once the thread is idle, the message is delivered through a distinct
+provider turn whose input provenance is `crewfold_delivery`.
 
 The durable provider conversation is resumed with a read-only checkout sandbox.
 It is a real Codex thread for inspection, planning, communication, and these

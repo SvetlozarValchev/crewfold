@@ -33,7 +33,7 @@
       "additionalProperties": false,
       "required": ["type", "id", "revision", "role", "ordinal"],
       "properties": {
-        "type": {"enum": ["task", "meeting", "meeting_proposal"]},
+        "type": {"enum": ["task", "meeting", "meeting_proposal", "domain_agent"]},
         "id": {"type": "string", "minLength": 1, "maxLength": 128},
         "revision": {"type": "integer", "minimum": 1},
         "role": {"enum": ["primary", "supporting"]},
@@ -51,6 +51,10 @@
         {
           "if": {"properties": {"type": {"const": "meeting_proposal"}}, "required": ["type"]},
           "then": {"properties": {"id": {"pattern": "^proposal_[0-9a-f]{32}$"}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "domain_agent"}}, "required": ["type"]},
+          "then": {"properties": {"id": {"pattern": "^agent_[0-9a-f]{32}$"}}}
         }
       ]
     }

@@ -20,16 +20,20 @@ than forcing the core to understand every terminal UI.
 
 ## Status
 
-Crewfold has completed M21's owner-local web workbench. Private XDG service
-defaults, `crewfold service install`, and `crewfold open` lead into one embedded
-React interface for repository onboarding, durable conversation with a real
-provider-backed project executive, explicit typed-proposal review, work and crew inspection, inbox and decisions, evidence, activity,
-briefings, health, bounded Git/log views, and separately authorized live terminal
-access. The CLI remains the typed automation/recovery/administration surface; the
-TUI is an operational fallback; Herdr is the normal interactive runtime host,
-managed as a companion user service when installed. Direct execution remains an
-explicit advanced fallback for CI and genuinely headless environments.
-The OSS release candidate follows as M22. The current binary provides a
+Crewfold has completed M22's domain-oriented durable-agent console. Private XDG
+service defaults, `crewfold service install`, and `crewfold open` lead into one
+embedded React interface organized around domains, attached checkouts,
+objective-backed workstreams, governed shared knowledge, and an arbitrary-depth
+tree of owner-defined durable agents. Selecting an agent opens its real resumable
+provider conversation and readable structured activity. A granted coordinator
+can create durable children, message them, and submit one inert dependency graph;
+only explicit owner acceptance creates the workstream, tasks, dependencies, and
+scheduling intents that the deterministic supervisor may run. The CLI remains
+the typed automation/recovery/administration surface; the TUI is an operational
+fallback; Herdr is the normal interactive runtime host, managed as a companion
+user service when installed. Direct execution remains an explicit advanced
+fallback for CI and genuinely headless environments.
+The OSS release candidate follows as M23. The current binary provides a
 foreground local daemon, an owner-only Unix socket, and durable workspace,
 project, repository, checkout, agent, objective, task, dependency, assignment,
 lease, budget, run, placement, timeline, handoff, and event records in SQLite. It

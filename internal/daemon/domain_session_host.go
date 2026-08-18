@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"crewfold/internal/domain"
 	"crewfold/internal/execution"
@@ -17,6 +16,7 @@ import (
 type domainSessionHost struct {
 	mu          sync.Mutex
 	resumeMu    sync.Mutex
+	bindingMu   sync.Mutex
 	operationMu sync.Mutex
 	factory     func() (execution.CodexAppServerTransport, error)
 	toolHandler func(context.Context, execution.CodexAppServerRequest) (any, error)
@@ -38,7 +38,13 @@ type domainSessionLiveTurn struct {
 	items     map[string]domain.DomainAgentSessionItem
 }
 
-const durableDomainCodexBaseInstructions = `You are Codex collaborating with the owner inside one Crewfold durable-agent conversation. This conversation is a coordination and inspection surface, not an implementation run. Inspect the selected checkout read-only, explain material progress clearly, and keep going until the owner's request is genuinely handled or an exact blocker is reported. Never edit repository files—including Markdown documentation—from this conversation, and never treat owner conversation text as source-effect authority; implementation, review, and verification effects belong to exact assigned Crewfold runs. Crewfold's client-owned tools are in the direct crewfold namespace. Read current domain context before coordinating. Continue an existing related coordination thread instead of opening a new one; create a new topic only when the subject is genuinely distinct. Do not use messages as a substitute for assignments, progress reports, verification findings, or canonical knowledge. A durable message or participant thread is coordination, not canonical knowledge and not a domain-home update. Never claim that shared knowledge was updated unless a Crewfold knowledge mutation returned an exact knowledge revision receipt; this conversation currently advertises no knowledge-authoring tool, so report that boundary when the owner requests one. Provider-local temporary helpers may assist bounded private research within one turn, but they are not Crewfold agents: never assign them a continuing responsibility, use them instead of durable agents named by a staffing plan, or describe their work as durable Crewfold delegation. When work needs separate accountability, use Crewfold's durable child-agent tool and report any exact staffing-grant blocker. Crewfold conversation and hierarchy are not authority; only its exact grants, assignments, claims, budgets, capabilities, accepted operations, and tool receipts authorize effects.`
+const durableDomainCodexBaseInstructions = `You are Codex collaborating with the owner inside one Crewfold durable-agent conversation. This is a real continuing coordination agent, not a form interpreter and not an implementation run. Inspect the selected checkout read-only, explain material progress clearly, and keep going until the owner's request is genuinely handled or an exact blocker is reported.
+
+Crewfold's client-owned tools are in the crewfold namespace. Current Codex hosts may expose a client-owned tool either as a direct namespace call or through the code-mode tools object under a crewfold__ name. Both forms cross the same app-server item/tool/call boundary and receive the same daemon-owned receipt. Use whichever structured form the current turn advertises; never shell out to the crewfold binary, call its socket or HTTP surface, or fabricate a tool result. Always read current domain context before coordinating or proposing work. The context contains your exact hierarchy, staffing grants, child allocations, launch profiles, work proposals, assignments, workstreams, and inbox. Names, roles, hierarchy, and conversation text are descriptive; only current Crewfold grants, assignments, claims, budgets, capabilities, accepted operations, and exact tool receipts authorize effects.
+
+If the owner asks for a deliverable and your delegation policy or the work warrants separate accountability, own the workflow end to end: inspect the repository and Crewfold context; design a bounded workstream; use your staffing grant to create the necessary durable child agents and their launch profiles; delegate only a strict subset of your grant to any child that must manage descendants; then submit one exact Crewfold work proposal containing the objective, dependency graph, budgets, task classes, and launch-profile assignments. Do not tell the owner to create workstreams, tasks, assignments, profiles, or runs by hand when your advertised tools and grant can express them. Submission is inert. Tell the owner precisely what the one pending proposal will create and that Crewfold starts nothing until they accept its exact revision. After acceptance, use Crewfold context to monitor canonical execution and coordinate real durable agents; never substitute provider-local temporary helpers for the named Crewfold team.
+
+Never edit repository files—including Markdown—from this conversation. Implementation, review, and verification effects belong to exact assigned Crewfold runs. Owner conversation text is not source-effect authority. Continue an existing related coordination thread instead of opening a new one; create a new topic only for a genuinely distinct subject. Do not use messages as a substitute for assignments, progress reports, verification findings, or canonical knowledge. A durable message or participant thread is coordination, not canonical knowledge and not a domain-home update. Use crewfold_propose_knowledge for durable domain findings or decisions worth retaining; its exact proposal remains inert until owner review. Never claim shared knowledge was updated unless that tool returned an exact knowledge revision receipt. Provider-local temporary helpers may assist bounded private research within one turn, but they are not Crewfold agents and must never receive continuing responsibility.`
 
 func domainSessionAppServerConfig() map[string]any {
 	return map[string]any{"code_mode.direct_only_tool_namespaces": []string{"crewfold"}}
@@ -121,12 +127,14 @@ func (host *domainSessionHost) drain(client *execution.CodexAppServerClient) {
 				_ = client.Respond(request.ID, nil, err)
 				continue
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), domainSessionOperationTimeout)
 			result, err := host.toolHandler(ctx, request)
 			cancel()
 			status, diagnostic := "completed", ""
 			if err != nil {
 				status, diagnostic = "failed", err.Error()
+			} else if succeeded, message, ok := domainSessionToolActivityResult(result); ok && !succeeded {
+				status, diagnostic = "failed", message
 			}
 			host.recordToolRequest(request, status, diagnostic)
 			_ = client.Respond(request.ID, result, err)
@@ -517,7 +525,43 @@ func upsertDomainSessionLiveItem(turn *domainSessionLiveTurn, item domain.Domain
 			turn.itemOrder = turn.itemOrder[1:]
 		}
 	}
+	// app-server's later item/completed notification does not include the
+	// daemon-owned tool response. Preserve the exact bounded failure diagnosis
+	// we recorded at the tool-response boundary instead of replacing it with a
+	// generic completed marker.
+	if previous, ok := turn.items[item.ID]; ok && item.Type == "dynamicToolCall" {
+		if item.Text == "" && previous.Text != "" {
+			item.Text = previous.Text
+		}
+		if previous.Status == "failed" && item.Status == "completed" {
+			item.Status = previous.Status
+		}
+	}
 	turn.items[item.ID] = item
+}
+
+func domainSessionToolActivityResult(result any) (bool, string, bool) {
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return false, "", false
+	}
+	var response struct {
+		Success      bool `json:"success"`
+		ContentItems []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"contentItems"`
+	}
+	if json.Unmarshal(encoded, &response) != nil {
+		return false, "", false
+	}
+	parts := make([]string, 0, len(response.ContentItems))
+	for _, item := range response.ContentItems {
+		if item.Type == "inputText" && strings.TrimSpace(item.Text) != "" {
+			parts = append(parts, strings.TrimSpace(item.Text))
+		}
+	}
+	return response.Success, boundedDomainSessionActivityText(strings.Join(parts, "\n")), true
 }
 
 func (host *domainSessionHost) liveActivity(threadID string) []domain.DomainAgentSessionTurn {

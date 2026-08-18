@@ -114,6 +114,26 @@ redundant owner decision. Expansion beyond it, provider credential changes,
 external publication, destructive effects, and authority/budget changes stop at
 the existing owner boundary.
 
+A granted coordinator may also submit one **inert work proposal**. The proposal
+names one workstream objective and a bounded task/dependency graph whose tasks
+reference already-created durable agents through exact launch profiles. It does
+not create an objective, task, assignment, run, checkout claim, or provider
+session when submitted. The owner reviews the exact graph in the browser and
+accepts or rejects one immutable proposal revision. Acceptance atomically creates
+the objective, tasks, dependencies, and scheduling intents; the deterministic
+supervisor starts only ready work and leaves dependent implementation, review,
+verification, and knowledge-maintenance work visibly gated. Conversation text,
+including a bare “yes”, is never that acceptance.
+
+This is the normal end-to-end delegation path. A coordinator with a current
+staffing grant creates the durable specialists it needs, sends each specialist
+its bounded responsibility, submits the graph, and then observes their replies.
+It does not ask the owner to reproduce task records or start each child manually.
+The grant is delegable authority only inside its frozen envelope: a child may
+receive a narrower descendant grant from authority the parent actually holds,
+but no parent can manufacture provider, runtime, task-class, budget, concurrency,
+checkout, or source-effect authority that it was not given.
+
 Task classes are exact lowercase authority labels, but the owner interface
 presents the common implementation, review, verification, coordination,
 knowledge-maintenance, and integration classes as explained selections. A custom
@@ -166,9 +186,15 @@ canonical project truth. The daemon still validates every structured mutation;
 private chain-of-thought and provider-private state are neither required nor
 claimed.
 
+Owner turns and durable message wakes are serialized per provider thread. If a
+child reply arrives while the coordinator is still handling owner input,
+Crewfold leaves that wake pending and retries after the active turn settles. The
+reply becomes a separate provider turn with explicit `crewfold_delivery`
+provenance; it is never spliced into the middle of the owner's instruction.
+
 The app-server conversation resumes with `sandbox=read-only`, including after a
-daemon/provider restart. It may inspect the selected checkout and use the three
-audited Crewfold tools below. It may not edit that checkout merely because the
+daemon/provider restart. It may inspect the selected checkout and use the closed
+audited Crewfold tool set described below. It may not edit that checkout merely because the
 owner said “yes” in conversation. A separately assigned Crewfold execution run
 is the only current path for implementation, review, or verification effects.
 
@@ -359,9 +385,9 @@ do not enforce one executive per domain or one agent per checkout.
 `default`, not `entry`, and has no rank or authority semantics. Onboarding has no
 hardcoded `lead`, `domain-steward`, or other magic identity.
 
-The accepted interaction reference is
-[`../../web/domain-agent-console-mock.html`](../../web/domain-agent-console-mock.html).
-It illustrates information architecture and interaction, not implemented state or
+The built M22 console and its strict public schemas are the accepted interaction
+reference. The exploratory standalone HTML mock was deleted after the information
+architecture was implemented so it cannot drift into a second product contract or
 an alternate authority surface.
 
 ### M22 proves the corrected owner experience

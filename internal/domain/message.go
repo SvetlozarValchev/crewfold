@@ -160,11 +160,12 @@ type InboxSummary struct {
 }
 
 type MessageWakeJob struct {
-	ID               string `json:"id"`
-	MessageID        string `json:"message_id"`
-	RecipientAgentID string `json:"recipient_agent_id"`
-	TargetRunID      string `json:"target_run_id"`
-	Status           string `json:"status"`
-	Attempts         int    `json:"attempts"`
-	Diagnostic       string `json:"diagnostic,omitempty"`
+	ID                   string `json:"id"`
+	MessageID            string `json:"message_id"`
+	RecipientAgentID     string `json:"recipient_agent_id"`
+	TargetRunID          string `json:"target_run_id,omitempty"`
+	TargetDomainThreadID string `json:"-"`
+	Status               string `json:"status"`
+	Attempts             int    `json:"attempts"`
+	Diagnostic           string `json:"diagnostic,omitempty"`
 }

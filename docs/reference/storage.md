@@ -173,6 +173,19 @@ checked in that same transaction. An expired grant is reported as expired at the
 read boundary without appending an event; it cannot authorize a child. A revoke
 racing creation cannot leave a definition without membership or allocation.
 
+`domain_work_proposals` stores one coordinator-authored inert graph with exact
+workspace/domain, source agent and private session binding, staffing-grant
+revision, captured event cut, canonical content JSON/SHA-256, decision state,
+revision, and actor/timestamps. Its content contains one objective and a bounded
+set of typed tasks with stable proposal-local keys, launch profiles, budgets,
+and dependency keys. A pending proposal owns no task, objective, assignment,
+checkout, or runtime effect. Owner acceptance revalidates the current source
+membership, grant, profiles, and graph, then atomically creates the objective,
+tasks, task dependencies, and one `scheduling_intents` row per task.
+`scheduling_intents.source_domain_work_proposal_id` plus
+`source_domain_task_key` binds every resulting intent to that exact proposal;
+other proposal-source columns remain null.
+
 ## Runs and deterministic execution
 
 The task state constraint includes `review`, `changes_requested`, and `failed`
@@ -280,6 +293,12 @@ once: startup turns a previously executing, outcome-unknown call into
 `failed_unknown` rather than sending a duplicate prompt. Success may advance a
 still-queued delivery to delivered. Failure/unknown stores a bounded diagnostic
 and leaves delivery queued so inbox polling remains authoritative.
+
+Durable-agent app-server delivery adds one earlier safe deferral: if the target
+thread already has an active owner or provider turn, the leased wake returns to
+`pending` with a short future `available_at` and bounded `target_busy`
+diagnostic. No provider call, event, or recipient-state mutation occurs. A later
+claim delivers it as its own provenance-labeled provider turn.
 
 Message sends are idempotent within their sender identity, and read/acknowledge
 mutations are idempotent within the authenticated run. Artifact references are

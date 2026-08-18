@@ -719,6 +719,12 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleDomainStaffingGrantList(request), false
 	case localapi.MethodDomainStaffingGrantRevoke:
 		return s.handleDomainStaffingGrantRevoke(request), false
+	case localapi.MethodDomainWorkProposalList:
+		return s.handleDomainWorkProposalList(request), false
+	case localapi.MethodDomainWorkProposalAccept:
+		return s.handleDomainWorkProposalAccept(request), false
+	case localapi.MethodDomainWorkProposalReject:
+		return s.handleDomainWorkProposalReject(request), false
 	case localapi.MethodOwnerCrewConfigure:
 		return s.handleOwnerCrewConfigure(request), false
 	case localapi.MethodObjectiveCreate:

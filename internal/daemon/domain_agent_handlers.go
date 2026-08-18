@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 
+	"crewfold/internal/domain"
 	"crewfold/internal/localapi"
 	"crewfold/internal/store"
 )
@@ -131,5 +132,51 @@ func (s *server) handleDomainStaffingGrantRevoke(request localapi.Request) local
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.DomainStaffingGrantMutationResult{
 		Schema: localapi.DomainStaffingGrantMutationSchema, Type: "domain_staffing_grant_mutation",
 		Grant: result.Value, EventSequence: result.EventSequence,
+	})
+}
+
+func (s *server) handleDomainWorkProposalList(request localapi.Request) localapi.Response {
+	var params localapi.DomainWorkProposalListParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "domain.work_proposal.list requires canonical workspace and project")
+	}
+	proposals, err := s.store.DomainWorkProposals(context.Background(), params.Workspace, params.Project)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.DomainWorkProposalListResult{
+		Schema: localapi.DomainWorkProposalListSchema, Type: "domain_work_proposal_list", Proposals: proposals,
+	})
+}
+
+func (s *server) handleDomainWorkProposalAccept(request localapi.Request) localapi.Response {
+	return s.handleDomainWorkProposalDecision(request, true)
+}
+
+func (s *server) handleDomainWorkProposalReject(request localapi.Request) localapi.Response {
+	return s.handleDomainWorkProposalDecision(request, false)
+}
+
+func (s *server) handleDomainWorkProposalDecision(request localapi.Request, accept bool) localapi.Response {
+	var params localapi.DomainWorkProposalDecisionParams
+	if err := decodeParams(request.Params, &params); err != nil {
+		return invalidParamsResponse(request, "domain work proposal decision requires canonical workspace, proposal, exact revision, bounded note, and idempotency_key")
+	}
+	command := store.DecideDomainWorkProposalCommand{
+		WorkspaceIdentifier: params.Workspace, ProposalID: params.ProposalID, ExpectedRevision: params.ExpectedRevision,
+		DecisionNote: params.DecisionNote, IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
+	}
+	var decision domain.DomainWorkProposalDecision
+	var err error
+	if accept {
+		decision, err = s.store.AcceptDomainWorkProposal(context.Background(), command)
+	} else {
+		decision, err = s.store.RejectDomainWorkProposal(context.Background(), command)
+	}
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.DomainWorkProposalDecisionResult{
+		Schema: localapi.DomainWorkProposalDecisionSchema, Type: "domain_work_proposal_decision", Decision: decision,
 	})
 }

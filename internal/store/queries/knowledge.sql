@@ -131,10 +131,22 @@ FROM meeting_proposals mp
 JOIN meetings m ON m.id = mp.meeting_id
 WHERE mp.id = ?;
 
+-- name: GetKnowledgeSourceDomainAgent :one
+SELECT agent.workspace_id, membership.project_id, membership.revision, membership.status, agent.enabled
+FROM domain_agent_memberships membership
+JOIN agents agent ON agent.id = membership.agent_id
+WHERE membership.agent_id = ?;
+
 -- name: GetKnowledgeActorRunWorkspace :one
 SELECT workspace_id
 FROM runs
 WHERE id = ?;
+
+-- name: GetKnowledgeActorDomainAgentWorkspace :one
+SELECT agent.workspace_id
+FROM domain_agent_memberships membership
+JOIN agents agent ON agent.id = membership.agent_id
+WHERE membership.agent_id = ? AND membership.status = 'active' AND agent.enabled = 1;
 
 -- name: InsertKnowledgeAuthorityCheck :exec
 INSERT INTO knowledge_authority_checks(

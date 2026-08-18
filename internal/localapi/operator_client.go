@@ -33,6 +33,7 @@ var operatorReadResultDiscriminators = map[string][2]string{
 	MethodAgentList:              {AgentListSchema, "agent_list"},
 	MethodDomainAgentTree:        {DomainAgentTreeSchema, "domain_agent_tree"},
 	MethodDomainAgentSessionShow: {DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainWorkProposalList: {DomainWorkProposalListSchema, "domain_work_proposal_list"},
 	MethodObjectiveList:          {ObjectiveListSchema, "objective_list"},
 	MethodTaskList:               {TaskListSchema, "task_list"},
 	MethodRunList:                {RunListSchema, "run_list"},
@@ -71,6 +72,9 @@ var operatorResultContracts = map[string]operatorResultContract{
 	MethodDomainStaffingGrantCreate:   {"local/v1/domain-staffing-grant-mutation.result.schema.json", DomainStaffingGrantMutationSchema, "domain_staffing_grant_mutation"},
 	MethodDomainStaffingGrantList:     {"local/v1/domain-staffing-grant-list.result.schema.json", DomainStaffingGrantListSchema, "domain_staffing_grant_list"},
 	MethodDomainStaffingGrantRevoke:   {"local/v1/domain-staffing-grant-mutation.result.schema.json", DomainStaffingGrantMutationSchema, "domain_staffing_grant_mutation"},
+	MethodDomainWorkProposalList:      {"local/v1/domain-work-proposal-list.result.schema.json", DomainWorkProposalListSchema, "domain_work_proposal_list"},
+	MethodDomainWorkProposalAccept:    {"local/v1/domain-work-proposal-decision.result.schema.json", DomainWorkProposalDecisionSchema, "domain_work_proposal_decision"},
+	MethodDomainWorkProposalReject:    {"local/v1/domain-work-proposal-decision.result.schema.json", DomainWorkProposalDecisionSchema, "domain_work_proposal_decision"},
 	MethodObjectiveList:               {"local/v1/objective-list.result.schema.json", ObjectiveListSchema, "objective_list"},
 	MethodTaskList:                    {"local/v1/task-list.result.schema.json", TaskListSchema, "task_list"},
 	MethodRunList:                     {"local/v1/run-list.result.schema.json", RunListSchema, "run_list"},
@@ -181,6 +185,14 @@ func validateOperatorReadResult(method string, paramsValue, result any) error {
 		}
 		if preferred > 1 || !validReturnedDomainAttentionTree(seen) {
 			return fmt.Errorf("decode local API result %s: domain attention tree is invalid", method)
+		}
+		return nil
+	case *DomainWorkProposalListResult:
+		params := paramsValue.(DomainWorkProposalListParams)
+		for _, proposal := range value.Proposals {
+			if proposal.WorkspaceID != params.Workspace || proposal.ProjectID != params.Project {
+				return fmt.Errorf("decode local API result %s: domain work proposal violates requested scope", method)
+			}
 		}
 		return nil
 	case *ObjectiveListResult:
@@ -321,6 +333,15 @@ func validateOperatorReadResult(method string, paramsValue, result any) error {
 		if !canonicalWorkspaceIDPattern.MatchString(workspace) || value.Membership.ProjectID != project ||
 			value.Membership.AgentID != agent || value.Membership.Revision != expectedRevision+1 {
 			return fmt.Errorf("decode local API result %s: domain agent mutation does not match the requested target", method)
+		}
+	case *DomainWorkProposalDecisionResult:
+		params := paramsValue.(DomainWorkProposalDecisionParams)
+		proposal := value.Decision.Proposal
+		if proposal.WorkspaceID != params.Workspace || proposal.ID != params.ProposalID || proposal.Revision != params.ExpectedRevision+1 || proposal.DecisionNote != params.DecisionNote {
+			return fmt.Errorf("decode local API result %s: domain work proposal decision does not match the requested target", method)
+		}
+		if method == MethodDomainWorkProposalAccept && proposal.Status != domain.DomainWorkProposalAccepted || method == MethodDomainWorkProposalReject && proposal.Status != domain.DomainWorkProposalRejected {
+			return fmt.Errorf("decode local API result %s: domain work proposal returned the wrong terminal decision", method)
 		}
 	case *RunLossResolutionResult:
 		params := paramsValue.(RunLostResolveParams)

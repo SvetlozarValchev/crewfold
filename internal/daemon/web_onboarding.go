@@ -150,10 +150,35 @@ func (w *workbenchServer) handleWorkbenchOnboarding(response http.ResponseWriter
 		w.writeStoreError(response, err)
 		return
 	}
+	staffingGrant, err := w.daemon.store.CreateDomainAgentStaffingGrant(request.Context(), store.CreateDomainAgentStaffingGrantCommand{
+		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID,
+		ManagerAgentIdentifier: agent.Value.ID, ExpectedMembershipRevision: membership.Value.Revision,
+		Profiles:       []domain.DomainAgentStaffingProfile{{Provider: agent.Value.Provider, Runtime: agent.Value.Runtime, MaxConcurrency: 2}},
+		TaskClasses:    []string{"coordination", "implementation", "integration", "knowledge", "review", "verification"},
+		MaxDescendants: 12, MaxConcurrency: 4, Budget: domain.Budget{},
+		IdempotencyKey: operation + "-staffing-grant", CorrelationID: operation,
+	})
+	if err != nil {
+		w.writeStoreError(response, err)
+		return
+	}
+	policy, err := w.daemon.store.ConfigureSupervisorPolicy(request.Context(), store.ConfigureSupervisorPolicyCommand{
+		WorkspaceIdentifier: workspace.Workspace.ID, Enabled: true, AutoSchedule: true,
+		Limits: domain.SupervisorLimits{
+			MaxActiveRuns: 8, MaxStartingRuns: 2, DefaultProjectConcurrency: 4, DefaultProviderConcurrency: 4,
+			ProjectConcurrency: map[string]int{}, ProviderConcurrency: map[string]int{},
+		},
+		AutoRetryLimit: 0, RetryCooldownSeconds: 0, ExpectedRevision: 1,
+		IdempotencyKey: operation + "-supervisor-policy", CorrelationID: operation,
+	})
+	if err != nil {
+		w.writeStoreError(response, err)
+		return
+	}
 	w.writeJSON(response, http.StatusOK, map[string]any{
 		"schema": "urn:crewfold:schema:web:onboarding:v1", "type": "workbench_onboarding", "status": "completed",
 		"workspace": workspace.Workspace, "project": project.Project, "checkout": project.Checkout, "agent": agent.Value,
-		"domain_membership":  membership.Value,
+		"domain_membership": membership.Value, "staffing_grant": staffingGrant.Value, "supervisor_policy": policy.Value,
 		"provider_diagnosis": diagnosis, "repository": map[string]any{"branch": observation.Branch, "dirty": observation.Dirty, "dirty_path_count": len(observation.DirtyPaths)},
 	})
 }

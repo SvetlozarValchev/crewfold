@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -578,7 +579,7 @@ func scopedMCPTools() []mcp.Tool {
 		{Name: toolProposeTasks, Description: "Propose a bounded task decomposition using only exact owner-allowed launch profiles. This does not create tasks until the local owner accepts it.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionCreateTask, domain.ProposalActionAddDependency, domain.ProposalActionDeclareClaimRequirement})},
 		{Name: toolExecutiveContext, Description: "Read the exact frozen owner instruction, conversation, project snapshot, and citation namespace for this executive exchange.", InputSchema: empty},
 		{Name: toolRespondToOwner, Description: "Submit this executive exchange's sole typed owner response. Proposal responses explain linked proposals; decision responses ask a genuine owner choice. These shapes are exclusive. This tool does not accept proposals or execute effects.", InputSchema: ownerExecutiveResponseInputSchema()},
-		{Name: toolCompletion, Description: "Propose completion with an executive handoff and evidence.", InputSchema: objectSchema([]string{"summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "handoff": stringSchema(1, 4096), "evidence_ids": stringArraySchema(), "changed_paths": stringArraySchema(), "checks": stringArraySchema(), "remaining_risks": stringArraySchema(), "unknowns": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
+		{Name: toolCompletion, Description: "Propose completion with an executive handoff and evidence. changed_paths means the exact implementation diff paths inspected for this completion; an independent verifier lists the paths it reviewed without claiming to have edited them. Every array item is limited to 128 printable characters.", InputSchema: objectSchema([]string{"summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "handoff": stringSchema(1, 4096), "evidence_ids": stringArraySchema(), "changed_paths": stringArraySchema(), "checks": stringArraySchema(), "remaining_risks": stringArraySchema(), "unknowns": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolRunCheck, Description: "Request one exact active project requirement whose frozen definition revision is present in this run's check-watch grant.", InputSchema: objectSchema([]string{"requirement_id", "idempotency_key"}, map[string]any{"requirement_id": checkEntityIDSchema("checkreq_"), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolListCheckResults, Description: "List a bounded page of check results visible through this run's exact check-watch grant.", InputSchema: objectSchema([]string{"limit"}, map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 50}, "cursor": stringSchema(1, 256)})},
 		{Name: toolInspectCheckResult, Description: "Inspect one check run and its bounded structured evidence when visible through this run's exact grant.", InputSchema: objectSchema([]string{"check_run_id"}, map[string]any{"check_run_id": checkEntityIDSchema("checkrun_")})},
@@ -1411,7 +1412,12 @@ func (arguments proposeKnowledgeArguments) validate() error {
 }
 
 func (arguments progressArguments) validate() error {
-	if err := validateMCPStringItems(arguments.Completed, arguments.Next, arguments.Risks, arguments.EvidenceIDs); err != nil {
+	if err := validateMCPNamedStringItems(
+		namedMCPStringItems{name: "completed", items: arguments.Completed},
+		namedMCPStringItems{name: "next", items: arguments.Next},
+		namedMCPStringItems{name: "risks", items: arguments.Risks},
+		namedMCPStringItems{name: "evidence_ids", items: arguments.EvidenceIDs},
+	); err != nil {
 		return err
 	}
 	return nil
@@ -1421,11 +1427,20 @@ func (arguments blockedArguments) validate() error {
 	if arguments.Severity != "blocking" && arguments.Severity != "high" && arguments.Severity != "medium" && arguments.Severity != "low" {
 		return errors.New("severity must be blocking, high, medium, or low")
 	}
-	return validateMCPStringItems(arguments.Needs, arguments.RelatedIDs)
+	return validateMCPNamedStringItems(
+		namedMCPStringItems{name: "needs", items: arguments.Needs},
+		namedMCPStringItems{name: "related_ids", items: arguments.RelatedIDs},
+	)
 }
 
 func (arguments completionArguments) validate() error {
-	return validateMCPStringItems(arguments.EvidenceIDs, arguments.ChangedPaths, arguments.Checks, arguments.RemainingRisks, arguments.Unknowns)
+	return validateMCPNamedStringItems(
+		namedMCPStringItems{name: "evidence_ids", items: arguments.EvidenceIDs},
+		namedMCPStringItems{name: "changed_paths", items: arguments.ChangedPaths},
+		namedMCPStringItems{name: "checks", items: arguments.Checks},
+		namedMCPStringItems{name: "remaining_risks", items: arguments.RemainingRisks},
+		namedMCPStringItems{name: "unknowns", items: arguments.Unknowns},
+	)
 }
 
 func (arguments completionArguments) validateForRun(run domain.Run) error {
@@ -1438,14 +1453,19 @@ func (arguments completionArguments) validateForRun(run domain.Run) error {
 	return nil
 }
 
-func validateMCPStringItems(collections ...[]string) error {
+type namedMCPStringItems struct {
+	name  string
+	items []string
+}
+
+func validateMCPNamedStringItems(collections ...namedMCPStringItems) error {
 	for _, collection := range collections {
-		if len(collection) > 32 {
-			return errors.New("tool array contains more than 32 items")
+		if len(collection.items) > 32 {
+			return fmt.Errorf("%s contains %d items; maximum is 32", collection.name, len(collection.items))
 		}
-		for _, item := range collection {
+		for index, item := range collection.items {
 			if strings.TrimSpace(item) == "" || len(item) > 128 || strings.ContainsAny(item, "\r\n\x00") {
-				return errors.New("tool array item must contain 1 to 128 printable characters")
+				return fmt.Errorf("%s[%d] must contain 1 to 128 printable characters; received %d bytes", collection.name, index, len(item))
 			}
 		}
 	}

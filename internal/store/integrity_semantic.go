@@ -79,6 +79,13 @@ JOIN domain_agent_memberships manager
 WHERE grant.manager_membership_revision>manager.revision
    OR NOT EXISTS(SELECT 1 FROM domain_agent_staffing_profiles profile WHERE profile.grant_id=grant.id)
    OR NOT EXISTS(SELECT 1 FROM domain_agent_staffing_task_classes class WHERE class.grant_id=grant.id)
+	OR ((grant.parent_grant_id IS NULL)<>(grant.source_allocation_id IS NULL))
+	OR ((grant.parent_grant_id IS NULL)<>(grant.delegated_by_agent_id IS NULL))
+	OR (grant.parent_grant_id IS NOT NULL AND NOT EXISTS(
+	  SELECT 1 FROM domain_agent_staffing_allocations allocation
+	  WHERE allocation.id=grant.source_allocation_id AND allocation.grant_id=grant.parent_grant_id
+	    AND allocation.child_agent_id=grant.manager_agent_id AND allocation.parent_agent_id=grant.delegated_by_agent_id
+	))
 UNION ALL
 SELECT 'domain_staffing_allocation:'||allocation.id FROM domain_agent_staffing_allocations allocation
 JOIN domain_agent_staffing_grants grant ON grant.id=allocation.grant_id
@@ -152,7 +159,7 @@ LEFT JOIN events event ON event.sequence=(
   SELECT MAX(candidate.sequence) FROM events candidate
   WHERE candidate.entity_type='domain_staffing_grant' AND candidate.entity_id=grant.id
 )
-WHERE event.sequence IS NULL OR event.type NOT IN ('domain.staffing_grant_created','domain.staffing_grant_revoked')
+WHERE event.sequence IS NULL OR event.type NOT IN ('domain.staffing_grant_created','domain.staffing_grant_delegated','domain.staffing_grant_revoked')
    OR event.workspace_id<>project.workspace_id OR event.entity_revision<>grant.revision
    OR event.occurred_at<>grant.updated_at OR json_extract(event.data_json,'$.project_id')<>grant.project_id
    OR json_extract(event.data_json,'$.manager_agent_id')<>grant.manager_agent_id
@@ -338,6 +345,14 @@ UNION ALL
 SELECT 'native_anchor:'||anchor.task_id FROM knowledge_task_scope_anchors anchor JOIN tasks task ON task.id=anchor.task_id
 WHERE anchor.workspace_id<>task.workspace_id OR anchor.project_id<>task.project_id OR anchor.created_at<>task.created_at OR anchor.created_by<>task.created_by
 UNION ALL
+SELECT 'integration_source:'||revision.id FROM knowledge_revisions revision
+WHERE revision.proposed_by_type='integration'
+  AND NOT EXISTS(SELECT 1 FROM knowledge_sources source WHERE source.revision_id=revision.id AND source.source_type='domain_agent' AND source.source_id=revision.proposed_by AND source.role='primary')
+UNION ALL
+SELECT 'domain_agent_source:'||source.revision_id FROM knowledge_sources source JOIN knowledge_revisions revision ON revision.id=source.revision_id
+WHERE source.source_type='domain_agent' AND source.role='primary'
+  AND (revision.proposed_by_type<>'integration' OR revision.proposed_by<>source.source_id)
+UNION ALL
 SELECT 'accepted_authority:'||revision.id FROM knowledge_revisions revision JOIN knowledge_items item ON item.id=revision.item_id
 WHERE revision.review_status='accepted'
  AND NOT EXISTS(SELECT 1 FROM knowledge_authority_checks authority JOIN events event ON event.sequence=authority.event_sequence
@@ -509,7 +524,9 @@ UNION ALL
 SELECT 'wake:'||wake.id FROM message_wake_jobs wake
 LEFT JOIN message_recipients recipient ON recipient.message_id=wake.message_id AND recipient.recipient_agent_id=wake.recipient_agent_id
 LEFT JOIN events event ON event.entity_type='message' AND event.entity_id=wake.message_id AND event.correlation_id='wake-unknown-'||wake.id
-WHERE recipient.message_id IS NULL OR (wake.status='leased')<>(wake.lease_expires_at IS NOT NULL)
+WHERE recipient.message_id IS NULL
+   OR (wake.target_run_id IS NOT NULL)=(wake.target_domain_thread_id IS NOT NULL)
+   OR (wake.status='leased')<>(wake.lease_expires_at IS NOT NULL)
    OR (wake.status='succeeded' AND recipient.status='queued')
    OR (wake.status='failed_unknown' AND (event.type<>'message.wake_failed_unknown' OR event.actor_id<>'message-wake-worker' OR event.actor_type<>'subsystem'))`},
 	},

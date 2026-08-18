@@ -301,7 +301,8 @@ func TestKnowledgeSourceTypesAreBoundedAndRevisionPinned(t *testing.T) {
 	}
 	resolved := document.Definitions["source"]
 	input := document.Definitions["sourceInput"]
-	assertKnowledgeEnum(t, resolved.Properties["type"], []string{"task", "meeting", "meeting_proposal"})
+	assertKnowledgeEnum(t, resolved.Properties["type"], []string{"task", "meeting", "meeting_proposal", "domain_agent"})
+	assertKnowledgeEnum(t, input.Properties["type"], []string{"task", "meeting", "meeting_proposal"})
 	assertKnowledgeEnum(t, resolved.Properties["role"], []string{"primary", "supporting"})
 	if !containsKnowledgeString(resolved.Required, "revision") || !containsKnowledgeString(resolved.Required, "ordinal") {
 		t.Errorf("resolved source is not revision-pinned and ordered: %v", resolved.Required)

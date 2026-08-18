@@ -191,6 +191,40 @@ func (c *Client) DomainStaffingGrantRevoke(ctx context.Context, params DomainSta
 	return result, nil
 }
 
+func (c *Client) DomainWorkProposalList(ctx context.Context, workspace, project string) (DomainWorkProposalListResult, error) {
+	workspaceID, projectID, err := c.resolveOperatorScope(ctx, workspace, project)
+	if err != nil {
+		return DomainWorkProposalListResult{}, err
+	}
+	var result DomainWorkProposalListResult
+	if err := c.callParamsStrict(ctx, MethodDomainWorkProposalList, DomainWorkProposalListParams{Workspace: workspaceID, Project: projectID}, &result); err != nil {
+		return DomainWorkProposalListResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) DomainWorkProposalAccept(ctx context.Context, params DomainWorkProposalDecisionParams) (DomainWorkProposalDecisionResult, error) {
+	return c.decideDomainWorkProposal(ctx, MethodDomainWorkProposalAccept, params)
+}
+
+func (c *Client) DomainWorkProposalReject(ctx context.Context, params DomainWorkProposalDecisionParams) (DomainWorkProposalDecisionResult, error) {
+	return c.decideDomainWorkProposal(ctx, MethodDomainWorkProposalReject, params)
+}
+
+func (c *Client) decideDomainWorkProposal(ctx context.Context, method string, params DomainWorkProposalDecisionParams) (DomainWorkProposalDecisionResult, error) {
+	workspaceID, err := c.resolveOperatorWorkspace(ctx, params.Workspace)
+	if err != nil {
+		return DomainWorkProposalDecisionResult{}, err
+	}
+	params.Workspace = workspaceID
+	params.IdempotencyKey = defaultIdempotencyKey(params.IdempotencyKey)
+	var result DomainWorkProposalDecisionResult
+	if err := c.callParamsStrict(ctx, method, params, &result); err != nil {
+		return DomainWorkProposalDecisionResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) resolveDomainAgentSessionParams(ctx context.Context, workspace, project, agent string) (DomainAgentSessionParams, error) {
 	workspaceID, projectID, err := c.resolveOperatorScope(ctx, workspace, project)
 	if err != nil {

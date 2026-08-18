@@ -57,7 +57,8 @@ func TestMessageWakePassIsBoundedSequentialAndYields(t *testing.T) {
 		return nil
 	}
 
-	processed, err := processMessageWakePass(context.Background(), claims, deliver, settle)
+	deferJob := func(context.Context, string, time.Duration, string) error { return nil }
+	processed, err := processMessageWakePass(context.Background(), claims, deliver, settle, deferJob)
 	if err != nil || processed != messageWakePassLimit || claimCursor != messageWakePassLimit || deliveries != messageWakePassLimit || settlements != messageWakePassLimit {
 		t.Fatalf("first pass processed=%d claims=%d deliveries=%d settlements=%d error=%v", processed, claimCursor, deliveries, settlements, err)
 	}
@@ -68,7 +69,7 @@ func TestMessageWakePassIsBoundedSequentialAndYields(t *testing.T) {
 		t.Fatalf("full-pass wait = %s, want yield %s", wait, messageWakeYieldWait)
 	}
 
-	processed, err = processMessageWakePass(context.Background(), claims, deliver, settle)
+	processed, err = processMessageWakePass(context.Background(), claims, deliver, settle, deferJob)
 	if err != nil || processed != 1 || claimCursor != len(jobs) || deliveries != len(jobs) || settlements != len(jobs) {
 		t.Fatalf("second pass processed=%d claims=%d deliveries=%d settlements=%d error=%v", processed, claimCursor, deliveries, settlements, err)
 	}
@@ -114,6 +115,7 @@ func TestMessageWakeDeliveryHasDeadlineAndPassCancellationDoesNotSettle(t *testi
 				settled.Store(true)
 				return nil
 			},
+			func(context.Context, string, time.Duration, string) error { return nil },
 		)
 		done <- err
 	}()
@@ -129,6 +131,42 @@ func TestMessageWakeDeliveryHasDeadlineAndPassCancellationDoesNotSettle(t *testi
 	}
 	if settled.Load() {
 		t.Fatal("shutdown-cancelled external effect was durably settled")
+	}
+}
+
+func TestMessageWakeBusyDurableSessionIsDeferredBeforeAnySettlement(t *testing.T) {
+	claimed := false
+	deferred := false
+	settled := false
+	processed, err := processMessageWakePass(
+		context.Background(),
+		func(context.Context, time.Duration) (domain.MessageWakeJob, bool, error) {
+			if claimed {
+				return domain.MessageWakeJob{}, false, nil
+			}
+			claimed = true
+			return domain.MessageWakeJob{ID: "wake-busy"}, true, nil
+		},
+		func(context.Context, domain.MessageWakeJob, time.Duration) error { return errMessageWakeTargetBusy },
+		func(context.Context, string, string, string) error { settled = true; return nil },
+		func(_ context.Context, id string, delay time.Duration, diagnostic string) error {
+			deferred = id == "wake-busy" && delay == messageWakeBusyDelay && diagnostic == errMessageWakeTargetBusy.Error()
+			return nil
+		},
+	)
+	if err != nil || processed != 1 || !deferred || settled {
+		t.Fatalf("busy wake processed=%d deferred=%t settled=%t error=%v", processed, deferred, settled, err)
+	}
+}
+
+func TestM22DurableSessionWakeNeverStartsBesideAnActiveTurn(t *testing.T) {
+	thread := execution.CodexThread{Turns: []execution.CodexTurn{{ID: "complete", Status: "completed"}, {ID: "active", Status: "inProgress"}}}
+	if !codexThreadHasActiveTurn(thread) {
+		t.Fatal("active durable-agent turn was not detected")
+	}
+	thread.Turns[1].Status = "completed"
+	if codexThreadHasActiveTurn(thread) {
+		t.Fatal("completed durable-agent thread remained busy")
 	}
 }
 

@@ -299,6 +299,20 @@ func TestM21WorkbenchCompletionRequiresStructuredChecksAndChangedPaths(t *testin
 	}
 }
 
+func TestM22WorkerArrayValidationNamesTheExactFieldAndItem(t *testing.T) {
+	t.Parallel()
+
+	tooLong := strings.Repeat("x", 129)
+	err := (progressArguments{Completed: []string{"short", tooLong}}).validate()
+	if err == nil || err.Error() != "completed[1] must contain 1 to 128 printable characters; received 129 bytes" {
+		t.Fatalf("progress diagnostic = %v", err)
+	}
+	err = (completionArguments{Checks: make([]string, 33)}).validate()
+	if err == nil || err.Error() != "checks contains 33 items; maximum is 32" {
+		t.Fatalf("completion diagnostic = %v", err)
+	}
+}
+
 func TestManagerProposalActionKindsAreClosed(t *testing.T) {
 	t.Parallel()
 	allowed := map[string][]string{

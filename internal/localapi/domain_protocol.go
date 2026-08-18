@@ -168,3 +168,28 @@ type DomainStaffingGrantListResult struct {
 	Type   string                            `json:"type"`
 	Grants []domain.DomainAgentStaffingGrant `json:"grants"`
 }
+
+type DomainWorkProposalListParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project"`
+}
+
+type DomainWorkProposalDecisionParams struct {
+	Workspace        string `json:"workspace"`
+	ProposalID       string `json:"proposal_id"`
+	ExpectedRevision int64  `json:"expected_revision"`
+	DecisionNote     string `json:"decision_note"`
+	IdempotencyKey   string `json:"idempotency_key"`
+}
+
+type DomainWorkProposalListResult struct {
+	Schema    string                      `json:"schema"`
+	Type      string                      `json:"type"`
+	Proposals []domain.DomainWorkProposal `json:"proposals"`
+}
+
+type DomainWorkProposalDecisionResult struct {
+	Schema   string                            `json:"schema"`
+	Type     string                            `json:"type"`
+	Decision domain.DomainWorkProposalDecision `json:"decision"`
+}

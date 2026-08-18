@@ -117,6 +117,13 @@ func TestDurableMailboxSupportsOfflineDeliveryReplyAcknowledgementAndFailedWake(
 	if err != nil || !found || wake.MessageID != reply.Value.Message.ID || wake.TargetRunID != senderRun.Run.ID {
 		t.Fatalf("ClaimMessageWakeJob() = %#v, %t, %v", wake, found, err)
 	}
+	if err := storage.DeferMessageWakeJob(context.Background(), wake.ID, 0, "target session is still active"); err != nil {
+		t.Fatalf("DeferMessageWakeJob() error = %v", err)
+	}
+	wake, found, err = storage.ClaimMessageWakeJob(context.Background(), time.Second)
+	if err != nil || !found || wake.MessageID != reply.Value.Message.ID || wake.Attempts != 2 || wake.Diagnostic != "target session is still active" {
+		t.Fatalf("ClaimMessageWakeJob(after deferral) = %#v, %t, %v", wake, found, err)
+	}
 	if err := storage.SettleMessageWakeJob(context.Background(), wake.ID, domain.WakeFailed, "fixture prompt refused"); err != nil {
 		t.Fatalf("SettleMessageWakeJob(failed) error = %v", err)
 	}

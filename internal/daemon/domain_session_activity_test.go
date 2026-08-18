@@ -64,6 +64,27 @@ func TestM22DomainSessionHostShowsProviderErrorsWithoutInventingState(t *testing
 	}
 }
 
+func TestM22DomainSessionHostPreservesExactCrewfoldToolFailure(t *testing.T) {
+	host := &domainSessionHost{activity: make(map[string]*domainSessionLiveActivity)}
+	request := execution.CodexAppServerRequest{Method: "item/tool/call", Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","callId":"call-1","tool":"crewfold_propose_work"}`)}
+	host.recordToolRequest(request, "inProgress", "")
+	succeeded, diagnostic, ok := domainSessionToolActivityResult(map[string]any{
+		"success":      false,
+		"contentItems": []map[string]string{{"type": "inputText", "text": `submit work proposal: task "verify" uses task class "testing" outside staffing grant staffgrant_1`}},
+	})
+	if !ok || succeeded || diagnostic == "" {
+		t.Fatalf("tool activity result = succeeded %t diagnostic %q ok %t", succeeded, diagnostic, ok)
+	}
+	host.recordToolRequest(request, "failed", diagnostic)
+	// A later provider item/completed marker lacks Crewfold's response body. It
+	// must not erase or relabel the exact daemon-owned failure.
+	host.recordNotification(execution.CodexAppServerNotification{Method: "item/completed", Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","item":{"id":"call-1","type":"dynamicToolCall","tool":"crewfold_propose_work","status":"completed"}}`)})
+	live := host.liveActivity("thread-1")
+	if len(live) != 1 || len(live[0].Items) != 1 || live[0].Items[0].Status != "failed" || live[0].Items[0].Text != diagnostic {
+		t.Fatalf("tool failure activity = %#v", live)
+	}
+}
+
 func TestM22DomainSessionMergeDeduplicatesPersistedAndLiveMessageIDs(t *testing.T) {
 	persisted := []domain.DomainAgentSessionTurn{{
 		ID: "turn-1", Status: "completed", Items: []domain.DomainAgentSessionItem{
