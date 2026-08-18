@@ -1422,20 +1422,24 @@ one-response executive interaction is not retained as a compatibility path.
    navigation.
 2. Add an acyclic durable manager/child relationship and bounded owner-authored
    staffing grants for typed child-agent creation.
-3. Bind a durable agent to a resumable provider conversation, hosted through
+3. Freeze an owner-reviewed operating charter and explicit hands-on/adaptive/
+   delegation-first policy on every membership. Allow a separate read-only,
+   effect-free ephemeral Codex thread to draft those fields, but require owner
+   review before any durable record exists.
+4. Bind a durable agent to a resumable provider conversation, hosted through
    Herdr or a structured provider transport, with explicit replacement continuity
    when resume is impossible.
-4. Replace the project-executive composer with the selected agent's real
+5. Replace the project-executive composer with the selected agent's real
    conversation and readable structured provider/tool/diff activity. Keep exact
    PTY bytes in an advanced console.
-5. Add the domain workspace: workstreams, shared governed knowledge, interface
+6. Add the domain workspace: workstreams, shared governed knowledge, interface
    changes, upstream impact, documents/artifacts, services, decisions, and
    cross-workstream messages.
-6. Route relevant accepted knowledge and durable messages across affected
+7. Route relevant accepted knowledge and durable messages across affected
    workstreams without copying transcripts or broadcasting all domain state.
-7. Prove independent implementer, reviewer, and scenario-tester duties, including
+8. Prove independent implementer, reviewer, and scenario-tester duties, including
    a bounded product/MCP test charter and evidence publication.
-8. Replace peer administrative pages with contextual drill-downs while retaining
+9. Replace peer administrative pages with contextual drill-downs while retaining
    exact canonical API coverage, keyboard access, responsive layouts, and
    operational CLI/TUI fallbacks.
 

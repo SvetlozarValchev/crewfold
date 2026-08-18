@@ -196,9 +196,11 @@ func (s *Store) CreateDomainAgentChild(ctx context.Context, command CreateDomain
 	command.Name, command.Role = strings.TrimSpace(command.Name), strings.TrimSpace(command.Role)
 	command.Provider, command.Runtime = strings.TrimSpace(command.Provider), strings.TrimSpace(command.Runtime)
 	command.Workstream, command.TaskClass = strings.TrimSpace(command.Workstream), strings.TrimSpace(command.TaskClass)
+	command.OperatingCharter, command.DelegationPolicy = strings.TrimSpace(command.OperatingCharter), strings.TrimSpace(command.DelegationPolicy)
 	command.IdempotencyKey, command.CorrelationID = strings.TrimSpace(command.IdempotencyKey), strings.TrimSpace(command.CorrelationID)
 	if command.ThreadID == "" || command.GrantID == "" || !workspaceNamePattern.MatchString(command.Name) ||
 		!validShortText(command.Role) || !validShortText(command.Provider) || !validShortText(command.Runtime) ||
+		!validDomainAgentCharter(command.OperatingCharter) || !validDomainAgentDelegationPolicy(command.DelegationPolicy) ||
 		command.MaxConcurrency < 1 || command.MaxConcurrency > 100 || !workspaceNamePattern.MatchString(command.TaskClass) ||
 		!validBudget(command.Budget) {
 		return domain.DomainAgentChildCreation{}, domainAgentError(CodeDomainStaffingDenied, "durable child request is outside the typed staffing contract")
@@ -219,6 +221,7 @@ func (s *Store) CreateDomainAgentChild(ctx context.Context, command CreateDomain
 		"project_id": scope.Project.ID, "parent_agent_id": scope.Agent.ID, "grant_id": command.GrantID,
 		"name": command.Name, "role": command.Role, "provider": command.Provider, "runtime": command.Runtime,
 		"max_concurrency": command.MaxConcurrency, "workstream": command.Workstream,
+		"operating_charter": command.OperatingCharter, "delegation_policy": command.DelegationPolicy,
 		"task_class": command.TaskClass, "budget": command.Budget,
 	}
 	requestHash, err := hashCommand("domain.child.create", request)
@@ -306,6 +309,7 @@ FROM domain_agent_staffing_allocations WHERE grant_id=?`, grant.ID).Scan(&spent.
 	}
 	membership := domain.DomainAgentMembership{
 		ProjectID: scope.Project.ID, AgentID: agent.ID, ParentAgentID: scope.Agent.ID, WorkstreamID: workstreamID,
+		OperatingCharter: command.OperatingCharter, DelegationPolicy: command.DelegationPolicy,
 		Status: domain.DomainAgentActive, Revision: 1, CreatedAt: now, UpdatedAt: now,
 		CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID,
 	}
@@ -315,9 +319,9 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, agent.ID, agent.WorkspaceID, agent.Name, age
 		return domain.DomainAgentChildCreation{}, storageFailure("insert durable child agent", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO domain_agent_memberships(
-project_id,agent_id,parent_agent_id,workstream_id,preferred_entry,status,revision,created_at,updated_at,created_by,updated_by)
-VALUES(?,?,?,NULLIF(?,''),0,?,?,?,?,?,?)`, membership.ProjectID, membership.AgentID, membership.ParentAgentID,
-		membership.WorkstreamID, membership.Status, membership.Revision, membership.CreatedAt, membership.UpdatedAt,
+project_id,agent_id,parent_agent_id,workstream_id,operating_charter,delegation_policy,preferred_entry,status,revision,created_at,updated_at,created_by,updated_by)
+VALUES(?,?,?,NULLIF(?,''),?,?,0,?,?,?,?,?,?)`, membership.ProjectID, membership.AgentID, membership.ParentAgentID,
+		membership.WorkstreamID, membership.OperatingCharter, membership.DelegationPolicy, membership.Status, membership.Revision, membership.CreatedAt, membership.UpdatedAt,
 		membership.CreatedBy, membership.UpdatedBy); err != nil {
 		return domain.DomainAgentChildCreation{}, storageFailure("insert durable child membership", err)
 	}

@@ -3,12 +3,15 @@
   "$id": "urn:crewfold:schema:web:onboarding-request:v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["repository_path", "workspace", "project", "agent", "provider", "runtime", "write_mode"],
+  "required": ["repository_path", "workspace", "project", "agent", "role", "operating_charter", "delegation_policy", "provider", "runtime", "write_mode"],
   "properties": {
     "repository_path": {"type": "string", "minLength": 2, "maxLength": 4096},
     "workspace": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
     "project": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
     "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "role": {"type": "string", "minLength": 1, "maxLength": 128},
+    "operating_charter": {"type": "string", "minLength": 1, "maxLength": 8192},
+    "delegation_policy": {"enum": ["hands_on", "adaptive", "delegation_first"]},
     "provider": {"type": "string", "minLength": 1, "maxLength": 128},
     "runtime": {"type": "string", "minLength": 1, "maxLength": 128},
     "write_mode": {"enum": ["exclusive", "claimed", "shared", "read_only"]}

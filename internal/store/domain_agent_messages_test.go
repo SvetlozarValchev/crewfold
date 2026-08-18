@@ -17,6 +17,7 @@ func TestM22DurableAgentMessagesAreSameDomainScopedDeliveredAndReplaySafe(t *tes
 	for index, agent := range []MutationResult[domain.AgentDefinition]{sender, recipient} {
 		if _, err := storage.AttachDomainAgent(ctx, AttachDomainAgentCommand{
 			WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+			OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 			PreferredEntry: index == 0, IdempotencyKey: "attach-message-agent-" + agent.Value.ID,
 			CorrelationID: "attach-message-agent-" + agent.Value.ID,
 		}); err != nil {

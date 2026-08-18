@@ -199,7 +199,14 @@ func (client *CodexAppServerClient) StartThread(ctx context.Context, params Code
 	if err := client.call(ctx, "thread/start", params, &response); err != nil {
 		return CodexThread{}, err
 	}
-	return validateCodexThread(response.Thread, false)
+	thread, err := validateCodexThread(response.Thread, params.Ephemeral)
+	if err != nil {
+		return CodexThread{}, err
+	}
+	if thread.Ephemeral != params.Ephemeral {
+		return CodexThread{}, errors.New("Codex thread lifecycle does not match the requested persistence")
+	}
+	return thread, nil
 }
 
 func (client *CodexAppServerClient) ResumeThread(ctx context.Context, threadID string) (CodexThread, error) {

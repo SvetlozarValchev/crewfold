@@ -26,9 +26,12 @@ func (s *Store) CreateDomainAgent(ctx context.Context, command CreateDomainAgent
 	provider, runtimeName := strings.TrimSpace(command.Provider), strings.TrimSpace(command.Runtime)
 	parentIdentifier := strings.TrimSpace(command.ParentAgentIdentifier)
 	workstreamIdentifier := strings.TrimSpace(command.WorkstreamIdentifier)
+	operatingCharter := strings.TrimSpace(command.OperatingCharter)
+	delegationPolicy := strings.TrimSpace(command.DelegationPolicy)
 	key, correlationID := strings.TrimSpace(command.IdempotencyKey), strings.TrimSpace(command.CorrelationID)
 	if workspaceIdentifier == "" || projectIdentifier == "" || !workspaceNamePattern.MatchString(name) ||
 		!validShortText(role) || !validShortText(provider) || !validShortText(runtimeName) ||
+		!validDomainAgentCharter(operatingCharter) || !validDomainAgentDelegationPolicy(delegationPolicy) ||
 		command.MaxConcurrency < 1 || command.MaxConcurrency > 100 {
 		return domain.DomainAgentCreation{}, domainAgentError(CodeInvalidDomainAgent, "domain agent creation requires exact scope, lowercase name, role, provider, runtime, and max concurrency from 1 to 100")
 	}
@@ -39,6 +42,7 @@ func (s *Store) CreateDomainAgent(ctx context.Context, command CreateDomainAgent
 		"workspace": workspaceIdentifier, "project": projectIdentifier, "name": name, "role": role,
 		"provider": provider, "runtime": runtimeName, "max_concurrency": command.MaxConcurrency,
 		"parent_agent": parentIdentifier, "workstream": workstreamIdentifier, "preferred_entry": command.PreferredEntry,
+		"operating_charter": operatingCharter, "delegation_policy": delegationPolicy,
 	})
 	if err != nil {
 		return domain.DomainAgentCreation{}, storageFailure("hash domain agent creation", err)
@@ -98,9 +102,9 @@ func (s *Store) CreateDomainAgent(ctx context.Context, command CreateDomainAgent
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, agent.ID, agent.WorkspaceID, agent.Name, agent.Role, agent.Provider, agent.Runtime, agent.Enabled, agent.MaxConcurrency, agent.Revision, agent.CreatedAt, agent.UpdatedAt, agent.CreatedBy, agent.UpdatedBy); err != nil {
 		return domain.DomainAgentCreation{}, storageFailure("insert domain agent definition", err)
 	}
-	membership := domain.DomainAgentMembership{ProjectID: project.ID, AgentID: agent.ID, ParentAgentID: parentID, WorkstreamID: workstreamID, PreferredEntry: command.PreferredEntry, Status: domain.DomainAgentActive, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO domain_agent_memberships(project_id,agent_id,parent_agent_id,workstream_id,preferred_entry,status,revision,created_at,updated_at,created_by,updated_by)
-VALUES(?,?,NULLIF(?,''),NULLIF(?,''),?,?,?,?,?,?,?)`, membership.ProjectID, membership.AgentID, membership.ParentAgentID, membership.WorkstreamID, membership.PreferredEntry, membership.Status, membership.Revision, membership.CreatedAt, membership.UpdatedAt, membership.CreatedBy, membership.UpdatedBy); err != nil {
+	membership := domain.DomainAgentMembership{ProjectID: project.ID, AgentID: agent.ID, ParentAgentID: parentID, WorkstreamID: workstreamID, OperatingCharter: operatingCharter, DelegationPolicy: delegationPolicy, PreferredEntry: command.PreferredEntry, Status: domain.DomainAgentActive, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO domain_agent_memberships(project_id,agent_id,parent_agent_id,workstream_id,operating_charter,delegation_policy,preferred_entry,status,revision,created_at,updated_at,created_by,updated_by)
+VALUES(?,?,NULLIF(?,''),NULLIF(?,''),?,?,?,?,?,?,?,?,?)`, membership.ProjectID, membership.AgentID, membership.ParentAgentID, membership.WorkstreamID, membership.OperatingCharter, membership.DelegationPolicy, membership.PreferredEntry, membership.Status, membership.Revision, membership.CreatedAt, membership.UpdatedAt, membership.CreatedBy, membership.UpdatedBy); err != nil {
 		return domain.DomainAgentCreation{}, storageFailure("insert domain agent membership", err)
 	}
 	if err := s.runMutationHook(MutationAfterProjection); err != nil {
@@ -133,9 +137,11 @@ func (s *Store) AttachDomainAgent(ctx context.Context, command AttachDomainAgent
 	agentIdentifier := strings.TrimSpace(command.AgentIdentifier)
 	parentIdentifier := strings.TrimSpace(command.ParentAgentIdentifier)
 	workstreamIdentifier := strings.TrimSpace(command.WorkstreamIdentifier)
+	operatingCharter := strings.TrimSpace(command.OperatingCharter)
+	delegationPolicy := strings.TrimSpace(command.DelegationPolicy)
 	key := strings.TrimSpace(command.IdempotencyKey)
 	correlationID := strings.TrimSpace(command.CorrelationID)
-	if workspaceIdentifier == "" || projectIdentifier == "" || agentIdentifier == "" {
+	if workspaceIdentifier == "" || projectIdentifier == "" || agentIdentifier == "" || !validDomainAgentCharter(operatingCharter) || !validDomainAgentDelegationPolicy(delegationPolicy) {
 		return MutationResult[domain.DomainAgentMembership]{}, domainAgentError(CodeInvalidDomainAgent, "domain agent attachment requires workspace, domain, and agent")
 	}
 	if err := validateMutationMetadata(key, correlationID, CodeInvalidDomainAgent); err != nil {
@@ -144,6 +150,7 @@ func (s *Store) AttachDomainAgent(ctx context.Context, command AttachDomainAgent
 	requestHash, err := hashCommand("domain.agent.attach", map[string]any{
 		"workspace": workspaceIdentifier, "project": projectIdentifier, "agent": agentIdentifier,
 		"parent_agent": parentIdentifier, "workstream": workstreamIdentifier, "preferred_entry": command.PreferredEntry,
+		"operating_charter": operatingCharter, "delegation_policy": delegationPolicy,
 	})
 	if err != nil {
 		return MutationResult[domain.DomainAgentMembership]{}, storageFailure("hash domain agent attachment", err)
@@ -199,13 +206,14 @@ func (s *Store) AttachDomainAgent(ctx context.Context, command AttachDomainAgent
 	now := s.nowText()
 	membership := domain.DomainAgentMembership{
 		ProjectID: project.ID, AgentID: agent.ID, ParentAgentID: parentID, WorkstreamID: workstreamID,
+		OperatingCharter: operatingCharter, DelegationPolicy: delegationPolicy,
 		PreferredEntry: command.PreferredEntry, Status: domain.DomainAgentActive, Revision: 1,
 		CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID,
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO domain_agent_memberships(
-project_id,agent_id,parent_agent_id,workstream_id,preferred_entry,status,revision,created_at,updated_at,created_by,updated_by)
-VALUES(?,?,NULLIF(?,''),NULLIF(?,''),?,?,?,?,?,?,?)`, membership.ProjectID, membership.AgentID,
-		membership.ParentAgentID, membership.WorkstreamID, membership.PreferredEntry, membership.Status,
+project_id,agent_id,parent_agent_id,workstream_id,operating_charter,delegation_policy,preferred_entry,status,revision,created_at,updated_at,created_by,updated_by)
+VALUES(?,?,NULLIF(?,''),NULLIF(?,''),?,?,?,?,?,?,?,?,?)`, membership.ProjectID, membership.AgentID,
+		membership.ParentAgentID, membership.WorkstreamID, membership.OperatingCharter, membership.DelegationPolicy, membership.PreferredEntry, membership.Status,
 		membership.Revision, membership.CreatedAt, membership.UpdatedAt, membership.CreatedBy, membership.UpdatedBy); err != nil {
 		return MutationResult[domain.DomainAgentMembership]{}, storageFailure("insert domain agent membership", err)
 	}
@@ -237,7 +245,7 @@ func (s *Store) UpdateDomainAgent(ctx context.Context, command UpdateDomainAgent
 	key := strings.TrimSpace(command.IdempotencyKey)
 	correlationID := strings.TrimSpace(command.CorrelationID)
 	if workspaceIdentifier == "" || projectIdentifier == "" || agentIdentifier == "" || command.ExpectedRevision < 1 ||
-		(command.ParentAgentIdentifier == nil && command.WorkstreamIdentifier == nil && command.PreferredEntry == nil && command.Status == nil) {
+		(command.ParentAgentIdentifier == nil && command.WorkstreamIdentifier == nil && command.OperatingCharter == nil && command.DelegationPolicy == nil && command.PreferredEntry == nil && command.Status == nil) {
 		return MutationResult[domain.DomainAgentMembership]{}, domainAgentError(CodeInvalidDomainAgent, "domain agent update requires scope, agent, expected revision, and a changed field")
 	}
 	if command.Status != nil {
@@ -245,6 +253,12 @@ func (s *Store) UpdateDomainAgent(ctx context.Context, command UpdateDomainAgent
 		if status != domain.DomainAgentActive && status != domain.DomainAgentRetired {
 			return MutationResult[domain.DomainAgentMembership]{}, domainAgentError(CodeInvalidDomainAgent, "domain agent status is invalid")
 		}
+	}
+	if command.OperatingCharter != nil && !validDomainAgentCharter(strings.TrimSpace(*command.OperatingCharter)) {
+		return MutationResult[domain.DomainAgentMembership]{}, domainAgentError(CodeInvalidDomainAgent, "domain agent operating charter is invalid")
+	}
+	if command.DelegationPolicy != nil && !validDomainAgentDelegationPolicy(strings.TrimSpace(*command.DelegationPolicy)) {
+		return MutationResult[domain.DomainAgentMembership]{}, domainAgentError(CodeInvalidDomainAgent, "domain agent delegation policy is invalid")
 	}
 	if err := validateMutationMetadata(key, correlationID, CodeInvalidDomainAgent); err != nil {
 		return MutationResult[domain.DomainAgentMembership]{}, err
@@ -304,6 +318,12 @@ func (s *Store) UpdateDomainAgent(ctx context.Context, command UpdateDomainAgent
 			return MutationResult[domain.DomainAgentMembership]{}, err
 		}
 	}
+	if command.OperatingCharter != nil {
+		membership.OperatingCharter = strings.TrimSpace(*command.OperatingCharter)
+	}
+	if command.DelegationPolicy != nil {
+		membership.DelegationPolicy = strings.TrimSpace(*command.DelegationPolicy)
+	}
 	if command.PreferredEntry != nil {
 		membership.PreferredEntry = *command.PreferredEntry
 	}
@@ -330,8 +350,8 @@ WHERE project_id=? AND parent_agent_id=? AND status='active'`, project.ID, agent
 	membership.Revision++
 	membership.UpdatedAt, membership.UpdatedBy = now, localOwnerActorID
 	if _, err := tx.ExecContext(ctx, `UPDATE domain_agent_memberships
-SET parent_agent_id=NULLIF(?,''),workstream_id=NULLIF(?,''),preferred_entry=?,status=?,revision=?,updated_at=?,updated_by=?
-WHERE project_id=? AND agent_id=?`, membership.ParentAgentID, membership.WorkstreamID, membership.PreferredEntry,
+SET parent_agent_id=NULLIF(?,''),workstream_id=NULLIF(?,''),operating_charter=?,delegation_policy=?,preferred_entry=?,status=?,revision=?,updated_at=?,updated_by=?
+WHERE project_id=? AND agent_id=?`, membership.ParentAgentID, membership.WorkstreamID, membership.OperatingCharter, membership.DelegationPolicy, membership.PreferredEntry,
 		membership.Status, membership.Revision, membership.UpdatedAt, membership.UpdatedBy,
 		membership.ProjectID, membership.AgentID); err != nil {
 		return MutationResult[domain.DomainAgentMembership]{}, storageFailure("update domain agent membership", err)
@@ -368,7 +388,7 @@ func (s *Store) DomainAgentTree(ctx context.Context, workspaceIdentifier, projec
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT
 a.id,a.workspace_id,a.name,a.role,a.provider,a.runtime,a.enabled,a.max_concurrency,a.revision,a.created_at,a.updated_at,a.created_by,a.updated_by,
-m.project_id,m.agent_id,COALESCE(m.parent_agent_id,''),COALESCE(m.workstream_id,''),m.preferred_entry,m.status,m.revision,m.created_at,m.updated_at,m.created_by,m.updated_by
+m.project_id,m.agent_id,COALESCE(m.parent_agent_id,''),COALESCE(m.workstream_id,''),m.operating_charter,m.delegation_policy,m.preferred_entry,m.status,m.revision,m.created_at,m.updated_at,m.created_by,m.updated_by
 FROM domain_agent_memberships m JOIN agents a ON a.id=m.agent_id
 WHERE m.project_id=? ORDER BY m.status='active' DESC,m.preferred_entry DESC,COALESCE(m.parent_agent_id,''),a.name,a.id
 LIMIT ?`, project.ID, maximumDomainAgents+1)
@@ -461,7 +481,7 @@ SELECT 1 FROM ancestors WHERE agent_id=? LIMIT 1`, projectID, fromAgentID, proje
 }
 
 func queryDomainAgentMembership(ctx context.Context, database queryRower, projectID, agentID string) (domain.DomainAgentMembership, error) {
-	query := `SELECT project_id,agent_id,COALESCE(parent_agent_id,''),COALESCE(workstream_id,''),preferred_entry,status,revision,created_at,updated_at,created_by,updated_by
+	query := `SELECT project_id,agent_id,COALESCE(parent_agent_id,''),COALESCE(workstream_id,''),operating_charter,delegation_policy,preferred_entry,status,revision,created_at,updated_at,created_by,updated_by
 FROM domain_agent_memberships WHERE agent_id=?`
 	arguments := []any{agentID}
 	if projectID != "" {
@@ -471,7 +491,7 @@ FROM domain_agent_memberships WHERE agent_id=?`
 	var membership domain.DomainAgentMembership
 	var preferred int
 	err := database.QueryRowContext(ctx, query, arguments...).Scan(&membership.ProjectID, &membership.AgentID,
-		&membership.ParentAgentID, &membership.WorkstreamID, &preferred, &membership.Status, &membership.Revision,
+		&membership.ParentAgentID, &membership.WorkstreamID, &membership.OperatingCharter, &membership.DelegationPolicy, &preferred, &membership.Status, &membership.Revision,
 		&membership.CreatedAt, &membership.UpdatedAt, &membership.CreatedBy, &membership.UpdatedBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.DomainAgentMembership{}, domainAgentError(CodeDomainAgentNotFound, fmt.Sprintf("agent %q is not attached to the selected domain", agentID))
@@ -488,7 +508,7 @@ func scanDomainAgent(row rowScanner, item *domain.DomainAgent) error {
 	err := row.Scan(&item.Definition.ID, &item.Definition.WorkspaceID, &item.Definition.Name, &item.Definition.Role,
 		&item.Definition.Provider, &item.Definition.Runtime, &item.Definition.Enabled, &item.Definition.MaxConcurrency,
 		&item.Definition.Revision, &item.Definition.CreatedAt, &item.Definition.UpdatedAt, &item.Definition.CreatedBy, &item.Definition.UpdatedBy,
-		&item.Membership.ProjectID, &item.Membership.AgentID, &item.Membership.ParentAgentID, &item.Membership.WorkstreamID,
+		&item.Membership.ProjectID, &item.Membership.AgentID, &item.Membership.ParentAgentID, &item.Membership.WorkstreamID, &item.Membership.OperatingCharter, &item.Membership.DelegationPolicy,
 		&preferred, &item.Membership.Status, &item.Membership.Revision, &item.Membership.CreatedAt,
 		&item.Membership.UpdatedAt, &item.Membership.CreatedBy, &item.Membership.UpdatedBy)
 	item.Membership.PreferredEntry = preferred == 1
@@ -498,8 +518,24 @@ func scanDomainAgent(row rowScanner, item *domain.DomainAgent) error {
 func domainAgentEventData(value domain.DomainAgentMembership) map[string]any {
 	return map[string]any{
 		"project_id": value.ProjectID, "agent_id": value.AgentID, "parent_agent_id": value.ParentAgentID,
-		"workstream_id": value.WorkstreamID, "preferred_entry": value.PreferredEntry, "status": value.Status,
+		"workstream_id": value.WorkstreamID, "operating_charter": value.OperatingCharter, "delegation_policy": value.DelegationPolicy, "preferred_entry": value.PreferredEntry, "status": value.Status,
 	}
+}
+
+func validDomainAgentDelegationPolicy(value string) bool {
+	return value == domain.DomainAgentHandsOn || value == domain.DomainAgentAdaptive || value == domain.DomainAgentDelegationFirst
+}
+
+func validDomainAgentCharter(value string) bool {
+	if value == "" || len(value) > 8192 || strings.TrimSpace(value) != value || strings.ContainsRune(value, 0) {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 && character != '\n' && character != '\t' {
+			return false
+		}
+	}
+	return true
 }
 
 func domainAgentError(code, message string) *Error {

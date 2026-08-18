@@ -140,6 +140,12 @@ CREATE TABLE domain_agent_memberships (
     agent_id TEXT PRIMARY KEY REFERENCES agents(id),
     parent_agent_id TEXT REFERENCES agents(id),
     workstream_id TEXT REFERENCES objectives(id),
+    operating_charter TEXT NOT NULL CHECK (
+        length(CAST(operating_charter AS BLOB)) BETWEEN 1 AND 8192
+        AND operating_charter = trim(operating_charter)
+        AND instr(operating_charter, char(0)) = 0
+    ),
+    delegation_policy TEXT NOT NULL CHECK (delegation_policy IN ('hands_on', 'adaptive', 'delegation_first')),
     preferred_entry INTEGER NOT NULL CHECK (preferred_entry IN (0, 1)),
     status TEXT NOT NULL CHECK (status IN ('active', 'retired')),
     revision INTEGER NOT NULL CHECK (revision > 0),

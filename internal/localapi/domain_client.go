@@ -6,6 +6,21 @@ import (
 	"time"
 )
 
+func (c *Client) DomainAgentSpecDraft(ctx context.Context, params DomainAgentSpecDraftParams) (DomainAgentSpecDraftResult, error) {
+	if params.RepositoryPath == "" {
+		workspaceID, projectID, err := c.resolveOperatorScope(ctx, params.Workspace, params.Project)
+		if err != nil {
+			return DomainAgentSpecDraftResult{}, err
+		}
+		params.Workspace, params.Project = workspaceID, projectID
+	}
+	var result DomainAgentSpecDraftResult
+	if err := c.callParamsStrictWithTimeout(ctx, 120*time.Second, MethodDomainAgentSpecDraft, params, &result); err != nil {
+		return DomainAgentSpecDraftResult{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) DomainAgentCreate(ctx context.Context, params DomainAgentCreateParams) (DomainAgentCreateResult, error) {
 	workspaceID, projectID, err := c.resolveOperatorScope(ctx, params.Workspace, params.Project)
 	if err != nil {

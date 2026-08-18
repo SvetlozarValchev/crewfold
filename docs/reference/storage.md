@@ -142,6 +142,13 @@ preferred entry, name, and role organize owner attention only and grant no
 authority. One domain may have zero, one, or many roots and arbitrary bounded
 depth; `domain-steward` has no special storage meaning.
 
+Each membership also stores a nonempty bounded `operating_charter` and exact
+`delegation_policy` (`hands_on|adaptive|delegation_first`). They are revisioned
+provider-behavior inputs and are included in idempotency/event seals. They grant
+no authority and never substitute for staffing grants, assignments, launch
+profiles, claims, budgets, or capabilities. `preferred_entry` means only “open
+this agent by default”; no agent name, role, charter, or tree position is special.
+
 `domain_agent_session_bindings` binds the durable agent identity to one private
 Codex provider thread and current node fingerprint. Public results expose only
 whether a conversation exists, its bounded readable turns, current thread state,

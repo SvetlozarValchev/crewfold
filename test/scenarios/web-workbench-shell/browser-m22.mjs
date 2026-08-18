@@ -31,14 +31,19 @@ function command(method, params = {}) {
   return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
 }
 async function evaluate(expression) {
-  const result = await command("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+  let result;
+  try {
+    result = await command("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+  } catch (error) {
+    throw new Error(`browser evaluation failed for ${expression.slice(0, 160)}: ${error.message}`);
+  }
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || "browser evaluation failed");
   return result.result?.value;
 }
 async function waitFor(expression, label, timeout = 15000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (await evaluate(expression)) return;
+    if (await evaluate(`Boolean(${expression})`)) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`timed out waiting for ${label}\n${await evaluate("document.body.innerText")}`);
@@ -54,26 +59,30 @@ async function capture(label) {
 await command("Runtime.enable");
 await command("Page.enable");
 await waitFor("document.body?.innerText.includes('Bring your repository into the workbench.')", "domain onboarding");
-await waitFor("document.body.innerText.includes('First durable agent') && document.body.innerText.includes('Descriptive role')", "neutral first-agent fields");
+await waitFor("document.body.innerText.includes('First durable agent') && document.body.innerText.includes('Owner-reviewed operating charter')", "reviewed first-agent fields");
 await capture("01-domain-onboarding");
 
 await evaluate(`(() => {
   const set = (element, value) => {
-    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
   };
   const form = document.querySelector('.onboarding-form');
   const inputs = form.querySelectorAll('input');
+  const textareas = form.querySelectorAll('textarea');
   const selects = form.querySelectorAll('select');
   set(inputs[0], ${JSON.stringify(repositoryPath)});
   set(inputs[1], 'personal');
   set(inputs[2], 'world-engine');
   set(inputs[3], 'orchid');
   set(inputs[4], 'owner-facing coordinator');
-  set(selects[0], 'fixture-mcp');
-  set(selects[1], 'direct');
+  set(textareas[0], 'Coordinate this domain and delegate durable review work when staffing authority is available.');
+  set(textareas[1], 'Maintain the domain overview, communicate material boundaries, and delegate continuing specialist work through exact reviewed staffing grants.');
+  set(selects[0], 'delegation_first');
+  set(selects[1], 'fixture-mcp');
+  set(selects[2], 'direct');
   form.requestSubmit();
   return true;
 })()`);
@@ -81,6 +90,25 @@ await waitFor("document.querySelector('.m22-console') && document.body.innerText
 await waitFor("document.body.innerText.includes('orchid') && document.body.innerText.includes('owner-facing coordinator')", "canonical arbitrary agent");
 if (await evaluate("document.body.innerText.includes('project-executive')")) throw new Error("legacy hardcoded project-executive leaked into M22 onboarding");
 await capture("02-domain-home");
+
+await evaluate(`(() => {
+  const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('new workstream'));
+  button?.click();
+  return Boolean(button);
+})()`);
+await waitFor("document.querySelector('.m22-rail-create')", "canonical workstream creation");
+await evaluate(`(() => {
+  const form = document.querySelector('.m22-rail-create');
+  const set = (element, value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const inputs = form.querySelectorAll('input');
+  set(inputs[0], 'Independent review');
+  form.requestSubmit();
+  return true;
+})()`);
+await waitFor("document.body.innerText.includes('Independent review')", "canonical workstream");
 
 await evaluate(`(() => {
   const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('add durable agent'));
@@ -92,23 +120,29 @@ await capture("03-agent-create");
 await evaluate(`(() => {
   const form = document.querySelector('.m22-agent-create form');
   const set = (element, value) => {
-    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
   };
   const inputs = form.querySelectorAll('input');
+  const textareas = form.querySelectorAll('textarea');
   const selects = form.querySelectorAll('select');
   set(inputs[0], 'moss-reviewer');
   set(inputs[1], 'independent review');
-  set(selects[0], selects[0].options[1].value);
-  set(selects[2], 'fixture-mcp');
-  set(selects[3], 'direct');
+  set(textareas[0], 'Independently review this domain workstream and report exact findings.');
+  set(textareas[1], 'Review assigned changes independently, preserve evidence, and escalate material defects without taking over implementation.');
+  set(selects[0], 'hands_on');
+  set(selects[1], '');
+  set(selects[2], selects[2].options[1].value);
+  set(selects[3], 'fixture-mcp');
+  set(selects[4], 'direct');
   set(inputs[2], '1');
   form.requestSubmit();
   return true;
 })()`);
 await waitFor("[...document.querySelectorAll('.m22-agent-row')].some((candidate) => candidate.textContent.includes('moss-reviewer'))", "atomic child attached to domain tree");
+await waitFor("[...document.querySelectorAll('.m22-workstream-group h3')].some((candidate) => candidate.textContent.includes('Independent review'))", "objective-backed hierarchy grouping");
 
 await evaluate(`(() => {
   const button = [...document.querySelectorAll('.m22-agent-row')].find((candidate) => candidate.textContent.includes('orchid'));

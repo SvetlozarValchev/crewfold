@@ -2,18 +2,43 @@ package localapi
 
 import "crewfold/internal/domain"
 
+type DomainAgentSpecDraftParams struct {
+	Workspace      string `json:"workspace,omitempty"`
+	Project        string `json:"project,omitempty"`
+	Checkout       string `json:"checkout,omitempty"`
+	RepositoryPath string `json:"repository_path,omitempty"`
+	DomainName     string `json:"domain_name,omitempty"`
+	OwnerIntent    string `json:"owner_intent"`
+}
+
+type DomainAgentSpecDraft struct {
+	Name             string `json:"name"`
+	Role             string `json:"role"`
+	OperatingCharter string `json:"operating_charter"`
+	DelegationPolicy string `json:"delegation_policy"`
+	Rationale        string `json:"rationale"`
+}
+
+type DomainAgentSpecDraftResult struct {
+	Schema string               `json:"schema"`
+	Type   string               `json:"type"`
+	Draft  DomainAgentSpecDraft `json:"draft"`
+}
+
 type DomainAgentCreateParams struct {
-	Workspace      string `json:"workspace"`
-	Project        string `json:"project"`
-	Name           string `json:"name"`
-	Role           string `json:"role"`
-	Provider       string `json:"provider"`
-	Runtime        string `json:"runtime"`
-	MaxConcurrency int    `json:"max_concurrency"`
-	ParentAgent    string `json:"parent_agent,omitempty"`
-	Workstream     string `json:"workstream,omitempty"`
-	PreferredEntry bool   `json:"preferred_entry,omitempty"`
-	IdempotencyKey string `json:"idempotency_key"`
+	Workspace        string `json:"workspace"`
+	Project          string `json:"project"`
+	Name             string `json:"name"`
+	Role             string `json:"role"`
+	Provider         string `json:"provider"`
+	Runtime          string `json:"runtime"`
+	MaxConcurrency   int    `json:"max_concurrency"`
+	ParentAgent      string `json:"parent_agent,omitempty"`
+	Workstream       string `json:"workstream,omitempty"`
+	OperatingCharter string `json:"operating_charter"`
+	DelegationPolicy string `json:"delegation_policy"`
+	PreferredEntry   bool   `json:"preferred_entry,omitempty"`
+	IdempotencyKey   string `json:"idempotency_key"`
 }
 
 type DomainAgentCreateResult struct {
@@ -24,13 +49,15 @@ type DomainAgentCreateResult struct {
 }
 
 type DomainAgentAttachParams struct {
-	Workspace      string `json:"workspace"`
-	Project        string `json:"project"`
-	Agent          string `json:"agent"`
-	ParentAgent    string `json:"parent_agent,omitempty"`
-	Workstream     string `json:"workstream,omitempty"`
-	PreferredEntry bool   `json:"preferred_entry,omitempty"`
-	IdempotencyKey string `json:"idempotency_key"`
+	Workspace        string `json:"workspace"`
+	Project          string `json:"project"`
+	Agent            string `json:"agent"`
+	ParentAgent      string `json:"parent_agent,omitempty"`
+	Workstream       string `json:"workstream,omitempty"`
+	OperatingCharter string `json:"operating_charter"`
+	DelegationPolicy string `json:"delegation_policy"`
+	PreferredEntry   bool   `json:"preferred_entry,omitempty"`
+	IdempotencyKey   string `json:"idempotency_key"`
 }
 
 type DomainAgentUpdateParams struct {
@@ -39,6 +66,8 @@ type DomainAgentUpdateParams struct {
 	Agent            string  `json:"agent"`
 	ParentAgent      *string `json:"parent_agent,omitempty"`
 	Workstream       *string `json:"workstream,omitempty"`
+	OperatingCharter *string `json:"operating_charter,omitempty"`
+	DelegationPolicy *string `json:"delegation_policy,omitempty"`
 	PreferredEntry   *bool   `json:"preferred_entry,omitempty"`
 	Status           *string `json:"status,omitempty"`
 	ExpectedRevision int64   `json:"expected_revision"`

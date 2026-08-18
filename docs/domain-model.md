@@ -95,7 +95,9 @@ A durable role identity. It contains:
 - capabilities and required tools;
 - action policy and budgets;
 - concurrency limit, normally one;
-- optional manager/team relationship.
+- optional manager/team relationship;
+- an owner-reviewed operating charter and one explicit hands-on/adaptive/
+  delegation-first behavior policy.
 
 The manager relationship forms an acyclic, owner-visible **attention tree** within
 one domain. It controls roll-up and navigation, not authorization. A durable agent
@@ -112,9 +114,12 @@ context and never deletes the agent, hierarchy, messages, or task ownership.
 An agent definition never means a process is currently running.
 
 The implemented subset stores name, role, provider/runtime preference, enabled
-state, maximum concurrency, revision, and audit metadata. Instructions,
-capabilities, team membership, and action policy arrive with the capabilities that
-consume them. M16 launch profiles provide exact project/agent scheduling bindings.
+state, maximum concurrency, revision, and audit metadata. Its domain membership
+stores parent/workstream/default placement plus the owner-reviewed operating
+charter and delegation policy. The charter is injected into the real provider
+conversation but grants no authority. Capabilities, staffing grants, assignments,
+and action policy remain separate records consumed by the operations they permit.
+M16 launch profiles provide exact project/agent scheduling bindings.
 M17 check-watch grants provide exact project/definition/operation bindings.
 Provider/runtime values remain opaque data. `AgentDefinition.Role` is always
 descriptive metadata: it is never consulted for management, check-watch, evidence,

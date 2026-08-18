@@ -19,8 +19,10 @@ type Workspace = { id: string; name: string; revision: number; updated_at: strin
 type Project = { id: string; workspace_id: string; name: string; revision: number; updated_at: string };
 type Checkout = { id: string; project_id: string; path: string; write_mode: string; availability: string; branch?: string; head_commit?: string; dirty?: boolean; dirty_paths?: string[]; omitted_paths?: number; truncated?: boolean; diagnostic?: string };
 type Agent = { id: string; workspace_id: string; name: string; role: string; provider: string; runtime: string; enabled: boolean; max_concurrency: number; revision: number };
-type DomainAgentMembership = { project_id: string; agent_id: string; parent_agent_id?: string; workstream_id?: string; preferred_entry: boolean; status: "active" | "retired"; revision: number; created_at: string; updated_at: string; created_by: string; updated_by: string };
+type DelegationPolicy = "hands_on" | "adaptive" | "delegation_first";
+type DomainAgentMembership = { project_id: string; agent_id: string; parent_agent_id?: string; workstream_id?: string; operating_charter: string; delegation_policy: DelegationPolicy; preferred_entry: boolean; status: "active" | "retired"; revision: number; created_at: string; updated_at: string; created_by: string; updated_by: string };
 type DomainAgent = { definition: Agent; membership: DomainAgentMembership };
+type DomainAgentSpecDraft = { name: string; role: string; operating_charter: string; delegation_policy: DelegationPolicy; rationale: string };
 type DomainAgentSession = { project_id: string; agent_id: string; provider?: string; state: "unbound" | "ready" | "detached"; cwd?: string; has_conversation: boolean; revision: number; created_at?: string; updated_at?: string };
 type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "reasoning"; text?: string; command?: string; status?: string };
 type DomainAgentSessionTurn = { id: string; status: string; items: DomainAgentSessionItem[] };
@@ -321,8 +323,13 @@ function Onboarding({ apiBase, csrf, status, onComplete }: { apiBase: string; cs
   const [workspace, setWorkspace] = useState("personal");
   const [project, setProject] = useState("");
   const [path, setPath] = useState("");
-  const [agent, setAgent] = useState("lead");
-  const [role, setRole] = useState("domain coordinator");
+  const [agent, setAgent] = useState("");
+  const [role, setRole] = useState("");
+  const [ownerIntent, setOwnerIntent] = useState("");
+  const [operatingCharter, setOperatingCharter] = useState("");
+  const [delegationPolicy, setDelegationPolicy] = useState<DelegationPolicy>("adaptive");
+  const [draftRationale, setDraftRationale] = useState("");
+  const [draftBusy, setDraftBusy] = useState(false);
   const [provider, setProvider] = useState("codex");
   const [runtime, setRuntime] = useState("herdr");
   const [busy, setBusy] = useState(false);
@@ -337,11 +344,19 @@ function Onboarding({ apiBase, csrf, status, onComplete }: { apiBase: string; cs
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true); setError("");
     try {
-      await submitOnboarding(apiBase, csrf, { repository_path: path, workspace, project, agent, role, provider, runtime, write_mode: "shared" });
+      await submitOnboarding(apiBase, csrf, { repository_path: path, workspace, project, agent, role, operating_charter: operatingCharter, delegation_policy: delegationPolicy, provider, runtime, write_mode: "shared" });
       await onComplete();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Onboarding failed without a diagnosis.");
     } finally { setBusy(false); }
+  };
+  const draft = async () => {
+    setDraftBusy(true); setError("");
+    try {
+      const result = await rpc<{ schema: string; type: "domain_agent_spec_draft"; draft: DomainAgentSpecDraft }>(apiBase, csrf, "domain.agent.spec.draft", { repository_path: path, domain_name: project, owner_intent: ownerIntent });
+      setAgent(result.draft.name); setRole(result.draft.role); setOperatingCharter(result.draft.operating_charter); setDelegationPolicy(result.draft.delegation_policy); setDraftRationale(result.draft.rationale);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Codex could not draft the agent specification."); }
+    finally { setDraftBusy(false); }
   };
   return <main className="onboarding-main">
     <section className="onboarding-copy">
@@ -361,16 +376,20 @@ function Onboarding({ apiBase, csrf, status, onComplete }: { apiBase: string; cs
         <label><span>Workspace</span><input required pattern="[a-z][a-z0-9-]{0,62}" value={workspace} onChange={(event) => setWorkspace(event.target.value)} /></label>
         <label><span>Domain</span><input required pattern="[a-z][a-z0-9-]{0,62}" value={project} onChange={(event) => setProject(event.target.value)} placeholder="world-engine" /></label>
       </div>
+      <div className="m22-spec-drafter"><label><span>What should the first agent own?</span><textarea required maxLength={4096} value={ownerIntent} onChange={(event) => setOwnerIntent(event.target.value)} placeholder="Coordinate this domain, maintain the bigger picture, and delegate implementation, review, and verification when staffing authority is available." /></label><button type="button" disabled={draftBusy || !path || !project || !ownerIntent.trim()} onClick={() => void draft()}>{draftBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />} {draftBusy ? "Codex is drafting…" : "Draft reviewed specification"}</button><small>Read-only, short-lived Codex session. It records no Crewfold state and grants no authority.</small></div>
       <div className="field-grid">
         <label><span>First durable agent</span><input required pattern="[a-z][a-z0-9-]{0,62}" value={agent} onChange={(event) => setAgent(event.target.value)} /><small className="field-help">An arbitrary owner-chosen name—not a hardcoded steward or executive.</small></label>
         <label><span>Descriptive role</span><input required maxLength={256} value={role} onChange={(event) => setRole(event.target.value)} /><small className="field-help">A label for humans. Grants and assignments authorize effects.</small></label>
       </div>
+      <label><span>Owner-reviewed operating charter</span><textarea required maxLength={8192} value={operatingCharter} onChange={(event) => setOperatingCharter(event.target.value)} placeholder="Describe what this agent owns, how it coordinates, when it delegates, and what it must escalate." /><small className="field-help">This behavior is injected into the durable Codex conversation. It still cannot expand grants or assignments.</small></label>
+      <label><span>Operating mode</span><select value={delegationPolicy} onChange={(event) => setDelegationPolicy(event.target.value as DelegationPolicy)}><option value="hands_on">Hands-on by default</option><option value="adaptive">Choose direct work or delegation</option><option value="delegation_first">Delegate durable responsibilities first</option></select></label>
+      {draftRationale && <div className="m22-draft-rationale"><strong>Why Codex suggested this</strong>{draftRationale}</div>}
       <label><span>Provider</span><select value={provider} onChange={(event) => setProvider(event.target.value)}><option value="codex">Codex subscription</option><option value="claude">Claude subscription</option><option value="fixture-mcp">Local fixture</option></select></label>
       {provider === "codex" && <div className="runtime-primary"><Network size={19} /><div><strong>Dependency and documentation network {status?.codex_tool_network_access ? "enabled" : "disabled"}</strong><span>{status?.codex_tool_network_access ? "Codex may retrieve packages and documentation inside the workspace sandbox. Publishing, deployment, credentials, paid services, and external side effects remain outside this grant." : "This service cannot retrieve uncached packages. Reinstall with --codex-tool-network-access true before starting implementation work."}</span></div><StatusPill value={status?.codex_tool_network_access ? "enabled" : "blocked"} /></div>}
       <div className="runtime-primary"><TerminalSquare size={19} /><div><strong>Herdr interactive runtime</strong><span>Persistent agent terminal hosted beside Crewfold's canonical state.</span></div><StatusPill value={runtime === "herdr" ? "recommended" : "fallback"} /></div>
       <details className="advanced-runtime"><summary>Advanced runtime fallback</summary><label><span>Execution runtime</span><select value={runtime} onChange={(event) => setRuntime(event.target.value)}><option value="herdr">Herdr interactive · recommended</option><option value="direct">Direct headless · CI and automation</option></select></label><p>Direct has bounded logs but no persistent interactive terminal.</p></details>
       {error && <div className="form-error" role="alert"><AlertCircle size={17} />{error}</div>}
-      <button className="primary-button" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Command size={17} />} {busy ? "Inspecting and recording…" : "Create domain"}</button>
+      <button className="primary-button" disabled={busy || draftBusy || !operatingCharter.trim()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Command size={17} />} {busy ? "Inspecting and recording…" : "Create domain"}</button>
       <div className="role-preview"><div><Boxes size={16} /><span><strong>{project || "Domain"}</strong>Shared knowledge and coordination boundary.</span></div><ChevronRight size={15} /><div><Bot size={16} /><span><strong>{agent || "Durable agent"}</strong>{role || "Owner-defined role"} through {runtime === "herdr" ? "Herdr" : "Direct"}.</span></div></div>
       <p className="form-note">One replay-safe submission records the workspace, domain, checkout, first agent definition, launch profile, and hierarchy membership.</p>
     </form>
@@ -379,7 +398,7 @@ function Onboarding({ apiBase, csrf, status, onComplete }: { apiBase: string; cs
 
 type DomainConsoleView = "domain" | "session" | "assignment" | "changes" | "briefing" | "verification" | "staffing";
 
-function DomainAgentTreeList({ agents, selected, choose }: { agents: DomainAgent[]; selected: string; choose: (agent: DomainAgent) => void }) {
+function DomainAgentTreeList({ agents, objectives, selected, choose }: { agents: DomainAgent[]; objectives: Objective[]; selected: string; choose: (agent: DomainAgent) => void }) {
   const active = agents.filter((agent) => agent.membership.status === "active");
   const children = new Map<string, DomainAgent[]>();
   for (const agent of active) {
@@ -392,19 +411,26 @@ function DomainAgentTreeList({ agents, selected, choose }: { agents: DomainAgent
       <button className={`m22-agent-row ${selected === agent.definition.id ? "selected" : ""}`} style={{ paddingLeft: `${12 + depth * 17}px` }} onClick={() => choose(agent)}>
         <span className="m22-tree-joint">{depth ? "└" : "›"}</span>
         <span><strong>{agent.definition.name}</strong><small>{agent.definition.role || "unlabeled agent"}</small></span>
-        {agent.membership.preferred_entry && <em>entry</em>}
+        {agent.membership.preferred_entry && <em>default</em>}
       </button>
       {(children.get(agent.definition.id) ?? []).map((child) => row(child, depth + 1))}
     </div>;
   };
   const roots = active.filter((agent) => !agent.membership.parent_agent_id);
   if (!roots.length) return <p className="m22-rail-empty">No durable agents are attached to this domain.</p>;
-  return <div className="m22-agent-tree">{roots.map((agent) => row(agent, 0))}</div>;
+  const domainWide = roots.filter((agent) => !agent.membership.workstream_id);
+  const scoped = objectives.map((objective) => ({ objective, agents: roots.filter((agent) => agent.membership.workstream_id === objective.id) })).filter((group) => group.agents.length);
+  return <div className="m22-agent-tree">{domainWide.map((agent) => row(agent, 0))}{scoped.map((group) => <section className="m22-workstream-group" key={group.objective.id}><h3>{group.objective.title}</h3>{group.agents.map((agent) => row(agent, 0))}</section>)}</div>;
 }
 
 function DomainAgentCreatePanel({ data, suggestedParent, apiBase, csrf, mutable, close, created, reload }: { data: WorkbenchData; suggestedParent: string; apiBase: string; csrf: string; mutable: boolean; close: () => void; created: (agent: DomainAgent) => void; reload: () => Promise<void> }) {
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
+  const [ownerIntent, setOwnerIntent] = useState("");
+  const [operatingCharter, setOperatingCharter] = useState("");
+  const [delegationPolicy, setDelegationPolicy] = useState<DelegationPolicy>("adaptive");
+  const [draftRationale, setDraftRationale] = useState("");
+  const [draftBusy, setDraftBusy] = useState(false);
   const [provider, setProvider] = useState("codex");
   const [runtime, setRuntime] = useState("herdr");
   const [maxConcurrency, setMaxConcurrency] = useState(1);
@@ -419,7 +445,8 @@ function DomainAgentCreatePanel({ data, suggestedParent, apiBase, csrf, mutable,
     try {
       const result = await rpc<{ schema: string; type: "domain_agent_create"; agent: DomainAgent; event_sequences: number[] }>(apiBase, csrf, "domain.agent.create", {
         workspace: data.workspace.id, project: data.project.id, name: name.trim(), role: role.trim(), provider, runtime,
-        max_concurrency: maxConcurrency, ...(parent ? { parent_agent: parent } : {}), ...(workstream ? { workstream } : {}),
+        max_concurrency: maxConcurrency, operating_charter: operatingCharter.trim(), delegation_policy: delegationPolicy,
+        ...(parent ? { parent_agent: parent } : {}), ...(workstream ? { workstream } : {}),
         idempotency_key: newKey("domain-agent-create"),
       });
       await reload();
@@ -427,17 +454,32 @@ function DomainAgentCreatePanel({ data, suggestedParent, apiBase, csrf, mutable,
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create the durable agent."); }
     finally { setBusy(false); }
   };
+  const draft = async () => {
+    if (!data.workspace || !data.project) return;
+    setDraftBusy(true); setError("");
+    try {
+      const result = await rpc<{ schema: string; type: "domain_agent_spec_draft"; draft: DomainAgentSpecDraft }>(apiBase, csrf, "domain.agent.spec.draft", {
+        workspace: data.workspace.id, project: data.project.id, ...(data.checkouts.length === 1 ? { checkout: data.checkouts[0].id } : {}), owner_intent: ownerIntent,
+      });
+      setName(result.draft.name); setRole(result.draft.role); setOperatingCharter(result.draft.operating_charter); setDelegationPolicy(result.draft.delegation_policy); setDraftRationale(result.draft.rationale);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Codex could not draft the agent specification."); }
+    finally { setDraftBusy(false); }
+  };
   return <section className="m22-agent-create">
     <header><div><p className="m22-kicker">owner operation</p><h1>Create a durable agent</h1><p>This records one real agent definition and its exact place in the domain tree atomically. Parentage routes attention; it grants no staffing, task, checkout, or runtime authority.</p></div><button onClick={close} aria-label="Close agent creation"><X size={15} /></button></header>
     <form onSubmit={submit}>
+      <div className="m22-spec-drafter"><label><span>What should this agent own?</span><textarea required maxLength={4096} value={ownerIntent} onChange={(event) => setOwnerIntent(event.target.value)} placeholder="Independently review terrain persistence changes, challenge unsafe assumptions, and report findings to the terrain lead." /></label><button type="button" disabled={draftBusy || !ownerIntent.trim()} onClick={() => void draft()}>{draftBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />} {draftBusy ? "Codex is drafting…" : "Draft agent specification"}</button><small>Optional read-only Codex assistance. The draft is temporary until you review and create it.</small></div>
       <label><span>agent name</span><input required pattern="[a-z][a-z0-9-]{0,62}" value={name} onChange={(event) => setName(event.target.value)} placeholder="terrain-reviewer" /></label>
       <label><span>descriptive role</span><input required maxLength={128} value={role} onChange={(event) => setRole(event.target.value)} placeholder="independent terrain review" /></label>
+      <label><span>owner-reviewed operating charter</span><textarea required maxLength={8192} value={operatingCharter} onChange={(event) => setOperatingCharter(event.target.value)} placeholder="Describe durable ownership, communication, delegation, reporting, and escalation behavior." /></label>
+      <label><span>operating mode</span><select value={delegationPolicy} onChange={(event) => setDelegationPolicy(event.target.value as DelegationPolicy)}><option value="hands_on">Hands-on by default</option><option value="adaptive">Choose direct work or delegation</option><option value="delegation_first">Delegate durable responsibilities first</option></select></label>
+      {draftRationale && <div className="m22-draft-rationale"><strong>Why Codex suggested this</strong>{draftRationale}</div>}
       <div className="m22-form-grid"><label><span>parent in attention tree</span><select value={parent} onChange={(event) => setParent(event.target.value)}><option value="">domain root</option>{data.domainAgents.filter((agent) => agent.membership.status === "active").map((agent) => <option key={agent.definition.id} value={agent.definition.id}>{agent.definition.name}</option>)}</select></label><label><span>workstream scope</span><select value={workstream} onChange={(event) => setWorkstream(event.target.value)}><option value="">domain-wide</option>{data.objectives.filter((objective) => objective.project_id === data.project?.id).map((objective) => <option key={objective.id} value={objective.id}>{objective.title}</option>)}</select></label></div>
       <div className="m22-form-grid"><label><span>provider</span><select value={provider} onChange={(event) => setProvider(event.target.value)}><option value="codex">Codex subscription</option><option value="claude">Claude subscription</option><option value="fixture-mcp">Local fixture</option></select></label><label><span>runtime host</span><select value={runtime} onChange={(event) => setRuntime(event.target.value)}><option value="herdr">Herdr interactive</option><option value="direct">Direct headless</option></select></label></div>
       <label><span>maximum concurrent runs</span><input type="number" min={1} max={100} value={maxConcurrency} onChange={(event) => setMaxConcurrency(Number(event.target.value))} /></label>
       <div className="m22-exact-effect"><ShieldCheck size={15} /><span><strong>Exact effect</strong> Create the definition and hierarchy membership only. No session, task, run, grant, or child is started.</span></div>
       {error && <p className="m22-session-error">{error}</p>}
-      <div className="m22-form-actions"><button type="button" onClick={close}>cancel</button><button className="m22-send" disabled={!mutable || busy || !name.trim() || !role.trim()}>{busy ? <LoaderCircle className="spin" size={14} /> : <Plus size={14} />} create agent</button></div>
+      <div className="m22-form-actions"><button type="button" onClick={close}>cancel</button><button className="m22-send" disabled={!mutable || busy || draftBusy || !name.trim() || !role.trim() || !operatingCharter.trim()}>{busy ? <LoaderCircle className="spin" size={14} /> : <Plus size={14} />} create reviewed agent</button></div>
     </form>
   </section>;
 }
@@ -631,14 +673,30 @@ function DomainAgentCenter({ data, agent, view, setView, inspectRun, apiBase, cs
 function DomainConsole({ data, selectedAgentID, selectAgent, selectProject, inspectRun, apiBase, csrf, mutable, reload }: { data: WorkbenchData; selectedAgentID: string; selectAgent: (agent: DomainAgent | null) => void; selectProject: (id: string) => void; inspectRun: (run: Run) => void; apiBase: string; csrf: string; mutable: boolean; reload: () => Promise<void> }) {
   const [view, setView] = useState<DomainConsoleView>("domain");
   const [creating, setCreating] = useState(false);
+  const [creatingWorkstream, setCreatingWorkstream] = useState(false);
+  const [workstreamTitle, setWorkstreamTitle] = useState("");
+  const [workstreamBusy, setWorkstreamBusy] = useState(false);
+  const [workstreamError, setWorkstreamError] = useState("");
   const selected = data.domainAgents.find((agent) => agent.definition.id === selectedAgentID) ?? null;
-  useEffect(() => { setView(selected ? "session" : "domain"); setCreating(false); }, [selected?.definition.id, data.project?.id]);
+  useEffect(() => { setView(selected ? "session" : "domain"); setCreating(false); setCreatingWorkstream(false); }, [selected?.definition.id, data.project?.id]);
+  const createWorkstream = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!data.workspace || !data.project) return;
+    setWorkstreamBusy(true); setWorkstreamError("");
+    try {
+      await rpc(apiBase, csrf, "objective.create", { workspace: data.workspace.id, project: data.project.id, title: workstreamTitle.trim(), budget: { token_limit: 0, cost_cents: 0, time_seconds: 0 }, idempotency_key: newKey("domain-workstream") });
+      setWorkstreamTitle(""); setCreatingWorkstream(false); await reload();
+    } catch (reason) { setWorkstreamError(reason instanceof Error ? reason.message : "Could not create the workstream."); }
+    finally { setWorkstreamBusy(false); }
+  };
   return <div className="m22-console">
     <aside className="m22-domain-rail">
       <p className="m22-rail-label">domains</p>
       {data.projects.map((project) => <button key={project.id} className={`m22-domain-row ${project.id === data.project?.id && !selected ? "selected" : ""}`} onClick={() => { if (project.id !== data.project?.id) selectProject(project.id); selectAgent(null); }}><Boxes size={14} /><span><strong>{project.name}</strong><small>{project.id === data.project?.id ? `${data.domainAgents.filter((agent) => agent.membership.status === "active").length} durable agents` : "select domain"}</small></span></button>)}
-      {data.project && <><p className="m22-rail-label agents">agent hierarchy</p><DomainAgentTreeList agents={data.domainAgents} selected={selectedAgentID} choose={selectAgent} /></>}
+      {data.project && <><p className="m22-rail-label agents">agent hierarchy</p><DomainAgentTreeList agents={data.domainAgents} objectives={data.objectives.filter((objective) => objective.project_id === data.project?.id)} selected={selectedAgentID} choose={selectAgent} /></>}
       <div className="m22-rail-spacer" />
+      {creatingWorkstream && <form className="m22-rail-create" onSubmit={createWorkstream}><label><span>new workstream</span><input autoFocus required maxLength={256} value={workstreamTitle} onChange={(event) => setWorkstreamTitle(event.target.value)} placeholder="Terrain consolidation" /></label><small>Creates one canonical workstream. Agents can then be scoped into this group.</small>{workstreamError && <em>{workstreamError}</em>}<div><button type="button" onClick={() => setCreatingWorkstream(false)}>cancel</button><button disabled={workstreamBusy || !workstreamTitle.trim()}>{workstreamBusy ? "creating…" : "create"}</button></div></form>}
+      {data.project && !creatingWorkstream && <button className="m22-add-agent" disabled={!mutable} onClick={() => setCreatingWorkstream(true)}><Plus size={13} /> new workstream</button>}
       {data.project && <button className="m22-add-agent" disabled={!mutable} onClick={() => setCreating(true)}><Plus size={13} /> add durable agent</button>}
       <div className="m22-cut">canonical through event {data.highWater}</div>
     </aside>
@@ -646,7 +704,7 @@ function DomainConsole({ data, selectedAgentID, selectAgent, selectProject, insp
     <aside className="m22-context">
       <p className="m22-rail-label">selected {selected ? "agent" : "domain"}</p>
       <h2>{selected?.definition.name ?? data.project?.name}</h2>
-      {selected ? <><dl className="m22-facts"><div><dt>role</dt><dd>{selected.definition.role}</dd></div><div><dt>status</dt><dd>{selected.membership.status}</dd></div><div><dt>entry</dt><dd>{selected.membership.preferred_entry ? "preferred" : "no"}</dd></div><div><dt>revision</dt><dd>{selected.membership.revision}</dd></div></dl><section><h3>authority boundary</h3><p>Tree placement organizes attention only. Grants, assignments, claims, budgets, and capabilities authorize effects.</p></section></> : <><dl className="m22-facts"><div><dt>workstreams</dt><dd>{data.objectives.length}</dd></div><div><dt>agents</dt><dd>{data.domainAgents.filter((agent) => agent.membership.status === "active").length}</dd></div><div><dt>checkouts</dt><dd>{data.checkouts.length}</dd></div><div><dt>open tasks</dt><dd>{data.tasks.filter((detail) => !["completed", "cancelled", "failed"].includes(detail.task.status)).length}</dd></div></dl><section><h3>domain boundary</h3><p>A domain coordinates related work and knowledge. It is not a repository or folder.</p></section></>}
+      {selected ? <><dl className="m22-facts"><div><dt>role</dt><dd>{selected.definition.role}</dd></div><div><dt>operating mode</dt><dd>{selected.membership.delegation_policy.replaceAll("_", " ")}</dd></div><div><dt>status</dt><dd>{selected.membership.status}</dd></div><div><dt>opens by default</dt><dd>{selected.membership.preferred_entry ? "yes" : "no"}</dd></div><div><dt>revision</dt><dd>{selected.membership.revision}</dd></div></dl><section><h3>operating charter</h3><p>{selected.membership.operating_charter}</p></section><section><h3>authority boundary</h3><p>Tree placement and charter organize behavior only. Grants, assignments, claims, budgets, and capabilities authorize effects.</p></section></> : <><dl className="m22-facts"><div><dt>workstreams</dt><dd>{data.objectives.length}</dd></div><div><dt>agents</dt><dd>{data.domainAgents.filter((agent) => agent.membership.status === "active").length}</dd></div><div><dt>checkouts</dt><dd>{data.checkouts.length}</dd></div><div><dt>open tasks</dt><dd>{data.tasks.filter((detail) => !["completed", "cancelled", "failed"].includes(detail.task.status)).length}</dd></div></dl><section><h3>domain boundary</h3><p>A domain coordinates related work and knowledge. It is not a repository or folder.</p></section></>}
     </aside>
   </div>;
 }

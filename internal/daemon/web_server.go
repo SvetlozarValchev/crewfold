@@ -487,7 +487,7 @@ var workbenchMethods = map[string]struct{}{
 	localapi.MethodProjectAdd: {}, localapi.MethodProjectShow: {}, localapi.MethodProjectInspect: {}, localapi.MethodProjectList: {},
 	localapi.MethodCheckoutAdd: {}, localapi.MethodCheckoutList: {},
 	localapi.MethodAgentCreate: {}, localapi.MethodAgentUpdate: {}, localapi.MethodAgentShow: {}, localapi.MethodAgentList: {},
-	localapi.MethodDomainAgentCreate: {}, localapi.MethodDomainAgentAttach: {}, localapi.MethodDomainAgentUpdate: {}, localapi.MethodDomainAgentTree: {},
+	localapi.MethodDomainAgentCreate: {}, localapi.MethodDomainAgentSpecDraft: {}, localapi.MethodDomainAgentAttach: {}, localapi.MethodDomainAgentUpdate: {}, localapi.MethodDomainAgentTree: {},
 	localapi.MethodDomainAgentSessionOpen: {}, localapi.MethodDomainAgentSessionShow: {}, localapi.MethodDomainAgentSessionSend: {}, localapi.MethodDomainAgentSessionInterrupt: {},
 	localapi.MethodDomainStaffingGrantCreate: {}, localapi.MethodDomainStaffingGrantList: {}, localapi.MethodDomainStaffingGrantRevoke: {},
 	localapi.MethodOwnerCrewConfigure: {},

@@ -23,6 +23,7 @@ var operatorRequestParamContracts = map[string]string{
 	localapi.MethodProjectList:                 "local/v1/project-list.params.schema.json",
 	localapi.MethodAgentList:                   "local/v1/agent-list.params.schema.json",
 	localapi.MethodDomainAgentCreate:           "local/v1/domain-agent-create.params.schema.json",
+	localapi.MethodDomainAgentSpecDraft:        "local/v1/domain-agent-spec-draft.params.schema.json",
 	localapi.MethodDomainAgentAttach:           "local/v1/domain-agent-attach.params.schema.json",
 	localapi.MethodDomainAgentUpdate:           "local/v1/domain-agent-update.params.schema.json",
 	localapi.MethodDomainAgentTree:             "local/v1/domain-agent-tree.params.schema.json",

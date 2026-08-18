@@ -11,6 +11,8 @@
     "agent": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
     "parent_agent": {"oneOf": [{"const": ""}, {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"}]},
     "workstream": {"oneOf": [{"const": ""}, {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"}]},
+    "operating_charter": {"type": "string", "minLength": 1, "maxLength": 8192},
+    "delegation_policy": {"enum": ["hands_on", "adaptive", "delegation_first"]},
     "preferred_entry": {"type": "boolean"},
     "status": {"enum": ["active", "retired"]},
     "expected_revision": {"type": "integer", "minimum": 1},
@@ -19,6 +21,8 @@
   "anyOf": [
     {"required": ["parent_agent"]},
     {"required": ["workstream"]},
+    {"required": ["operating_charter"]},
+    {"required": ["delegation_policy"]},
     {"required": ["preferred_entry"]},
     {"required": ["status"]}
   ]

@@ -10,6 +10,8 @@ import (
 	"crewfold/internal/localapi"
 )
 
+const daemonTestDomainCharter = "Own the described responsibility, communicate material boundaries, delegate when useful, and escalate missing authority to the owner."
+
 func TestM22DomainAgentTreeCrossesStrictLocalAPIWithoutRoleAuthority(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("Git is unavailable: %v", err)
@@ -43,6 +45,7 @@ func TestM22DomainAgentTreeCrossesStrictLocalAPIWithoutRoleAuthority(t *testing.
 	}
 	if _, err := client.DomainAgentAttach(ctx, localapi.DomainAgentAttachParams{
 		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: rootAgent.Agent.Name,
+		OperatingCharter: daemonTestDomainCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		PreferredEntry: true, IdempotencyKey: "m22-domain-attach-root",
 	}); err != nil {
 		t.Fatal(err)
@@ -50,6 +53,7 @@ func TestM22DomainAgentTreeCrossesStrictLocalAPIWithoutRoleAuthority(t *testing.
 	childAgent, err := client.DomainAgentCreate(ctx, localapi.DomainAgentCreateParams{
 		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Name: "terrain-reviewer", Role: "independent-review",
 		Provider: "codex-subscription", Runtime: "herdr", MaxConcurrency: 1, ParentAgent: rootAgent.Agent.Name,
+		OperatingCharter: daemonTestDomainCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		Workstream: workstream.Objective.ID, IdempotencyKey: "m22-domain-create-child",
 	})
 	if err != nil {

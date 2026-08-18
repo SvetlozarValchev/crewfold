@@ -16,6 +16,7 @@ func TestM22DomainAgentSessionBindingIsPrivateCurrentNodeAndNameNeutral(t *testi
 	agent := createDomainTestAgent(t, storage, workspace.ID, "orchid", "arbitrary coordinator")
 	if _, err := storage.AttachDomainAgent(ctx, AttachDomainAgentCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		PreferredEntry: true, IdempotencyKey: "attach-orchid-session", CorrelationID: "attach-orchid-session",
 	}); err != nil {
 		t.Fatal(err)
@@ -121,6 +122,7 @@ func TestM22DomainAgentSessionForeignNodeIsDetachedAndUnboundIsHonest(t *testing
 	agent := createDomainTestAgent(t, first, workspace.ID, "plain-name", "plain-role")
 	if _, err := first.AttachDomainAgent(ctx, AttachDomainAgentCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		IdempotencyKey: "attach-plain", CorrelationID: "attach-plain",
 	}); err != nil {
 		t.Fatal(err)

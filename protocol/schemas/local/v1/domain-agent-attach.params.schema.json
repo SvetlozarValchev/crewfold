@@ -4,13 +4,15 @@
   "title": "Crewfold local API domain agent attach parameters v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["workspace", "project", "agent", "idempotency_key"],
+  "required": ["workspace", "project", "agent", "operating_charter", "delegation_policy", "idempotency_key"],
   "properties": {
     "workspace": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
     "project": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
     "agent": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
     "parent_agent": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
     "workstream": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
+    "operating_charter": {"type": "string", "minLength": 1, "maxLength": 8192},
+    "delegation_policy": {"enum": ["hands_on", "adaptive", "delegation_first"]},
     "preferred_entry": {"type": "boolean"},
     "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
   }

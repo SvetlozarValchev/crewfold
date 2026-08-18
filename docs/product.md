@@ -102,7 +102,7 @@ The owner interface presents the current canonical scopes this way:
 | Agent attempt | Run | One provider/runtime execution of that durable agent |
 
 A domain may have several peer orchestrators and arbitrarily deep durable agent
-relationships. One preferred steward may be the default owner entry point, but
+relationships. One preferred agent may be the default owner entry point, but
 there is no one-executive-per-domain or one-agent-per-checkout rule. Hierarchy
 organizes attention and roll-up; explicit grants, profiles, policies, assignments,
 claims, and budgets confer authority.
@@ -118,11 +118,16 @@ read-only unless initialization is explicitly requested.
 
 ### 2. Define or delegate a durable agent
 
-The owner names a durable agent, chooses a role and provider adapter, places it in
-the domain attention tree, sets its eligible workstreams/resources, and applies
-budgets. The definition and resumable conversation identity exist even when no
-provider process is running. A manager with a bounded staffing grant may create a
-durable child inside that exact envelope.
+The owner names a durable agent, chooses a descriptive role and provider adapter,
+reviews its durable operating charter and direct-work/delegation policy, places it
+in the domain attention tree, sets its eligible workstreams/resources, and applies
+budgets. A short-lived read-only Codex helper may draft the name, role, charter,
+and policy from owner intent, but the draft records no state and grants no
+authority until the owner reviews and creates the definition. The definition and
+resumable conversation identity exist even when no provider process is running.
+A manager with a bounded staffing grant may create a durable child inside that
+exact envelope; the child's charter describes expected behavior while the grant
+still supplies the only creation authority.
 
 ### 3. Assign and launch
 

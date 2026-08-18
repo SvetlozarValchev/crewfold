@@ -563,6 +563,8 @@ type AttachDomainAgentCommand struct {
 	AgentIdentifier       string
 	ParentAgentIdentifier string
 	WorkstreamIdentifier  string
+	OperatingCharter      string
+	DelegationPolicy      string
 	PreferredEntry        bool
 	IdempotencyKey        string
 	CorrelationID         string
@@ -578,6 +580,8 @@ type CreateDomainAgentCommand struct {
 	MaxConcurrency        int
 	ParentAgentIdentifier string
 	WorkstreamIdentifier  string
+	OperatingCharter      string
+	DelegationPolicy      string
 	PreferredEntry        bool
 	IdempotencyKey        string
 	CorrelationID         string
@@ -589,6 +593,8 @@ type UpdateDomainAgentCommand struct {
 	AgentIdentifier       string
 	ParentAgentIdentifier *string
 	WorkstreamIdentifier  *string
+	OperatingCharter      *string
+	DelegationPolicy      *string
 	PreferredEntry        *bool
 	Status                *string
 	ExpectedRevision      int64
@@ -620,18 +626,20 @@ type RevokeDomainAgentStaffingGrantCommand struct {
 }
 
 type CreateDomainAgentChildCommand struct {
-	ThreadID       string
-	GrantID        string
-	Name           string
-	Role           string
-	Provider       string
-	Runtime        string
-	MaxConcurrency int
-	Workstream     string
-	TaskClass      string
-	Budget         domain.Budget
-	IdempotencyKey string
-	CorrelationID  string
+	ThreadID         string
+	GrantID          string
+	Name             string
+	Role             string
+	Provider         string
+	Runtime          string
+	MaxConcurrency   int
+	Workstream       string
+	OperatingCharter string
+	DelegationPolicy string
+	TaskClass        string
+	Budget           domain.Budget
+	IdempotencyKey   string
+	CorrelationID    string
 }
 
 type CreateObjectiveCommand struct {

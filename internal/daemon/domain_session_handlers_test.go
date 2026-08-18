@@ -63,6 +63,7 @@ func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *test
 	}
 	attached, err := client.DomainAgentAttach(ctx, localapi.DomainAgentAttachParams{
 		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		OperatingCharter: daemonTestDomainCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		PreferredEntry: true, IdempotencyKey: "m22-session-attach",
 	})
 	if err != nil {
@@ -70,12 +71,14 @@ func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *test
 	}
 	if _, err := client.DomainAgentAttach(ctx, localapi.DomainAgentAttachParams{
 		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: recipient.Agent.Name,
+		OperatingCharter: daemonTestDomainCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		IdempotencyKey: "m22-session-recipient-attach",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.DomainAgentAttach(ctx, localapi.DomainAgentAttachParams{
 		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: unsupported.Agent.Name,
+		OperatingCharter: daemonTestDomainCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		IdempotencyKey: "m22-session-unsupported-attach",
 	}); err != nil {
 		t.Fatal(err)
@@ -299,6 +302,7 @@ func (fixture *codexDomainSessionFixture) requireDomainChildToolResponse(scanner
 			"arguments": map[string]any{
 				"grant_id": grantID, "name": "moss-reviewer", "role": "independent reviewer",
 				"provider": "codex-subscription", "runtime": "herdr", "max_concurrency": 1,
+				"operating_charter": daemonTestDomainCharter, "delegation_policy": domain.DomainAgentHandsOn,
 				"task_class": "reviewer", "budget": map[string]any{"token_limit": 50, "cost_cents": 50, "time_seconds": 120},
 			},
 			"callId": "call-child-one", "threadId": "thread-private-019",
@@ -530,7 +534,7 @@ func (fixture *codexDomainSessionFixture) sawArbitraryAgentInstructions() bool {
 	config, _ := fixture.startedParams["config"].(map[string]any)
 	directNamespaces, _ := config["code_mode.direct_only_tool_namespaces"].([]any)
 	toolChecks := fixture.toolChecks
-	return strings.Contains(baseInstructions, "direct crewfold namespace") && strings.Contains(instructions, `"orchid"`) && strings.Contains(instructions, `"owner-defined-whatever"`) && strings.Contains(instructions, "grants no authority") &&
+	return strings.Contains(baseInstructions, "direct crewfold namespace") && strings.Contains(instructions, `"orchid"`) && strings.Contains(instructions, `"owner-defined-whatever"`) && strings.Contains(instructions, daemonTestDomainCharter) && strings.Contains(instructions, domain.DomainAgentAdaptive) && strings.Contains(instructions, "grants no authority") &&
 		tool["name"] == domainToolContext && tool["type"] == "function" && messageTool["name"] == domainToolSendMessage && messageTool["type"] == "function" &&
 		childTool["name"] == domainToolCreateChild && childTool["type"] == "function" && len(directNamespaces) == 1 && directNamespaces[0] == "crewfold" && toolChecks == 3
 }

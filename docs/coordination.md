@@ -58,6 +58,14 @@ grant that freezes domain, eligible provider/runtime profiles, task classes,
 descendant and concurrency ceilings, budget, and expiry. Creation and later
 disablement are typed, idempotent, and receipted.
 
+An operating charter makes the expected coordination behavior durable rather than
+hoping a descriptive label such as `lead` or `steward` implies it. A
+delegation-first charter tells the provider to create appropriately scoped durable
+children when a staffing grant permits, while a hands-on charter permits direct
+work. Neither policy can manufacture the staffing grant, task, checkout access,
+or budget it would need. Workstream grouping is backed by canonical Objective
+membership, not a cosmetic browser folder.
+
 The owner may address any durable agent directly. A workstream lead receives
 material child reports through durable messages and roll-up projections rather
 than terminal scraping. A higher-level domain steward receives accepted outcomes,

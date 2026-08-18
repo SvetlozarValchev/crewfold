@@ -16,6 +16,7 @@ func TestM22OwnerStaffingGrantBoundsTypedDurableChildCreation(t *testing.T) {
 	manager := createDomainTestAgent(t, storage, workspace.ID, "terrain-lead", "owner-defined lead")
 	attached, err := storage.AttachDomainAgent(ctx, AttachDomainAgentCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: manager.Value.ID,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		PreferredEntry: true, IdempotencyKey: "attach-staffing-manager", CorrelationID: "attach-staffing-manager",
 	})
 	if err != nil {
@@ -53,6 +54,7 @@ func TestM22OwnerStaffingGrantBoundsTypedDurableChildCreation(t *testing.T) {
 		return storage.CreateDomainAgentChild(ctx, CreateDomainAgentChildCommand{
 			ThreadID: "terrain-manager-thread", GrantID: grant.Value.ID, Name: name,
 			Role: "arbitrary " + taskClass, Provider: "codex-subscription", Runtime: "herdr", MaxConcurrency: 1,
+			OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 			TaskClass: taskClass, Budget: budget, IdempotencyKey: key, CorrelationID: key,
 		})
 	}
@@ -76,6 +78,7 @@ func TestM22OwnerStaffingGrantBoundsTypedDurableChildCreation(t *testing.T) {
 	wrongProfile := CreateDomainAgentChildCommand{
 		ThreadID: "terrain-manager-thread", GrantID: grant.Value.ID, Name: "wrong-provider", Role: "reviewer",
 		Provider: "other", Runtime: "herdr", MaxConcurrency: 1, TaskClass: "reviewer",
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		Budget: domain.Budget{TokenLimit: 1}, IdempotencyKey: "child-wrong-profile", CorrelationID: "child-wrong-profile",
 	}
 	if _, err := storage.CreateDomainAgentChild(ctx, wrongProfile); ErrorCode(err) != CodeDomainStaffingDenied {
@@ -129,6 +132,7 @@ func TestM22ExpiredStaffingGrantIsVisibleAndCannotCreateAChild(t *testing.T) {
 	manager := createDomainTestAgent(t, storage, workspace.ID, "orchid", "arbitrary coordinator")
 	attached, err := storage.AttachDomainAgent(ctx, AttachDomainAgentCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: manager.Value.ID,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		PreferredEntry: true, IdempotencyKey: "attach-expiring-manager", CorrelationID: "attach-expiring-manager",
 	})
 	if err != nil {
@@ -156,6 +160,7 @@ func TestM22ExpiredStaffingGrantIsVisibleAndCannotCreateAChild(t *testing.T) {
 	if _, err := storage.CreateDomainAgentChild(ctx, CreateDomainAgentChildCommand{
 		ThreadID: "expiring-manager-thread", GrantID: grant.Value.ID, Name: "late-reviewer", Role: "review",
 		Provider: "codex-subscription", Runtime: "herdr", MaxConcurrency: 1, TaskClass: "review",
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		Budget: domain.Budget{TokenLimit: 1, TimeSeconds: 1}, IdempotencyKey: "late-child", CorrelationID: "late-child",
 	}); ErrorCode(err) != CodeDomainStaffingDenied {
 		t.Fatalf("expired child error = %v, code %q", err, ErrorCode(err))

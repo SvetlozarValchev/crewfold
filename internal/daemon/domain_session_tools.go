@@ -41,15 +41,17 @@ type domainSessionSendMessageArguments struct {
 }
 
 type domainSessionCreateChildArguments struct {
-	GrantID        string        `json:"grant_id"`
-	Name           string        `json:"name"`
-	Role           string        `json:"role"`
-	Provider       string        `json:"provider"`
-	Runtime        string        `json:"runtime"`
-	MaxConcurrency int           `json:"max_concurrency"`
-	Workstream     string        `json:"workstream,omitempty"`
-	TaskClass      string        `json:"task_class"`
-	Budget         domain.Budget `json:"budget"`
+	GrantID          string        `json:"grant_id"`
+	Name             string        `json:"name"`
+	Role             string        `json:"role"`
+	Provider         string        `json:"provider"`
+	Runtime          string        `json:"runtime"`
+	MaxConcurrency   int           `json:"max_concurrency"`
+	Workstream       string        `json:"workstream,omitempty"`
+	OperatingCharter string        `json:"operating_charter"`
+	DelegationPolicy string        `json:"delegation_policy"`
+	TaskClass        string        `json:"task_class"`
+	Budget           domain.Budget `json:"budget"`
 }
 
 func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
@@ -80,16 +82,18 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 			Description: "Create one continuing durable child only through a current owner-authored Crewfold staffing grant. The grant, not hierarchy or role text, bounds the domain, provider/runtime, task class, descendants, concurrency, budget, and expiry.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
-				"required": []string{"grant_id", "name", "role", "provider", "runtime", "max_concurrency", "task_class", "budget"},
+				"required": []string{"grant_id", "name", "role", "operating_charter", "delegation_policy", "provider", "runtime", "max_concurrency", "task_class", "budget"},
 				"properties": map[string]any{
-					"grant_id":        map[string]any{"type": "string", "pattern": "^staffgrant_[0-9a-f]{32}$"},
-					"name":            map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
-					"role":            map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-					"provider":        map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-					"runtime":         map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-					"max_concurrency": map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
-					"workstream":      map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-					"task_class":      map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+					"grant_id":          map[string]any{"type": "string", "pattern": "^staffgrant_[0-9a-f]{32}$"},
+					"name":              map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+					"role":              map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+					"operating_charter": map[string]any{"type": "string", "minLength": 1, "maxLength": 8192},
+					"delegation_policy": map[string]any{"type": "string", "enum": []string{"hands_on", "adaptive", "delegation_first"}},
+					"provider":          map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+					"runtime":           map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+					"max_concurrency":   map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
+					"workstream":        map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+					"task_class":        map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
 					"budget": map[string]any{
 						"type": "object", "additionalProperties": false,
 						"required": []string{"token_limit", "cost_cents", "time_seconds"},
@@ -158,6 +162,7 @@ func (s *server) domainCreateChildToolResult(ctx context.Context, call domainSes
 	result, err := s.store.CreateDomainAgentChild(ctx, store.CreateDomainAgentChildCommand{
 		ThreadID: call.ThreadID, GrantID: arguments.GrantID, Name: arguments.Name, Role: arguments.Role,
 		Provider: arguments.Provider, Runtime: arguments.Runtime, MaxConcurrency: arguments.MaxConcurrency,
+		OperatingCharter: arguments.OperatingCharter, DelegationPolicy: arguments.DelegationPolicy,
 		Workstream: arguments.Workstream, TaskClass: arguments.TaskClass, Budget: arguments.Budget,
 		IdempotencyKey: idempotencyKey, CorrelationID: idempotencyKey,
 	})

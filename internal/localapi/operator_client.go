@@ -60,6 +60,7 @@ var operatorResultContracts = map[string]operatorResultContract{
 	MethodProjectList:                 {"local/v1/project-list.result.schema.json", ProjectListSchema, "project_list"},
 	MethodAgentList:                   {"local/v1/agent-list.result.schema.json", AgentListSchema, "agent_list"},
 	MethodDomainAgentCreate:           {"local/v1/domain-agent-create.result.schema.json", DomainAgentCreateSchema, "domain_agent_create"},
+	MethodDomainAgentSpecDraft:        {"local/v1/domain-agent-spec-draft.result.schema.json", DomainAgentSpecDraftSchema, "domain_agent_spec_draft"},
 	MethodDomainAgentAttach:           {"local/v1/domain-agent-mutation.result.schema.json", DomainAgentMutationSchema, "domain_agent_mutation"},
 	MethodDomainAgentUpdate:           {"local/v1/domain-agent-mutation.result.schema.json", DomainAgentMutationSchema, "domain_agent_mutation"},
 	MethodDomainAgentTree:             {"local/v1/domain-agent-tree.result.schema.json", DomainAgentTreeSchema, "domain_agent_tree"},

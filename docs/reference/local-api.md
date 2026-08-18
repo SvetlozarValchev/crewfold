@@ -1454,6 +1454,7 @@ The strict domain-agent methods are:
 
 | Method | Effect |
 | --- | --- |
+| `domain.agent.spec.draft` | run one read-only ephemeral Codex helper and return an uncommitted owner-reviewable name/role/charter/policy draft |
 | `domain.agent.create` | owner atomically creates one agent definition and its membership in the selected domain |
 | `domain.agent.attach` | attach an existing workspace agent definition to the selected domain |
 | `domain.agent.update` | revise parent, workstream, preferred entry, or active/retired state with optimistic revision checking |
@@ -1466,11 +1467,20 @@ The strict domain-agent methods are:
 | `domain.agent.staffing_grant.list` | list the manager's exact active, revoked, and derived-expired grants |
 | `domain.agent.staffing_grant.revoke` | revoke one exact current grant revision |
 
+`domain.agent.spec.draft` accepts either an exact existing domain/checkout scope
+or a pre-onboarding repository path/domain name plus bounded owner intent. It uses
+an ephemeral read-only provider thread with no Crewfold tools or effect approval,
+returns exactly `name`, `role`, `operating_charter`, `delegation_policy`, and
+`rationale`, and appends no event. It is assistance, not creation.
+
 `domain.agent.create` accepts exact workspace/project/name/role/provider/runtime,
-`max_concurrency`, optional parent/workstream/preferred-entry, and an idempotency
-key. Its result contains the joined agent plus the two committed event sequences.
-Creation does not open a provider session, create a task, launch a run, grant
-staffing authority, or infer authority from the chosen parent or role.
+`max_concurrency`, required owner-reviewed `operating_charter` and
+`delegation_policy`, optional parent/workstream/preferred-entry, and an
+idempotency key. Its result contains the joined agent plus the two committed event
+sequences. Creation does not open a provider session, create a task, launch a run,
+grant staffing authority, or infer authority from the chosen name, parent, role,
+charter, or policy. Attach and child creation require the same charter/policy;
+update may revise them with the exact expected membership revision.
 
 A staffing grant freezes: the manager membership revision; allowed
 provider/runtime/max-concurrency profiles; task-class slugs; descendant and total

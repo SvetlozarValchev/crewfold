@@ -305,7 +305,7 @@ func TestM22WorkbenchOnboardingCreatesOneArbitraryPreferredDomainAgent(t *testin
 	}
 	onboardingBody, _ := json.Marshal(map[string]any{
 		"repository_path": repository, "workspace": "personal", "project": "world-engine",
-		"agent": "builder", "role": "arbitrary coordinator", "provider": "fixture-mcp", "runtime": "direct", "write_mode": "shared",
+		"agent": "builder", "role": "arbitrary coordinator", "operating_charter": daemonTestDomainCharter, "delegation_policy": "adaptive", "provider": "fixture-mcp", "runtime": "direct", "write_mode": "shared",
 	})
 	onboardingRaw := post("/onboarding", onboardingBody)
 	if err := protocolschema.ValidateJSON("web/v1/onboarding.response.schema.json", onboardingRaw); err != nil {
@@ -364,7 +364,7 @@ func TestM21WorkbenchOnboardingPreflightsBeforeMutationAndReplaysExactly(t *test
 		t.Helper()
 		body, _ := json.Marshal(map[string]any{
 			"repository_path": filepath.Join(t.TempDir(), "world-engine"), "workspace": "personal", "project": "world-engine",
-			"agent": "builder", "role": "arbitrary coordinator", "provider": provider, "runtime": "direct", "write_mode": "shared",
+			"agent": "builder", "role": "arbitrary coordinator", "operating_charter": daemonTestDomainCharter, "delegation_policy": "adaptive", "provider": provider, "runtime": "direct", "write_mode": "shared",
 		})
 		request, err := http.NewRequest(http.MethodPost, origin+session.APIBase+"/onboarding", bytes.NewReader(body))
 		if err != nil {
@@ -392,7 +392,7 @@ func TestM21WorkbenchOnboardingPreflightsBeforeMutationAndReplaysExactly(t *test
 
 	// Use one stable path for the exact replay request.
 	path := filepath.Join(t.TempDir(), "world-engine")
-	body, _ := json.Marshal(map[string]any{"repository_path": path, "workspace": "personal", "project": "world-engine", "agent": "builder", "role": "arbitrary coordinator", "provider": "fixture-mcp", "runtime": "direct", "write_mode": "shared"})
+	body, _ := json.Marshal(map[string]any{"repository_path": path, "workspace": "personal", "project": "world-engine", "agent": "builder", "role": "arbitrary coordinator", "operating_charter": daemonTestDomainCharter, "delegation_policy": "adaptive", "provider": "fixture-mcp", "runtime": "direct", "write_mode": "shared"})
 	validCall := func() []byte {
 		request, _ := http.NewRequest(http.MethodPost, origin+session.APIBase+"/onboarding", bytes.NewReader(body))
 		request.Header.Set("Origin", origin)
@@ -658,7 +658,7 @@ func TestM21HerdrOnboardingRequiresLiveHostBeforeCanonicalMutation(t *testing.T)
 	}
 	body, _ := json.Marshal(map[string]any{
 		"repository_path": filepath.Join(t.TempDir(), "signal-garden"), "workspace": "personal", "project": "signal-garden",
-		"agent": "builder", "role": "arbitrary coordinator", "provider": "fixture-mcp", "runtime": "herdr", "write_mode": "shared",
+		"agent": "builder", "role": "arbitrary coordinator", "operating_charter": daemonTestDomainCharter, "delegation_policy": "adaptive", "provider": "fixture-mcp", "runtime": "herdr", "write_mode": "shared",
 	})
 	call := func() (int, []byte) {
 		request, _ := http.NewRequest(http.MethodPost, origin+session.APIBase+"/onboarding", bytes.NewReader(body))

@@ -27,14 +27,16 @@ const maximumWorkbenchOnboardingBytes = 16 * 1024
 var workbenchNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
 type workbenchOnboardingRequest struct {
-	RepositoryPath string `json:"repository_path"`
-	Workspace      string `json:"workspace"`
-	Project        string `json:"project"`
-	Agent          string `json:"agent"`
-	Role           string `json:"role"`
-	Provider       string `json:"provider"`
-	Runtime        string `json:"runtime"`
-	WriteMode      string `json:"write_mode"`
+	RepositoryPath   string `json:"repository_path"`
+	Workspace        string `json:"workspace"`
+	Project          string `json:"project"`
+	Agent            string `json:"agent"`
+	Role             string `json:"role"`
+	OperatingCharter string `json:"operating_charter"`
+	DelegationPolicy string `json:"delegation_policy"`
+	Provider         string `json:"provider"`
+	Runtime          string `json:"runtime"`
+	WriteMode        string `json:"write_mode"`
 }
 
 type workbenchProviderDiagnosis struct {
@@ -62,7 +64,7 @@ func (w *workbenchServer) handleWorkbenchOnboarding(response http.ResponseWriter
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&params); err != nil || decodeHasTrailingValue(decoder) ||
 		!workbenchNamePattern.MatchString(params.Workspace) || !workbenchNamePattern.MatchString(params.Project) || !workbenchNamePattern.MatchString(params.Agent) ||
-		!validWorkbenchText(params.Role, 256) || !validWorkbenchText(params.Provider, 128) || !validWorkbenchText(params.Runtime, 128) {
+		!validWorkbenchText(params.Role, 128) || !validWorkbenchCharter(params.OperatingCharter) || !validWorkbenchDelegationPolicy(params.DelegationPolicy) || !validWorkbenchText(params.Provider, 128) || !validWorkbenchText(params.Runtime, 128) {
 		w.writeError(response, http.StatusBadRequest, "invalid_request", "onboarding request does not match the current exact path and naming contract")
 		return
 	}
@@ -141,6 +143,7 @@ func (w *workbenchServer) handleWorkbenchOnboarding(response http.ResponseWriter
 	membership, err := w.daemon.store.AttachDomainAgent(request.Context(), store.AttachDomainAgentCommand{
 		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID,
 		AgentIdentifier: agent.Value.ID, PreferredEntry: true,
+		OperatingCharter: params.OperatingCharter, DelegationPolicy: params.DelegationPolicy,
 		IdempotencyKey: operation + "-domain-agent", CorrelationID: operation,
 	})
 	if err != nil {
@@ -210,4 +213,13 @@ func resolveWorkbenchRepositoryPath(value string) (string, bool) {
 
 func validWorkbenchText(value string, maximum int) bool {
 	return value != "" && len(value) <= maximum && strings.TrimSpace(value) == value && utf8.ValidString(value) && strings.IndexFunc(value, unicode.IsControl) < 0
+}
+
+func validWorkbenchCharter(value string) bool {
+	return value != "" && len(value) <= 8192 && strings.TrimSpace(value) == value && utf8.ValidString(value) &&
+		strings.IndexFunc(value, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) < 0
+}
+
+func validWorkbenchDelegationPolicy(value string) bool {
+	return value == domain.DomainAgentHandsOn || value == domain.DomainAgentAdaptive || value == domain.DomainAgentDelegationFirst
 }

@@ -31,8 +31,12 @@ $go_runner test ./...
 
 if [ "$($go_runner env CGO_ENABLED)" = "1" ] && command -v gcc >/dev/null 2>&1
 then
-  printf 'go test -race -timeout 20m ./...\n'
-  $go_runner test -race -timeout 20m ./...
+  printf 'go test -race -p=1 -timeout 20m ./...\n'
+  # The Store, recovery, and daemon race suites are each intentionally heavy.
+  # Serializing packages keeps their per-package timing/resource assertions
+  # meaningful instead of making them compete for one host; test-level
+  # concurrency and the race detector remain fully enabled inside each package.
+  $go_runner test -race -p=1 -timeout 20m ./...
 else
   printf 'go test -race ./... skipped: race detector prerequisites unavailable\n'
 fi

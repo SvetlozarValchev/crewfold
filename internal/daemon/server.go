@@ -697,6 +697,8 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleAgentList(request), false
 	case localapi.MethodDomainAgentCreate:
 		return s.handleDomainAgentCreate(request), false
+	case localapi.MethodDomainAgentSpecDraft:
+		return s.handleDomainAgentSpecDraft(request), false
 	case localapi.MethodDomainAgentAttach:
 		return s.handleDomainAgentAttach(request), false
 	case localapi.MethodDomainAgentUpdate:

@@ -6,6 +6,10 @@ const (
 	DomainAgentActive  = "active"
 	DomainAgentRetired = "retired"
 
+	DomainAgentHandsOn         = "hands_on"
+	DomainAgentAdaptive        = "adaptive"
+	DomainAgentDelegationFirst = "delegation_first"
+
 	DomainStaffingGrantActive  = "active"
 	DomainStaffingGrantRevoked = "revoked"
 	DomainStaffingGrantExpired = "expired"
@@ -69,17 +73,19 @@ type DomainAgentChildCreation struct {
 // owner-visible attention tree. Parentage and PreferredEntry are presentation
 // and routing metadata only; they never grant authority.
 type DomainAgentMembership struct {
-	ProjectID      string `json:"project_id"`
-	AgentID        string `json:"agent_id"`
-	ParentAgentID  string `json:"parent_agent_id,omitempty"`
-	WorkstreamID   string `json:"workstream_id,omitempty"`
-	PreferredEntry bool   `json:"preferred_entry"`
-	Status         string `json:"status"`
-	Revision       int64  `json:"revision"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
-	CreatedBy      string `json:"created_by"`
-	UpdatedBy      string `json:"updated_by"`
+	ProjectID        string `json:"project_id"`
+	AgentID          string `json:"agent_id"`
+	ParentAgentID    string `json:"parent_agent_id,omitempty"`
+	WorkstreamID     string `json:"workstream_id,omitempty"`
+	OperatingCharter string `json:"operating_charter"`
+	DelegationPolicy string `json:"delegation_policy"`
+	PreferredEntry   bool   `json:"preferred_entry"`
+	Status           string `json:"status"`
+	Revision         int64  `json:"revision"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+	CreatedBy        string `json:"created_by"`
+	UpdatedBy        string `json:"updated_by"`
 }
 
 // DomainAgent joins the durable definition with its domain-local position.

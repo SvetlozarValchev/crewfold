@@ -8,6 +8,8 @@ import (
 	"crewfold/internal/domain"
 )
 
+const testDomainAgentCharter = "Own the described durable responsibility, keep canonical context current, communicate material boundaries, and escalate authority gaps to the owner."
+
 func TestM22OwnerCreatesDomainAgentAtomicallyAndReplaySafely(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -16,6 +18,7 @@ func TestM22OwnerCreatesDomainAgentAtomicallyAndReplaySafely(t *testing.T) {
 	parent := createDomainTestAgent(t, storage, workspace.ID, "terrain-lead", "workstream lead")
 	if _, err := storage.AttachDomainAgent(ctx, AttachDomainAgentCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: parent.Value.ID,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		PreferredEntry: true, IdempotencyKey: "m22-owner-parent", CorrelationID: "m22-owner-parent",
 	}); err != nil {
 		t.Fatal(err)
@@ -23,6 +26,7 @@ func TestM22OwnerCreatesDomainAgentAtomicallyAndReplaySafely(t *testing.T) {
 	command := CreateDomainAgentCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, Name: "terrain-reviewer",
 		Role: "independent review", Provider: "codex", Runtime: "herdr", MaxConcurrency: 2,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		ParentAgentIdentifier: parent.Value.ID, IdempotencyKey: "m22-owner-create", CorrelationID: "m22-owner-create",
 	}
 	created, err := storage.CreateDomainAgent(ctx, command)
@@ -40,6 +44,7 @@ func TestM22OwnerCreatesDomainAgentAtomicallyAndReplaySafely(t *testing.T) {
 	if _, err := storage.CreateDomainAgent(ctx, CreateDomainAgentCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, Name: command.Name,
 		Role: "another label", Provider: "codex", Runtime: "herdr", MaxConcurrency: 1,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		IdempotencyKey: "m22-owner-duplicate", CorrelationID: "m22-owner-duplicate",
 	}); ErrorCode(err) != CodeDomainAgentExists {
 		t.Fatalf("duplicate create error = %v, code %q", err, ErrorCode(err))
@@ -68,6 +73,7 @@ func TestM22DomainAgentTreeIsNeutralDurableAndIdempotent(t *testing.T) {
 
 	rootCommand := AttachDomainAgentCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: root.Value.Name,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		PreferredEntry: true, IdempotencyKey: "m22-attach-orchid", CorrelationID: "m22-attach-orchid",
 	}
 	attachedRoot, err := storage.AttachDomainAgent(ctx, rootCommand)
@@ -80,6 +86,7 @@ func TestM22DomainAgentTreeIsNeutralDurableAndIdempotent(t *testing.T) {
 	}
 	attachedChild, err := storage.AttachDomainAgent(ctx, AttachDomainAgentCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: child.Value.ID,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		ParentAgentIdentifier: root.Value.ID, WorkstreamIdentifier: workstream.Value.ID,
 		IdempotencyKey: "m22-attach-red-team", CorrelationID: "m22-attach-red-team",
 	})
@@ -143,9 +150,9 @@ func TestM22DomainAgentHierarchyRejectsCrossScopeCycleAndImplicitCardinality(t *
 	child := createDomainTestAgent(t, storage, workspace.ID, "child-one", "arbitrary")
 	other := createDomainTestAgent(t, storage, workspace.ID, "lead-two", "arbitrary")
 	for _, command := range []AttachDomainAgentCommand{
-		{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: firstProject.ID, AgentIdentifier: root.Value.ID, PreferredEntry: true, IdempotencyKey: "m22-root", CorrelationID: "m22-root"},
-		{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: firstProject.ID, AgentIdentifier: child.Value.ID, ParentAgentIdentifier: root.Value.ID, WorkstreamIdentifier: firstWorkstream.Value.ID, IdempotencyKey: "m22-child", CorrelationID: "m22-child"},
-		{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: secondProject.ID, AgentIdentifier: other.Value.ID, PreferredEntry: true, WorkstreamIdentifier: secondWorkstream.Value.ID, IdempotencyKey: "m22-other", CorrelationID: "m22-other"},
+		{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: firstProject.ID, AgentIdentifier: root.Value.ID, OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive, PreferredEntry: true, IdempotencyKey: "m22-root", CorrelationID: "m22-root"},
+		{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: firstProject.ID, AgentIdentifier: child.Value.ID, OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive, ParentAgentIdentifier: root.Value.ID, WorkstreamIdentifier: firstWorkstream.Value.ID, IdempotencyKey: "m22-child", CorrelationID: "m22-child"},
+		{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: secondProject.ID, AgentIdentifier: other.Value.ID, OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive, PreferredEntry: true, WorkstreamIdentifier: secondWorkstream.Value.ID, IdempotencyKey: "m22-other", CorrelationID: "m22-other"},
 	} {
 		if _, err := storage.AttachDomainAgent(ctx, command); err != nil {
 			t.Fatal(err)
@@ -155,6 +162,7 @@ func TestM22DomainAgentHierarchyRejectsCrossScopeCycleAndImplicitCardinality(t *
 
 	if _, err := storage.AttachDomainAgent(ctx, AttachDomainAgentCommand{
 		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: secondProject.ID, AgentIdentifier: root.Value.ID,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
 		IdempotencyKey: "m22-duplicate-domain", CorrelationID: "m22-duplicate-domain",
 	}); ErrorCode(err) != CodeDomainAgentExists {
 		t.Fatalf("cross-domain reattachment error = %v, code %q", err, ErrorCode(err))

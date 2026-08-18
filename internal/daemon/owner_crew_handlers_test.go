@@ -42,7 +42,7 @@ func TestM22OnboardingDoesNotCreateLegacyExecutiveAuthority(t *testing.T) {
 	}
 	body, _ := json.Marshal(map[string]any{
 		"repository_path": filepath.Join(t.TempDir(), "crew-project"), "workspace": "personal", "project": "crew-project",
-		"agent": "builder", "role": "arbitrary coordinator", "provider": "fake", "runtime": "fake", "write_mode": "shared",
+		"agent": "builder", "role": "arbitrary coordinator", "operating_charter": daemonTestDomainCharter, "delegation_policy": "adaptive", "provider": "fake", "runtime": "fake", "write_mode": "shared",
 	})
 	request, _ := http.NewRequest(http.MethodPost, origin+session.APIBase+"/onboarding", bytes.NewReader(body))
 	request.Header.Set("Origin", origin)

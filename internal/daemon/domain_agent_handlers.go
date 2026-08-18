@@ -16,6 +16,7 @@ func (s *server) handleDomainAgentCreate(request localapi.Request) localapi.Resp
 		WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, Name: params.Name, Role: params.Role,
 		Provider: params.Provider, Runtime: params.Runtime, MaxConcurrency: params.MaxConcurrency,
 		ParentAgentIdentifier: params.ParentAgent, WorkstreamIdentifier: params.Workstream,
+		OperatingCharter: params.OperatingCharter, DelegationPolicy: params.DelegationPolicy,
 		PreferredEntry: params.PreferredEntry, IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
 	})
 	if err != nil {
@@ -34,6 +35,7 @@ func (s *server) handleDomainAgentAttach(request localapi.Request) localapi.Resp
 	result, err := s.store.AttachDomainAgent(context.Background(), store.AttachDomainAgentCommand{
 		WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, AgentIdentifier: params.Agent,
 		ParentAgentIdentifier: params.ParentAgent, WorkstreamIdentifier: params.Workstream,
+		OperatingCharter: params.OperatingCharter, DelegationPolicy: params.DelegationPolicy,
 		PreferredEntry: params.PreferredEntry, IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
 	})
 	if err != nil {
@@ -53,6 +55,7 @@ func (s *server) handleDomainAgentUpdate(request localapi.Request) localapi.Resp
 	result, err := s.store.UpdateDomainAgent(context.Background(), store.UpdateDomainAgentCommand{
 		WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, AgentIdentifier: params.Agent,
 		ParentAgentIdentifier: params.ParentAgent, WorkstreamIdentifier: params.Workstream,
+		OperatingCharter: params.OperatingCharter, DelegationPolicy: params.DelegationPolicy,
 		PreferredEntry: params.PreferredEntry, Status: params.Status, ExpectedRevision: params.ExpectedRevision,
 		IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID,
 	})

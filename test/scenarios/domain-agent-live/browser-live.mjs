@@ -64,20 +64,39 @@ await waitFor("document.body?.innerText.includes('Bring your repository into the
 await evaluate(`(() => {
   const form = document.querySelector('.onboarding-form');
   const set = (element, value) => {
-    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
   };
   const inputs = form.querySelectorAll('input');
+  const textareas = form.querySelectorAll('textarea');
   const selects = form.querySelectorAll('select');
   set(inputs[0], ${JSON.stringify(repositoryPath)});
   set(inputs[1], 'personal');
   set(inputs[2], 'm22-live-domain');
+  set(textareas[0], 'Coordinate this domain rather than implementing everything yourself. Delegate continuing implementation and independent review to durable specialists when a reviewed staffing grant permits it, keep peers informed, and report anything that needs owner authority.');
+  return true;
+})()`);
+await clickText("button", "Draft reviewed specification");
+await waitFor("document.querySelectorAll('.onboarding-form input')[3].value.length > 0 && document.querySelectorAll('.onboarding-form textarea')[1].value.length > 0", "real ephemeral Codex specification draft");
+await evaluate(`(() => {
+  const form = document.querySelector('.onboarding-form');
+  const set = (element, value) => {
+    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  const inputs = form.querySelectorAll('input');
+  const textareas = form.querySelectorAll('textarea');
+  const selects = form.querySelectorAll('select');
   set(inputs[3], 'orchid');
   set(inputs[4], 'owner-created coordinator');
-  set(selects[0], 'codex');
-  set(selects[1], 'herdr');
+  set(textareas[1], 'Coordinate the domain, keep peers informed, and delegate continuing implementation or independent review through exact staffing grants before doing that work yourself. Escalate missing authority and material cross-agent conflicts to the owner.');
+  set(selects[0], 'delegation_first');
+  set(selects[1], 'codex');
+  set(selects[2], 'herdr');
   form.requestSubmit();
   return true;
 })()`);
@@ -88,18 +107,23 @@ await waitFor("document.querySelector('.m22-agent-create')", "agent creation");
 await evaluate(`(() => {
   const form = document.querySelector('.m22-agent-create form');
   const set = (element, value) => {
-    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
   };
   const inputs = form.querySelectorAll('input');
+  const textareas = form.querySelectorAll('textarea');
   const selects = form.querySelectorAll('select');
   set(inputs[0], 'fern');
   set(inputs[1], 'independent domain peer');
-  set(selects[0], '');
-  set(selects[2], 'codex');
-  set(selects[3], 'herdr');
+  set(textareas[0], 'Remain an independent durable peer and receive exact coordination messages from other domain agents.');
+  set(textareas[1], 'Read canonical domain context, respond to durable peer messages, and report material coordination gaps without taking over unrelated implementation.');
+  set(selects[0], 'hands_on');
+  set(selects[1], '');
+  set(selects[2], '');
+  set(selects[3], 'codex');
+  set(selects[4], 'herdr');
   form.requestSubmit();
   return true;
 })()`);
@@ -119,7 +143,7 @@ await waitFor("document.body.innerText.includes('start Codex session')", "unboun
 await clickText("button", "start Codex session");
 await waitFor("document.body.innerText.toLowerCase().includes('codex conversation · codex') && document.querySelector('.m22-composer textarea')", "opened real Codex thread");
 
-const orchidInstruction = `Read your canonical Crewfold domain context. From it find the active staffing grant and the durable agent named fern. Send fern a durable inform message with subject "live M22" and body "orchid-live-message". Then use that active grant to create a continuing durable child named moss-live with role independent-reviewer, provider codex, runtime herdr, max concurrency 1, task class review, and budget token limit 1000, cost cents 0, time seconds 600. After both Crewfold operations succeed, answer exactly LIVE_M22_OK.`;
+const orchidInstruction = `Coordinate the domain according to your operating charter. We need one continuing independent reviewer, separate from you, to review future work; this responsibility must survive this turn. Fern also needs a durable message telling it that independent review is being staffed. Use only the current canonical authority available to you. Once both canonical operations are confirmed, answer exactly LIVE_M22_OK.`;
 await evaluate(`(() => {
   const input = document.querySelector('.m22-composer textarea');
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(orchidInstruction)});
@@ -129,14 +153,14 @@ await evaluate(`(() => {
 await waitFor("!document.querySelector('.m22-composer button').disabled", "enabled orchid send");
 await clickText(".m22-composer button", "send");
 await waitFor("[...document.querySelectorAll('.m22-thread-item.agentMessage p')].some((item) => item.textContent.trim() === 'LIVE_M22_OK')", "orchid tool-backed response");
-await waitFor("[...document.querySelectorAll('.m22-agent-row')].some((candidate) => candidate.textContent.includes('moss-live'))", "provider-created durable child");
+await waitFor("document.querySelectorAll('.m22-agent-row').length >= 3", "charter-driven durable child delegation");
 await capture("01-orchid-real-session");
 
 await clickText(".m22-agent-row", "fern");
 await waitFor("document.body.innerText.includes('start Codex session')", "unbound fern session");
 await clickText("button", "start Codex session");
 await waitFor("document.querySelector('.m22-composer textarea') && document.body.innerText.toLowerCase().includes('codex conversation · codex')", "opened fern thread");
-const fernInstruction = `Read your canonical Crewfold domain context and confirm your delivered inbox contains the exact body "orchid-live-message" from orchid. If and only if it does, answer exactly LIVE_FERN_ACK.`;
+const fernInstruction = `Read your canonical Crewfold domain context and confirm your delivered inbox contains the durable coordination message from orchid about staffing independent review. If and only if it does, answer exactly LIVE_FERN_ACK.`;
 await evaluate(`(() => {
   const input = document.querySelector('.m22-composer textarea');
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(fernInstruction)});
@@ -150,7 +174,7 @@ const fernReplySeen = await evaluate("[...document.querySelectorAll('.m22-thread
 await capture("02-fern-real-session");
 
 await command("Page.reload", { ignoreCache: true });
-await waitFor("document.querySelector('.m22-console') && document.body.innerText.includes('moss-live')", "canonical tree after browser reload");
+await waitFor("document.querySelector('.m22-console') && document.querySelectorAll('.m22-agent-row').length >= 3", "canonical tree after browser reload");
 await clickText(".m22-agent-row", "orchid");
 await waitFor("document.body.innerText.includes('LIVE_M22_OK')", "orchid conversation after reload");
 await capture("03-reloaded-session");
@@ -158,7 +182,7 @@ await capture("03-reloaded-session");
 const result = await evaluate(`(() => ({
   orchidReply: [...document.querySelectorAll('.m22-thread-item.agentMessage p')].some((item) => item.textContent.trim() === 'LIVE_M22_OK'),
   fernReply: ${JSON.stringify(fernReplySeen)},
-  childVisible: [...document.querySelectorAll('.m22-agent-row')].some((candidate) => candidate.textContent.includes('moss-live')),
+  childVisible: document.querySelectorAll('.m22-agent-row').length >= 3,
   legacyExecutive: document.body.innerText.includes('project-executive'),
   leakedPrivateBinding: ['thread_id', 'node_fingerprint', 'runtime_handle', 'provider_handle'].some((value) => document.documentElement.innerHTML.includes(value)),
 }))()`);

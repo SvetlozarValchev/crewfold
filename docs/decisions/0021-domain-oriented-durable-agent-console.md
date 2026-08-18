@@ -75,6 +75,20 @@ delegation, roll-up, and navigation. It grants no authority by itself. Existing
 owner-authored grants, profiles, task assignments, checkout policy, claims,
 budgets, and capabilities remain the authority boundary.
 
+Every membership also freezes an owner-reviewed operating charter and one
+behavioral policy: `hands_on`, `adaptive`, or `delegation_first`. These are real
+provider instructions, not decorative role labels. A delegation-first agent is
+instructed to use a current staffing grant to create durable specialists before
+absorbing implementation itself, or to explain the missing grant. The charter and
+policy still grant no task, checkout, staffing, budget, or effect authority.
+Changing them is a revision-checked membership mutation.
+
+The product may use a separate read-only ephemeral Codex thread to draft a
+candidate name, role, charter, and policy from owner intent. That helper exposes
+no Crewfold tools, uses `approvalPolicy=never`, records no Crewfold domain state,
+and returns one closed typed object for owner review. It is not the durable agent,
+does not choose authority, and is discarded after the draft.
+
 The tree is not restricted to executive and worker levels. A domain steward may
 coordinate workstream leads; a lead may coordinate implementers, independent
 reviewers, and scenario-specific testers; any of those agents may coordinate a
@@ -288,8 +302,11 @@ not delete the durable agent or its conversation history.
 Canonical tasks, decisions, evidence, activity, and health remain accessible, but
 they are contextual views and drill-downs rather than ten peer destinations the
 owner must reconcile manually. The owner may address any durable agent directly.
-One preferred domain steward may be the default entry point, but the schema and UI
+One preferred agent may be the default entry point, but the schema and UI
 do not enforce one executive per domain or one agent per checkout.
+“Preferred” means only which agent the client opens by default. It is rendered as
+`default`, not `entry`, and has no rank or authority semantics. Onboarding has no
+hardcoded `lead`, `domain-steward`, or other magic identity.
 
 The accepted interaction reference is
 [`../../web/domain-agent-console-mock.html`](../../web/domain-agent-console-mock.html).
