@@ -12,7 +12,7 @@ flowchart TB
         CLI[CLI]
         TUI[TUI]
         AgentMCP[Agent MCP clients]
-        FutureWeb[Future web console]
+        Web[Owner-local domain console]
     end
 
     subgraph ControlPlane[Local Crewfold control plane]
@@ -41,7 +41,7 @@ flowchart TB
     CLI --> API
     TUI --> API
     AgentMCP --> API
-    FutureWeb -. deferred .-> API
+    Web --> API
     API --> Commands
     Commands --> Journal
     Journal --> Projections
@@ -59,6 +59,15 @@ flowchart TB
     ProviderBridge --> Providers
     Watchers --> Git
 ```
+
+The web client presents canonical `Project` scope as a domain and `Objective`
+scope as a workstream. Its left rail is an owner-visible durable-agent tree; its
+primary center surface is the selected agent's real resumable provider
+conversation; its context rail is assembled from canonical tasks, messages,
+knowledge, Git observations, checks, evidence, services, decisions, and capacity.
+Selecting the domain replaces the conversation with its cross-workstream
+overview. The browser never derives authority or project truth from provider
+conversation state.
 
 ## Deployment topology
 
@@ -155,6 +164,25 @@ All external text is bounded and sanitized before terminal layout. Confirmed
 interventions use the same expected-revision and idempotency contracts as CLI
 commands. Attach is the only transition into the runtime terminal: Bubble Tea
 suspends while the exact `RunAttach` argv executes, then restores and catches up.
+
+### Domain-oriented web console
+
+The embedded owner-local web client is the primary rich interface. It uses the
+same bounded canonical API and cursor invalidation contract as other clients. A
+provider-session stream is observational and separately authorized; structured
+Codex/provider events are rendered before any advanced raw terminal console.
+
+One durable agent can bind to one current resumable provider conversation. The
+daemon mediates start, resume, replacement, prompt, interrupt, and stop through
+the runtime/provider boundary. The binding is node-local operational state and
+never substitutes for the durable agent, its task, or accepted knowledge. When a
+provider session cannot resume, a new run receives canonical context and the UI
+marks the continuity break explicitly.
+
+The browser may request a typed child-agent creation only when the selected
+manager has a current staffing grant. The daemon validates domain, ancestry cycle,
+profile, task class, descendant/concurrency ceiling, budget, and idempotency before
+creating the child. The tree cannot grant itself authority through nesting.
 
 ### MCP server
 

@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crewfold — domain agent workbench</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #1e1e1e;
+      --rail: #222;
+      --bar: #2d2d2d;
+      --selection: #393939;
+      --line: #464646;
+      --line-soft: #343434;
+      --text: #d8d8d8;
+      --muted: #aaa;
+      --dim: #777;
+      --violet: #d8d8d8;
+      --coral: #d7af87;
+      --cyan: #8bc7c7;
+      --green: #a3d9a0;
+      --amber: #e5cd8c;
+      --red: #df8c8c;
+    }
+    body[data-theme="kitty-default"] {
+      --ink: #000;
+      --rail: #101010;
+      --bar: #171717;
+      --selection: #242424;
+      --line: #3a3a3a;
+      --line-soft: #272727;
+      --text: #ddd;
+      --muted: #aaa;
+      --dim: #717171;
+      --violet: #a5a5ff;
+      --coral: #ff9a76;
+      --cyan: #79dada;
+      --green: #8bdc73;
+      --amber: #e8d47a;
+      --red: #ef7d86;
+    }
+    body[data-theme="high-contrast"] {
+      --ink: #050505;
+      --rail: #0b0b0b;
+      --bar: #121212;
+      --selection: #2b2540;
+      --line: #646464;
+      --line-soft: #3d3d3d;
+      --text: #fff;
+      --muted: #c5c5c5;
+      --dim: #929292;
+      --violet: #d8b4ff;
+      --coral: #ffac8e;
+      --cyan: #9cecff;
+      --green: #b7f58d;
+      --amber: #ffe49b;
+      --red: #ff95a5;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      color: var(--text);
+      background: var(--ink);
+      font: 13px/1.52 "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-feature-settings: "liga" 0, "calt" 0;
+    }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible { outline: 1px solid var(--violet); outline-offset: -1px; }
+    ::selection { color: var(--ink); background: var(--violet); }
+    * { scrollbar-width: thin; scrollbar-color: #4c4668 transparent; }
+
+    .app { display: grid; grid-template-columns: 232px minmax(0, 1fr); height: 100%; }
+
+    .rail {
+      display: grid;
+      grid-template-rows: 36% minmax(0, 1fr) auto;
+      min-height: 0;
+      border-right: 1px solid var(--line);
+      background: var(--rail);
+    }
+    .rail-section { min-height: 0; overflow: auto; }
+    .rail-section + .rail-section { border-top: 1px solid var(--line); }
+    .rail-heading {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 10px;
+      color: var(--dim);
+      background: var(--rail);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .03em;
+    }
+    .rail-row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 10px minmax(0, 1fr);
+      gap: 7px;
+      padding: 7px 10px;
+      border: 0;
+      color: var(--muted);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .rail-row:hover { color: var(--text); background: var(--selection); }
+    .rail-row.selected { color: var(--text); background: var(--selection); }
+    .rail-row strong, .rail-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rail-row strong { font-size: 12px; }
+    .rail-row small { color: var(--dim); font-size: 10px; }
+    .rail-row.selected small { color: var(--muted); }
+    .dot { width: 6px; height: 6px; margin-top: 6px; border: 1px solid currentColor; border-radius: 50%; color: var(--dim); }
+    .dot.live { color: var(--green); background: var(--green); box-shadow: 0 0 8px rgb(166 218 149 / 45%); }
+    .dot.wait { color: var(--amber); background: var(--amber); }
+    .dot.blocked { color: var(--red); background: var(--red); }
+    .group-label { padding: 8px 10px 3px 27px; color: var(--dim); font-size: 10px; text-transform: lowercase; }
+    .rail-row.level-1 { padding-left: 24px; }
+    .rail-row.level-2 { padding-left: 39px; }
+    .rail-footer { padding: 7px 10px; border-top: 1px solid var(--line); color: var(--dim); font-size: 10px; }
+    .rail-footer strong { color: var(--green); font-weight: 500; }
+    .theme-control { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+    .theme-control label { color: var(--dim); }
+    .theme-control select { min-width: 0; flex: 1; border: 0; color: var(--muted); background: transparent; font: inherit; cursor: pointer; }
+    .theme-control option { color: var(--text); background: var(--rail); }
+
+    .workbench { display: grid; grid-template-rows: 31px minmax(0, 1fr); min-width: 0; min-height: 0; }
+    .tabs { display: flex; min-width: 0; border-bottom: 1px solid var(--line); background: var(--bar); }
+    .tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      padding: 0 12px;
+      border: 0;
+      border-right: 1px solid var(--line-soft);
+      color: var(--dim);
+      background: transparent;
+      cursor: pointer;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--text); background: var(--selection); box-shadow: inset 0 -2px var(--cyan); }
+    .tab strong { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tab-add { width: 36px; justify-content: center; padding: 0; }
+    .rail-toggle { display: none; }
+    .canonical { margin-left: auto; padding: 6px 11px; color: var(--dim); font-size: 10px; white-space: nowrap; }
+    .canonical::before { display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px rgb(166 218 149 / 50%); content: ""; }
+
+    .panes { display: grid; grid-template-columns: minmax(520px, 1.55fr) minmax(300px, .75fr); min-width: 0; min-height: 0; }
+    .terminal, .sidecar { min-width: 0; min-height: 0; }
+    .terminal { display: grid; grid-template-rows: 28px minmax(0, 1fr) 42px 24px; }
+    .pane-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      border-bottom: 1px solid var(--line-soft);
+      color: var(--dim);
+      background: var(--rail);
+      font-size: 11px;
+    }
+    .pane-label strong { color: var(--text); }
+    .pane-label .live-word { margin-left: auto; color: var(--green); }
+    .stream { min-height: 0; overflow: auto; padding: 13px 13px 40px; }
+    .session-ident { margin-bottom: 20px; color: var(--muted); }
+    .session-ident strong { color: var(--text); }
+    .session-ident div:last-child { color: var(--dim); }
+    .entry { display: grid; grid-template-columns: 15px minmax(0, 1fr); gap: 5px; margin: 0 0 15px; }
+    .entry-mark { color: var(--coral); font-weight: 800; }
+    .entry.owner .entry-mark { color: var(--violet); }
+    .entry p { margin: 0 0 7px; }
+    .entry p:last-child { margin-bottom: 0; }
+    .entry .speaker { color: var(--text); font-weight: 700; }
+    .entry time { color: var(--dim); font-size: 10px; font-weight: 400; }
+    .event-kind { margin-left: 7px; color: var(--dim); font-size: 10px; }
+    .event-group { margin: -4px 0 15px 20px; }
+    .event-row { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; gap: 10px; padding: 3px 0; }
+    .event-row .kind { color: var(--dim); font-size: 10px; }
+    .event-row .value { min-width: 0; overflow-wrap: anywhere; }
+    .event-row .result { color: var(--green); font-size: 10px; }
+    .plan-step { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; gap: 7px; padding: 2px 0; color: var(--muted); }
+    .plan-step .number { color: var(--dim); }
+    .plan-step .state { color: var(--green); font-size: 10px; }
+    .command-event { margin: -4px 0 15px 20px; }
+    .command-event .command { color: var(--text); overflow-wrap: anywhere; }
+    .command-event .command::before { margin-right: 8px; color: var(--coral); content: "$"; }
+    .command-event pre { margin: 5px 0 3px 19px; color: var(--muted); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .command-event .command-meta { margin-left: 19px; color: var(--dim); font-size: 10px; }
+    .reasoning { margin: -4px 0 15px 20px; color: var(--muted); }
+    .reasoning summary { color: var(--cyan); cursor: pointer; }
+    .reasoning summary::marker { color: var(--dim); }
+    .reasoning p { margin: 5px 0 0 18px; }
+    .receipt { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin: 4px 0 0 20px; color: var(--cyan); }
+    .receipt .tool::before { content: "crewfold › "; color: var(--dim); }
+    .receipt .state { color: var(--green); font-size: 10px; }
+    .turn-complete { margin: -2px 0 15px 20px; color: var(--dim); font-size: 10px; }
+    .turn-complete strong { color: var(--green); font-weight: 500; }
+    .quiet { color: var(--muted); }
+    .prompt {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      align-items: center;
+      margin: 0 10px;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .prompt span { color: var(--violet); font-weight: 800; }
+    .prompt input { width: 100%; height: 40px; border: 0; outline: 0; color: var(--text); background: transparent; caret-color: var(--coral); }
+    .prompt input::placeholder { color: var(--dim); }
+    .statusline { display: flex; gap: 13px; align-items: center; padding: 0 10px; color: var(--dim); font-size: 10px; }
+    .statusline strong { color: var(--coral); font-weight: 600; }
+    .statusline .right { margin-left: auto; }
+
+    .sidecar { display: grid; grid-template-rows: 29px minmax(0, 1fr) 24px; border-left: 1px solid var(--line); background: var(--ink); }
+    .side-tabs { display: flex; border-bottom: 1px solid var(--line-soft); background: var(--rail); }
+    .side-tabs button { flex: 1; border: 0; color: var(--dim); background: transparent; font-size: 10px; cursor: pointer; }
+    .side-tabs button.active { color: var(--text); box-shadow: inset 0 -1px var(--violet); }
+    .side-content { min-height: 0; overflow: auto; padding: 12px 13px 30px; }
+    .side-panel { display: none; }
+    .side-panel.active { display: block; }
+    .side-section { margin-bottom: 19px; }
+    .side-section h2 { margin: 0 0 6px; color: var(--violet); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+    .side-section p { margin: 0; }
+    .side-section .muted { color: var(--muted); }
+    .plain-list { margin: 0; padding: 0; list-style: none; }
+    .plain-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 5px 0; }
+    .plain-list strong, .plain-list small { display: block; }
+    .plain-list small { color: var(--dim); }
+    .state-live { color: var(--green); }
+    .state-wait { color: var(--amber); }
+    .state-idle { color: var(--dim); }
+    .attention { color: var(--amber); }
+    .commandline { display: flex; gap: 14px; align-items: center; padding: 0 10px; border-top: 1px solid var(--line-soft); color: var(--dim); font-size: 10px; }
+    .commandline button { padding: 0; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
+    .commandline button:hover { color: var(--text); }
+    .commandline .danger { color: var(--red); }
+
+    .domain-screen { display: none; min-height: 0; overflow: auto; padding: 18px 20px 60px; }
+    .domain-screen.active { display: block; }
+    .domain-screen h1 { margin: 0 0 5px; font-size: 19px; }
+    .domain-screen p { max-width: 780px; }
+    .domain-shell { max-width: 1080px; padding-bottom: 14px; border-bottom: 1px solid var(--line-soft); }
+    .domain-shell > p { margin: 0 0 9px; color: var(--muted); }
+    .domain-meta { display: flex; flex-wrap: wrap; gap: 6px 17px; color: var(--dim); font-size: 10px; }
+    .domain-meta strong { color: var(--green); font-weight: 500; }
+    .domain-home { max-width: 1080px; }
+    .home-byline { display: flex; flex-wrap: wrap; gap: 7px 15px; align-items: baseline; margin: 17px 0 10px; color: var(--dim); font-size: 10px; }
+    .home-byline strong { color: var(--violet); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+    .orientation-note { max-width: 820px; margin: 0 0 22px; padding-left: 13px; border-left: 2px solid var(--violet); }
+    .orientation-note p { margin: 0 0 5px; }
+    .orientation-note small { color: var(--dim); }
+    .domain-columns { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 36px; max-width: 1080px; }
+    .domain-block { margin-bottom: 23px; }
+    .domain-block h2 { margin: 0 0 8px; color: var(--violet); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+    .domain-block-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; }
+    .domain-block-heading button { padding: 0; border: 0; color: var(--dim); background: transparent; font-size: 10px; cursor: pointer; }
+    .domain-block-heading button:hover { color: var(--text); }
+    .domain-line { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 15px; padding: 6px 0; border: 0; color: var(--text); background: transparent; text-align: left; }
+    button.domain-line { cursor: pointer; }
+    button.domain-line:hover strong, button.domain-line:focus-visible strong { color: var(--violet); }
+    .domain-line .domain-action { color: var(--dim); font-size: 10px; }
+    button.domain-line:hover .domain-action { color: var(--cyan); }
+    .domain-line small { display: block; color: var(--dim); }
+    .alignment { color: var(--amber); }
+    .service-state { color: var(--green); }
+    .domain-detail { display: none; max-width: 860px; }
+    .domain-detail.active { display: block; }
+    .domain-home.hidden { display: none; }
+    .detail-back { margin: 0 0 14px; padding: 0; border: 0; color: var(--cyan); background: transparent; cursor: pointer; }
+    .detail-kicker { margin: 0 0 3px; color: var(--violet); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+    .detail-title { margin: 0 0 4px; font-size: 19px; }
+    .detail-subtitle { margin: 0 0 20px; color: var(--muted); }
+    .detail-section { margin: 0 0 22px; }
+    .detail-section h2 { margin: 0 0 7px; color: var(--violet); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+    .detail-section p { margin: 0 0 7px; }
+    .detail-list { margin: 0; padding: 0; list-style: none; }
+    .detail-list li { padding: 4px 0; }
+    .detail-list small { display: block; color: var(--dim); }
+    .detail-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 11px; }
+    .detail-links button { padding: 0; border: 0; color: var(--cyan); background: transparent; cursor: pointer; }
+
+    .toast { position: fixed; right: 14px; bottom: 13px; max-width: 420px; padding: 8px 10px; border-left: 2px solid var(--coral); color: var(--text); background: var(--selection); opacity: 0; transform: translateY(8px); transition: .15s ease; pointer-events: none; }
+    .toast.show { opacity: 1; transform: none; }
+
+    @media (max-width: 1030px) {
+      .panes { grid-template-columns: minmax(0, 1fr); }
+      .sidecar { display: none; }
+    }
+    @media (max-width: 820px) {
+      .app { grid-template-columns: minmax(0, 1fr); }
+      .rail { position: fixed; inset: 31px auto 0 0; z-index: 5; width: min(280px, 88vw); transform: translateX(-101%); transition: transform .15s ease; }
+      body.rail-open .rail { transform: none; }
+      .rail-toggle { display: inline-flex; }
+      .canonical { display: none; }
+      .tab { padding-inline: 9px; }
+      .terminal { grid-template-rows: 28px minmax(0, 1fr) 48px 24px; }
+      .stream { padding-inline: 10px; }
+      .domain-columns { grid-template-columns: 1fr; gap: 0; }
+    }
+  </style>
+</head>
+<body data-theme="user-kitty">
+  <div class="app">
+    <aside class="rail" aria-label="Domains and durable agents">
+      <section class="rail-section">
+        <div class="rail-heading"><span>domains</span><span>local</span></div>
+        <button class="rail-row selected" id="domainRail"><span class="dot live"></span><span><strong>world-engine</strong><small>4 workstreams · 4 checkouts</small></span></button>
+        <button class="rail-row"><span class="dot wait"></span><span><strong>plugandrev</strong><small>2 workstreams · alignment open</small></span></button>
+        <button class="rail-row"><span class="dot"></span><span><strong>personal</strong><small>no active work</small></span></button>
+      </section>
+
+      <section class="rail-section">
+        <div class="rail-heading"><span>agents</span><span>hierarchy</span></div>
+        <button class="rail-row" data-agent="domain-steward"><span class="dot live"></span><span><strong>domain-steward</strong><small>working · domain coordination</small></span></button>
+        <div class="group-label">terrain consolidation</div>
+        <button class="rail-row level-1 selected" data-agent="terrain-lead"><span class="dot live"></span><span><strong>terrain-lead</strong><small>working · workstream lead</small></span></button>
+        <button class="rail-row level-2" data-agent="terrain-implementer"><span class="dot live"></span><span><strong>terrain-implementer</strong><small>working · storage extraction</small></span></button>
+        <button class="rail-row level-2"><span class="dot wait"></span><span><strong>terrain-reviewer</strong><small>waiting · independent review</small></span></button>
+        <button class="rail-row level-2"><span class="dot"></span><span><strong>terrain-scenario-qa</strong><small>idle · World MCP charter</small></span></button>
+        <div class="group-label">prefab system</div>
+        <button class="rail-row level-1"><span class="dot wait"></span><span><strong>prefab-lead</strong><small>waiting · storage contract</small></span></button>
+        <div class="group-label">asset pipeline</div>
+        <button class="rail-row level-1"><span class="dot live"></span><span><strong>asset-pipeline-lead</strong><small>working · cooker compatibility</small></span></button>
+        <div class="group-label">domain services</div>
+        <button class="rail-row level-1"><span class="dot"></span><span><strong>knowledge-maintainer</strong><small>idle · domain memory</small></span></button>
+      </section>
+
+      <footer class="rail-footer"><div><strong>● canonical</strong> · event 12,488</div><div class="theme-control"><label for="themeSelect">theme</label><select id="themeSelect"><option value="user-kitty">user · kitty-dusk</option><option value="kitty-default">default · kitty dark</option><option value="high-contrast">default · high contrast</option></select></div></footer>
+    </aside>
+
+    <section class="workbench">
+      <nav class="tabs" aria-label="Open workspaces">
+        <button class="tab rail-toggle" id="railToggle">menu</button>
+        <button class="tab" id="domainTab"><strong>world-engine</strong></button>
+        <button class="tab" id="stewardTab"><strong>domain-steward</strong></button>
+        <button class="tab active" id="agentTab"><strong id="agentTabName">terrain-lead</strong><span class="dot live"></span></button>
+        <button class="tab tab-add" id="newTab" aria-label="Open another agent">+</button>
+        <span class="canonical">through event 12,488</span>
+      </nav>
+
+      <div class="panes" id="agentPanes">
+        <main class="terminal" aria-label="Selected Codex session">
+          <div class="pane-label"><span>codex</span><strong id="paneAgent">terrain-lead</strong><span class="live-word">working</span></div>
+          <div class="stream">
+            <div class="session-ident">
+              <div><strong id="sessionAgent">terrain-lead</strong> · Codex subscription · resumable provider thread</div>
+              <div id="sessionScope">world-engine · terrain/storage/** · reports to terrain-lead</div>
+            </div>
+
+            <div class="entry owner">
+              <span class="entry-mark">›</span>
+              <div><p><span class="speaker">you</span><span class="event-kind">userMessage</span> <time>10:42</time></p><p id="ownerLine">The prefab team is changing nested component storage. Check the terrain dependency, coordinate with asset-pipeline, and keep extraction moving.</p></div>
+            </div>
+
+            <div class="entry">
+              <span class="entry-mark">●</span>
+              <div>
+                <p><span class="speaker">codex</span><span class="event-kind">agentMessage · commentary</span> <time>10:43</time></p>
+                <p id="agentLine">I’ll inspect the stored prefab reference and cooker boundary before I ask either lead to freeze a contract.</p>
+              </div>
+            </div>
+
+            <div class="event-group" aria-label="Plan update">
+              <div class="event-row"><span class="kind">plan</span><span class="value">Trace prefab identity through terrain persistence</span><span class="result">completed</span></div>
+              <div class="plan-step"><span class="number">1</span><span>Find serialized prefab references</span><span class="state">done</span></div>
+              <div class="plan-step"><span class="number">2</span><span>Compare the cooker manifest boundary</span><span class="state">done</span></div>
+              <div class="plan-step"><span class="number">3</span><span>Notify the affected durable leads</span><span class="state">done</span></div>
+            </div>
+
+            <div class="command-event" aria-label="Command execution">
+              <div class="event-row"><span class="kind">command</span><span class="value command">git grep -n "PrefabInstance\|prefab_id" -- terrain tools/cooker</span><span class="result">completed</span></div>
+              <pre>terrain/storage/chunk_store.rs:118: prefab_id: StablePrefabId
+tools/cooker/terrain_manifest.rs:73: source.prefab_id()</pre>
+              <div class="command-meta">cwd world-engine · exit 0 · 84 ms · exact bounded output</div>
+            </div>
+
+            <details class="reasoning" open>
+              <summary>reasoning summary</summary>
+              <p>Terrain persists a stable prefab identity before cooking. The extraction can continue behind the current adapter; changing the serialized identity requires coordination.</p>
+            </details>
+
+            <p class="receipt"><span class="tool">send_message → prefab-lead</span><span class="state">completed · receipt msg_7f2…</span></p>
+            <p class="receipt"><span class="tool">send_message → asset-pipeline-lead</span><span class="state">completed · receipt msg_80a…</span></p>
+
+            <div class="entry">
+              <span class="entry-mark">●</span>
+              <div><p><span class="speaker">codex</span><span class="event-kind">agentMessage · final_answer</span> <time>10:48</time></p><p id="finalLine">Terrain chunks embed prefab instance references before cooking. Extraction remains independent behind the adapter. I sent the exact identity and cooker seams to both affected leads; no owner decision is needed yet.</p></div>
+            </div>
+
+            <div class="turn-complete"><strong>turn completed</strong> · 8 items · no file changes · context 31k/1m</div>
+          </div>
+
+          <form class="prompt" id="promptForm"><span>›</span><input id="promptInput" autocomplete="off" aria-label="Send input to selected Codex session" placeholder="message terrain-lead directly"></form>
+          <div class="statusline"><strong>interactive</strong><span>grants enforced</span><span>cwd world-engine</span><span class="right">ctx 31k/1m</span></div>
+        </main>
+
+        <aside class="sidecar" aria-label="Canonical agent context">
+          <nav class="side-tabs"><button class="active" data-side="context">context</button><button data-side="briefing">briefing</button><button data-side="changes">changes</button><button data-side="verify">verify</button></nav>
+          <div class="side-content">
+            <section class="side-panel active" data-panel="context">
+              <div class="side-section"><h2>assignment</h2><p>Separate durable terrain storage from runtime ownership without breaking editor or cooked-asset compatibility.</p></div>
+              <div class="side-section"><h2>attached</h2><ul class="plain-list"><li><span><strong>world-engine</strong><small>exclusive writer · terrain/storage/**</small></span></li><li><span><strong>upstream main</strong><small>read-only observations</small></span></li></ul></div>
+              <div class="side-section"><h2>children</h2><ul class="plain-list"><li><span><strong>terrain-implementer</strong><small>storage extraction</small></span><span class="state-live">working</span></li><li><span><strong>terrain-reviewer</strong><small>independent review</small></span><span class="state-wait">waiting</span></li><li><span><strong>terrain-scenario-qa</strong><small>World MCP charter</small></span><span class="state-idle">idle</span></li></ul></div>
+              <div class="side-section"><h2>owner attention</h2><p class="muted">none · agents remain inside their grants</p></div>
+            </section>
+            <section class="side-panel" data-panel="briefing">
+              <div class="side-section"><h2>delivered launch packet · r4</h2><p class="muted">Immutable context supplied when this run started, plus acknowledged live deltas.</p></div>
+              <div class="side-section"><h2>work contract</h2><ul class="plain-list"><li><span><strong>terrain persistence extraction</strong><small>task, dependencies, checkout, budget, allowed tools, reporting contract</small></span></li></ul></div>
+              <div class="side-section"><h2>accepted knowledge</h2><ul class="plain-list"><li><span><strong>terrain extraction boundary</strong><small>accepted decision · current</small></span></li><li><span><strong>upstream consolidation handoff</strong><small>verified at commit 8b3d…</small></span></li></ul></div>
+              <div class="side-section"><h2>acknowledged delta · 2</h2><p>Prefab instance identity may change. Do not select a format; preserve the adapter seam and report the compatibility requirement.</p></div>
+              <div class="side-section"><h2>excluded</h2><p class="muted">Unrelated workstreams, private provider transcripts, and unaccepted proposals were not delivered.</p></div>
+            </section>
+            <section class="side-panel" data-panel="changes">
+              <div class="side-section"><h2>observed paths</h2><ul class="plain-list"><li><span><strong>M terrain/storage/chunk_store.rs</strong><small>+84 −31 · inside claim</small></span></li><li><span><strong>A terrain/storage/manifest.rs</strong><small>+126 · inside claim</small></span></li><li><span><strong>M terrain/tests/reopen_persistence.rs</strong><small>outside claim · review required</small></span></li></ul></div>
+              <div class="side-section"><h2>observation</h2><p class="muted">HEAD 8b3d… · 10:51 · Git proves checkout differences, not private authorship.</p></div>
+            </section>
+            <section class="side-panel" data-panel="verify">
+              <div class="side-section"><h2>mechanical</h2><p><span class="state-live">184 passed</span> · baseline serialization fixtures</p></div>
+              <div class="side-section"><h2>independent review</h2><p class="state-wait">waiting for extraction diff</p></div>
+              <div class="side-section"><h2>scenario</h2><p class="muted">prepared · streaming, collision, reopen, editor/runtime parity</p></div>
+            </section>
+          </div>
+          <div class="commandline"><button id="newChild">new child</button><button>open terminal</button><button>interrupt</button><button class="danger">stop</button></div>
+        </aside>
+      </div>
+
+      <main class="domain-screen" id="domainScreen">
+        <div class="domain-home" id="domainHome">
+          <header class="domain-shell">
+            <h1>world-engine</h1>
+            <p>Shared knowledge and coordination across independent terrain, prefab, asset-pipeline, and libweb workstreams. Open a durable agent for its real Codex conversation.</p>
+            <div class="domain-meta"><strong>canonical through event 12,488</strong><span>4 workstreams</span><span>8 durable agents</span><span>4 attached checkouts</span><span>2 managed services</span><span class="attention">2 coordination items</span></div>
+          </header>
+
+          <div class="home-byline"><strong>domain home</strong><span>curated by domain-steward</span><span>revision 6</span><span>updated 18 minutes ago</span><span>7 pinned records · 5 linked sources</span></div>
+          <div class="orientation-note"><p>Terrain persistence, prefab identity, and asset cooking progress independently. Their shared boundary is serialized prefab identity inside terrain chunks; affected leads are reviewing that contract before accepting a format.</p><small>authored orientation note · sources: prefab identity contract, terrain extraction handoff, cooker manifest observation</small></div>
+
+          <div class="domain-columns">
+            <div>
+              <section class="domain-block">
+                <div class="domain-block-heading"><h2>needs coordination</h2><button data-notify="Would open every current cross-workstream coordination record">view all</button></div>
+                <button class="domain-line" data-detail="coord-prefab"><span><strong>prefab instance storage</strong><small>interface contract · terrain, prefab, asset pipeline · no owner decision yet</small></span><span class="alignment">open →</span></button>
+                <button class="domain-line" data-detail="coord-manifest"><span><strong>cooked terrain manifest PR #4821</strong><small>upstream observation · asset pipeline, terrain</small></span><span class="state-live">watched →</span></button>
+              </section>
+
+              <section class="domain-block">
+                <div class="domain-block-heading"><h2>shared memory · curated pins</h2><button data-notify="Would open searchable canonical domain knowledge">open knowledge</button></div>
+                <button class="domain-line" data-detail="knowledge-prefab"><span><strong>prefab storage and identity</strong><small>accepted contract · current · 3 workstreams · 6 sources</small></span><span class="domain-action">open →</span></button>
+                <button class="domain-line" data-detail="knowledge-handoff"><span><strong>terrain extraction handoff</strong><small>runbook · verified yesterday · 5 sources</small></span><span class="domain-action">open →</span></button>
+                <button class="domain-line" data-detail="knowledge-cdn"><span><strong>staging CDN release selection</strong><small>risk · owner-sourced coworker update · needs review</small></span><span class="domain-action">open →</span></button>
+              </section>
+            </div>
+
+            <div>
+              <section class="domain-block">
+                <h2>workstreams and resources</h2>
+                <button class="domain-line" data-detail="workstream-terrain"><span><strong>terrain consolidation</strong><small>world-engine · writer terrain/storage/** · 3 children</small></span><span class="state-live">moving →</span></button>
+                <button class="domain-line" data-detail="workstream-prefab"><span><strong>prefab system</strong><small>world-engine-5 · writer prefab/** · 1 lead</small></span><span class="state-wait">aligning →</span></button>
+                <button class="domain-line" data-detail="workstream-assets"><span><strong>asset pipeline</strong><small>world-engine-4 · writer cooker/** · 1 lead</small></span><span class="state-live">working →</span></button>
+                <button class="domain-line" data-detail="workstream-libweb"><span><strong>libweb/layout</strong><small>world-engine-6 · no active run</small></span><span class="state-idle">idle →</span></button>
+              </section>
+
+              <section class="domain-block">
+                <h2>attached checkouts</h2>
+                <button class="domain-line" data-detail="checkout-world-engine"><span><strong>world-engine</strong><small>~/depot/dev/world-engine · terrain consolidation</small></span><span class="domain-action">open →</span></button>
+                <button class="domain-line" data-detail="checkout-world-engine-4"><span><strong>world-engine-4</strong><small>~/depot/dev/world-engine-4 · asset pipeline</small></span><span class="domain-action">open →</span></button>
+                <button class="domain-line" data-detail="checkout-world-engine-5"><span><strong>world-engine-5</strong><small>~/depot/dev/world-engine-5 · prefab system</small></span><span class="domain-action">open →</span></button>
+              </section>
+
+              <section class="domain-block">
+                <h2>managed services</h2>
+                <button class="domain-line" data-detail="service-world"><span><strong>World Engine test instance</strong><small>localhost:4173 · terrain-scenario-qa · running 42m</small></span><span class="service-state">running →</span></button>
+                <button class="domain-line" data-detail="service-cooker"><span><strong>asset cooker watch</strong><small>world-engine-4 · asset-pipeline-lead</small></span><span class="state-idle">idle →</span></button>
+              </section>
+            </div>
+          </div>
+        </div>
+
+        <section class="domain-detail" id="domainDetail" aria-live="polite">
+          <button class="detail-back" id="detailBack">← domain home</button>
+          <p class="detail-kicker" id="detailKicker"></p>
+          <h1 class="detail-title" id="detailTitle"></h1>
+          <p class="detail-subtitle" id="detailSubtitle"></p>
+          <div id="detailBody"></div>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <div class="toast" id="toast">Mock interaction</div>
+
+  <script>
+    const body = document.body;
+    const agentPanes = document.getElementById("agentPanes");
+    const domainScreen = document.getElementById("domainScreen");
+    const domainTab = document.getElementById("domainTab");
+    const agentTab = document.getElementById("agentTab");
+    const stewardTab = document.getElementById("stewardTab");
+    const domainHome = document.getElementById("domainHome");
+    const domainDetail = document.getElementById("domainDetail");
+    const toast = document.getElementById("toast");
+    let toastTimer;
+
+    const detailData = {
+      "coord-prefab": {
+        kicker: "cross-workstream coordination",
+        title: "prefab instance storage",
+        subtitle: "Derived from one current interface contract affecting terrain, prefab, and asset-pipeline.",
+        body: `<section class="detail-section"><h2>why this is here</h2><p>The accepted terrain format persists a prefab identity before cooking. The prefab workstream is revising nested component storage, and the cooker must preserve the same identity.</p></section><section class="detail-section"><h2>current motion</h2><ul class="detail-list"><li><strong>prefab-lead</strong><small>drafting the storage contract</small></li><li><strong>terrain-lead</strong><small>preserving an adapter seam; extraction continues</small></li><li><strong>asset-pipeline-lead</strong><small>checking cooker compatibility</small></li></ul></section><section class="detail-section"><h2>owner attention</h2><p>No owner decision is required. Crewfold will surface one only if incompatible requirements are proposed or authority must expand.</p><div class="detail-links"><button data-open-agent="terrain-lead">open terrain-lead</button><button data-notify="Would open prefab-lead's real session">open prefab-lead</button><button data-notify="Would open the exact accepted interface contract">open source contract</button></div></section>`
+      },
+      "coord-manifest": {
+        kicker: "upstream impact",
+        title: "cooked terrain manifest PR #4821",
+        subtitle: "An observed upstream change linked to asset-pipeline and terrain consolidation.",
+        body: `<section class="detail-section"><h2>observation</h2><p>The cooker manifest changes terrain package selection. asset-pipeline-lead is comparing it with the accepted terrain handoff before terrain adopts the revision.</p></section><section class="detail-section"><h2>sources</h2><ul class="detail-list"><li><strong>upstream PR #4821</strong><small>read-only repository observation</small></li><li><strong>terrain extraction handoff</strong><small>accepted runbook · current</small></li></ul><div class="detail-links"><button data-notify="Would open asset-pipeline-lead's real session">open asset-pipeline-lead</button><button data-notify="Would open the bounded upstream observation">inspect PR observation</button></div></section>`
+      },
+      "knowledge-prefab": {
+        kicker: "accepted domain knowledge",
+        title: "prefab storage and identity",
+        subtitle: "Current contract · revision 7 · accepted by owner policy · affects 3 workstreams.",
+        body: `<section class="detail-section"><h2>current revision</h2><p>Prefab references use a stable serialized identity across editor persistence, terrain chunks, and cooked manifests. Concrete nested-component layout remains behind workstream-owned adapters.</p></section><section class="detail-section"><h2>provenance</h2><ul class="detail-list"><li><strong>authored by prefab-lead</strong><small>accepted 2 days ago · revision 7</small></li><li><strong>6 linked sources</strong><small>2 code observations · 1 meeting resolution · 2 tests · 1 owner note</small></li><li><strong>freshness</strong><small>current at event 12,488 · no open contradiction</small></li></ul></section><section class="detail-section"><h2>routed to</h2><p>terrain consolidation · prefab system · asset pipeline</p><div class="detail-links"><button data-notify="Would open the exact knowledge revision and linked evidence">open revision</button><button data-notify="Would open immutable revision history">revision history</button></div></section>`
+      },
+      "knowledge-handoff": {
+        kicker: "accepted runbook",
+        title: "terrain extraction handoff",
+        subtitle: "Verified yesterday · 5 linked sources · terrain consolidation.",
+        body: `<section class="detail-section"><h2>purpose</h2><p>Defines the editor/runtime ownership boundary, adapter sequence, reopen requirements, and evidence expected before terrain storage is accepted.</p></section><section class="detail-section"><h2>verification</h2><p><span class="state-live">current</span> · source commit 8b3d… · reopen fixture and baseline serialization checks linked.</p><div class="detail-links"><button data-notify="Would open the runbook revision">open runbook</button><button data-notify="Would open its five linked evidence records">open evidence</button></div></section>`
+      },
+      "knowledge-cdn": {
+        kicker: "owner-sourced risk",
+        title: "staging CDN release selection",
+        subtitle: "Recorded from a coworker update · proposed knowledge · not yet accepted.",
+        body: `<section class="detail-section"><h2>recorded statement</h2><p>The staging release may require a different CDN selection. The statement retains owner provenance and is not treated as current domain truth until reviewed.</p></section><section class="detail-section"><h2>status</h2><p class="attention">needs knowledge review · no workstream has received it as accepted context</p><div class="detail-links"><button data-notify="Would open the exact proposal and provenance">review proposal</button></div></section>`
+      },
+      "workstream-terrain": {
+        kicker: "workstream",
+        title: "terrain consolidation",
+        subtitle: "Independent outcome inside world-engine · moving · objective revision 4.",
+        body: `<section class="detail-section"><h2>goal</h2><p>Separate durable terrain storage from runtime ownership without breaking editor or cooked-asset compatibility.</p></section><section class="detail-section"><h2>durable agents</h2><ul class="detail-list"><li><strong>terrain-lead</strong><small>coordinates this workstream</small></li><li><strong>terrain-implementer</strong><small>exclusive writer · storage extraction</small></li><li><strong>terrain-reviewer</strong><small>independent review</small></li><li><strong>terrain-scenario-qa</strong><small>World MCP scenario validation</small></li></ul></section><section class="detail-section"><h2>resources</h2><ul class="detail-list"><li><strong>~/depot/dev/world-engine</strong><small>exclusive writer · claim terrain/storage/**</small></li><li><strong>GoNeuralAI/world-engine main</strong><small>read-only upstream observation</small></li></ul><div class="detail-links"><button data-open-agent="terrain-lead">open terrain-lead</button><button data-notify="Would open the objective, readiness graph, and assignments">open work graph</button></div></section>`
+      },
+      "checkout-world-engine": {
+        kicker: "attached checkout",
+        title: "world-engine",
+        subtitle: "Concrete local resource; it does not define domain membership or agent hierarchy.",
+        body: `<section class="detail-section"><h2>location</h2><p>~/depot/dev/world-engine</p><ul class="detail-list"><li><strong>repository</strong><small>GoNeuralAI/world-engine</small></li><li><strong>branch / head</strong><small>terrain-consolidation · 8b3d…</small></li><li><strong>write mode</strong><small>exclusive · terrain/storage/** claimed by terrain-implementer</small></li></ul></section><section class="detail-section"><h2>used by</h2><p>terrain consolidation</p><div class="detail-links"><button data-notify="Would open exact Git observations and claim state">inspect checkout</button></div></section>`
+      },
+      "service-world": {
+        kicker: "managed domain service",
+        title: "World Engine test instance",
+        subtitle: "running · localhost:4173 · started 42 minutes ago by terrain-scenario-qa.",
+        body: `<section class="detail-section"><h2>managed surface</h2><p>A domain-pinned test world used for bounded terrain streaming and collision scenarios. It is a live service, not canonical knowledge.</p></section><section class="detail-section"><h2>runtime</h2><ul class="detail-list"><li><strong>owner</strong><small>terrain-scenario-qa</small></li><li><strong>checkout</strong><small>~/depot/dev/world-engine</small></li><li><strong>health</strong><small>ready · last probe 9 seconds ago</small></li></ul><div class="detail-links"><button data-notify="Would open the managed localhost surface">open surface</button><button data-notify="Would open bounded service logs">view logs</button><button data-notify="Stopping remains a typed, receipted Crewfold operation">stop service</button></div></section>`
+      }
+    };
+
+    detailData["workstream-prefab"] = { ...detailData["workstream-terrain"], title: "prefab system", subtitle: "Independent outcome inside world-engine · aligning on a shared contract.", body: `<section class="detail-section"><h2>goal</h2><p>Define prefab authoring and stable storage independently of terrain and cooking implementations.</p></section><section class="detail-section"><h2>resources</h2><p>~/depot/dev/world-engine-5 · exclusive writer · prefab/**</p><div class="detail-links"><button data-notify="Would open prefab-lead's real session">open prefab-lead</button></div></section>` };
+    detailData["workstream-assets"] = { ...detailData["workstream-terrain"], title: "asset pipeline", subtitle: "Independent outcome inside world-engine · cooker compatibility active.", body: `<section class="detail-section"><h2>goal</h2><p>Cook and package domain assets while preserving accepted source identities and runtime manifests.</p></section><section class="detail-section"><h2>resources</h2><p>~/depot/dev/world-engine-4 · exclusive writer · cooker/**</p><div class="detail-links"><button data-notify="Would open asset-pipeline-lead's real session">open asset-pipeline-lead</button></div></section>` };
+    detailData["workstream-libweb"] = { ...detailData["workstream-terrain"], title: "libweb/layout", subtitle: "Independent outcome inside world-engine · idle · no active run.", body: `<section class="detail-section"><h2>goal</h2><p>Maintain the engine-facing layout and web integration surface.</p></section><section class="detail-section"><h2>resources</h2><p>~/depot/dev/world-engine-6 · no current write claim</p></section>` };
+    detailData["checkout-world-engine-4"] = { ...detailData["checkout-world-engine"], title: "world-engine-4", subtitle: "Attached checkout used by asset pipeline.", body: `<section class="detail-section"><h2>location</h2><p>~/depot/dev/world-engine-4</p><ul class="detail-list"><li><strong>repository</strong><small>GoNeuralAI/world-engine</small></li><li><strong>used by</strong><small>asset pipeline</small></li><li><strong>write claim</strong><small>cooker/**</small></li></ul></section>` };
+    detailData["checkout-world-engine-5"] = { ...detailData["checkout-world-engine"], title: "world-engine-5", subtitle: "Attached checkout used by prefab system.", body: `<section class="detail-section"><h2>location</h2><p>~/depot/dev/world-engine-5</p><ul class="detail-list"><li><strong>repository</strong><small>GoNeuralAI/world-engine</small></li><li><strong>used by</strong><small>prefab system</small></li><li><strong>write claim</strong><small>prefab/**</small></li></ul></section>` };
+    detailData["service-cooker"] = { ...detailData["service-world"], title: "asset cooker watch", subtitle: "idle · world-engine-4 · owned by asset-pipeline-lead.", body: `<section class="detail-section"><h2>managed surface</h2><p>A pinned cooker watcher that can be started when the asset-pipeline workstream needs live manifest feedback.</p></section><section class="detail-section"><h2>state</h2><p class="muted">idle · no process currently consumes resources</p><div class="detail-links"><button data-notify="Starting remains a typed, receipted Crewfold operation">start service</button><button data-notify="Would open asset-pipeline-lead's real session">open owner agent</button></div></section>` };
+
+    function notify(text) {
+      toast.textContent = text;
+      toast.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("show"), 2200);
+    }
+
+    function showAgent(name = "terrain-lead") {
+      domainScreen.classList.remove("active");
+      agentPanes.style.display = "grid";
+      domainTab.classList.remove("active");
+      agentTab.classList.toggle("active", name !== "domain-steward");
+      stewardTab.classList.toggle("active", name === "domain-steward");
+      body.classList.remove("rail-open");
+      if (name === "domain-steward") {
+        document.getElementById("agentTabName").textContent = "terrain-lead";
+        document.getElementById("paneAgent").textContent = name;
+        document.getElementById("sessionAgent").textContent = name;
+        document.getElementById("sessionScope").textContent = "world-engine domain · 4 attached checkouts · owner-facing";
+        document.getElementById("ownerLine").textContent = "Summarize what crosses workstream boundaries and tell me whether I need to decide anything.";
+        document.getElementById("agentLine").textContent = "I’ll inspect the accepted domain contracts and current cross-workstream observations before deciding whether owner attention is required.";
+        document.getElementById("finalLine").textContent = "Prefab instance storage and the cooked terrain manifest cross workstreams. Affected leads are reviewing compatibility. Neither needs owner authority yet.";
+        document.getElementById("promptInput").placeholder = "message domain-steward directly";
+      } else {
+        document.getElementById("agentTabName").textContent = name;
+        document.getElementById("paneAgent").textContent = name;
+        document.getElementById("sessionAgent").textContent = name;
+        document.getElementById("sessionScope").textContent = "world-engine · terrain/storage/** · reports to terrain-lead";
+        document.getElementById("ownerLine").textContent = "The prefab team is changing nested component storage. Check the terrain dependency, coordinate with asset-pipeline, and keep extraction moving.";
+        document.getElementById("agentLine").textContent = "I’ll inspect the stored prefab reference and cooker boundary before I ask either lead to freeze a contract.";
+        document.getElementById("finalLine").textContent = "Terrain chunks embed prefab instance references before cooking. Extraction remains independent behind the adapter. I sent the exact identity and cooker seams to both affected leads; no owner decision is needed yet.";
+        document.getElementById("promptInput").placeholder = `message ${name} directly`;
+      }
+      document.querySelectorAll("[data-agent]").forEach(row => row.classList.toggle("selected", row.dataset.agent === name));
+    }
+
+    function showDomain() {
+      agentPanes.style.display = "none";
+      domainScreen.classList.add("active");
+      domainHome.classList.remove("hidden");
+      domainDetail.classList.remove("active");
+      domainTab.classList.add("active");
+      agentTab.classList.remove("active");
+      stewardTab.classList.remove("active");
+      body.classList.remove("rail-open");
+    }
+
+    function showDomainDetail(key) {
+      const detail = detailData[key];
+      if (!detail) return;
+      document.getElementById("detailKicker").textContent = detail.kicker;
+      document.getElementById("detailTitle").textContent = detail.title;
+      document.getElementById("detailSubtitle").textContent = detail.subtitle;
+      document.getElementById("detailBody").innerHTML = detail.body;
+      domainHome.classList.add("hidden");
+      domainDetail.classList.add("active");
+      domainScreen.scrollTop = 0;
+    }
+
+    document.getElementById("domainRail").addEventListener("click", showDomain);
+    domainTab.addEventListener("click", showDomain);
+    document.getElementById("detailBack").addEventListener("click", showDomain);
+    document.querySelectorAll("[data-detail]").forEach(row => row.addEventListener("click", () => showDomainDetail(row.dataset.detail)));
+    agentTab.addEventListener("click", () => showAgent(document.getElementById("agentTabName").textContent));
+    stewardTab.addEventListener("click", () => showAgent("domain-steward"));
+    document.querySelectorAll("[data-agent]").forEach(row => row.addEventListener("click", () => showAgent(row.dataset.agent)));
+    document.getElementById("railToggle").addEventListener("click", () => body.classList.toggle("rail-open"));
+    document.querySelectorAll(".side-tabs button").forEach(button => button.addEventListener("click", () => {
+      document.querySelectorAll(".side-tabs button").forEach(item => item.classList.toggle("active", item === button));
+      document.querySelectorAll(".side-panel").forEach(panel => panel.classList.toggle("active", panel.dataset.panel === button.dataset.side));
+    }));
+    document.getElementById("promptForm").addEventListener("submit", event => {
+      event.preventDefault();
+      const input = document.getElementById("promptInput");
+      if (!input.value.trim()) return;
+      notify("Mock only · input would go to this exact Codex thread");
+      input.value = "";
+    });
+    document.getElementById("newChild").addEventListener("click", () => notify("Mock only · opens a durable-child request inside the current staffing grant"));
+    document.getElementById("newTab").addEventListener("click", () => notify("Mock only · opens the agent/session switcher"));
+    document.getElementById("themeSelect").addEventListener("change", event => {
+      body.dataset.theme = event.target.value;
+      notify(`Theme preview · ${event.target.options[event.target.selectedIndex].text}`);
+    });
+    document.addEventListener("click", event => {
+      const messageControl = event.target.closest("[data-notify]");
+      if (messageControl) notify(messageControl.dataset.notify);
+      const agentControl = event.target.closest("[data-open-agent]");
+      if (agentControl) showAgent(agentControl.dataset.openAgent);
+    });
+    if (location.hash.startsWith("#detail=")) {
+      showDomain();
+      showDomainDetail(decodeURIComponent(location.hash.slice(8)));
+    } else if (location.hash === "#domain") {
+      showDomain();
+    }
+  </script>
+</body>
+</html>

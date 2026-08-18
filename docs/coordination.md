@@ -42,6 +42,34 @@ The receiving agent may accept, reject with a reason, or propose a narrower task
 Acceptance establishes an assignment lease and expected heartbeat, not permanent
 ownership.
 
+## Durable agent hierarchy and staffing
+
+Delegation can create a continuing actor as well as a task. A durable child agent
+is appropriate when it owns work beyond one provider turn, needs direct owner or
+peer communication, coordinates children, owns an attached resource/service, or
+must retain a resumable conversation after its creator stops. Short research,
+analysis, and review helpers may remain provider-local subagents and appear only in
+the parent's activity.
+
+The durable manager/child graph is an acyclic attention hierarchy. It determines
+navigation, reporting, and escalation defaults, but never grants access by role or
+ancestry. A manager can create a child only with a current owner-authored staffing
+grant that freezes domain, eligible provider/runtime profiles, task classes,
+descendant and concurrency ceilings, budget, and expiry. Creation and later
+disablement are typed, idempotent, and receipted.
+
+The owner may address any durable agent directly. A workstream lead receives
+material child reports through durable messages and roll-up projections rather
+than terminal scraping. A higher-level domain steward receives accepted outcomes,
+interface changes, verification gaps, risks, and owner requests rather than a
+concatenation of every child transcript.
+
+Independent duties remain independent. A reviewer should receive the work
+contract, diff, and evidence without inheriting the implementer's private provider
+conversation. A scenario tester receives an explicit domain-specific charter and
+only the product/MCP/service capabilities needed to exercise it. Neither agent's
+report becomes accepted delivery merely because it agrees with the implementer.
+
 ## Agent-to-agent communication
 
 Agents communicate through Crewfold mailboxes rather than injecting text directly

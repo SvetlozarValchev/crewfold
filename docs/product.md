@@ -9,6 +9,20 @@ copy context between them.
 
 ## Jobs to be done
 
+### Organize a domain, not a directory
+
+Group related engineering work under one durable knowledge and coordination
+boundary even when it spans several repositories, worktrees, services, and
+independent objectives. A checkout is an execution resource, not an organizational
+container.
+
+### Direct durable agents
+
+Open any named agent's real resumable provider conversation, understand its
+objective and children, give it direction directly, and preserve that continuity
+when its current process stops. Let granted agents create bounded durable children
+for continuing implementation, review, and testing work.
+
 ### Start a coherent crew
 
 Given an objective and existing repositories, define a small set of roles, assign
@@ -74,20 +88,41 @@ authority.
 No role name grants permission. Policy is explicit and attached to the agent,
 task, project, and action.
 
+## Domain-oriented product mapping
+
+The owner interface presents the current canonical scopes this way:
+
+| Owner concept | Initial canonical backing | Meaning |
+| --- | --- | --- |
+| Workspace | Workspace | One local owner's portfolio and defaults |
+| Domain | Project | Shared knowledge, policy, workstreams, resources, and agents; never one folder |
+| Workstream | Objective | One independently managed outcome inside a domain |
+| Attached resource | Repository, checkout, service | A place or process used by work; never the hierarchy |
+| Durable agent | Agent definition plus resumable provider binding | A named continuing actor that can be idle or running |
+| Agent attempt | Run | One provider/runtime execution of that durable agent |
+
+A domain may have several peer orchestrators and arbitrarily deep durable agent
+relationships. One preferred steward may be the default owner entry point, but
+there is no one-executive-per-domain or one-agent-per-checkout rule. Hierarchy
+organizes attention and roll-up; explicit grants, profiles, policies, assignments,
+claims, and budgets confer authority.
+
 ## Core workflows
 
-### 1. Register a project
+### 1. Register a domain and its resources
 
-The owner points Crewfold at a Git repository or checkout. Crewfold records its
-canonical path, remote identity if present, default branch, checkouts, commands,
-and project-specific policy. Registration is read-only unless initialization is
-explicitly requested.
+The owner creates or selects a domain, then attaches one or more Git repositories,
+checkouts, services, or other bounded resources. Crewfold records canonical
+identity, branch/HEAD observations, commands, and domain policy. Registration is
+read-only unless initialization is explicitly requested.
 
-### 2. Define an agent
+### 2. Define or delegate a durable agent
 
-The owner names a durable agent, chooses a role and provider adapter, sets its
-default project scope, and applies budgets. The definition exists even when no
-provider process is running.
+The owner names a durable agent, chooses a role and provider adapter, places it in
+the domain attention tree, sets its eligible workstreams/resources, and applies
+budgets. The definition and resumable conversation identity exist even when no
+provider process is running. A manager with a bounded staffing grant may create a
+durable child inside that exact envelope.
 
 ### 3. Assign and launch
 
@@ -103,6 +138,10 @@ The running agent uses Crewfold tools to claim scope, read messages, report
 progress, send a question, publish evidence, and request coordination. Crewfold
 also observes Git and runtime state, but observations do not override explicit
 task facts without reconciliation.
+
+The owner can open and speak to any durable agent's real provider conversation.
+Agent-to-agent facts still travel through durable messages and governed knowledge
+rather than relying on one provider transcript being visible to another.
 
 ### 5. Handle overlap
 
@@ -134,15 +173,15 @@ duplicates, contradictions, risks, and unknowns; and identifies decisions that
 need the owner. The owner can approve the next work, intervene, or drill into the
 supporting records without reading each session.
 
-### 9. Operate from one control panel
+### 9. Operate from one domain console
 
-The owner launches `crewfold ui` and navigates Overview, Briefing, Work,
-Decisions, Checks, Coordination, and Activity without polling terminal panes.
-Every summary drills into the exact canonical records that produced it. The
-dashboard remains read-only until the owner opens an explicit action review and
-confirms the displayed target, revision, and consequence. Attaching suspends the
-dashboard and enters the selected Herdr terminal; exiting it returns to the same
-durable Crewfold selection and catches up from the applied event cursor.
+The owner opens the web console and navigates domains and expandable durable-agent
+trees. Selecting an agent opens its real resumable conversation and structured
+activity, with objective, resources, children, changes, checks, evidence,
+messages, and decisions alongside it. Selecting a domain opens shared knowledge,
+workstreams, interfaces, upstream impact, documents, services, and owner
+attention. Raw terminal attachment and the TUI remain advanced operational
+fallbacks. Every summary drills into the exact canonical records that produced it.
 
 ## Functional requirements
 
@@ -157,6 +196,12 @@ durable Crewfold selection and catches up from the applied event cursor.
 ### Agents and runs
 
 - Separate durable agent definitions from concrete process runs.
+- Preserve a resumable provider conversation per durable agent when supported;
+  replacement runs recover from canonical context when it is not.
+- Support an acyclic owner-visible manager/child relationship without deriving
+  authority from that relationship.
+- Permit bounded child-agent creation only through an exact staffing grant and
+  record every created identity and launch receipt.
 - Support at least Herdr, direct subprocess, and test/fake runtime drivers.
 - Support a generic terminal provider plus enhanced provider adapters.
 - Track lifecycle as observed, claimed, and reconciled state.
@@ -182,6 +227,8 @@ durable Crewfold selection and catches up from the applied event cursor.
 
 - Versioned project briefs, decisions, constraints, glossary entries, findings,
   and runbooks.
+- Keep domain knowledge independent of checkout paths and route relevant changes
+  across affected workstreams without copying whole transcripts.
 - Scope by workspace, project, component, task, and role.
 - Provenance, authority, confidence, freshness, and supersession.
 - Full-text retrieval first; optional semantic retrieval later.
@@ -229,8 +276,12 @@ durable Crewfold selection and catches up from the applied event cursor.
 
 ### Operator interface
 
-- Provide one keyboard-complete Go-native terminal dashboard in the existing
-  binary; do not require a browser or separate frontend service.
+- Provide one owner-local domain-oriented web console embedded in the existing
+  binary, with no production Node process or separate frontend service.
+- Make the selected durable agent's real provider conversation the primary work
+  surface; make the domain overview the primary cross-workstream surface.
+- Keep the Go-native terminal dashboard as a keyboard-complete SSH/operational
+  fallback rather than a competing management interface.
 - Consume canonical local-API records and M18 briefing claims unchanged. Event
   envelopes invalidate records but never become an alternate fact projection.
 - Preserve stable-ID selection and visibly stale cached state across reconnect;

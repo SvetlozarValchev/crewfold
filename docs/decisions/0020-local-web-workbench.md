@@ -1,6 +1,6 @@
 # ADR-0020: Local web workbench as the primary owner interface
 
-- Status: accepted
+- Status: superseded by [ADR-0021](0021-domain-oriented-durable-agent-console.md)
 - Date: 2026-08-14
 
 ## Context

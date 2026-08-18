@@ -16,18 +16,18 @@ Crewfold IDs must continue to work.
 
 ## Ownership hierarchy
 
-The personal product uses a deliberately small hierarchy:
+The local owner has one portfolio of domains. Canonical `Project` records back the
+initial domain scope; `Objective` records back independently managed workstreams:
 
 ```text
 workspace
-├─ projects
-│  ├─ repositories
-│  ├─ checkouts
+├─ domains (canonical projects)
+│  ├─ workstreams (canonical objectives)
+│  ├─ repositories, checkouts, and services
 │  ├─ check definitions, requirements, and results
-│  ├─ knowledge scopes
-│  └─ tasks
-├─ teams
-│  └─ agent definitions
+│  ├─ domain knowledge and coordination
+│  ├─ tasks
+│  └─ durable agent attention trees
 └─ policies and budgets
 ```
 
@@ -46,6 +46,11 @@ but only one is needed initially.
 
 A coordinated body of work with an objective, policies, knowledge, tasks, and one
 or more repositories. A project is not synonymous with one Git repository.
+
+The owner interface presents this scope as a **domain**. A domain may contain
+several objectives/workstreams whose implementation is unrelated but whose
+formats, constraints, upstream changes, services, or accepted knowledge overlap.
+Checkout paths never determine domain membership or agent hierarchy.
 
 ### Repository
 
@@ -91,6 +96,18 @@ A durable role identity. It contains:
 - action policy and budgets;
 - concurrency limit, normally one;
 - optional manager/team relationship.
+
+The manager relationship forms an acyclic, owner-visible **attention tree** within
+one domain. It controls roll-up and navigation, not authorization. A durable agent
+may be a steward, workstream lead, implementer, reviewer, scenario tester, curator,
+or any owner-defined role; those labels remain descriptive. One agent may have
+many durable children, and the owner may address any node directly.
+
+A durable agent may also have one current resumable provider-session binding. The
+binding is operational continuity, not identity or authority. It records the
+provider/runtime, opaque resumable reference, current node provenance, and last
+successful synchronization. Losing it creates a replacement run from canonical
+context and never deletes the agent, hierarchy, messages, or task ownership.
 
 An agent definition never means a process is currently running.
 
@@ -418,6 +435,12 @@ No-op refresh advances inspected state without creating a delta or event.
 A human-level desired outcome that can contain many tasks. An objective records
 success criteria, priority, budget, policy, and status. Managers may propose a task
 decomposition, but the objective remains the owner's statement of intent.
+
+The domain console presents an objective as a **workstream** when it is managed by
+one lead or agent subtree. Several workstreams may share knowledge and attached
+resources without becoming one sequential task graph. Cross-workstream interface
+changes use durable messages, meetings, claims, and knowledge rather than shared
+folder conventions.
 
 The implemented subset stores project scope, title, `active|completed|cancelled`
 status, and token/cost/time budget. Success criteria and policy are planned.

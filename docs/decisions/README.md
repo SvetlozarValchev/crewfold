@@ -23,6 +23,7 @@ deployment shape, or difficult-to-reverse dependencies.
 
 Current decisions:
 
+- [ADR-0021: Domain-oriented durable-agent console](0021-domain-oriented-durable-agent-console.md)
 - [ADR-0020: Local web workbench as the primary owner interface](0020-local-web-workbench.md)
 - [ADR-0019: Personal-scale hardening and quiescent recovery](0019-personal-scale-hardening-and-recovery.md)
 - [ADR-0018: Go-native operator TUI over the canonical local API](0018-go-native-operator-tui.md)

@@ -25,6 +25,19 @@ than independent terminals:
 
 Crewfold supplies that missing layer.
 
+The coordinating scope is a **domain**, not a folder. A domain can attach several
+repositories and checkouts and can contain several independently managed
+workstreams that still share formats, constraints, decisions, services, and owner
+knowledge. `world-engine`, `world-engine-4`, and `world-engine-5` may be the
+preferred writable checkouts for terrain, asset-pipeline, and prefab work without
+becoming separate knowledge silos.
+
+Agents form an owner-visible attention tree inside the domain. A domain steward
+may coordinate workstream leads; a lead may coordinate implementers, independent
+reviewers, and scenario-specific testers. The hierarchy is flexible and durable,
+but does not itself grant authority. Provider-local helpers remain temporary
+unless they are deliberately promoted into durable Crewfold agents.
+
 ## The control problem
 
 As agent autonomy increases, code review by personal comprehension stops scaling.
@@ -52,6 +65,7 @@ but reconstructing them is never the normal path to understanding current state.
 
 The owner opens one console and sees:
 
+- every domain, its workstreams, attached resources, and durable agent tree;
 - what every project is trying to achieve;
 - what was actually delivered since the last owner checkpoint;
 - why material implementation and architecture decisions were made;
@@ -68,6 +82,12 @@ The owner can ask a manager agent to decompose an objective. The manager propose
 tasks, roles, dependencies, and budgets. Once approved, Crewfold launches the
 needed sessions, supplies scoped context, and mediates their coordination. The
 owner can inspect or interrupt every step.
+
+The normal conversation is with a real resumable provider session belonging to
+the selected durable agent. The owner may address the domain steward, a workstream
+lead, an implementer, a reviewer, or a tester directly. The agent and conversation
+survive process restarts; Crewfold's canonical state remains authoritative when a
+provider thread cannot be resumed.
 
 The same information is queryable through stable CLI/API records. The console is
 one presentation of an outcome projection, not the only place where a model has

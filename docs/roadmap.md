@@ -7,13 +7,15 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M21 are complete. M22 is next.** The owner-local
-web workbench now provides service/open lifecycle, browser onboarding, durable
-conversation with a provider-backed project executive, explicit typed-proposal
-review, canonical inspection and understanding surfaces, bounded Git/log access,
-and separately authorized live terminal access. Post-onboarding crew-authority
-editing, immutable proposal revision, dependency/readiness explanations, and a
-subscription-backed Codex/Herdr workflow are included. Evidence is
+Current status: **M0 through M21 are complete. M22 is next.** M21 proved the
+owner-local service, browser security, canonical web transport, Herdr stream, and
+first complete browser workflow. Real use showed that its singular short-lived
+project executive and page-oriented navigation are not the intended owner model.
+M22 replaces that interaction with domains, workstreams, owner-visible durable
+agent trees, resumable provider conversations, and a session-first rich console.
+The public OSS release candidate moves to M23. The correction is frozen in
+[ADR-0021](decisions/0021-domain-oriented-durable-agent-console.md). Historical
+M21 evidence is
 recorded in the [M0 review](reviews/buildable-repository.md), [M1
 review](reviews/daemon-api-spine.md), and [M2
 review](reviews/persistent-workspace.md), and [M3
@@ -132,7 +134,8 @@ diagnosis, and retry correction is `a6a8f82`.
 | M19 ✓ | Operator TUI | Understand and intervene in the crew from one terminal dashboard | M18 |
 | M20 ✓ | Personal beta | Back up, restore, verify current-baseline integrity, and load-test 100 registered agent definitions | M19 |
 | M21 ✓ | Local web workbench | Orchestrate, inspect, understand, and intervene from one owner-local browser interface | M20 |
-| M22 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M21 |
+| M22 | Domain-oriented durable-agent console | Direct resumable agents and coordinate cross-workstream knowledge from one domain tree | M21 |
+| M23 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M22 |
 
 ## Capability ladder
 
@@ -159,6 +162,7 @@ buildable binary
   -> operator TUI
   -> personal-scale recovery
   -> local web workbench
+  -> domain-oriented durable-agent console
   -> public release readiness
 ```
 
@@ -239,7 +243,29 @@ Herdr terminal. CLI and TUI remain secondary automation, recovery, and operation
 interfaces. The exact contract is
 [ADR-0020](decisions/0020-local-web-workbench.md).
 
-### Public release candidate — M22
+M21 is retained as historical implementation evidence for the local service and
+web boundary. Its singular short-lived project-executive interaction is
+superseded by ADR-0021 and is not the release user experience.
+
+### Domain agent console — M22
+
+One developer opens a domain rather than a checkout-bound project, sees its
+workstreams, attached resources, shared knowledge, services, and expandable
+durable-agent tree, and converses directly with any agent's real resumable
+provider session. Granted leads can create bounded durable implementer, reviewer,
+and scenario-tester children. Cross-workstream interface changes are routed
+through durable messages and governed domain knowledge. Canonical state remains
+the Go daemon's authority; Herdr remains the runtime host; raw terminal bytes are
+an advanced diagnostic surface. The exact contract is
+[ADR-0021](decisions/0021-domain-oriented-durable-agent-console.md).
+
+### Public release candidate — M23
+
+Packaging, extension/conformance, clean-machine installation, license, security,
+and public contribution readiness follow only after the corrected domain and
+durable-agent owner experience passes its real-provider acceptance workflow.
+
+### Public release detail — M23
 
 An unrelated developer can install, demo, test, and extend Crewfold without model
 credentials. Live provider tests remain explicit opt-in canaries.
@@ -292,10 +318,11 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M22 is next: the public open-source release candidate. Packaging, adapter
-SDK/conformance, installation/tutorial polish, contribution governance, security
-contact, license selection, and any upstream publication build on M21's accepted
-single-place owner workflow rather than adding another control surface.
+M22 is next: the domain-oriented durable-agent console. It replaces M21's
+singular short-lived executive with the accepted domain, workstream, durable-agent
+tree, and resumable-provider-session model. The public open-source release
+candidate follows as M23; packaging and publication must build on the corrected
+owner workflow rather than preserving the superseded harness.
 
 M21's service/browser foundation is recorded at commit
 `6116b5d0b21bfba48007da464ff3bae0c8543416`; its

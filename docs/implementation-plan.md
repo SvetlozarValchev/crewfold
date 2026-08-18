@@ -1389,7 +1389,98 @@ and recovery claims remain true, and every previous scenario passes. No hosted,
 remote, multi-user, push/deploy/publication, public-package, or compatibility path
 is introduced.
 
-### M22 — Public open-source release readiness
+### M22 — Domain-oriented durable-agent console
+
+**Question answered:** Can one developer coordinate related work across several
+checkouts and workstreams by talking directly to persistent, inspectable Codex
+agents instead of operating a singular short-lived executive harness?
+
+**Visible result**
+
+```sh
+crewfold open
+```
+
+The browser opens the selected domain. Its left rail shows workstreams and an
+expandable durable-agent hierarchy. Selecting an agent resumes and opens that
+agent's real provider conversation; selecting the domain opens shared knowledge,
+interfaces, upstream impact, documents, services, and owner attention.
+
+**Contract**
+
+The accepted product and architecture boundary is
+[ADR-0021](decisions/0021-domain-oriented-durable-agent-console.md). The
+interaction reference is
+[`../web/domain-agent-console-mock.html`](../web/domain-agent-console-mock.html).
+M21 remains historical evidence for the local web/service security boundary; its
+one-response executive interaction is not retained as a compatibility path.
+
+**Delivery slices**
+
+1. Present canonical Project scope as a domain, Objective scope as a workstream,
+   and repositories/checkouts/services as attached resources rather than parent
+   navigation.
+2. Add an acyclic durable manager/child relationship and bounded owner-authored
+   staffing grants for typed child-agent creation.
+3. Bind a durable agent to a resumable provider conversation, hosted through
+   Herdr or a structured provider transport, with explicit replacement continuity
+   when resume is impossible.
+4. Replace the project-executive composer with the selected agent's real
+   conversation and readable structured provider/tool/diff activity. Keep exact
+   PTY bytes in an advanced console.
+5. Add the domain workspace: workstreams, shared governed knowledge, interface
+   changes, upstream impact, documents/artifacts, services, decisions, and
+   cross-workstream messages.
+6. Route relevant accepted knowledge and durable messages across affected
+   workstreams without copying transcripts or broadcasting all domain state.
+7. Prove independent implementer, reviewer, and scenario-tester duties, including
+   a bounded product/MCP test charter and evidence publication.
+8. Replace peer administrative pages with contextual drill-downs while retaining
+   exact canonical API coverage, keyboard access, responsive layouts, and
+   operational CLI/TUI fallbacks.
+
+**Automated acceptance**
+
+- One real-provider browser scenario opens a World Engine fixture domain backed
+  by at least three checkouts and three independent workstreams.
+- The owner resumes and converses directly with two durable agents, restarts the
+  provider process, Herdr, daemon, and browser, and retains identity, hierarchy,
+  conversation, messages, task, and accepted knowledge.
+- A granted terrain lead creates a durable implementer, independent reviewer, and
+  scenario tester within exact descendant/concurrency/budget limits; cycle,
+  over-limit, cross-domain, stale-profile, and replay cases fail closed.
+- One prefab-format change reaches the terrain and asset-pipeline agents as exact
+  governed domain context. Both acknowledge it; no unrelated agent receives a
+  transcript dump.
+- The reviewer reports one code defect independently. The scenario tester opens a
+  bounded fixture through MCP/service capability, follows a domain-specific
+  charter, and publishes reproducible evidence. Neither report becomes accepted
+  delivery automatically.
+- Desktop and narrow-browser runs prove readable text, stable tree selection,
+  keyboard/focus order, bounded virtualization, reconnect behavior, structured
+  activity rendering, and advanced-console isolation.
+
+**Failure injection**
+
+- Lose or corrupt the provider resume reference, kill during child creation,
+  create an ancestry cycle, revoke a staffing grant during execution, exceed
+  capacity, move a checkout, lose Herdr, disconnect the browser stream, and replay
+  a knowledge/message delivery after restart.
+- Inject hostile provider text and terminal controls; prove structured activity,
+  domain knowledge, and tree labels stay bounded and safe while canonical state
+  remains unchanged.
+
+**Exit gate**
+
+The owner can understand and steer one domain without knowing which checkout
+contains each workstream, can speak directly to every durable agent, can inspect
+the agent organization and relevant shared knowledge, and sees only genuine
+authority decisions. The same workflow proves multiple writers remain isolated
+by checkout/claim policy. No one-executive cardinality, one-agent-per-checkout
+rule, browser authority, transcript knowledge, or hidden provider-only durable
+employee remains.
+
+### M23 — Public open-source release readiness
 
 **Question answered:** Can an unrelated developer install, understand, test, and
 extend Crewfold safely?
@@ -1443,7 +1534,8 @@ an explicit owner decision.
 | Operator alpha | M19 | One coherent terminal control surface |
 | Personal beta | M20 | Operable and recoverable at target local scale |
 | Usable personal workbench | M21 | One local browser surface for intent, execution, inspection, and understanding |
-| Public release candidate | M22 | Installable, documented, extensible OSS package |
+| Domain agent console | M22 | Domains, durable agent trees, resumable conversations, and cross-workstream knowledge |
+| Public release candidate | M23 | Installable, documented, extensible OSS package |
 
 These are capability labels, not promises of semantic-version numbers or dates.
 
