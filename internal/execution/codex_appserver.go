@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -115,6 +116,24 @@ type codexAppServerResponse struct {
 	err    error
 }
 
+// CodexAppServerError preserves the provider's stable JSON-RPC error code so
+// lifecycle callers can distinguish a missing persisted rollout from a thread
+// that merely has not been loaded into the current app-server process.
+type CodexAppServerError struct {
+	Code    int
+	Message string
+}
+
+func (err *CodexAppServerError) Error() string {
+	return fmt.Sprintf("Codex app-server error %d: %s", err.Code, err.Message)
+}
+
+func IsCodexThreadRolloutNotFound(err error) bool {
+	var appServerError *CodexAppServerError
+	return errors.As(err, &appServerError) && appServerError.Code == -32600 &&
+		strings.Contains(appServerError.Message, "no rollout found for thread id")
+}
+
 // CodexAppServerClient is a strict concurrent JSONL client for the supported
 // v2 thread lifecycle. It never interprets provider output as Crewfold state.
 type CodexAppServerClient struct {
@@ -209,6 +228,18 @@ func (client *CodexAppServerClient) StartThread(ctx context.Context, params Code
 	return thread, nil
 }
 
+// SetThreadName assigns provider-local metadata to a thread. For a new
+// non-ephemeral Codex thread this also materializes its empty rollout without
+// inventing a user turn or invoking the model, making an opened conversation
+// resumable even if the service restarts before the owner's first message.
+func (client *CodexAppServerClient) SetThreadName(ctx context.Context, threadID, name string) error {
+	if threadID == "" || strings.TrimSpace(name) == "" {
+		return errors.New("Codex thread id and name are required")
+	}
+	var response map[string]any
+	return client.call(ctx, "thread/name/set", map[string]string{"threadId": threadID, "name": name}, &response)
+}
+
 func (client *CodexAppServerClient) ResumeThread(ctx context.Context, threadID string) (CodexThread, error) {
 	if threadID == "" {
 		return CodexThread{}, errors.New("Codex thread id is required")
@@ -217,7 +248,14 @@ func (client *CodexAppServerClient) ResumeThread(ctx context.Context, threadID s
 	if err := client.call(ctx, "thread/resume", map[string]any{"threadId": threadID}, &response); err != nil {
 		return CodexThread{}, err
 	}
-	return validateCodexThread(response.Thread, false)
+	thread, err := validateCodexThread(response.Thread, false)
+	if err != nil {
+		return CodexThread{}, err
+	}
+	if thread.ID != threadID {
+		return CodexThread{}, errors.New("Codex app-server resumed a different thread")
+	}
+	return thread, nil
 }
 
 func (client *CodexAppServerClient) ReadThread(ctx context.Context, threadID string) (CodexThread, error) {
@@ -228,7 +266,14 @@ func (client *CodexAppServerClient) ReadThread(ctx context.Context, threadID str
 	if err := client.call(ctx, "thread/read", map[string]any{"threadId": threadID, "includeTurns": true}, &response); err != nil {
 		return CodexThread{}, err
 	}
-	return validateCodexThread(response.Thread, false)
+	thread, err := validateCodexThread(response.Thread, false)
+	if err != nil {
+		return CodexThread{}, err
+	}
+	if thread.ID != threadID {
+		return CodexThread{}, errors.New("Codex app-server read a different thread")
+	}
+	return thread, nil
 }
 
 func (client *CodexAppServerClient) StartTurn(ctx context.Context, threadID, text string) (CodexTurn, error) {
@@ -398,7 +443,7 @@ func (client *CodexAppServerClient) readLoop() {
 				continue
 			}
 			if envelope.Error != nil {
-				waiter <- codexAppServerResponse{err: fmt.Errorf("Codex app-server error %d: %s", envelope.Error.Code, envelope.Error.Message)}
+				waiter <- codexAppServerResponse{err: &CodexAppServerError{Code: envelope.Error.Code, Message: envelope.Error.Message}}
 			} else {
 				waiter <- codexAppServerResponse{result: envelope.Result}
 			}

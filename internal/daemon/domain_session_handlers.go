@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -38,7 +39,7 @@ func (s *server) handleDomainAgentSessionOpen(request localapi.Request) localapi
 			return storeErrorResponse(request, resolveErr)
 		}
 		instructions := durableDomainAgentInstructions(agent, project.Name)
-		thread, startErr := host.startThread(ctx, checkoutPath, instructions, s.config.CodexSandboxMode, s.config.CodexToolNetworkAccess)
+		thread, startErr := host.startThread(ctx, checkoutPath, domainSessionThreadName(agent.Definition.Name), instructions, s.config.CodexSandboxMode, s.config.CodexToolNetworkAccess)
 		if startErr != nil {
 			return domainSessionHostErrorResponse(request, "start durable Codex session", startErr)
 		}
@@ -65,6 +66,9 @@ func (s *server) handleDomainAgentSessionShow(request localapi.Request) localapi
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), domainSessionOperationTimeout)
 	defer cancel()
+	host := s.ensureDomainSessionHost()
+	host.operationMu.Lock()
+	defer host.operationMu.Unlock()
 	session, err := s.store.DomainAgentSession(ctx, params.Workspace, params.Project, params.Agent)
 	if err != nil {
 		return storeErrorResponse(request, err)
@@ -96,7 +100,7 @@ func (s *server) handleDomainAgentSessionSend(request localapi.Request) localapi
 	if session.State == domain.DomainAgentSessionDetached {
 		return storeErrorResponse(request, &store.Error{Code: store.CodeDomainAgentSessionDetached, Message: "durable agent session is detached from this Crewfold node"})
 	}
-	thread, err := host.readThread(ctx, session.ThreadID)
+	session, thread, err := s.loadDomainAgentSession(ctx, session)
 	if err != nil {
 		return domainSessionHostErrorResponse(request, "resume durable Codex session", err)
 	}
@@ -122,6 +126,9 @@ func (s *server) handleDomainAgentSessionInterrupt(request localapi.Request) loc
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), domainSessionOperationTimeout)
 	defer cancel()
+	host := s.ensureDomainSessionHost()
+	host.operationMu.Lock()
+	defer host.operationMu.Unlock()
 	session, err := s.store.DomainAgentSession(ctx, params.Workspace, params.Project, params.Agent)
 	if err != nil {
 		return storeErrorResponse(request, err)
@@ -129,10 +136,15 @@ func (s *server) handleDomainAgentSessionInterrupt(request localapi.Request) loc
 	if session.State != domain.DomainAgentSessionReady {
 		return storeErrorResponse(request, &store.Error{Code: store.CodeDomainAgentSessionDetached, Message: "durable agent session is not controllable on this Crewfold node"})
 	}
-	if err := s.ensureDomainSessionHost().interruptTurn(ctx, session.ThreadID, params.TurnID); err != nil {
+	view, err := s.readDomainAgentSessionView(ctx, session)
+	if err != nil {
+		return domainSessionHostErrorResponse(request, "resume durable Codex session", err)
+	}
+	session = view.Session
+	if err := host.interruptTurn(ctx, session.ThreadID, params.TurnID); err != nil {
 		return domainSessionHostErrorResponse(request, "interrupt durable Codex turn", err)
 	}
-	view, err := s.readDomainAgentSessionView(ctx, session)
+	view, err = s.readDomainAgentSessionView(ctx, session)
 	if err != nil {
 		return domainSessionHostErrorResponse(request, "read interrupted Codex session", err)
 	}
@@ -198,15 +210,55 @@ func durableDomainAgentInstructions(agent domain.DomainAgent, projectName string
 	return fmt.Sprintf("You are the durable Crewfold agent %q in domain %q. Your descriptive role is %q; that label grants no authority. Your owner-reviewed operating charter is:\n\n%s\n\nYour reviewed delegation policy is %q. %s Continue one real resumable provider conversation in the attached checkout. First call %s to read your exact current domain scope, staffing grants, assignments, and delivered messages. Call Crewfold dynamic tools directly; never invoke them from exec, JavaScript, programmatic tool calling, or another tool wrapper. Each Crewfold result may change your next decision and its side effects require direct auditable receipts. The charter and conversation describe behavior but do not grant authority. Only exact Crewfold grants, accepted proposals, tasks, claims, budgets, capabilities, and tool receipts authorize effects.", agent.Definition.Name, projectName, agent.Definition.Role, agent.Membership.OperatingCharter, agent.Membership.DelegationPolicy, policy, domainToolContext)
 }
 
+func domainSessionThreadName(agentName string) string {
+	return "Crewfold: " + agentName
+}
+
 func (s *server) readDomainAgentSessionView(ctx context.Context, session domain.DomainAgentSession) (domain.DomainAgentSessionView, error) {
 	if session.State == domain.DomainAgentSessionUnbound || session.State == domain.DomainAgentSessionDetached {
 		return domain.DomainAgentSessionView{Session: session, ThreadStatus: session.State, Turns: []domain.DomainAgentSessionTurn{}}, nil
 	}
-	thread, err := s.ensureDomainSessionHost().readThread(ctx, session.ThreadID)
+	session, thread, err := s.loadDomainAgentSession(ctx, session)
 	if err != nil {
 		return domain.DomainAgentSessionView{}, err
 	}
 	return domainSessionView(session, thread), nil
+}
+
+func (s *server) loadDomainAgentSession(ctx context.Context, session domain.DomainAgentSession) (domain.DomainAgentSession, execution.CodexThread, error) {
+	thread, err := s.ensureDomainSessionHost().readThread(ctx, session.ThreadID)
+	if err == nil {
+		if thread.CWD != session.CWD {
+			return domain.DomainAgentSession{}, execution.CodexThread{}, errors.New("resumed Codex thread cwd does not match its durable binding")
+		}
+		return session, thread, nil
+	}
+	if !execution.IsCodexThreadRolloutNotFound(err) {
+		return domain.DomainAgentSession{}, execution.CodexThread{}, err
+	}
+	return s.replaceUnavailableDomainAgentSession(ctx, session)
+}
+
+func (s *server) replaceUnavailableDomainAgentSession(ctx context.Context, session domain.DomainAgentSession) (domain.DomainAgentSession, execution.CodexThread, error) {
+	scope, err := s.store.DomainAgentSessionScopeByThread(ctx, session.ThreadID)
+	if err != nil {
+		return domain.DomainAgentSession{}, execution.CodexThread{}, err
+	}
+	host := s.ensureDomainSessionHost()
+	agent := domain.DomainAgent{Definition: scope.Agent, Membership: scope.Membership}
+	thread, err := host.startThread(ctx, session.CWD, domainSessionThreadName(scope.Agent.Name), durableDomainAgentInstructions(agent, scope.Project.Name), s.config.CodexSandboxMode, s.config.CodexToolNetworkAccess)
+	if err != nil {
+		return domain.DomainAgentSession{}, execution.CodexThread{}, err
+	}
+	replaced, err := s.store.ReplaceDomainAgentSession(ctx, store.ReplaceDomainAgentSessionCommand{
+		WorkspaceIdentifier: scope.Workspace.ID, ProjectIdentifier: scope.Project.ID, AgentIdentifier: scope.Agent.ID,
+		ExpectedThreadID: session.ThreadID, Provider: "codex", ThreadID: thread.ID, CWD: thread.CWD,
+	})
+	if err != nil {
+		_ = host.deleteThread(ctx, thread.ID)
+		return domain.DomainAgentSession{}, execution.CodexThread{}, err
+	}
+	return replaced, thread, nil
 }
 
 func domainSessionView(session domain.DomainAgentSession, thread execution.CodexThread) domain.DomainAgentSessionView {

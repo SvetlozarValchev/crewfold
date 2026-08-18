@@ -163,6 +163,58 @@ func TestM22DomainAgentSessionForeignNodeIsDetachedAndUnboundIsHonest(t *testing
 	}
 }
 
+func TestM22UnavailableProviderSessionReplacementIsExactAndEventFree(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, project := initializeWorkTestProject(t, storage)
+	agent := createDomainTestAgent(t, storage, workspace.ID, "orchid", "arbitrary coordinator")
+	if _, err := storage.AttachDomainAgent(ctx, AttachDomainAgentCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentAdaptive,
+		PreferredEntry: true, IdempotencyKey: "attach-orchid-replacement", CorrelationID: "attach-orchid-replacement",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := storage.BindDomainAgentSession(ctx, BindDomainAgentSessionCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		Provider: "codex", ThreadID: "missing-provider-thread", CWD: "/work/orchid",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventsBefore := testWorkspaceEvents(t, storage, workspace.ID, 0, 1000)
+	if _, err := storage.ReplaceDomainAgentSession(ctx, ReplaceDomainAgentSessionCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		ExpectedThreadID: "wrong-expected-thread", Provider: "codex", ThreadID: "replacement-provider-thread", CWD: "/work/orchid",
+	}); ErrorCode(err) != CodeDomainAgentSessionConflict {
+		t.Fatalf("stale replacement error = %v, code %q", err, ErrorCode(err))
+	}
+	unchanged, err := storage.DomainAgentSession(ctx, workspace.ID, project.ID, agent.Value.ID)
+	if err != nil || unchanged.ThreadID != bound.ThreadID || unchanged.Revision != bound.Revision {
+		t.Fatalf("binding after stale replacement = %#v, %v; want %#v", unchanged, err, bound)
+	}
+	replaced, err := storage.ReplaceDomainAgentSession(ctx, ReplaceDomainAgentSessionCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		ExpectedThreadID: bound.ThreadID, Provider: "codex", ThreadID: "replacement-provider-thread", CWD: "/work/orchid",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced.ThreadID != "replacement-provider-thread" || replaced.Revision != bound.Revision+1 || replaced.AgentID != bound.AgentID || replaced.ProjectID != bound.ProjectID {
+		t.Fatalf("replacement binding = %#v; prior = %#v", replaced, bound)
+	}
+	if _, err := storage.DomainAgentSessionScopeByThread(ctx, bound.ThreadID); ErrorCode(err) != CodeDomainAgentSessionNotFound {
+		t.Fatalf("old provider thread scope error = %v, code %q", err, ErrorCode(err))
+	}
+	if scope, err := storage.DomainAgentSessionScopeByThread(ctx, replaced.ThreadID); err != nil || scope.Agent.ID != agent.Value.ID {
+		t.Fatalf("replacement provider scope = %#v, %v", scope, err)
+	}
+	if eventsAfter := testWorkspaceEvents(t, storage, workspace.ID, 0, 1000); len(eventsAfter) != len(eventsBefore) {
+		t.Fatalf("operational provider replacement appended a domain event: %d -> %d", len(eventsBefore), len(eventsAfter))
+	}
+}
+
 func jsonContainsAnyKey(encoded []byte, keys ...string) bool {
 	var object map[string]any
 	if json.Unmarshal(encoded, &object) != nil {

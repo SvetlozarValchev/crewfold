@@ -24,6 +24,16 @@ type BindDomainAgentSessionCommand struct {
 	CWD                 string
 }
 
+type ReplaceDomainAgentSessionCommand struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	AgentIdentifier     string
+	ExpectedThreadID    string
+	Provider            string
+	ThreadID            string
+	CWD                 string
+}
+
 // BindDomainAgentSession records the private current-node provider thread for
 // an already-created durable domain agent. It is deliberately not a domain
 // mutation: the opaque provider identity never becomes agent identity or an
@@ -96,6 +106,78 @@ VALUES(?,?,?,?,?,?,?,?,?,?)`, binding.ProjectID, binding.AgentID, binding.Provid
 		return domain.DomainAgentSession{}, storageFailure("commit domain agent session binding", err)
 	}
 	return publicDomainAgentSession(binding, true), nil
+}
+
+// ReplaceDomainAgentSession changes only a missing provider-local continuity
+// binding. The durable agent, hierarchy, assignments, messages, knowledge, and
+// authority remain unchanged. Callers must first prove through the provider's
+// resume operation that the expected rollout is unavailable.
+func (s *Store) ReplaceDomainAgentSession(ctx context.Context, command ReplaceDomainAgentSessionCommand) (domain.DomainAgentSession, error) {
+	workspaceIdentifier := strings.TrimSpace(command.WorkspaceIdentifier)
+	projectIdentifier := strings.TrimSpace(command.ProjectIdentifier)
+	agentIdentifier := strings.TrimSpace(command.AgentIdentifier)
+	expectedThreadID := strings.TrimSpace(command.ExpectedThreadID)
+	provider := strings.TrimSpace(command.Provider)
+	threadID := strings.TrimSpace(command.ThreadID)
+	if workspaceIdentifier == "" || projectIdentifier == "" || agentIdentifier == "" ||
+		!validPrivateSessionText(expectedThreadID, maximumDomainAgentThreadIDBytes) ||
+		!validDomainAgentProvider(provider) || !validPrivateSessionText(threadID, maximumDomainAgentThreadIDBytes) ||
+		expectedThreadID == threadID || !validSessionCWD(command.CWD) {
+		return domain.DomainAgentSession{}, domainAgentSessionError(CodeInvalidDomainAgentSession, "replacement domain agent session binding is invalid")
+	}
+	if err := s.validateRuntimeNodeIdentity(); err != nil {
+		return domain.DomainAgentSession{}, domainAgentSessionError(CodeInvalidDomainAgentSession, "domain agent session replacement requires the daemon's canonical node identity")
+	}
+	tx, err := s.beginTx(ctx, nil)
+	if err != nil {
+		return domain.DomainAgentSession{}, storageFailure("begin domain agent session replacement", err)
+	}
+	defer tx.Rollback()
+	workspace, err := workspaceInTransaction(ctx, tx, workspaceIdentifier)
+	if err != nil {
+		return domain.DomainAgentSession{}, err
+	}
+	project, err := projectInTransaction(ctx, tx, workspace.ID, projectIdentifier)
+	if err != nil {
+		return domain.DomainAgentSession{}, err
+	}
+	agent, err := queryAgent(ctx, tx, workspace.ID, agentIdentifier)
+	if err != nil {
+		return domain.DomainAgentSession{}, err
+	}
+	membership, err := queryDomainAgentMembership(ctx, tx, project.ID, agent.ID)
+	if err != nil {
+		return domain.DomainAgentSession{}, err
+	}
+	if membership.Status != domain.DomainAgentActive || !agent.Enabled {
+		return domain.DomainAgentSession{}, domainAgentSessionError(CodeInvalidDomainAgentSession, "inactive domain agent cannot replace a provider session")
+	}
+	existing, found, err := queryDomainAgentSessionBinding(ctx, tx, project.ID, agent.ID)
+	if err != nil {
+		return domain.DomainAgentSession{}, err
+	}
+	if !found || existing.ThreadID != expectedThreadID || existing.NodeID != s.runtimeNodeID ||
+		existing.NodeFingerprint != s.runtimeNodeFingerprint || existing.Provider != provider || existing.CWD != command.CWD {
+		return domain.DomainAgentSession{}, domainAgentSessionError(CodeDomainAgentSessionConflict, "domain agent session changed before its unavailable provider binding could be replaced")
+	}
+	now := s.nowText()
+	result, err := tx.ExecContext(ctx, `UPDATE domain_agent_session_bindings
+SET thread_id=?,revision=revision+1,updated_at=?
+WHERE project_id=? AND agent_id=? AND thread_id=? AND revision=?`, threadID, now, project.ID, agent.ID, expectedThreadID, existing.Revision)
+	if err != nil {
+		return domain.DomainAgentSession{}, storageFailure("replace domain agent session binding", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return domain.DomainAgentSession{}, domainAgentSessionError(CodeDomainAgentSessionConflict, "domain agent session changed before replacement committed")
+	}
+	existing.ThreadID = threadID
+	existing.Revision++
+	existing.UpdatedAt = now
+	if err := tx.Commit(); err != nil {
+		return domain.DomainAgentSession{}, storageFailure("commit domain agent session replacement", err)
+	}
+	return publicDomainAgentSession(existing, true), nil
 }
 
 // DomainAgentSession returns a safe owner-facing session projection. The

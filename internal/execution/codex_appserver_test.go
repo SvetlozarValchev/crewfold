@@ -21,7 +21,7 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 		defer serverSide.Close()
 		scanner := bufio.NewScanner(serverSide)
 		encoder := json.NewEncoder(serverSide)
-		methods := []string{"initialize", "initialized", "thread/start", "thread/read", "turn/start", "turn/interrupt", "thread/resume"}
+		methods := []string{"initialize", "initialized", "thread/start", "thread/name/set", "thread/read", "turn/start", "turn/interrupt", "thread/resume"}
 		for _, want := range methods {
 			if !scanner.Scan() {
 				t.Errorf("missing %s: %v", want, scanner.Err())
@@ -55,6 +55,13 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 					return
 				}
 				result = map[string]any{"thread": map[string]any{"id": "019-thread", "cwd": "/work", "ephemeral": false, "modelProvider": "openai", "status": map[string]any{"type": "idle"}, "turns": []any{}}}
+			case "thread/name/set":
+				params := request["params"].(map[string]any)
+				if params["threadId"] != "019-thread" || params["name"] != "Crewfold: orchid" {
+					t.Errorf("thread/name/set params = %#v", params)
+					return
+				}
+				result = map[string]any{}
 			case "turn/start":
 				result = map[string]any{"turn": map[string]any{"id": "turn-1", "status": "inProgress", "items": []any{}}}
 			case "turn/interrupt":
@@ -87,6 +94,9 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 	thread, err := client.StartThread(ctx, CodexThreadStartParams{CWD: "/work", Ephemeral: false})
 	if err != nil || thread.ID != "019-thread" {
 		t.Fatalf("StartThread() = %#v, %v", thread, err)
+	}
+	if err := client.SetThreadName(ctx, thread.ID, "Crewfold: orchid"); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := client.ReadThread(ctx, thread.ID); err != nil {
 		t.Fatal(err)

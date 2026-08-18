@@ -14,6 +14,7 @@ import (
 
 type domainSessionHost struct {
 	mu          sync.Mutex
+	resumeMu    sync.Mutex
 	operationMu sync.Mutex
 	factory     func() (execution.CodexAppServerTransport, error)
 	toolHandler func(context.Context, execution.CodexAppServerRequest) (any, error)
@@ -112,7 +113,7 @@ func (host *domainSessionHost) invalidate(client *execution.CodexAppServerClient
 	}
 }
 
-func (host *domainSessionHost) startThread(ctx context.Context, cwd, instructions, sandbox string, networkAccess bool) (execution.CodexThread, error) {
+func (host *domainSessionHost) startThread(ctx context.Context, cwd, threadName, instructions, sandbox string, networkAccess bool) (execution.CodexThread, error) {
 	client, err := host.clientFor(ctx)
 	if err != nil {
 		return execution.CodexThread{}, err
@@ -133,6 +134,12 @@ func (host *domainSessionHost) startThread(ctx context.Context, cwd, instruction
 		CWD: cwd, Ephemeral: false, ApprovalPolicy: "never", BaseInstructions: durableDomainCodexBaseInstructions, DeveloperInstructions: instructions,
 		RuntimeWorkspaceRoots: []string{cwd}, Sandbox: sandbox, Config: config, DynamicTools: domainAgentDynamicToolSpecs(),
 	})
+	if err == nil {
+		err = client.SetThreadName(ctx, thread.ID, threadName)
+		if err != nil {
+			_ = client.DeleteThread(ctx, thread.ID)
+		}
+	}
 	if err != nil {
 		select {
 		case <-client.Done():
@@ -162,6 +169,35 @@ func (host *domainSessionHost) readThread(ctx context.Context, threadID string) 
 	host.mu.Unlock()
 	if cachedOK && len(cached.Turns) == 0 {
 		return cached, nil
+	}
+	if !cachedOK {
+		// A persisted Codex thread is not loaded into a newly started app-server
+		// process. Resume the exact thread before attempting thread/read. This is
+		// the normal path after a Crewfold service restart or an app-server host
+		// replacement; it must not create a replacement conversation.
+		host.resumeMu.Lock()
+		defer host.resumeMu.Unlock()
+		host.mu.Lock()
+		cached, cachedOK = host.threads[threadID]
+		host.mu.Unlock()
+		if !cachedOK {
+			thread, resumeErr := client.ResumeThread(ctx, threadID)
+			if resumeErr != nil {
+				select {
+				case <-client.Done():
+					host.invalidate(client)
+				default:
+				}
+				return execution.CodexThread{}, resumeErr
+			}
+			host.mu.Lock()
+			host.threads[thread.ID] = thread
+			host.mu.Unlock()
+			return thread, nil
+		}
+		if len(cached.Turns) == 0 {
+			return cached, nil
+		}
 	}
 	// thread/read observes a materialized thread without changing its lifecycle.
 	thread, err := client.ReadThread(ctx, threadID)
@@ -198,6 +234,9 @@ func (host *domainSessionHost) startTurn(ctx context.Context, threadID, clientMe
 }
 
 func (host *domainSessionHost) interruptTurn(ctx context.Context, threadID, turnID string) error {
+	if _, err := host.readThread(ctx, threadID); err != nil {
+		return err
+	}
 	client, err := host.clientFor(ctx)
 	if err != nil {
 		return err

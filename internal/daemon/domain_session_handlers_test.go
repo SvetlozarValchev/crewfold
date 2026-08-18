@@ -26,7 +26,7 @@ func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *test
 	fixture := newCodexDomainSessionFixture(t)
 	config := testConfig(t)
 	config.CodexAppServerTransportFactory = fixture.transport
-	startTestServer(t, config)
+	running := startTestServer(t, config)
 	client := localapi.NewClient(config.SocketPath)
 	ctx := context.Background()
 
@@ -186,17 +186,246 @@ func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *test
 	if childCount != 1 {
 		t.Fatalf("durable child tree = %#v", tree.Agents)
 	}
+
+	// A daemon restart creates a new app-server process. The durable binding
+	// remains canonical, but Codex requires the exact persisted thread to be
+	// resumed into that process before it can be read or controlled.
+	running.cancel()
+	if err := running.wait(); err != nil {
+		t.Fatalf("stop first daemon: %v", err)
+	}
+	startTestServer(t, config)
+	afterRestart, err := client.DomainAgentSessionShow(ctx, workspace.Workspace.Name, project.Project.Name, agent.Agent.Name)
+	if err != nil {
+		t.Fatalf("DomainAgentSessionShow(after restart) = %v", err)
+	}
+	if afterRestart.View.Session.State != domain.DomainAgentSessionReady || len(afterRestart.View.Turns) == 0 {
+		t.Fatalf("resumed session after restart = %#v", afterRestart.View)
+	}
+	if fixture.resumes() != 1 || fixture.unloadedReads() != 0 {
+		t.Fatalf("app-server restart lifecycle: resumes = %d, reads before resume = %d", fixture.resumes(), fixture.unloadedReads())
+	}
+}
+
+func TestM22UnavailableProviderRolloutRebindsTheSameDurableAgentAndThenResumes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("Git is unavailable: %v", err)
+	}
+	fixture := newMissingRolloutDomainSessionFixture(t)
+	config := testConfig(t)
+	config.CodexAppServerTransportFactory = fixture.transport
+	running := startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+	ctx := context.Background()
+	repositoryRoot := t.TempDir()
+	createGitFixture(t, repositoryRoot)
+	workspace, err := client.WorkspaceInit(ctx, "personal", "m22-missing-rollout-workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := client.ProjectAdd(ctx, workspace.Workspace.Name, "garden", filepath.Join(repositoryRoot, "world-engine"), domain.WriteModeExclusive, "m22-missing-rollout-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := client.AgentCreate(ctx, localapi.AgentCreateParams{
+		Workspace: workspace.Workspace.Name, Name: "orchid", Role: "arbitrary durable coordinator",
+		Provider: "codex-subscription", Runtime: "herdr", IdempotencyKey: "m22-missing-rollout-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DomainAgentAttach(ctx, localapi.DomainAgentAttachParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		OperatingCharter: daemonTestDomainCharter, DelegationPolicy: domain.DomainAgentAdaptive,
+		PreferredEntry: true, IdempotencyKey: "m22-missing-rollout-attach",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := client.DomainAgentSessionOpen(ctx, localapi.DomainAgentSessionOpenParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		Checkout: project.Checkout.ID, IdempotencyKey: "m22-missing-rollout-open",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.View.Session.Revision != 1 || fixture.starts() != 1 || fixture.names() != 1 {
+		t.Fatalf("opened session = %#v, starts = %d, names = %d", opened.View.Session, fixture.starts(), fixture.names())
+	}
+	fixture.removeFirstRollout()
+	running.cancel()
+	if err := running.wait(); err != nil {
+		t.Fatalf("stop first daemon: %v", err)
+	}
+	second := startTestServer(t, config)
+	replaced, err := client.DomainAgentSessionShow(ctx, workspace.Workspace.Name, project.Project.Name, agent.Agent.Name)
+	if err != nil {
+		t.Fatalf("DomainAgentSessionShow(missing rollout) = %v", err)
+	}
+	if replaced.View.Session.Revision != 2 || replaced.View.ThreadStatus != "idle" || len(replaced.View.Turns) != 0 || fixture.starts() != 2 || fixture.names() != 2 {
+		t.Fatalf("replacement = %#v, starts = %d, names = %d", replaced.View, fixture.starts(), fixture.names())
+	}
+	second.cancel()
+	if err := second.wait(); err != nil {
+		t.Fatalf("stop second daemon: %v", err)
+	}
+	startTestServer(t, config)
+	resumed, err := client.DomainAgentSessionShow(ctx, workspace.Workspace.Name, project.Project.Name, agent.Agent.Name)
+	if err != nil {
+		t.Fatalf("DomainAgentSessionShow(replacement restart) = %v", err)
+	}
+	if resumed.View.Session.Revision != 2 || fixture.starts() != 2 || !fixture.resumedSecondRollout() {
+		t.Fatalf("resumed replacement = %#v, starts = %d, resume ids = %#v", resumed.View, fixture.starts(), fixture.resumeIDs())
+	}
+}
+
+type missingRolloutDomainSessionFixture struct {
+	t                *testing.T
+	mu               sync.Mutex
+	startCount       int
+	nameCount        int
+	firstRolloutGone bool
+	resumedThreadIDs []string
+	threadCWDs       map[string]string
+}
+
+func newMissingRolloutDomainSessionFixture(t *testing.T) *missingRolloutDomainSessionFixture {
+	return &missingRolloutDomainSessionFixture{t: t, threadCWDs: make(map[string]string)}
+}
+
+func (fixture *missingRolloutDomainSessionFixture) transport() (execution.CodexAppServerTransport, error) {
+	clientSide, serverSide := net.Pipe()
+	go fixture.serve(serverSide)
+	return clientSide, nil
+}
+
+func (fixture *missingRolloutDomainSessionFixture) serve(connection net.Conn) {
+	defer connection.Close()
+	scanner := bufio.NewScanner(connection)
+	encoder := json.NewEncoder(connection)
+	loadedThreadID, loadedCWD := "", ""
+	for scanner.Scan() {
+		var request map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+			fixture.t.Errorf("decode missing-rollout fixture request: %v", err)
+			return
+		}
+		method, _ := request["method"].(string)
+		id, hasID := request["id"]
+		if method == "initialized" {
+			continue
+		}
+		var result any
+		switch method {
+		case "initialize":
+			result = map[string]any{"codexHome": "/private/codex", "platformFamily": "unix", "platformOs": "linux", "userAgent": "fixture"}
+		case "thread/start":
+			params, _ := request["params"].(map[string]any)
+			loadedCWD, _ = params["cwd"].(string)
+			fixture.mu.Lock()
+			fixture.startCount++
+			loadedThreadID = fmt.Sprintf("missing-rollout-thread-%d", fixture.startCount)
+			fixture.threadCWDs[loadedThreadID] = loadedCWD
+			fixture.mu.Unlock()
+			result = map[string]any{"thread": fixture.thread(loadedThreadID, loadedCWD)}
+		case "thread/name/set":
+			params, _ := request["params"].(map[string]any)
+			if params["threadId"] != loadedThreadID || params["name"] != "Crewfold: orchid" {
+				fixture.t.Errorf("missing-rollout thread/name/set params = %#v", params)
+				return
+			}
+			fixture.mu.Lock()
+			fixture.nameCount++
+			fixture.mu.Unlock()
+			result = map[string]any{}
+		case "thread/resume":
+			params, _ := request["params"].(map[string]any)
+			threadID, _ := params["threadId"].(string)
+			fixture.mu.Lock()
+			fixture.resumedThreadIDs = append(fixture.resumedThreadIDs, threadID)
+			missing := fixture.firstRolloutGone && threadID == "missing-rollout-thread-1"
+			fixture.mu.Unlock()
+			if missing {
+				_ = encoder.Encode(map[string]any{"id": id, "error": map[string]any{"code": -32600, "message": "no rollout found for thread id " + threadID}})
+				continue
+			}
+			loadedThreadID = threadID
+			fixture.mu.Lock()
+			loadedCWD = fixture.threadCWDs[threadID]
+			fixture.mu.Unlock()
+			result = map[string]any{"thread": fixture.thread(loadedThreadID, loadedCWD)}
+		case "thread/read":
+			if loadedThreadID == "" {
+				fixture.t.Error("thread/read arrived before thread/resume")
+				return
+			}
+			result = map[string]any{"thread": fixture.thread(loadedThreadID, loadedCWD)}
+		case "thread/delete":
+			result = map[string]any{}
+		default:
+			fixture.t.Errorf("unexpected missing-rollout app-server method %q", method)
+			return
+		}
+		if !hasID {
+			fixture.t.Errorf("missing-rollout app-server method %q has no id", method)
+			return
+		}
+		if err := encoder.Encode(map[string]any{"id": id, "result": result}); err != nil {
+			return
+		}
+	}
+}
+
+func (fixture *missingRolloutDomainSessionFixture) thread(threadID, cwd string) map[string]any {
+	return map[string]any{
+		"id": threadID, "cwd": cwd, "ephemeral": false, "modelProvider": "openai",
+		"status": map[string]any{"type": "idle"}, "turns": []any{},
+	}
+}
+
+func (fixture *missingRolloutDomainSessionFixture) removeFirstRollout() {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	fixture.firstRolloutGone = true
+}
+
+func (fixture *missingRolloutDomainSessionFixture) starts() int {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return fixture.startCount
+}
+
+func (fixture *missingRolloutDomainSessionFixture) names() int {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return fixture.nameCount
+}
+
+func (fixture *missingRolloutDomainSessionFixture) resumeIDs() []string {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return append([]string(nil), fixture.resumedThreadIDs...)
+}
+
+func (fixture *missingRolloutDomainSessionFixture) resumedSecondRollout() bool {
+	for _, threadID := range fixture.resumeIDs() {
+		if threadID == "missing-rollout-thread-2" {
+			return true
+		}
+	}
+	return false
 }
 
 type codexDomainSessionFixture struct {
-	t              *testing.T
-	mu             sync.Mutex
-	turnStartCount int
-	interruptCount int
-	startedParams  map[string]any
-	turnExists     bool
-	toolChecks     int
-	grantID        string
+	t                 *testing.T
+	mu                sync.Mutex
+	turnStartCount    int
+	interruptCount    int
+	startedParams     map[string]any
+	turnExists        bool
+	toolChecks        int
+	grantID           string
+	resumeCount       int
+	unloadedReadCount int
 }
 
 func newCodexDomainSessionFixture(t *testing.T) *codexDomainSessionFixture {
@@ -213,6 +442,7 @@ func (fixture *codexDomainSessionFixture) serve(connection net.Conn) {
 	defer connection.Close()
 	scanner := bufio.NewScanner(connection)
 	encoder := json.NewEncoder(connection)
+	loaded := false
 	for scanner.Scan() {
 		var request map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
@@ -233,11 +463,43 @@ func (fixture *codexDomainSessionFixture) serve(connection net.Conn) {
 			fixture.mu.Lock()
 			fixture.startedParams = params
 			fixture.mu.Unlock()
+			loaded = true
 			result = map[string]any{"thread": map[string]any{
 				"id": "thread-private-019", "cwd": "/work", "ephemeral": false, "modelProvider": "openai",
 				"status": map[string]any{"type": "idle"}, "turns": []any{},
 			}}
-		case "thread/resume", "thread/read":
+		case "thread/name/set":
+			if !loaded {
+				fixture.t.Error("thread/name/set arrived before thread/start")
+				return
+			}
+			params, _ := request["params"].(map[string]any)
+			if params["threadId"] != "thread-private-019" || params["name"] != "Crewfold: orchid" {
+				fixture.t.Errorf("thread/name/set params = %#v", params)
+				return
+			}
+			result = map[string]any{}
+		case "thread/resume":
+			fixture.mu.Lock()
+			fixture.resumeCount++
+			turnExists := fixture.turnExists
+			fixture.mu.Unlock()
+			loaded = true
+			status := "idle"
+			if turnExists {
+				status = "active"
+			}
+			result = map[string]any{"thread": fixture.thread(status)}
+		case "thread/read":
+			if !loaded {
+				fixture.mu.Lock()
+				fixture.unloadedReadCount++
+				fixture.mu.Unlock()
+				if err := encoder.Encode(map[string]any{"id": id, "error": map[string]any{"code": -32600, "message": "thread not loaded: thread-private-019"}}); err != nil {
+					return
+				}
+				continue
+			}
 			fixture.mu.Lock()
 			turnExists := fixture.turnExists
 			fixture.mu.Unlock()
@@ -509,6 +771,18 @@ func (fixture *codexDomainSessionFixture) interrupts() int {
 	fixture.mu.Lock()
 	defer fixture.mu.Unlock()
 	return fixture.interruptCount
+}
+
+func (fixture *codexDomainSessionFixture) resumes() int {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return fixture.resumeCount
+}
+
+func (fixture *codexDomainSessionFixture) unloadedReads() int {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return fixture.unloadedReadCount
 }
 
 func (fixture *codexDomainSessionFixture) sawArbitraryAgentInstructions() bool {
