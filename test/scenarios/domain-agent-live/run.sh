@@ -26,6 +26,13 @@ cleanup() {
     printf 'M22 live domain-agent acceptance failed; diagnostics follow\n' >&2
     [ ! -f "$daemon_log" ] || tail -n 200 "$daemon_log" >&2
     [ ! -f "$scenario_root/browser-result.json" ] || sed -n '1,240p' "$scenario_root/browser-result.json" >&2
+    if [ -n "${CREWFOLD_SCREENSHOT_DIR:-}" ]
+    then
+      mkdir -p "$CREWFOLD_SCREENSHOT_DIR"
+      [ ! -f "$daemon_log" ] || cp "$daemon_log" "$CREWFOLD_SCREENSHOT_DIR/daemon.log"
+      [ ! -f "$scenario_root/herdr.stderr" ] || cp "$scenario_root/herdr.stderr" "$CREWFOLD_SCREENSHOT_DIR/herdr.stderr"
+      [ ! -f "$scenario_root/chrome.stderr" ] || cp "$scenario_root/chrome.stderr" "$CREWFOLD_SCREENSHOT_DIR/chrome.stderr"
+    fi
   fi
   if [ -n "$chrome_pid" ] && kill -0 "$chrome_pid" 2>/dev/null
   then
@@ -113,7 +120,9 @@ CREWFOLD_SCREENSHOT_DIR="${CREWFOLD_SCREENSHOT_DIR:-$scenario_root/screenshots}"
 grep -Fq '"orchidReply": true' "$scenario_root/browser-result.json"
 grep -Fq '"fernReply": true' "$scenario_root/browser-result.json"
 grep -Fq '"childVisible": true' "$scenario_root/browser-result.json"
+grep -Fq '"providerLocalHelper": false' "$scenario_root/browser-result.json"
 grep -Fq '"browserExceptions": []' "$scenario_root/browser-result.json"
+test -z "$(git -C "$scenario_root/domain-repository" status --porcelain=v1)"
 
 "$binary" daemon stop --socket "$socket_path" --output json >/dev/null
 wait "$daemon_pid"

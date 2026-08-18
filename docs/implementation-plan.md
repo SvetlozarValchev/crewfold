@@ -1431,7 +1431,9 @@ one-response executive interaction is not retained as a compatibility path.
    when resume is impossible.
 5. Replace the project-executive composer with the selected agent's real
    conversation and readable structured provider/tool/diff activity. Keep exact
-   PTY bytes in an advanced console.
+   PTY bytes in an advanced console. Keep the durable conversation read-only;
+   source effects occur only through exact assigned Crewfold runs, never by
+   interpreting owner chat as checkout authority.
 6. Add the domain workspace: workstreams, shared governed knowledge, interface
    changes, upstream impact, documents/artifacts, services, decisions, and
    cross-workstream messages.

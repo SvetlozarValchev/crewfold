@@ -17,6 +17,7 @@ import (
 
 const (
 	CodexProbeSchema             = "urn:crewfold:schema:provider:codex-probe:v1"
+	CodexSandboxReadOnly         = "read-only"
 	CodexSandboxWorkspaceWrite   = "workspace-write"
 	CodexSandboxDangerFullAccess = "danger-full-access"
 	codexProviderHandlePrefix    = "codex-provider:v1:"

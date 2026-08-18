@@ -21,7 +21,7 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 		defer serverSide.Close()
 		scanner := bufio.NewScanner(serverSide)
 		encoder := json.NewEncoder(serverSide)
-		methods := []string{"initialize", "initialized", "thread/start", "thread/name/set", "thread/read", "turn/start", "turn/interrupt", "thread/resume"}
+		methods := []string{"initialize", "initialized", "thread/start", "thread/name/set", "thread/read", "thread/turns/list", "turn/start", "turn/interrupt", "thread/resume"}
 		for _, want := range methods {
 			if !scanner.Scan() {
 				t.Errorf("missing %s: %v", want, scanner.Err())
@@ -55,6 +55,16 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 					return
 				}
 				result = map[string]any{"thread": map[string]any{"id": "019-thread", "cwd": "/work", "ephemeral": false, "modelProvider": "openai", "status": map[string]any{"type": "idle"}, "turns": []any{}}}
+			case "thread/turns/list":
+				params := request["params"].(map[string]any)
+				if params["threadId"] != "019-thread" || params["itemsView"] != "full" || params["sortDirection"] != "desc" || params["limit"] != float64(100) {
+					t.Errorf("thread/turns/list params = %#v", params)
+					return
+				}
+				result = map[string]any{"data": []any{
+					map[string]any{"id": "turn-newest", "status": "completed", "items": []any{}},
+					map[string]any{"id": "turn-oldest", "status": "completed", "items": []any{}},
+				}}
 			case "thread/name/set":
 				params := request["params"].(map[string]any)
 				if params["threadId"] != "019-thread" || params["name"] != "Crewfold: orchid" {
@@ -100,6 +110,10 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 	}
 	if _, err := client.ReadThread(ctx, thread.ID); err != nil {
 		t.Fatal(err)
+	}
+	turns, err := client.ListThreadTurns(ctx, thread.ID, 100)
+	if err != nil || len(turns) != 2 || turns[0].ID != "turn-oldest" || turns[1].ID != "turn-newest" {
+		t.Fatalf("ListThreadTurns() = %#v, %v", turns, err)
 	}
 	turn, err := client.StartTurn(ctx, thread.ID, "continue exactly")
 	if err != nil || turn.ID != "turn-1" {

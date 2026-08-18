@@ -39,7 +39,7 @@ func (s *server) handleDomainAgentSessionOpen(request localapi.Request) localapi
 			return storeErrorResponse(request, resolveErr)
 		}
 		instructions := durableDomainAgentInstructions(agent, project.Name)
-		thread, startErr := host.startThread(ctx, checkoutPath, domainSessionThreadName(agent.Definition.Name), instructions, s.config.CodexSandboxMode, s.config.CodexToolNetworkAccess)
+		thread, startErr := host.startThread(ctx, checkoutPath, domainSessionThreadName(agent.Definition.Name), instructions)
 		if startErr != nil {
 			return domainSessionHostErrorResponse(request, "start durable Codex session", startErr)
 		}
@@ -106,7 +106,7 @@ func (s *server) handleDomainAgentSessionSend(request localapi.Request) localapi
 	}
 	clientMessageID := "crewfold:" + params.IdempotencyKey
 	if replay, ok := codexTurnForClientMessage(thread, clientMessageID); ok {
-		view := domainSessionView(session, thread)
+		view := domainSessionView(session, thread, host.liveActivity(session.ThreadID))
 		accepted := readableDomainSessionTurn(replay)
 		return marshalDomainAgentSessionResult(request, view, &accepted)
 	}
@@ -115,7 +115,9 @@ func (s *server) handleDomainAgentSessionSend(request localapi.Request) localapi
 		return domainSessionHostErrorResponse(request, "send durable Codex turn", err)
 	}
 	accepted := readableDomainSessionTurn(turn)
-	view := domainSessionView(session, thread)
+	thread.Turns = append(thread.Turns, turn)
+	thread.Status.Type = "active"
+	view := domainSessionView(session, thread, host.liveActivity(session.ThreadID))
 	return marshalDomainAgentSessionResult(request, view, &accepted)
 }
 
@@ -200,12 +202,12 @@ func (s *server) resolveDomainSessionStart(ctx context.Context, workspace, proje
 }
 
 func durableDomainAgentInstructions(agent domain.DomainAgent, projectName string) string {
-	policy := "Choose direct work or durable delegation based on the reviewed operating charter, exact assignments, and available staffing grants."
+	policy := "Choose hands-on analysis or durable delegation based on the reviewed operating charter, exact assignments, and available staffing grants. Conversation remains read-only; source effects require a canonical assigned Crewfold run."
 	switch agent.Membership.DelegationPolicy {
 	case domain.DomainAgentHandsOn:
-		policy = "Work hands-on by default. Delegate only when the owner explicitly asks or the reviewed charter names a separate durable responsibility."
+		policy = "Work hands-on in analysis and coordination by default. Delegate when the owner explicitly asks or the reviewed charter names a separate durable responsibility. Source effects still require a canonical assigned Crewfold run."
 	case domain.DomainAgentDelegationFirst:
-		policy = "Coordinate and delegate durable implementation, review, or verification responsibilities first whenever a current staffing grant permits it. Do not absorb those responsibilities into this session merely because you can edit the checkout; if delegation is unavailable, explain the exact missing authority before doing that work yourself unless the owner explicitly directs you to proceed hands-on."
+		policy = "Coordinate and delegate durable implementation, review, or verification responsibilities first whenever a current staffing grant permits it. Never substitute provider-local temporary helpers for those named durable responsibilities. If delegation is unavailable, explain the exact missing authority; owner conversation alone cannot authorize repository effects."
 	}
 	return fmt.Sprintf("You are the durable Crewfold agent %q in domain %q. Your descriptive role is %q; that label grants no authority. Your owner-reviewed operating charter is:\n\n%s\n\nYour reviewed delegation policy is %q. %s Continue one real resumable provider conversation in the attached checkout. First call %s to read your exact current domain scope, staffing grants, assignments, and delivered messages. Call Crewfold dynamic tools directly; never invoke them from exec, JavaScript, programmatic tool calling, or another tool wrapper. Each Crewfold result may change your next decision and its side effects require direct auditable receipts. The charter and conversation describe behavior but do not grant authority. Only exact Crewfold grants, accepted proposals, tasks, claims, budgets, capabilities, and tool receipts authorize effects.", agent.Definition.Name, projectName, agent.Definition.Role, agent.Membership.OperatingCharter, agent.Membership.DelegationPolicy, policy, domainToolContext)
 }
@@ -222,11 +224,16 @@ func (s *server) readDomainAgentSessionView(ctx context.Context, session domain.
 	if err != nil {
 		return domain.DomainAgentSessionView{}, err
 	}
-	return domainSessionView(session, thread), nil
+	return domainSessionView(session, thread, s.ensureDomainSessionHost().liveActivity(session.ThreadID)), nil
 }
 
 func (s *server) loadDomainAgentSession(ctx context.Context, session domain.DomainAgentSession) (domain.DomainAgentSession, execution.CodexThread, error) {
-	thread, err := s.ensureDomainSessionHost().readThread(ctx, session.ThreadID)
+	scope, scopeErr := s.store.DomainAgentSessionScopeByThread(ctx, session.ThreadID)
+	if scopeErr != nil {
+		return domain.DomainAgentSession{}, execution.CodexThread{}, scopeErr
+	}
+	agent := domain.DomainAgent{Definition: scope.Agent, Membership: scope.Membership}
+	thread, err := s.ensureDomainSessionHost().readThread(ctx, session.ThreadID, session.CWD, durableDomainAgentInstructions(agent, scope.Project.Name))
 	if err == nil {
 		if thread.CWD != session.CWD {
 			return domain.DomainAgentSession{}, execution.CodexThread{}, errors.New("resumed Codex thread cwd does not match its durable binding")
@@ -246,7 +253,7 @@ func (s *server) replaceUnavailableDomainAgentSession(ctx context.Context, sessi
 	}
 	host := s.ensureDomainSessionHost()
 	agent := domain.DomainAgent{Definition: scope.Agent, Membership: scope.Membership}
-	thread, err := host.startThread(ctx, session.CWD, domainSessionThreadName(scope.Agent.Name), durableDomainAgentInstructions(agent, scope.Project.Name), s.config.CodexSandboxMode, s.config.CodexToolNetworkAccess)
+	thread, err := host.startThread(ctx, session.CWD, domainSessionThreadName(scope.Agent.Name), durableDomainAgentInstructions(agent, scope.Project.Name))
 	if err != nil {
 		return domain.DomainAgentSession{}, execution.CodexThread{}, err
 	}
@@ -261,8 +268,77 @@ func (s *server) replaceUnavailableDomainAgentSession(ctx context.Context, sessi
 	return replaced, thread, nil
 }
 
-func domainSessionView(session domain.DomainAgentSession, thread execution.CodexThread) domain.DomainAgentSessionView {
-	return domain.DomainAgentSessionView{Session: session, ThreadStatus: thread.Status.Type, Turns: execution.ReadableCodexTurns(thread)}
+func domainSessionView(session domain.DomainAgentSession, thread execution.CodexThread, live []domain.DomainAgentSessionTurn) domain.DomainAgentSessionView {
+	return domain.DomainAgentSessionView{
+		Session: session, ThreadStatus: thread.Status.Type,
+		Turns: mergeDomainSessionTurns(execution.ReadableCodexTurns(thread), live),
+	}
+}
+
+func mergeDomainSessionTurns(persisted, live []domain.DomainAgentSessionTurn) []domain.DomainAgentSessionTurn {
+	result := make([]domain.DomainAgentSessionTurn, 0, len(persisted)+len(live))
+	byID := make(map[string]int, len(persisted)+len(live))
+	for _, turn := range persisted {
+		turn.Items = append([]domain.DomainAgentSessionItem{}, turn.Items...)
+		byID[turn.ID] = len(result)
+		result = append(result, turn)
+	}
+	for _, update := range live {
+		index, ok := byID[update.ID]
+		if !ok {
+			update.Items = append([]domain.DomainAgentSessionItem{}, update.Items...)
+			byID[update.ID] = len(result)
+			result = append(result, update)
+			continue
+		}
+		turn := &result[index]
+		if update.Status != "" && !(isTerminalDomainSessionTurn(turn.Status) && !isTerminalDomainSessionTurn(update.Status)) {
+			turn.Status = update.Status
+		}
+		turn.Items = mergeDomainSessionItems(turn.Items, update.Items)
+	}
+	if len(result) > 100 {
+		result = result[len(result)-100:]
+	}
+	return result
+}
+
+func mergeDomainSessionItems(persisted, live []domain.DomainAgentSessionItem) []domain.DomainAgentSessionItem {
+	matched := func(item domain.DomainAgentSessionItem) bool {
+		for _, update := range live {
+			if item.ID == update.ID || sameDomainSessionMessage(item, update) {
+				return true
+			}
+		}
+		return false
+	}
+	result := make([]domain.DomainAgentSessionItem, 0, len(persisted)+len(live))
+	// An accepted owner message may already be persisted before app-server emits
+	// the first live item. Keep that input at the start until its live provider
+	// item arrives; once it does, the live sequence is authoritative.
+	for _, item := range persisted {
+		if item.Type == "userMessage" && !matched(item) {
+			result = append(result, item)
+		}
+	}
+	result = append(result, live...)
+	for _, item := range persisted {
+		if item.Type != "userMessage" && !matched(item) {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func sameDomainSessionMessage(left, right domain.DomainAgentSessionItem) bool {
+	if left.Type != right.Type || (left.Type != "userMessage" && left.Type != "agentMessage") {
+		return false
+	}
+	return left.Text == right.Text && left.Command == right.Command
+}
+
+func isTerminalDomainSessionTurn(status string) bool {
+	return status == "completed" || status == "failed" || status == "interrupted" || status == "cancelled"
 }
 
 func readableDomainSessionTurn(turn execution.CodexTurn) domain.DomainAgentSessionTurn {

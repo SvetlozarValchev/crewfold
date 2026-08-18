@@ -30,7 +30,7 @@ func ReadableCodexTurns(thread CodexThread) []domain.DomainAgentSessionTurn {
 			if remaining == 0 {
 				break
 			}
-			item, ok := readableCodexItem(raw)
+			item, ok := ReadableCodexItem(raw)
 			if !ok {
 				continue
 			}
@@ -45,7 +45,12 @@ func ReadableCodexTurns(thread CodexThread) []domain.DomainAgentSessionTurn {
 	return result
 }
 
-func readableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool) {
+// ReadableCodexItem converts one exact app-server ThreadItem into the bounded
+// owner-facing projection shared by persisted thread reads and live item
+// notifications. It deliberately omits private reasoning text and raw tool
+// arguments/results; those are neither necessary to understand observable
+// progress nor Crewfold authority.
+func ReadableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool) {
 	var envelope struct {
 		ID               string `json:"id"`
 		Type             string `json:"type"`
@@ -53,11 +58,21 @@ func readableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool
 		Command          string `json:"command"`
 		AggregatedOutput string `json:"aggregatedOutput"`
 		Status           string `json:"status"`
+		Server           string `json:"server"`
+		Query            string `json:"query"`
+		Prompt           string `json:"prompt"`
+		Kind             string `json:"kind"`
 		Tool             string `json:"tool"`
-		Content          []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
+		Error            *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		Changes []struct {
+			Path string `json:"path"`
+			Kind struct {
+				Type string `json:"type"`
+			} `json:"kind"`
+		} `json:"changes"`
+		Content json.RawMessage `json:"content"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil || envelope.ID == "" || envelope.Type == "" {
 		return domain.DomainAgentSessionItem{}, false
@@ -65,8 +80,15 @@ func readableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool
 	item := domain.DomainAgentSessionItem{ID: boundedCodexText(envelope.ID), Type: boundedCodexText(envelope.Type), Status: boundedCodexText(envelope.Status)}
 	switch envelope.Type {
 	case "userMessage":
-		parts := make([]string, 0, len(envelope.Content))
-		for _, content := range envelope.Content {
+		var contentItems []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(envelope.Content, &contentItems) != nil {
+			return domain.DomainAgentSessionItem{}, false
+		}
+		parts := make([]string, 0, len(contentItems))
+		for _, content := range contentItems {
 			if content.Type == "text" && content.Text != "" {
 				parts = append(parts, content.Text)
 			}
@@ -77,11 +99,32 @@ func readableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool
 	case "commandExecution":
 		item.Command = boundedCodexText(envelope.Command)
 		item.Text = boundedCodexText(envelope.AggregatedOutput)
-	case "dynamicToolCall", "collabAgentToolCall":
+	case "mcpToolCall":
+		item.Command = boundedCodexText(strings.Trim(strings.Join([]string{envelope.Server, envelope.Tool}, "."), "."))
+		if envelope.Error != nil {
+			item.Text = boundedCodexText(envelope.Error.Message)
+		}
+	case "dynamicToolCall":
 		item.Command = boundedCodexText(envelope.Tool)
-	case "fileChange", "reasoning":
-		// These types are useful as structured lifecycle markers but their rich
-		// payloads belong in Changes or the advanced provider console.
+	case "collabAgentToolCall":
+		item.Command = boundedCodexText(envelope.Tool)
+		item.Text = boundedCodexText(envelope.Prompt)
+	case "fileChange":
+		changes := make([]string, 0, len(envelope.Changes))
+		for _, change := range envelope.Changes {
+			label := strings.TrimSpace(strings.Join([]string{change.Kind.Type, change.Path}, " "))
+			if label != "" {
+				changes = append(changes, label)
+			}
+		}
+		item.Text = boundedCodexText(strings.Join(changes, "\n"))
+	case "webSearch":
+		item.Command = boundedCodexText(envelope.Query)
+	case "subAgentActivity":
+		item.Command = boundedCodexText(envelope.Kind)
+	case "reasoning":
+		// Reasoning is shown only as a lifecycle marker. Private reasoning text
+		// and summaries are not part of Crewfold's observable work record.
 	default:
 		return domain.DomainAgentSessionItem{}, false
 	}

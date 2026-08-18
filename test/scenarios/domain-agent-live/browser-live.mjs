@@ -41,7 +41,14 @@ async function waitFor(expression, label, timeout = 300000) {
     if (await evaluate(`Boolean(${expression})`)) return;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error(`timed out waiting for ${label}\n${await evaluate("document.body.innerText")}`);
+  const body = await evaluate("document.body.innerText");
+  const diagnostics = process.env.CREWFOLD_SCREENSHOT_DIR;
+  if (diagnostics) {
+    fs.mkdirSync(diagnostics, { recursive: true });
+    fs.writeFileSync(path.join(diagnostics, "failure-body.txt"), String(body ?? ""));
+    await capture("failure-timeout");
+  }
+  throw new Error(`timed out waiting for ${label}\n${body}`);
 }
 async function capture(label) {
   const directory = process.env.CREWFOLD_SCREENSHOT_DIR;
@@ -186,9 +193,10 @@ const result = await evaluate(`(() => ({
   childVisible: document.querySelectorAll('.m22-agent-row').length >= 3,
   legacyExecutive: document.body.innerText.includes('project-executive'),
   leakedPrivateBinding: ['thread_id', 'node_fingerprint', 'runtime_handle', 'provider_handle'].some((value) => document.documentElement.innerHTML.includes(value)),
+  providerLocalHelper: document.querySelector('.m22-thread-item.collabAgentToolCall, .m22-thread-item.subAgentActivity') !== null,
 }))()`);
 result.browserExceptions = browserExceptions;
-if (!result.orchidReply || !result.fernReply || !result.childVisible || result.legacyExecutive || result.leakedPrivateBinding || browserExceptions.length) {
+if (!result.orchidReply || !result.fernReply || !result.childVisible || result.legacyExecutive || result.leakedPrivateBinding || result.providerLocalHelper || browserExceptions.length) {
   throw new Error(`live M22 invariant failed: ${JSON.stringify(result)}`);
 }
 fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));

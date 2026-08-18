@@ -34,7 +34,7 @@
       "required": ["id", "type"],
       "properties": {
         "id": {"type": "string", "minLength": 1, "maxLength": 65536},
-        "type": {"enum": ["userMessage", "agentMessage", "plan", "commandExecution", "dynamicToolCall", "collabAgentToolCall", "fileChange", "reasoning"]},
+        "type": {"enum": ["userMessage", "agentMessage", "plan", "commandExecution", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "fileChange", "webSearch", "subAgentActivity", "reasoning", "error"]},
         "text": {"type": "string", "maxLength": 65536},
         "command": {"type": "string", "maxLength": 65536},
         "status": {"type": "string", "maxLength": 65536}

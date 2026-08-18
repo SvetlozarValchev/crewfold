@@ -1517,6 +1517,14 @@ tools:
 - `crewfold_create_durable_child`: one typed child request under an explicit
   current staffing grant.
 
+The durable provider conversation is resumed with a read-only checkout sandbox.
+It is a real Codex thread for inspection, planning, communication, and these
+audited structured operations, but it is not a Crewfold implementation run.
+Owner prose cannot authorize repository writes. Implementation, review, and
+verification source effects require an exact assigned Crewfold run. Creating a
+durable child records only its definition and hierarchy membership; it does not
+assign a task, reserve a checkout, or start that child.
+
 Each tool exchange has a durable, replay-safe receipt. Tool and session results
 exclude the provider thread ID, node identity/fingerprint, capability material,
 private reasoning, and raw transcript. Provider activity is bounded display data;

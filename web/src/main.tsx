@@ -1,4 +1,4 @@
-import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { StrictMode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
@@ -44,7 +44,7 @@ const staffingTaskClasses = [
 const staffingTaskClassLabel = (value: string) => staffingTaskClasses.find((item) => item.value === value)?.label ?? value;
 const staffingBudgetLabel = (value: number, finiteUnit: string) => value === 0 ? `unlimited ${finiteUnit}` : `${value.toLocaleString()} ${finiteUnit}`;
 type DomainAgentSession = { project_id: string; agent_id: string; provider?: string; state: "unbound" | "ready" | "detached"; cwd?: string; has_conversation: boolean; revision: number; created_at?: string; updated_at?: string };
-type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "reasoning"; text?: string; command?: string; status?: string };
+type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "mcpToolCall" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "webSearch" | "subAgentActivity" | "reasoning" | "error"; text?: string; command?: string; status?: string };
 type DomainAgentSessionTurn = { id: string; status: string; items: DomainAgentSessionItem[] };
 type DomainAgentSessionResult = { schema: string; type: "domain_agent_session"; view: { session: DomainAgentSession; thread_status: string; turns: DomainAgentSessionTurn[] }; accepted_turn?: DomainAgentSessionTurn };
 type DomainStaffingProfile = { provider: string; runtime: string; max_concurrency: number };
@@ -735,12 +735,39 @@ function DomainWorkstreamLifecyclePanel({ data, objective, apiBase, csrf, mutabl
   </section>;
 }
 
+function sessionItemLabel(item: DomainAgentSessionItem, agentName: string) {
+  if (item.type === "userMessage") return "you";
+  if (item.type === "agentMessage") return agentName;
+  if (item.type === "commandExecution") return "command";
+  if (item.type === "dynamicToolCall") return item.command?.startsWith("crewfold_") ? "crewfold tool" : "provider tool";
+  if (item.type === "mcpToolCall") return "mcp tool";
+  if (item.type === "collabAgentToolCall") return "temporary provider helper";
+  if (item.type === "subAgentActivity") return "temporary provider helper";
+  if (item.type === "fileChange") return "files";
+  if (item.type === "webSearch") return "web search";
+  return item.type.replaceAll(/([A-Z])/g, " $1").toLowerCase();
+}
+
+function SessionThreadItem({ item, agentName }: { item: DomainAgentSessionItem; agentName: string }) {
+  const isCommandOutput = item.type === "commandExecution" && Boolean(item.text);
+  return <article className={`m22-thread-item ${item.type}`}>
+    <span>{sessionItemLabel(item, agentName)}</span>
+    {item.command && <code>{item.command}</code>}
+    {isCommandOutput ? <details><summary>show command output</summary><pre>{item.text}</pre></details> : item.text && <p>{item.text}</p>}
+    {item.type === "reasoning" && !item.text && <p className="m22-observable-note">Codex is reasoning; private chain-of-thought is not exposed.</p>}
+    {item.status && <small>{item.status.replaceAll("_", " ")}</small>}
+  </article>;
+}
+
 function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csrf }: { data: WorkbenchData; agent: DomainAgent; currentRun: Run | null; inspectRun: (run: Run) => void; apiBase: string; csrf: string }) {
   const [result, setResult] = useState<DomainAgentSessionResult | null>(null);
   const [checkout, setCheckout] = useState(data.checkouts.length === 1 ? data.checkouts[0].id : "");
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState<"loading" | "opening" | "sending" | "interrupting" | "">("loading");
   const [error, setError] = useState("");
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  const followThreadRef = useRef(true);
   const scope = { workspace: data.workspace?.id ?? "", project: data.project?.id ?? "", agent: agent.definition.id };
   const load = useCallback(async (quiet = false) => {
     if (!scope.workspace || !scope.project) return;
@@ -753,8 +780,10 @@ function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csr
     } finally { if (!quiet) setBusy(""); }
   }, [apiBase, csrf, scope.agent, scope.project, scope.workspace]);
   const accepted = result?.accepted_turn;
-  const turns = result ? [...result.view.turns, ...(accepted && !result.view.turns.some((turn) => turn.id === accepted.id) ? [accepted] : [])] : [];
+  const providerTurns = result?.view.turns ?? [];
+  const turns = result ? [...providerTurns, ...(accepted && !providerTurns.some((turn) => turn.id === accepted.id) ? [accepted] : [])].map((turn) => ({ ...turn, items: turn.items ?? [] })) : [];
   const activeTurn = [...turns].reverse().find((turn) => ["inProgress", "in_progress"].includes(turn.status));
+  const activityKey = turns.map((turn) => `${turn.id}:${turn.status}:${turn.items.map((item) => `${item.id}:${item.status ?? ""}:${item.text?.length ?? 0}`).join(",")}`).join("|");
   useEffect(() => {
     setResult(null); setInput(""); setError("");
     setCheckout(data.checkouts.length === 1 ? data.checkouts[0].id : "");
@@ -765,6 +794,17 @@ function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csr
     const timer = window.setInterval(() => void load(true), 900);
     return () => window.clearInterval(timer);
   }, [activeTurn?.id, load, result?.view.session.state, result?.view.thread_status]);
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = "auto";
+    composer.style.height = `${Math.min(composer.scrollHeight, 160)}px`;
+  }, [input]);
+  useLayoutEffect(() => {
+    const thread = threadRef.current;
+    if (!thread || !followThreadRef.current) return;
+    thread.scrollTop = thread.scrollHeight;
+  }, [activityKey]);
   const open = async () => {
     setBusy("opening"); setError("");
     try {
@@ -774,7 +814,7 @@ function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csr
   };
   const send = async () => {
     const text = input.trim();
-    if (!text) return;
+    if (!text || activeTurn) return;
     setBusy("sending"); setError("");
     try {
       setResult(await rpc<DomainAgentSessionResult>(apiBase, csrf, "domain.agent.session.send", { ...scope, text, idempotency_key: newKey("domain-session-turn") }));
@@ -802,20 +842,24 @@ function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csr
   return <div className="m22-session">
     <div className="m22-session-state"><span>Codex conversation · {result?.view.session.provider || agent.definition.provider}</span><StatusPill value={result?.view.thread_status ?? state} /></div>
     {busy === "loading" && !result ? <p className="m22-session-loading"><LoaderCircle className="spin" size={14} /> reading persisted provider thread…</p> : state === "detached" ? <p className="m22-session-error">This session belongs to another Crewfold node. It is visible as detached and cannot be controlled here.</p> : <>
-      <div className="m22-thread" aria-live="polite">
+      <div className="m22-thread" aria-live="polite" ref={threadRef} onScroll={(event) => {
+        const thread = event.currentTarget;
+        followThreadRef.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48;
+      }}>
         {turns.length === 0 ? <p className="m22-empty">The provider thread is ready. Send the first owner message below.</p> : turns.map((turn) => <section className="m22-turn" key={turn.id}>
-          {turn.items.map((item) => <article className={`m22-thread-item ${item.type}`} key={item.id}>
-            <span>{item.type === "userMessage" ? "you" : item.type === "agentMessage" ? agent.definition.name : item.type === "commandExecution" ? "command" : item.type.replaceAll(/([A-Z])/g, " $1").toLowerCase()}</span>
-            {item.command && <code>{item.command}</code>}
-            {item.text && <p>{item.text}</p>}
-            {item.status && <small>{item.status.replaceAll("_", " ")}</small>}
-          </article>)}
+          {turn.items.map((item) => <SessionThreadItem item={item} agentName={agent.definition.name} key={item.id} />)}
+          {["inProgress", "in_progress"].includes(turn.status) && turn.items.length <= 1 && <div className="m22-turn-waiting"><LoaderCircle className="spin" size={13} /> Waiting for the next structured Codex activity event…</div>}
           <footer>{turn.status.replaceAll("_", " ")}</footer>
         </section>)}
       </div>
       <div className="m22-composer">
-        <textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder={`Message ${agent.definition.name} directly…`} maxLength={65536} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void send(); }} />
-        <div><small>Ctrl/⌘ + Enter to send · conversation text is not authority</small><span>{activeTurn && <button disabled={busy !== ""} onClick={() => void interrupt()}><Square size={13} /> interrupt</button>}<button className="m22-send" disabled={busy !== "" || !input.trim() || Boolean(activeTurn)} onClick={() => void send()}>{busy === "sending" ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />} send</button></span></div>
+        <div className="m22-composer-line">
+          <textarea ref={composerRef} rows={1} value={input} onChange={(event) => setInput(event.target.value)} placeholder={`Message ${agent.definition.name} directly…`} maxLength={65536} onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); }
+          }} />
+          <span>{activeTurn && <button disabled={busy !== ""} onClick={() => void interrupt()}><Square size={13} /> interrupt</button>}<button className="m22-send" disabled={busy !== "" || !input.trim() || Boolean(activeTurn)} onClick={() => void send()}>{busy === "sending" ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />} send</button></span>
+        </div>
+        <small>Enter to send · Shift+Enter for a new line · conversation text is not authority</small>
       </div>
     </>}
     {currentRun && <button className="m22-command secondary" onClick={() => inspectRun(currentRun)}><TerminalSquare size={15} /> open separate Crewfold execution run</button>}

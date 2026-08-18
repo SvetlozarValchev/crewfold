@@ -83,6 +83,13 @@ absorbing implementation itself, or to explain the missing grant. The charter an
 policy still grant no task, checkout, staffing, budget, or effect authority.
 Changing them is a revision-checked membership mutation.
 
+The durable conversation itself is read-only coordination and inspection.
+`hands_on` means the selected agent performs its own analysis, planning, and
+owner communication rather than delegating those responsibilities by default;
+it does not turn conversation text into checkout authority. Repository effects
+belong to an exact assigned Crewfold run with its frozen checkout, claims,
+capabilities, policy, budget, and receipts.
+
 The owner interface may provide fixed, descriptive starting templates for common
 responsibilities. Selecting one only prefills the editable owner intent used to
 draft or author the charter. Templates are not a role taxonomy, do not grant
@@ -132,6 +139,11 @@ be rendered in its parent's activity but is not automatically promoted to a
 durable Crewfold identity. A child becomes durable when it owns a continuing
 objective or task, needs direct communication, coordinates others, owns a
 resource or service, or must survive the current provider run.
+Provider-local helpers may perform bounded private research inside one turn, but
+must not replace implementer/reviewer/verifier identities named by a durable
+staffing plan, receive continuing source responsibilities, or be reported as
+Crewfold staffing. The parent session must expose their provider-local lifecycle
+as such.
 
 ### A durable agent owns a resumable provider conversation
 
@@ -153,6 +165,12 @@ Provider conversation state is continuity and presentation, never authority or
 canonical project truth. The daemon still validates every structured mutation;
 private chain-of-thought and provider-private state are neither required nor
 claimed.
+
+The app-server conversation resumes with `sandbox=read-only`, including after a
+daemon/provider restart. It may inspect the selected checkout and use the three
+audited Crewfold tools below. It may not edit that checkout merely because the
+owner said “yes” in conversation. A separately assigned Crewfold execution run
+is the only current path for implementation, review, or verification effects.
 
 For Codex, M22 uses the provider's rich-client protocol rather than reproducing a
 chat harness. A private node-local `codex app-server` is the provider host. Herdr

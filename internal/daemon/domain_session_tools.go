@@ -79,7 +79,7 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 		},
 		{
 			Type: "function", Name: domainToolCreateChild,
-			Description: "Create one continuing durable child only through a current owner-authored Crewfold staffing grant. The grant, not hierarchy or role text, bounds the domain, provider/runtime, task class, descendants, concurrency, budget, and expiry.",
+			Description: "Create one continuing durable child only through a current owner-authored Crewfold staffing grant. This creates the durable definition and hierarchy membership only; it does not assign a task, reserve a checkout, or start a run. The grant, not hierarchy or role text, bounds the domain, provider/runtime, task class, descendants, concurrency, budget, and expiry.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"required": []string{"grant_id", "name", "role", "operating_charter", "delegation_policy", "provider", "runtime", "max_concurrency", "task_class", "budget"},

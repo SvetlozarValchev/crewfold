@@ -205,6 +205,9 @@ func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *test
 	if fixture.resumes() != 1 || fixture.unloadedReads() != 0 {
 		t.Fatalf("app-server restart lifecycle: resumes = %d, reads before resume = %d", fixture.resumes(), fixture.unloadedReads())
 	}
+	if !fixture.sawCurrentReadOnlyResumeBoundary() {
+		t.Fatalf("thread/resume did not reapply the current read-only Crewfold conversation boundary: %#v", fixture.resumeParameters())
+	}
 }
 
 func TestM22UnavailableProviderRolloutRebindsTheSameDurableAgentAndThenResumes(t *testing.T) {
@@ -359,6 +362,8 @@ func (fixture *missingRolloutDomainSessionFixture) serve(connection net.Conn) {
 				return
 			}
 			result = map[string]any{"thread": fixture.thread(loadedThreadID, loadedCWD)}
+		case "thread/turns/list":
+			result = map[string]any{"data": []any{}}
 		case "thread/delete":
 			result = map[string]any{}
 		default:
@@ -421,6 +426,7 @@ type codexDomainSessionFixture struct {
 	turnStartCount    int
 	interruptCount    int
 	startedParams     map[string]any
+	resumeParams      map[string]any
 	turnExists        bool
 	toolChecks        int
 	grantID           string
@@ -482,6 +488,7 @@ func (fixture *codexDomainSessionFixture) serve(connection net.Conn) {
 		case "thread/resume":
 			fixture.mu.Lock()
 			fixture.resumeCount++
+			fixture.resumeParams, _ = request["params"].(map[string]any)
 			turnExists := fixture.turnExists
 			fixture.mu.Unlock()
 			loaded = true
@@ -508,6 +515,16 @@ func (fixture *codexDomainSessionFixture) serve(connection net.Conn) {
 				status = "active"
 			}
 			result = map[string]any{"thread": fixture.thread(status)}
+		case "thread/turns/list":
+			fixture.mu.Lock()
+			turnExists := fixture.turnExists
+			fixture.mu.Unlock()
+			status := "idle"
+			if turnExists {
+				status = "active"
+			}
+			thread := fixture.thread(status)
+			result = map[string]any{"data": thread["turns"]}
 		case "turn/start":
 			params, _ := request["params"].(map[string]any)
 			if params["clientUserMessageId"] != "crewfold:m22-turn-one" {
@@ -808,7 +825,30 @@ func (fixture *codexDomainSessionFixture) sawArbitraryAgentInstructions() bool {
 	config, _ := fixture.startedParams["config"].(map[string]any)
 	directNamespaces, _ := config["code_mode.direct_only_tool_namespaces"].([]any)
 	toolChecks := fixture.toolChecks
-	return strings.Contains(baseInstructions, "direct crewfold namespace") && strings.Contains(instructions, `"orchid"`) && strings.Contains(instructions, `"owner-defined-whatever"`) && strings.Contains(instructions, daemonTestDomainCharter) && strings.Contains(instructions, domain.DomainAgentAdaptive) && strings.Contains(instructions, "grants no authority") &&
+	return fixture.startedParams["sandbox"] == execution.CodexSandboxReadOnly && fixture.startedParams["approvalPolicy"] == "never" &&
+		strings.Contains(baseInstructions, "coordination and inspection surface") && strings.Contains(baseInstructions, "direct crewfold namespace") && strings.Contains(instructions, `"orchid"`) && strings.Contains(instructions, `"owner-defined-whatever"`) && strings.Contains(instructions, daemonTestDomainCharter) && strings.Contains(instructions, domain.DomainAgentAdaptive) && strings.Contains(instructions, "grants no authority") &&
 		tool["name"] == domainToolContext && tool["type"] == "function" && messageTool["name"] == domainToolSendMessage && messageTool["type"] == "function" &&
 		childTool["name"] == domainToolCreateChild && childTool["type"] == "function" && len(directNamespaces) == 1 && directNamespaces[0] == "crewfold" && toolChecks == 3
+}
+
+func (fixture *codexDomainSessionFixture) sawCurrentReadOnlyResumeBoundary() bool {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	params := fixture.resumeParams
+	if params == nil || params["threadId"] != "thread-private-019" || params["cwd"] != "/work" ||
+		params["sandbox"] != execution.CodexSandboxReadOnly || params["approvalPolicy"] != "never" {
+		return false
+	}
+	base, _ := params["baseInstructions"].(string)
+	instructions, _ := params["developerInstructions"].(string)
+	config, _ := params["config"].(map[string]any)
+	directNamespaces, _ := config["code_mode.direct_only_tool_namespaces"].([]any)
+	return strings.Contains(base, "not an implementation run") && strings.Contains(strings.ToLower(base), "never edit repository files") &&
+		strings.Contains(instructions, `"orchid"`) && len(directNamespaces) == 1 && directNamespaces[0] == "crewfold"
+}
+
+func (fixture *codexDomainSessionFixture) resumeParameters() map[string]any {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return fixture.resumeParams
 }

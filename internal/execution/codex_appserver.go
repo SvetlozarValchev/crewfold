@@ -71,6 +71,21 @@ type CodexThreadStartParams struct {
 	DynamicTools          []CodexDynamicToolSpec `json:"dynamicTools,omitempty"`
 }
 
+// CodexThreadResumeParams reapplies the current host-owned safety and context
+// boundary when a persisted provider thread is loaded into a fresh app-server.
+// Provider history supplies continuity; it must not freeze obsolete Crewfold
+// instructions or a previously broader sandbox forever.
+type CodexThreadResumeParams struct {
+	ThreadID              string         `json:"threadId"`
+	ApprovalPolicy        string         `json:"approvalPolicy,omitempty"`
+	BaseInstructions      string         `json:"baseInstructions,omitempty"`
+	DeveloperInstructions string         `json:"developerInstructions,omitempty"`
+	CWD                   string         `json:"cwd,omitempty"`
+	RuntimeWorkspaceRoots []string       `json:"runtimeWorkspaceRoots,omitempty"`
+	Sandbox               string         `json:"sandbox,omitempty"`
+	Config                map[string]any `json:"config,omitempty"`
+}
+
 // CodexDynamicToolSpec is one function implemented by Crewfold and exposed to
 // a durable app-server thread. The input schema remains explicit and closed;
 // app-server requests are still authorized by the daemon at call time.
@@ -97,6 +112,11 @@ type CodexThreadResponse struct {
 
 type CodexTurnResponse struct {
 	Turn CodexTurn `json:"turn"`
+}
+
+type CodexThreadTurnsResponse struct {
+	Data       []CodexTurn `json:"data"`
+	NextCursor *string     `json:"nextCursor,omitempty"`
 }
 
 type codexAppServerEnvelope struct {
@@ -241,18 +261,22 @@ func (client *CodexAppServerClient) SetThreadName(ctx context.Context, threadID,
 }
 
 func (client *CodexAppServerClient) ResumeThread(ctx context.Context, threadID string) (CodexThread, error) {
-	if threadID == "" {
+	return client.ResumeThreadWithParams(ctx, CodexThreadResumeParams{ThreadID: threadID})
+}
+
+func (client *CodexAppServerClient) ResumeThreadWithParams(ctx context.Context, params CodexThreadResumeParams) (CodexThread, error) {
+	if params.ThreadID == "" {
 		return CodexThread{}, errors.New("Codex thread id is required")
 	}
 	var response CodexThreadResponse
-	if err := client.call(ctx, "thread/resume", map[string]any{"threadId": threadID}, &response); err != nil {
+	if err := client.call(ctx, "thread/resume", params, &response); err != nil {
 		return CodexThread{}, err
 	}
 	thread, err := validateCodexThread(response.Thread, false)
 	if err != nil {
 		return CodexThread{}, err
 	}
-	if thread.ID != threadID {
+	if thread.ID != params.ThreadID {
 		return CodexThread{}, errors.New("Codex app-server resumed a different thread")
 	}
 	return thread, nil
@@ -274,6 +298,31 @@ func (client *CodexAppServerClient) ReadThread(ctx context.Context, threadID str
 		return CodexThread{}, errors.New("Codex app-server read a different thread")
 	}
 	return thread, nil
+}
+
+// ListThreadTurns reads the newest persisted turns with their complete item
+// history. thread/read intentionally returns only display summaries on current
+// app-server versions, which is insufficient for Crewfold's exact command/tool
+// activity renderer after a host restart.
+func (client *CodexAppServerClient) ListThreadTurns(ctx context.Context, threadID string, limit int) ([]CodexTurn, error) {
+	if threadID == "" || limit < 1 || limit > 100 {
+		return nil, errors.New("Codex thread turn list requires thread id and limit 1 through 100")
+	}
+	var response CodexThreadTurnsResponse
+	if err := client.call(ctx, "thread/turns/list", map[string]any{
+		"threadId": threadID, "limit": limit, "sortDirection": "desc", "itemsView": "full",
+	}, &response); err != nil {
+		return nil, err
+	}
+	for index := range response.Data {
+		if response.Data[index].ID == "" || response.Data[index].Status == "" {
+			return nil, errors.New("Codex app-server returned an incomplete persisted turn")
+		}
+	}
+	for left, right := 0, len(response.Data)-1; left < right; left, right = left+1, right-1 {
+		response.Data[left], response.Data[right] = response.Data[right], response.Data[left]
+	}
+	return response.Data, nil
 }
 
 func (client *CodexAppServerClient) StartTurn(ctx context.Context, threadID, text string) (CodexTurn, error) {
