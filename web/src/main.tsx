@@ -23,6 +23,16 @@ type DelegationPolicy = "hands_on" | "adaptive" | "delegation_first";
 type DomainAgentMembership = { project_id: string; agent_id: string; parent_agent_id?: string; workstream_id?: string; operating_charter: string; delegation_policy: DelegationPolicy; preferred_entry: boolean; status: "active" | "retired"; revision: number; created_at: string; updated_at: string; created_by: string; updated_by: string };
 type DomainAgent = { definition: Agent; membership: DomainAgentMembership };
 type DomainAgentSpecDraft = { name: string; role: string; operating_charter: string; delegation_policy: DelegationPolicy; rationale: string };
+
+const agentOwnershipTemplates = [
+  { key: "domain-coordinator", label: "Domain coordinator", intent: "Coordinate the shared domain, maintain cross-workstream context, route material dependencies to the affected agents, delegate continuing specialist responsibilities when staffing authority permits, and escalate only genuine owner decisions." },
+  { key: "workstream-coordinator", label: "Workstream coordinator", intent: "Own one bounded workstream outcome, maintain its dependency picture, coordinate implementers and reviewers, keep adjacent workstreams informed of interface changes, and escalate unresolved cross-workstream conflicts." },
+  { key: "implementer", label: "Implementation specialist", intent: "Implement bounded assigned work in the authorized checkout, preserve unrelated changes, publish exact progress and evidence through Crewfold, communicate interface impacts early, and stop when required authority or context is missing." },
+  { key: "independent-reviewer", label: "Independent reviewer", intent: "Independently review assigned changes against their stated contract, inspect evidence and regressions, challenge unsafe assumptions, report concrete findings without taking over implementation, and clearly separate verified defects from suggestions." },
+  { key: "verification-qa", label: "Verification / scenario QA", intent: "Verify assigned outcomes using authorized checks and realistic scenarios, preserve reproducible evidence, distinguish product defects from environment failures, report coverage gaps, and avoid claiming completion without the required proof." },
+  { key: "knowledge-maintainer", label: "Knowledge maintainer", intent: "Maintain shared domain knowledge from accepted evidence, connect decisions and interface constraints across workstreams, identify stale or contradictory guidance, and request owner review before treating disputed conclusions as current." },
+  { key: "integration-release", label: "Integration / release coordinator", intent: "Coordinate cross-repository interfaces, upstream changes, dependency compatibility, and release readiness; route required work to the owning agents, track verification gaps, and never publish or deploy without explicit authority." },
+] as const;
 type DomainAgentSession = { project_id: string; agent_id: string; provider?: string; state: "unbound" | "ready" | "detached"; cwd?: string; has_conversation: boolean; revision: number; created_at?: string; updated_at?: string };
 type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "reasoning"; text?: string; command?: string; status?: string };
 type DomainAgentSessionTurn = { id: string; status: string; items: DomainAgentSessionItem[] };
@@ -319,6 +329,14 @@ function readableTaskReadiness(detail: TaskDetail, tasks: TaskDetail[]) {
   return detail.readiness.reason || "Waiting for Crewfold to make this task runnable.";
 }
 
+function AgentOwnershipTemplatePicker({ intent, setIntent }: { intent: string; setIntent: (value: string) => void }) {
+  const selected = agentOwnershipTemplates.find((template) => template.intent === intent)?.key ?? "";
+  return <label className="m22-agent-template"><span>Start from a role template</span><select value={selected} onChange={(event) => {
+    const template = agentOwnershipTemplates.find((candidate) => candidate.key === event.target.value);
+    setIntent(template?.intent ?? "");
+  }}><option value="">Custom — write your own</option>{agentOwnershipTemplates.map((template) => <option key={template.key} value={template.key}>{template.label}</option>)}</select><small>Optional starting point. It only prefills the editable ownership brief and grants no authority.</small></label>;
+}
+
 function Onboarding({ apiBase, csrf, status, onComplete }: { apiBase: string; csrf: string; status: DaemonStatus | null; onComplete: () => Promise<void> }) {
   const [workspace, setWorkspace] = useState("personal");
   const [project, setProject] = useState("");
@@ -373,12 +391,12 @@ function Onboarding({ apiBase, csrf, status, onComplete }: { apiBase: string; cs
       <div className="form-heading"><div className="step-mark">1</div><div><h2>Set up your first domain</h2><p>Attach a checkout and define the first durable agent. You can grow any hierarchy later.</p></div></div>
       <label><span>Repository path</span><input required value={path} onChange={(event) => updatePath(event.target.value)} placeholder="~/depot/dev/world-engine-2" autoComplete="off" /></label>
       <div className="field-grid">
-        <label><span>Workspace</span><input required pattern="[a-z][a-z0-9-]{0,62}" value={workspace} onChange={(event) => setWorkspace(event.target.value)} /></label>
-        <label><span>Domain</span><input required pattern="[a-z][a-z0-9-]{0,62}" value={project} onChange={(event) => setProject(event.target.value)} placeholder="world-engine" /></label>
+        <label><span>Workspace</span><input required pattern="[a-z][-a-z0-9]{0,62}" value={workspace} onChange={(event) => setWorkspace(event.target.value)} /></label>
+        <label><span>Domain</span><input required pattern="[a-z][-a-z0-9]{0,62}" value={project} onChange={(event) => setProject(event.target.value)} placeholder="world-engine" /></label>
       </div>
-      <div className="m22-spec-drafter"><label><span>What should the first agent own?</span><textarea required maxLength={4096} value={ownerIntent} onChange={(event) => setOwnerIntent(event.target.value)} placeholder="Coordinate this domain, maintain the bigger picture, and delegate implementation, review, and verification when staffing authority is available." /></label><button type="button" disabled={draftBusy || !path || !project || !ownerIntent.trim()} onClick={() => void draft()}>{draftBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />} {draftBusy ? "Codex is drafting…" : "Draft reviewed specification"}</button><small>Read-only, short-lived Codex session. It records no Crewfold state and grants no authority.</small></div>
+      <div className="m22-spec-drafter"><AgentOwnershipTemplatePicker intent={ownerIntent} setIntent={setOwnerIntent} /><label><span>What should the first agent own?</span><textarea required maxLength={4096} value={ownerIntent} onChange={(event) => setOwnerIntent(event.target.value)} placeholder="Choose a template above or write a custom ownership brief." /></label><button type="button" disabled={draftBusy || !path || !project || !ownerIntent.trim()} onClick={() => void draft()}>{draftBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />} {draftBusy ? "Codex is drafting…" : "Draft reviewed specification"}</button><small>Read-only, short-lived Codex session. It records no Crewfold state and grants no authority.</small></div>
       <div className="field-grid">
-        <label><span>First durable agent</span><input required pattern="[a-z][a-z0-9-]{0,62}" value={agent} onChange={(event) => setAgent(event.target.value)} /><small className="field-help">An arbitrary owner-chosen name—not a hardcoded steward or executive.</small></label>
+        <label><span>First durable agent</span><input required pattern="[a-z][-a-z0-9]{0,62}" value={agent} onChange={(event) => setAgent(event.target.value)} /><small className="field-help">An arbitrary owner-chosen name—not a hardcoded steward or executive.</small></label>
         <label><span>Descriptive role</span><input required maxLength={256} value={role} onChange={(event) => setRole(event.target.value)} /><small className="field-help">A label for humans. Grants and assignments authorize effects.</small></label>
       </div>
       <label><span>Owner-reviewed operating charter</span><textarea required maxLength={8192} value={operatingCharter} onChange={(event) => setOperatingCharter(event.target.value)} placeholder="Describe what this agent owns, how it coordinates, when it delegates, and what it must escalate." /><small className="field-help">This behavior is injected into the durable Codex conversation. It still cannot expand grants or assignments.</small></label>
@@ -419,8 +437,13 @@ function DomainAgentTreeList({ agents, objectives, selected, choose }: { agents:
   const roots = active.filter((agent) => !agent.membership.parent_agent_id);
   if (!roots.length) return <p className="m22-rail-empty">No durable agents are attached to this domain.</p>;
   const domainWide = roots.filter((agent) => !agent.membership.workstream_id);
-  const scoped = objectives.map((objective) => ({ objective, agents: roots.filter((agent) => agent.membership.workstream_id === objective.id) })).filter((group) => group.agents.length);
-  return <div className="m22-agent-tree">{domainWide.map((agent) => row(agent, 0))}{scoped.map((group) => <section className="m22-workstream-group" key={group.objective.id}><h3>{group.objective.title}</h3>{group.agents.map((agent) => row(agent, 0))}</section>)}</div>;
+  const titleCounts = objectives.reduce((counts, objective) => {
+    const key = objective.title.trim().toLocaleLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    return counts;
+  }, new Map<string, number>());
+  const scoped = objectives.map((objective) => ({ objective, agents: roots.filter((agent) => agent.membership.workstream_id === objective.id) }));
+  return <div className="m22-agent-tree">{domainWide.map((agent) => row(agent, 0))}{scoped.map((group) => <section className="m22-workstream-group" key={group.objective.id}><h3>{group.objective.title}{(titleCounts.get(group.objective.title.trim().toLocaleLowerCase()) ?? 0) > 1 && <span>duplicate title · r{group.objective.revision}</span>}</h3>{group.agents.length ? group.agents.map((agent) => row(agent, 0)) : <p>no agents</p>}</section>)}</div>;
 }
 
 function DomainAgentCreatePanel({ data, suggestedParent, apiBase, csrf, mutable, close, created, reload }: { data: WorkbenchData; suggestedParent: string; apiBase: string; csrf: string; mutable: boolean; close: () => void; created: (agent: DomainAgent) => void; reload: () => Promise<void> }) {
@@ -468,8 +491,8 @@ function DomainAgentCreatePanel({ data, suggestedParent, apiBase, csrf, mutable,
   return <section className="m22-agent-create">
     <header><div><p className="m22-kicker">owner operation</p><h1>Create a durable agent</h1><p>This records one real agent definition and its exact place in the domain tree atomically. Parentage routes attention; it grants no staffing, task, checkout, or runtime authority.</p></div><button onClick={close} aria-label="Close agent creation"><X size={15} /></button></header>
     <form onSubmit={submit}>
-      <div className="m22-spec-drafter"><label><span>What should this agent own?</span><textarea required maxLength={4096} value={ownerIntent} onChange={(event) => setOwnerIntent(event.target.value)} placeholder="Independently review terrain persistence changes, challenge unsafe assumptions, and report findings to the terrain lead." /></label><button type="button" disabled={draftBusy || !ownerIntent.trim()} onClick={() => void draft()}>{draftBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />} {draftBusy ? "Codex is drafting…" : "Draft agent specification"}</button><small>Optional read-only Codex assistance. The draft is temporary until you review and create it.</small></div>
-      <label><span>agent name</span><input required pattern="[a-z][a-z0-9-]{0,62}" value={name} onChange={(event) => setName(event.target.value)} placeholder="terrain-reviewer" /></label>
+      <div className="m22-spec-drafter"><AgentOwnershipTemplatePicker intent={ownerIntent} setIntent={setOwnerIntent} /><label><span>What should this agent own?</span><textarea required maxLength={4096} value={ownerIntent} onChange={(event) => setOwnerIntent(event.target.value)} placeholder="Choose a template above or write a custom ownership brief." /></label><button type="button" disabled={draftBusy || !ownerIntent.trim()} onClick={() => void draft()}>{draftBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />} {draftBusy ? "Codex is drafting…" : "Draft agent specification"}</button><small>Optional read-only Codex assistance. The draft is temporary until you review and create it.</small></div>
+      <label><span>agent name</span><input required pattern="[a-z][-a-z0-9]{0,62}" value={name} onChange={(event) => setName(event.target.value)} placeholder="terrain-reviewer" /></label>
       <label><span>descriptive role</span><input required maxLength={128} value={role} onChange={(event) => setRole(event.target.value)} placeholder="independent terrain review" /></label>
       <label><span>owner-reviewed operating charter</span><textarea required maxLength={8192} value={operatingCharter} onChange={(event) => setOperatingCharter(event.target.value)} placeholder="Describe durable ownership, communication, delegation, reporting, and escalation behavior." /></label>
       <label><span>operating mode</span><select value={delegationPolicy} onChange={(event) => setDelegationPolicy(event.target.value as DelegationPolicy)}><option value="hands_on">Hands-on by default</option><option value="adaptive">Choose direct work or delegation</option><option value="delegation_first">Delegate durable responsibilities first</option></select></label>
@@ -538,21 +561,27 @@ function StaffingPanel({ data, agent, apiBase, csrf, mutable }: { data: Workbenc
   </div>;
 }
 
-function DomainHome({ data, chooseAgent, inspectRun }: { data: WorkbenchData; chooseAgent: (agent: DomainAgent) => void; inspectRun: (run: Run) => void }) {
+function DomainHome({ data, chooseAgent, inspectRun, notice = "" }: { data: WorkbenchData; chooseAgent: (agent: DomainAgent) => void; inspectRun: (run: Run) => void; notice?: string }) {
   const projectObjectives = data.objectives.filter((objective) => objective.project_id === data.project?.id);
   const projectTasks = data.tasks.filter((detail) => detail.task.project_id === data.project?.id);
   const projectRuns = data.runs.filter((run) => run.project_id === data.project?.id);
   const attention = projectTasks.filter((detail) => ["blocked", "changes_requested", "failed"].includes(detail.task.status));
   const activeRuns = projectRuns.filter((run) => ["requested", "starting", "active", "blocked", "stopping", "lost"].includes(run.status));
+  const objectiveTitleCounts = projectObjectives.reduce((counts, objective) => {
+    const key = objective.title.trim().toLocaleLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    return counts;
+  }, new Map<string, number>());
   return <section className="m22-domain-home">
     <header>
       <p className="m22-kicker">domain</p>
       <h1>{data.project?.name}</h1>
       <p>{projectObjectives.length ? `${projectObjectives.length} workstream${projectObjectives.length === 1 ? "" : "s"}, ${data.domainAgents.filter((agent) => agent.membership.status === "active").length} durable agent${data.domainAgents.filter((agent) => agent.membership.status === "active").length === 1 ? "" : "s"}, and ${data.checkouts.length} attached checkout${data.checkouts.length === 1 ? "" : "s"}.` : "A durable coordination and knowledge boundary. No workstream has been recorded yet."}</p>
     </header>
+    {notice && <div className="m22-success"><ShieldCheck size={14} />{notice}</div>}
     {attention.length > 0 && <section className="m22-block"><h2>needs attention</h2>{attention.map((detail) => <button key={detail.task.id} className="m22-line"><span><strong>{detail.task.title}</strong><small>{detail.task.blocked_reason || detail.task.status.replaceAll("_", " ")}</small></span><StatusPill value={detail.task.status} /></button>)}</section>}
     <div className="m22-columns">
-      <section className="m22-block"><h2>workstreams</h2>{projectObjectives.length ? projectObjectives.map((objective) => <div className="m22-line static" key={objective.id}><span><strong>{objective.title}</strong><small>{projectTasks.filter((detail) => detail.task.objective_id === objective.id && detail.task.status !== "completed").length} open tasks</small></span><StatusPill value={objective.status} /></div>) : <p className="m22-empty">No canonical workstreams.</p>}</section>
+      <section className="m22-block"><h2>workstreams</h2>{projectObjectives.length ? projectObjectives.map((objective) => <div className="m22-line static" key={objective.id}><span><strong>{objective.title}</strong><small>{projectTasks.filter((detail) => detail.task.objective_id === objective.id && detail.task.status !== "completed").length} open tasks{(objectiveTitleCounts.get(objective.title.trim().toLocaleLowerCase()) ?? 0) > 1 ? ` · duplicate title · revision ${objective.revision}` : ""}</small></span><StatusPill value={objective.status} /></div>) : <p className="m22-empty">No canonical workstreams.</p>}</section>
       <section className="m22-block"><h2>attached checkouts</h2>{data.checkouts.map((checkout) => <div className="m22-line static" key={checkout.id}><span><strong>{checkout.path}</strong><small>{checkout.branch || "detached"} · {checkout.write_mode}</small></span><StatusPill value={checkout.availability} /></div>)}</section>
     </div>
     <div className="m22-columns">
@@ -561,6 +590,57 @@ function DomainHome({ data, chooseAgent, inspectRun }: { data: WorkbenchData; ch
     </div>
     <section className="m22-block"><h2>domain home</h2><p className="m22-empty">No attributed domain note or pinned shared-memory item has been recorded. M22 will only render authored, revisioned pins here; it will not invent a project summary.</p></section>
   </section>;
+}
+
+function DomainWorkstreamCreatePanel({ data, apiBase, csrf, mutable, close, created, reload }: { data: WorkbenchData; apiBase: string; csrf: string; mutable: boolean; close: () => void; created: (title: string) => void; reload: () => Promise<void> }) {
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const submitting = useRef(false);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!data.workspace || !data.project || submitting.current) return;
+    const exactTitle = title.trim();
+    if (data.objectives.some((objective) => objective.project_id === data.project?.id && objective.title.trim().toLocaleLowerCase() === exactTitle.toLocaleLowerCase())) {
+      setError(`A workstream named “${exactTitle}” already exists in this domain.`);
+      return;
+    }
+    submitting.current = true; setBusy(true); setError("");
+    try {
+      await rpc(apiBase, csrf, "objective.create", { workspace: data.workspace.id, project: data.project.id, title: exactTitle, budget: { token_limit: 0, cost_cents: 0, time_seconds: 0 }, idempotency_key: newKey("domain-workstream") });
+      await reload(); created(exactTitle);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create the workstream."); }
+    finally { submitting.current = false; setBusy(false); }
+  };
+  return <section className="m22-agent-create m22-workstream-create">
+    <header><div><p className="m22-kicker">owner operation</p><h1>Create a workstream</h1><p>A workstream is one canonical objective inside this domain. It groups related durable agents and work without making a repository, folder, or agent the domain boundary.</p></div><button onClick={close} aria-label="Close workstream creation"><X size={15} /></button></header>
+    <form onSubmit={submit}><label><span>workstream name</span><input autoFocus required maxLength={256} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Terrain consolidation" /></label>
+      <div className="m22-exact-effect"><ShieldCheck size={15} /><span><strong>Exact effect</strong> Create one empty objective-backed workstream. No agent is moved, task created, run started, or authority granted.</span></div>
+      <p className="m22-caveat">After creation it appears in the hierarchy even while empty. Choose it when creating or editing an agent’s placement.</p>
+      {error && <p className="m22-session-error" role="alert">{error}</p>}
+      <div className="m22-form-actions"><button type="button" onClick={close}>cancel</button><button className="m22-send" disabled={!mutable || busy || !title.trim()}>{busy ? <LoaderCircle className="spin" size={14} /> : <Plus size={14} />} {busy ? "creating…" : "create workstream"}</button></div>
+    </form>
+  </section>;
+}
+
+function DomainAgentPlacementEditor({ data, agent, apiBase, csrf, mutable, reload }: { data: WorkbenchData; agent: DomainAgent; apiBase: string; csrf: string; mutable: boolean; reload: () => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [parent, setParent] = useState(agent.membership.parent_agent_id ?? "");
+  const [workstream, setWorkstream] = useState(agent.membership.workstream_id ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  useEffect(() => { setParent(agent.membership.parent_agent_id ?? ""); setWorkstream(agent.membership.workstream_id ?? ""); }, [agent.definition.id, agent.membership.revision]);
+  useEffect(() => { setEditing(false); setError(""); setNotice(""); }, [agent.definition.id]);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setError(""); setNotice("");
+    try {
+      await rpc(apiBase, csrf, "domain.agent.update", { workspace: data.workspace?.id, project: data.project?.id, agent: agent.definition.id, parent_agent: parent, workstream, expected_revision: agent.membership.revision, idempotency_key: newKey("domain-agent-placement") });
+      await reload(); setNotice("Placement updated in the canonical hierarchy."); setEditing(false);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update agent placement."); }
+    finally { setBusy(false); }
+  };
+  return <section className="m22-placement"><h3>hierarchy placement</h3>{editing ? <form onSubmit={submit}><label><span>parent</span><select value={parent} onChange={(event) => setParent(event.target.value)}><option value="">domain root</option>{data.domainAgents.filter((candidate) => candidate.membership.status === "active" && candidate.definition.id !== agent.definition.id).map((candidate) => <option key={candidate.definition.id} value={candidate.definition.id}>{candidate.definition.name}</option>)}</select></label><label><span>workstream</span><select value={workstream} onChange={(event) => setWorkstream(event.target.value)}><option value="">domain-wide</option>{data.objectives.filter((objective) => objective.project_id === data.project?.id).map((objective) => <option key={objective.id} value={objective.id}>{objective.title}</option>)}</select></label><small>Placement routes owner attention only. It grants no authority.</small>{error && <p className="m22-session-error" role="alert">{error}</p>}<div><button type="button" onClick={() => setEditing(false)}>cancel</button><button disabled={!mutable || busy}>{busy ? "saving…" : "save placement"}</button></div></form> : <button className="m22-command" disabled={!mutable} onClick={() => setEditing(true)}>edit placement</button>}{notice && <p className="m22-placement-notice">{notice}</p>}</section>;
 }
 
 function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csrf }: { data: WorkbenchData; agent: DomainAgent; currentRun: Run | null; inspectRun: (run: Run) => void; apiBase: string; csrf: string }) {
@@ -674,37 +754,25 @@ function DomainConsole({ data, selectedAgentID, selectAgent, selectProject, insp
   const [view, setView] = useState<DomainConsoleView>("domain");
   const [creating, setCreating] = useState(false);
   const [creatingWorkstream, setCreatingWorkstream] = useState(false);
-  const [workstreamTitle, setWorkstreamTitle] = useState("");
-  const [workstreamBusy, setWorkstreamBusy] = useState(false);
-  const [workstreamError, setWorkstreamError] = useState("");
+  const [workstreamNotice, setWorkstreamNotice] = useState("");
   const selected = data.domainAgents.find((agent) => agent.definition.id === selectedAgentID) ?? null;
   useEffect(() => { setView(selected ? "session" : "domain"); setCreating(false); setCreatingWorkstream(false); }, [selected?.definition.id, data.project?.id]);
-  const createWorkstream = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!data.workspace || !data.project) return;
-    setWorkstreamBusy(true); setWorkstreamError("");
-    try {
-      await rpc(apiBase, csrf, "objective.create", { workspace: data.workspace.id, project: data.project.id, title: workstreamTitle.trim(), budget: { token_limit: 0, cost_cents: 0, time_seconds: 0 }, idempotency_key: newKey("domain-workstream") });
-      setWorkstreamTitle(""); setCreatingWorkstream(false); await reload();
-    } catch (reason) { setWorkstreamError(reason instanceof Error ? reason.message : "Could not create the workstream."); }
-    finally { setWorkstreamBusy(false); }
-  };
+  useEffect(() => { setWorkstreamNotice(""); }, [data.project?.id]);
   return <div className="m22-console">
     <aside className="m22-domain-rail">
       <p className="m22-rail-label">domains</p>
       {data.projects.map((project) => <button key={project.id} className={`m22-domain-row ${project.id === data.project?.id && !selected ? "selected" : ""}`} onClick={() => { if (project.id !== data.project?.id) selectProject(project.id); selectAgent(null); }}><Boxes size={14} /><span><strong>{project.name}</strong><small>{project.id === data.project?.id ? `${data.domainAgents.filter((agent) => agent.membership.status === "active").length} durable agents` : "select domain"}</small></span></button>)}
       {data.project && <><p className="m22-rail-label agents">agent hierarchy</p><DomainAgentTreeList agents={data.domainAgents} objectives={data.objectives.filter((objective) => objective.project_id === data.project?.id)} selected={selectedAgentID} choose={selectAgent} /></>}
       <div className="m22-rail-spacer" />
-      {creatingWorkstream && <form className="m22-rail-create" onSubmit={createWorkstream}><label><span>new workstream</span><input autoFocus required maxLength={256} value={workstreamTitle} onChange={(event) => setWorkstreamTitle(event.target.value)} placeholder="Terrain consolidation" /></label><small>Creates one canonical workstream. Agents can then be scoped into this group.</small>{workstreamError && <em>{workstreamError}</em>}<div><button type="button" onClick={() => setCreatingWorkstream(false)}>cancel</button><button disabled={workstreamBusy || !workstreamTitle.trim()}>{workstreamBusy ? "creating…" : "create"}</button></div></form>}
-      {data.project && !creatingWorkstream && <button className="m22-add-agent" disabled={!mutable} onClick={() => setCreatingWorkstream(true)}><Plus size={13} /> new workstream</button>}
-      {data.project && <button className="m22-add-agent" disabled={!mutable} onClick={() => setCreating(true)}><Plus size={13} /> add durable agent</button>}
+      {data.project && <button className="m22-add-agent" disabled={!mutable} onClick={() => { setCreating(false); setWorkstreamNotice(""); setCreatingWorkstream(true); }}><Plus size={13} /> new workstream</button>}
+      {data.project && <button className="m22-add-agent" disabled={!mutable} onClick={() => { setCreatingWorkstream(false); setWorkstreamNotice(""); setCreating(true); }}><Plus size={13} /> add durable agent</button>}
       <div className="m22-cut">canonical through event {data.highWater}</div>
     </aside>
-    <main className="m22-center">{creating ? <DomainAgentCreatePanel data={data} suggestedParent={selected?.definition.id ?? ""} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setCreating(false)} created={(agent) => { setCreating(false); selectAgent(agent); }} reload={reload} /> : selected ? <DomainAgentCenter data={data} agent={selected} view={view} setView={setView} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} mutable={mutable} /> : <DomainHome data={data} chooseAgent={selectAgent} inspectRun={inspectRun} />}</main>
+    <main className="m22-center">{creatingWorkstream ? <DomainWorkstreamCreatePanel data={data} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setCreatingWorkstream(false)} created={(title) => { setCreatingWorkstream(false); setWorkstreamNotice(`Workstream “${title}” was created. It is empty until you place durable agents or work inside it.`); selectAgent(null); }} reload={reload} /> : creating ? <DomainAgentCreatePanel data={data} suggestedParent={selected?.definition.id ?? ""} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setCreating(false)} created={(agent) => { setCreating(false); selectAgent(agent); }} reload={reload} /> : selected ? <DomainAgentCenter data={data} agent={selected} view={view} setView={setView} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} mutable={mutable} /> : <DomainHome data={data} chooseAgent={selectAgent} inspectRun={inspectRun} notice={workstreamNotice} />}</main>
     <aside className="m22-context">
       <p className="m22-rail-label">selected {selected ? "agent" : "domain"}</p>
       <h2>{selected?.definition.name ?? data.project?.name}</h2>
-      {selected ? <><dl className="m22-facts"><div><dt>role</dt><dd>{selected.definition.role}</dd></div><div><dt>operating mode</dt><dd>{selected.membership.delegation_policy.replaceAll("_", " ")}</dd></div><div><dt>status</dt><dd>{selected.membership.status}</dd></div><div><dt>opens by default</dt><dd>{selected.membership.preferred_entry ? "yes" : "no"}</dd></div><div><dt>revision</dt><dd>{selected.membership.revision}</dd></div></dl><section><h3>operating charter</h3><p>{selected.membership.operating_charter}</p></section><section><h3>authority boundary</h3><p>Tree placement and charter organize behavior only. Grants, assignments, claims, budgets, and capabilities authorize effects.</p></section></> : <><dl className="m22-facts"><div><dt>workstreams</dt><dd>{data.objectives.length}</dd></div><div><dt>agents</dt><dd>{data.domainAgents.filter((agent) => agent.membership.status === "active").length}</dd></div><div><dt>checkouts</dt><dd>{data.checkouts.length}</dd></div><div><dt>open tasks</dt><dd>{data.tasks.filter((detail) => !["completed", "cancelled", "failed"].includes(detail.task.status)).length}</dd></div></dl><section><h3>domain boundary</h3><p>A domain coordinates related work and knowledge. It is not a repository or folder.</p></section></>}
+      {selected ? <><dl className="m22-facts"><div><dt>role</dt><dd>{selected.definition.role}</dd></div><div><dt>operating mode</dt><dd>{selected.membership.delegation_policy.replaceAll("_", " ")}</dd></div><div><dt>status</dt><dd>{selected.membership.status}</dd></div><div><dt>opens by default</dt><dd>{selected.membership.preferred_entry ? "yes" : "no"}</dd></div><div><dt>revision</dt><dd>{selected.membership.revision}</dd></div></dl><section><h3>operating charter</h3><p>{selected.membership.operating_charter}</p></section><DomainAgentPlacementEditor data={data} agent={selected} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} /><section><h3>authority boundary</h3><p>Tree placement and charter organize behavior only. Grants, assignments, claims, budgets, and capabilities authorize effects.</p></section></> : <><dl className="m22-facts"><div><dt>workstreams</dt><dd>{data.objectives.length}</dd></div><div><dt>agents</dt><dd>{data.domainAgents.filter((agent) => agent.membership.status === "active").length}</dd></div><div><dt>checkouts</dt><dd>{data.checkouts.length}</dd></div><div><dt>open tasks</dt><dd>{data.tasks.filter((detail) => !["completed", "cancelled", "failed"].includes(detail.task.status)).length}</dd></div></dl><section><h3>domain boundary</h3><p>A domain coordinates related work and knowledge. It is not a repository or folder.</p></section></>}
     </aside>
   </div>;
 }

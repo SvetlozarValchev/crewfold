@@ -75,7 +75,7 @@ await evaluate(`(() => {
   set(inputs[0], ${JSON.stringify(repositoryPath)});
   set(inputs[1], 'personal');
   set(inputs[2], 'm22-live-domain');
-  set(textareas[0], 'Coordinate this domain rather than implementing everything yourself. Delegate continuing implementation and independent review to durable specialists when a reviewed staffing grant permits it, keep peers informed, and report anything that needs owner authority.');
+  set(selects[0], 'domain-coordinator');
   return true;
 })()`);
 await clickText("button", "Draft reviewed specification");
@@ -94,9 +94,9 @@ await evaluate(`(() => {
   set(inputs[3], 'orchid');
   set(inputs[4], 'owner-created coordinator');
   set(textareas[1], 'Coordinate the domain, keep peers informed, and delegate continuing implementation or independent review through exact staffing grants before doing that work yourself. Escalate missing authority and material cross-agent conflicts to the owner.');
-  set(selects[0], 'delegation_first');
-  set(selects[1], 'codex');
-  set(selects[2], 'herdr');
+  set(selects[1], 'delegation_first');
+  set(selects[2], 'codex');
+  set(selects[3], 'herdr');
   form.requestSubmit();
   return true;
 })()`);
@@ -119,11 +119,12 @@ await evaluate(`(() => {
   set(inputs[1], 'independent domain peer');
   set(textareas[0], 'Remain an independent durable peer and receive exact coordination messages from other domain agents.');
   set(textareas[1], 'Read canonical domain context, respond to durable peer messages, and report material coordination gaps without taking over unrelated implementation.');
-  set(selects[0], 'hands_on');
-  set(selects[1], '');
+  set(selects[0], 'independent-reviewer');
+  set(selects[1], 'hands_on');
   set(selects[2], '');
-  set(selects[3], 'codex');
-  set(selects[4], 'herdr');
+  set(selects[3], '');
+  set(selects[4], 'codex');
+  set(selects[5], 'herdr');
   form.requestSubmit();
   return true;
 })()`);

@@ -83,6 +83,11 @@ absorbing implementation itself, or to explain the missing grant. The charter an
 policy still grant no task, checkout, staffing, budget, or effect authority.
 Changing them is a revision-checked membership mutation.
 
+The owner interface may provide fixed, descriptive starting templates for common
+responsibilities. Selecting one only prefills the editable owner intent used to
+draft or author the charter. Templates are not a role taxonomy, do not grant
+authority, and coexist with an always-available custom option.
+
 The product may use a separate read-only ephemeral Codex thread to draft a
 candidate name, role, charter, and policy from owner intent. That helper exposes
 no Crewfold tools, uses `approvalPolicy=never`, records no Crewfold domain state,
@@ -327,7 +332,7 @@ owner model contradicts the product vision.
   forced into one sequential job.
 - Existing long-running Codex workstream sessions can become visible durable
   agents under one domain instead of being reconstructed from folder names.
-- Multiple orchestrators are allowed. A default steward improves navigation but
+- Multiple orchestrators are allowed. A default agent improves navigation but
   is a presentation choice, not an authority or cardinality constraint.
 - More provider session lifecycle and structured-stream integration is required;
   the current one-response executive harness is removed from the normal path.

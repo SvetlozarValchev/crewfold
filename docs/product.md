@@ -107,6 +107,12 @@ there is no one-executive-per-domain or one-agent-per-checkout rule. Hierarchy
 organizes attention and roll-up; explicit grants, profiles, policies, assignments,
 claims, and budgets confer authority.
 
+The owner UI may offer editable starting templates for familiar responsibilities
+such as domain coordination, workstream coordination, implementation,
+independent review, verification, knowledge maintenance, and integration. These
+templates only prefill an ownership brief. They are not role enums, do not choose
+authority, and never prevent the owner from writing a custom responsibility.
+
 ## Core workflows
 
 ### 1. Register a domain and its resources
@@ -125,6 +131,8 @@ budgets. A short-lived read-only Codex helper may draft the name, role, charter,
 and policy from owner intent, but the draft records no state and grants no
 authority until the owner reviews and creates the definition. The definition and
 resumable conversation identity exist even when no provider process is running.
+A selected starting template remains ordinary editable owner input throughout
+this flow; the reviewed charter, not the template label, is what becomes durable.
 A manager with a bounded staffing grant may create a durable child inside that
 exact envelope; the child's charter describes expected behavior while the grant
 still supplies the only creation authority.

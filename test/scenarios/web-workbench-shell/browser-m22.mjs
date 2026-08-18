@@ -16,9 +16,12 @@ await new Promise((resolve, reject) => {
 let nextID = 1;
 const pending = new Map();
 const browserExceptions = [];
+const failedResources = [];
 socket.addEventListener("message", (event) => {
   const message = JSON.parse(String(event.data));
   if (message.method === "Runtime.exceptionThrown") browserExceptions.push(message.params?.exceptionDetails?.exception?.description ?? message.params?.exceptionDetails?.text ?? "unknown browser exception");
+  if (message.method === "Network.responseReceived" && message.params?.response?.status >= 400) failedResources.push(`${message.params.response.status} ${message.params.response.url}`);
+  if (message.method === "Network.loadingFailed" && !message.params?.canceled && message.params?.errorText !== "net::ERR_ABORTED") failedResources.push(`${message.params?.errorText ?? "load failed"} ${message.params?.requestId ?? "unknown request"}`);
   const waiter = pending.get(message.id);
   if (!waiter) return;
   pending.delete(message.id);
@@ -48,6 +51,15 @@ async function waitFor(expression, label, timeout = 15000) {
   }
   throw new Error(`timed out waiting for ${label}\n${await evaluate("document.body.innerText")}`);
 }
+async function clickUntil(buttonExpression, targetExpression, label, timeout = 15000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (await evaluate(`Boolean(${targetExpression})`)) return;
+    await evaluate(`(() => { const button = ${buttonExpression}; if (button && !button.disabled) button.click(); return Boolean(button); })()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`timed out activating ${label}\n${await evaluate("document.body.innerText")}`);
+}
 async function capture(label) {
   const directory = process.env.CREWFOLD_SCREENSHOT_DIR;
   if (!directory) return;
@@ -58,8 +70,34 @@ async function capture(label) {
 
 await command("Runtime.enable");
 await command("Page.enable");
+await command("Network.enable");
+await command("Page.reload", { ignoreCache: true });
 await waitFor("document.body?.innerText.includes('Bring your repository into the workbench.')", "domain onboarding");
 await waitFor("document.body.innerText.includes('First durable agent') && document.body.innerText.includes('Owner-reviewed operating charter')", "reviewed first-agent fields");
+for (const [key, fragment] of [
+  ["domain-coordinator", "Coordinate the shared domain"],
+  ["workstream-coordinator", "Own one bounded workstream outcome"],
+  ["implementer", "Implement bounded assigned work"],
+  ["independent-reviewer", "Independently review assigned changes"],
+  ["verification-qa", "Verify assigned outcomes"],
+  ["knowledge-maintainer", "Maintain shared domain knowledge"],
+  ["integration-release", "Coordinate cross-repository interfaces"],
+]) {
+  await evaluate(`(() => {
+    const template = document.querySelector('.onboarding-form .m22-agent-template select');
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(template, ${JSON.stringify(key)});
+    template.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await waitFor(`document.querySelector('.onboarding-form textarea').value.includes(${JSON.stringify(fragment)})`, `${key} ownership template prefill`);
+}
+await evaluate(`(() => {
+  const template = document.querySelector('.onboarding-form .m22-agent-template select');
+  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(template, 'domain-coordinator');
+  template.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+})()`);
+await waitFor("document.querySelector('.onboarding-form textarea').value.includes('Coordinate the shared domain')", "editable ownership template prefill");
 await capture("01-domain-onboarding");
 
 await evaluate(`(() => {
@@ -78,11 +116,12 @@ await evaluate(`(() => {
   set(inputs[2], 'world-engine');
   set(inputs[3], 'orchid');
   set(inputs[4], 'owner-facing coordinator');
+  set(selects[0], 'domain-coordinator');
   set(textareas[0], 'Coordinate this domain and delegate durable review work when staffing authority is available.');
   set(textareas[1], 'Maintain the domain overview, communicate material boundaries, and delegate continuing specialist work through exact reviewed staffing grants.');
-  set(selects[0], 'delegation_first');
-  set(selects[1], 'fixture-mcp');
-  set(selects[2], 'direct');
+  set(selects[1], 'delegation_first');
+  set(selects[2], 'fixture-mcp');
+  set(selects[3], 'direct');
   form.requestSubmit();
   return true;
 })()`);
@@ -96,9 +135,10 @@ await evaluate(`(() => {
   button?.click();
   return Boolean(button);
 })()`);
-await waitFor("document.querySelector('.m22-rail-create')", "canonical workstream creation");
+await waitFor("document.querySelector('.m22-workstream-create') && document.body.innerText.includes('Create a workstream')", "canonical workstream creation");
+await capture("03-workstream-create");
 await evaluate(`(() => {
-  const form = document.querySelector('.m22-rail-create');
+  const form = document.querySelector('.m22-workstream-create form');
   const set = (element, value) => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, value);
     element.dispatchEvent(new Event('input', { bubbles: true }));
@@ -109,6 +149,23 @@ await evaluate(`(() => {
   return true;
 })()`);
 await waitFor("document.body.innerText.includes('Independent review')", "canonical workstream");
+await waitFor("document.body.innerText.includes('was created. It is empty') && [...document.querySelectorAll('.m22-workstream-group')].some((group) => group.textContent.includes('Independent review') && group.textContent.includes('no agents'))", "visible empty workstream confirmation");
+await capture("04-workstream-created");
+await evaluate(`(() => {
+  const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('new workstream'));
+  button?.click();
+  return Boolean(button);
+})()`);
+await waitFor("document.querySelector('.m22-workstream-create')", "second workstream review");
+await evaluate(`(() => {
+  const input = document.querySelector('.m22-workstream-create input');
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Independent review');
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  document.querySelector('.m22-workstream-create form').requestSubmit();
+  return true;
+})()`);
+await waitFor("document.querySelector('.m22-workstream-create [role=alert]')?.textContent.includes('already exists')", "duplicate workstream refusal");
+await evaluate("document.querySelector('.m22-workstream-create button[aria-label=\"Close workstream creation\"]').click(); true");
 
 await evaluate(`(() => {
   const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent.includes('add durable agent'));
@@ -132,11 +189,12 @@ await evaluate(`(() => {
   set(inputs[1], 'independent review');
   set(textareas[0], 'Independently review this domain workstream and report exact findings.');
   set(textareas[1], 'Review assigned changes independently, preserve evidence, and escalate material defects without taking over implementation.');
-  set(selects[0], 'hands_on');
-  set(selects[1], '');
-  set(selects[2], selects[2].options[1].value);
-  set(selects[3], 'fixture-mcp');
-  set(selects[4], 'direct');
+  set(selects[0], 'independent-reviewer');
+  set(selects[1], 'hands_on');
+  set(selects[2], '');
+  set(selects[3], selects[3].options[1].value);
+  set(selects[4], 'fixture-mcp');
+  set(selects[5], 'direct');
   set(inputs[2], '1');
   form.requestSubmit();
   return true;
@@ -150,6 +208,16 @@ await evaluate(`(() => {
   return Boolean(button);
 })()`);
 await waitFor("document.querySelector('.m22-agent-center') && document.body.innerText.includes('Start this durable agent') && document.body.innerText.includes('start Codex session')", "honest unbound durable session");
+await clickUntil("document.querySelector('.m22-placement .m22-command')", "document.querySelector('.m22-placement form')", "existing agent placement editor");
+await evaluate(`(() => {
+  const form = document.querySelector('.m22-placement form');
+  const workstream = form.querySelectorAll('select')[1];
+  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(workstream, workstream.options[1].value);
+  workstream.dispatchEvent(new Event('change', { bubbles: true }));
+  form.requestSubmit();
+  return true;
+})()`);
+await waitFor("document.body.innerText.includes('Placement updated in the canonical hierarchy.') && [...document.querySelectorAll('.m22-workstream-group')].some((group) => group.textContent.includes('Independent review') && group.textContent.includes('orchid'))", "existing agent grouped into workstream");
 await capture("04-agent-session");
 
 await evaluate(`(() => {
@@ -159,12 +227,7 @@ await evaluate(`(() => {
 })()`);
 await waitFor("document.body.innerText.includes('This agent cannot create durable children')", "empty explicit staffing authority");
 await waitFor("[...document.querySelectorAll('.m22-staffing button')].some((candidate) => candidate.textContent.includes('grant staffing') && !candidate.disabled)", "mutable staffing control");
-await evaluate(`(() => {
-  const button = [...document.querySelectorAll('.m22-staffing button')].find((candidate) => candidate.textContent.includes('grant staffing'));
-  button?.click();
-  return Boolean(button);
-})()`);
-await waitFor("document.querySelector('.m22-staffing-form') && document.body.innerText.includes('Exact effect')", "staffing grant review form");
+await clickUntil("[...document.querySelectorAll('.m22-staffing button')].find((candidate) => candidate.textContent.includes('grant staffing'))", "document.querySelector('.m22-staffing-form') && document.body.innerText.includes('Exact effect')", "staffing grant review form");
 await capture("05-staffing-review");
 await evaluate("document.querySelector('.m22-staffing-form').requestSubmit(); true");
 await waitFor("document.querySelector('.m22-grant') && document.body.innerText.includes('active · up to 4 descendants')", "active exact staffing grant");
@@ -198,5 +261,6 @@ if (result.title !== "Crewfold Workbench") throw new Error(`unexpected title ${r
 if (result.domains !== 1 || result.durableAgents !== 2) throw new Error(`unexpected domain console cardinality: ${JSON.stringify(result)}`);
 if (result.unnamedButtons || result.unlabelledControls || result.leakedHandle || result.legacyExecutive) throw new Error(`M22 browser invariant failed: ${JSON.stringify(result)}`);
 if (browserExceptions.length) throw new Error(`browser exceptions: ${browserExceptions.join(" | ")}`);
+if (failedResources.length) throw new Error(`failed browser resources: ${failedResources.join(" | ")}`);
 fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));
 socket.close();
