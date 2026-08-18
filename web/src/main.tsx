@@ -748,13 +748,22 @@ function sessionItemLabel(item: DomainAgentSessionItem, agentName: string) {
   return item.type.replaceAll(/([A-Z])/g, " $1").toLowerCase();
 }
 
+function sessionItemCommand(item: DomainAgentSessionItem) {
+  if (item.type !== "dynamicToolCall") return item.command;
+  return ({
+    crewfold_get_domain_context: "read domain context",
+    crewfold_send_message: "send durable message",
+    crewfold_create_durable_child: "create durable child",
+  } as Record<string, string>)[item.command ?? ""] ?? item.command;
+}
+
 function SessionThreadItem({ item, agentName }: { item: DomainAgentSessionItem; agentName: string }) {
   const isCommandOutput = item.type === "commandExecution" && Boolean(item.text);
+  const command = sessionItemCommand(item);
   return <article className={`m22-thread-item ${item.type}`}>
     <span>{sessionItemLabel(item, agentName)}</span>
-    {item.command && <code>{item.command}</code>}
+    {command && <code>{command}</code>}
     {isCommandOutput ? <details><summary>show command output</summary><pre>{item.text}</pre></details> : item.text && <p>{item.text}</p>}
-    {item.type === "reasoning" && !item.text && <p className="m22-observable-note">Codex is reasoning; private chain-of-thought is not exposed.</p>}
     {item.status && <small>{item.status.replaceAll("_", " ")}</small>}
   </article>;
 }

@@ -147,7 +147,6 @@
 .m22-thread-item.fileChange { border-left: 2px solid var(--m22-green); }
 .m22-thread-item.error { border-left: 2px solid #d16969; background: #2b2020; }
 .m22-thread-item.error > span, .m22-thread-item.error > p { color: #e7a6a6; }
-.m22-observable-note { color: var(--m22-muted) !important; font-size: 10px !important; }
 .m22-turn-waiting { margin: 8px 10px 8px 82px; display: flex; align-items: center; gap: 7px; color: var(--m22-muted); font-size: 10px; }
 .m22-composer { margin-top: 14px; border: 1px solid var(--m22-line); background: #202020; }
 .m22-composer-line { min-height: 42px; padding: 5px 6px 5px 12px; display: flex; align-items: flex-end; gap: 8px; }

@@ -123,8 +123,10 @@ func ReadableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool
 	case "subAgentActivity":
 		item.Command = boundedCodexText(envelope.Kind)
 	case "reasoning":
-		// Reasoning is shown only as a lifecycle marker. Private reasoning text
-		// and summaries are not part of Crewfold's observable work record.
+		// Private reasoning is neither observable work nor canonical Crewfold
+		// state. Omitting the provider lifecycle marker avoids inventing a
+		// repetitive placeholder in the owner's activity stream.
+		return domain.DomainAgentSessionItem{}, false
 	default:
 		return domain.DomainAgentSessionItem{}, false
 	}

@@ -31,7 +31,7 @@ func TestM22ReadableCodexItemCoversObservableWorkWithoutPrivateReasoning(t *test
 		{name: "mcp tool failure", raw: `{"id":"mcp-1","type":"mcpToolCall","server":"world","tool":"inspect","status":"failed","error":{"message":"world unavailable"}}`, want: domain.DomainAgentSessionItem{ID: "mcp-1", Type: "mcpToolCall", Command: "world.inspect", Text: "world unavailable", Status: "failed"}, wantOK: true},
 		{name: "changed paths", raw: `{"id":"patch-1","type":"fileChange","status":"completed","changes":[{"path":"src/main.ts","kind":{"type":"update"}},{"path":"src/new.ts","kind":{"type":"add"}}]}`, want: domain.DomainAgentSessionItem{ID: "patch-1", Type: "fileChange", Text: "update src/main.ts\nadd src/new.ts", Status: "completed"}, wantOK: true},
 		{name: "search", raw: `{"id":"search-1","type":"webSearch","query":"exact documentation"}`, want: domain.DomainAgentSessionItem{ID: "search-1", Type: "webSearch", Command: "exact documentation"}, wantOK: true},
-		{name: "private reasoning", raw: `{"id":"reasoning-1","type":"reasoning","summary":["private summary"],"content":["private chain"]}`, want: domain.DomainAgentSessionItem{ID: "reasoning-1", Type: "reasoning"}, wantOK: true},
+		{name: "private reasoning", raw: `{"id":"reasoning-1","type":"reasoning","summary":["private summary"],"content":["private chain"]}`, want: domain.DomainAgentSessionItem{}, wantOK: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
