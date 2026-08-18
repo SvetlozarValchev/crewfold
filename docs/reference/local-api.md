@@ -528,6 +528,14 @@ query and does not advance delivery state. `thread.show` takes
 `workspace` and thread ID and returns its ordered messages and delivery records,
 including acknowledgement and separate wake status/diagnostic.
 
+`thread.list` is the bounded discovery read for this history. It takes canonical
+`workspace`, optional canonical `project`, and a limit from 1 through 50. Each
+newest-first summary carries the thread, exact message count, and the bounded set
+of durable agent participants observed as senders, recipients, or frozen
+participant bindings. The web Domain Home uses the project scope; an agent view
+filters the same canonical result by participant ID. Listing or opening a thread
+does not acknowledge messages or create a domain event.
+
 `thread.create` creates the explicit cross-project collaboration exception. It
 takes `workspace`, a 1–160 byte UTF-8 `subject`, two through eight bindings with
 unique agents and unique tasks spanning at least two projects, and an idempotency

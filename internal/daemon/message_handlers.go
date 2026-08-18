@@ -115,3 +115,15 @@ func (s *server) handleThreadShow(request localapi.Request) localapi.Response {
 	}
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ThreadShowResult{Schema: localapi.ThreadShowSchema, Type: "thread", Detail: detail})
 }
+
+func (s *server) handleThreadList(request localapi.Request) localapi.Response {
+	var params localapi.ThreadListParams
+	if err := decodeParams(request.Params, &params); err != nil || strings.TrimSpace(params.Workspace) == "" || params.Limit < 0 || params.Limit > 50 {
+		return invalidParamsResponse(request, "thread.list requires workspace and accepts project plus a limit from 1 to 50")
+	}
+	threads, err := s.store.ListThreads(context.Background(), params.Workspace, params.Project, params.Limit)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
+	return localapi.MarshalResult(request.ID, request.Protocol, localapi.ThreadListResult{Schema: localapi.ThreadListSchema, Type: "thread_list", Threads: threads})
+}

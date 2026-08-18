@@ -134,6 +134,10 @@ func TestDurableMailboxSupportsOfflineDeliveryReplyAcknowledgementAndFailedWake(
 	if err != nil || len(thread.Messages) != 2 || len(thread.Recipients) != 2 || thread.Recipients[0].Status != domain.DeliveryAcknowledged || thread.Recipients[1].Status != domain.DeliveryAcknowledged || thread.Recipients[1].WakeStatus != domain.WakeFailed {
 		t.Fatalf("Thread() = %#v, %v", thread, err)
 	}
+	threads, err := storage.ListThreads(context.Background(), workspace.ID, project.ID, 20)
+	if err != nil || len(threads) != 1 || threads[0].Thread.ID != thread.Thread.ID || threads[0].Thread.Subject != "Review the contract" || threads[0].MessageCount != 2 || len(threads[0].AgentIDs) != 2 || !containsString(threads[0].AgentIDs, reviewer.ID) || !containsString(threads[0].AgentIDs, sender.ID) {
+		t.Fatalf("ListThreads() = %#v, %v", threads, err)
+	}
 }
 
 func TestExpiredMessageWakeIsFailedUnknownAndNeverReissued(t *testing.T) {

@@ -135,11 +135,38 @@ type DomainAgentSession struct {
 }
 
 type DomainAgentSessionItem struct {
-	ID      string `json:"id"`
+	ID             string                            `json:"id"`
+	Type           string                            `json:"type"`
+	Text           string                            `json:"text,omitempty"`
+	Command        string                            `json:"command,omitempty"`
+	Status         string                            `json:"status,omitempty"`
+	CWD            string                            `json:"cwd,omitempty"`
+	ProcessID      string                            `json:"process_id,omitempty"`
+	ExitCode       *int                              `json:"exit_code,omitempty"`
+	DurationMillis int64                             `json:"duration_ms,omitempty"`
+	CommandActions []DomainAgentSessionCommandAction `json:"command_actions,omitempty"`
+	Changes        []DomainAgentSessionFileChange    `json:"changes,omitempty"`
+}
+
+// DomainAgentSessionCommandAction is app-server's safe, best-effort command
+// classification. It lets owner surfaces distinguish repository exploration
+// from an opaque shell invocation without exposing environment variables or
+// inventing intent from command text.
+type DomainAgentSessionCommandAction struct {
 	Type    string `json:"type"`
-	Text    string `json:"text,omitempty"`
 	Command string `json:"command,omitempty"`
-	Status  string `json:"status,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Query   string `json:"query,omitempty"`
+}
+
+// DomainAgentSessionFileChange preserves app-server's bounded observable patch
+// projection. Crewfold still treats provider file output as noncanonical until
+// a real assigned execution run records its own evidence.
+type DomainAgentSessionFileChange struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+	Diff string `json:"diff,omitempty"`
 }
 
 type DomainAgentSessionTurn struct {

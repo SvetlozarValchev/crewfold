@@ -2,6 +2,7 @@ package execution
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"crewfold/internal/domain"
@@ -28,17 +29,20 @@ func TestM22ReadableCodexItemCoversObservableWorkWithoutPrivateReasoning(t *test
 		wantOK bool
 	}{
 		{name: "crewfold tool", raw: `{"id":"tool-1","type":"dynamicToolCall","tool":"crewfold_get_context","status":"inProgress"}`, want: domain.DomainAgentSessionItem{ID: "tool-1", Type: "dynamicToolCall", Command: "crewfold_get_context", Status: "inProgress"}, wantOK: true},
-		{name: "mcp tool failure", raw: `{"id":"mcp-1","type":"mcpToolCall","server":"world","tool":"inspect","status":"failed","error":{"message":"world unavailable"}}`, want: domain.DomainAgentSessionItem{ID: "mcp-1", Type: "mcpToolCall", Command: "world.inspect", Text: "world unavailable", Status: "failed"}, wantOK: true},
-		{name: "changed paths", raw: `{"id":"patch-1","type":"fileChange","status":"completed","changes":[{"path":"src/main.ts","kind":{"type":"update"}},{"path":"src/new.ts","kind":{"type":"add"}}]}`, want: domain.DomainAgentSessionItem{ID: "patch-1", Type: "fileChange", Text: "update src/main.ts\nadd src/new.ts", Status: "completed"}, wantOK: true},
+		{name: "command observation", raw: `{"id":"command-1","type":"commandExecution","command":"sed -n '1,20p' README.md","cwd":"/repo","processId":"pty-1","status":"completed","exitCode":0,"durationMs":1250,"aggregatedOutput":"hello","commandActions":[{"type":"read","command":"sed","name":"README.md","path":"/repo/README.md"}]}`, want: domain.DomainAgentSessionItem{ID: "command-1", Type: "commandExecution", Text: "hello", Command: "sed -n '1,20p' README.md", Status: "completed", CWD: "/repo", ProcessID: "pty-1", ExitCode: intPointer(0), DurationMillis: 1250, CommandActions: []domain.DomainAgentSessionCommandAction{{Type: "read", Command: "sed", Name: "README.md", Path: "/repo/README.md"}}}, wantOK: true},
+		{name: "mcp tool failure", raw: `{"id":"mcp-1","type":"mcpToolCall","server":"world","tool":"inspect","status":"failed","durationMs":44,"error":{"message":"world unavailable"}}`, want: domain.DomainAgentSessionItem{ID: "mcp-1", Type: "mcpToolCall", Command: "world.inspect", Text: "world unavailable", Status: "failed", DurationMillis: 44}, wantOK: true},
+		{name: "changed paths and diffs", raw: `{"id":"patch-1","type":"fileChange","status":"completed","changes":[{"path":"src/main.ts","kind":{"type":"update"},"diff":"@@ -1 +1 @@\n-old\n+new"},{"path":"src/new.ts","kind":{"type":"add"},"diff":"export {}"}]}`, want: domain.DomainAgentSessionItem{ID: "patch-1", Type: "fileChange", Status: "completed", Changes: []domain.DomainAgentSessionFileChange{{Path: "src/main.ts", Kind: "update", Diff: "@@ -1 +1 @@\n-old\n+new"}, {Path: "src/new.ts", Kind: "add", Diff: "export {}"}}}, wantOK: true},
 		{name: "search", raw: `{"id":"search-1","type":"webSearch","query":"exact documentation"}`, want: domain.DomainAgentSessionItem{ID: "search-1", Type: "webSearch", Command: "exact documentation"}, wantOK: true},
 		{name: "private reasoning", raw: `{"id":"reasoning-1","type":"reasoning","summary":["private summary"],"content":["private chain"]}`, want: domain.DomainAgentSessionItem{}, wantOK: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got, ok := ReadableCodexItem(json.RawMessage(test.raw))
-			if ok != test.wantOK || got != test.want {
+			if ok != test.wantOK || !reflect.DeepEqual(got, test.want) {
 				t.Fatalf("ReadableCodexItem() = %#v, %t, want %#v, %t", got, ok, test.want, test.wantOK)
 			}
 		})
 	}
 }
+
+func intPointer(value int) *int { return &value }

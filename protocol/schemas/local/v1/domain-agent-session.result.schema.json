@@ -37,7 +37,33 @@
         "type": {"enum": ["userMessage", "agentMessage", "plan", "commandExecution", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "fileChange", "webSearch", "subAgentActivity", "reasoning", "error"]},
         "text": {"type": "string", "maxLength": 65536},
         "command": {"type": "string", "maxLength": 65536},
-        "status": {"type": "string", "maxLength": 65536}
+        "status": {"type": "string", "maxLength": 65536},
+        "cwd": {"type": "string", "maxLength": 65536},
+        "process_id": {"type": "string", "maxLength": 65536},
+        "exit_code": {"type": "integer"},
+        "duration_ms": {"type": "integer", "minimum": 0},
+        "command_actions": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/command_action"}},
+        "changes": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/file_change"}}
+      }
+    },
+    "command_action": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {"enum": ["read", "listFiles", "search", "unknown"]},
+        "command": {"type": "string", "maxLength": 65536},
+        "name": {"type": "string", "maxLength": 65536},
+        "path": {"type": "string", "maxLength": 65536},
+        "query": {"type": "string", "maxLength": 65536}
+      }
+    },
+    "file_change": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "kind"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 65536},
+        "kind": {"enum": ["add", "delete", "update"]},
+        "diff": {"type": "string", "maxLength": 65536}
       }
     }
   }

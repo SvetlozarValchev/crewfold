@@ -88,6 +88,7 @@ const (
 	MethodThreadCreate                = "thread.create"
 	MethodThreadInvite                = "thread.invite"
 	MethodThreadParticipants          = "thread.participants.list"
+	MethodThreadList                  = "thread.list"
 	MethodThreadShow                  = "thread.show"
 	MethodRunStart                    = "run.start"
 	MethodRunShow                     = "run.show"
@@ -173,6 +174,7 @@ const (
 	ParticipantThreadMutationSchema   = "urn:crewfold:schema:local-api:participant-thread-mutation-result:v1"
 	ParticipantThreadSchema           = "urn:crewfold:schema:local-api:participant-thread-result:v1"
 	ThreadShowSchema                  = "urn:crewfold:schema:local-api:thread-show-result:v1"
+	ThreadListSchema                  = "urn:crewfold:schema:local-api:thread-list-result:v1"
 	RunMutationSchema                 = "urn:crewfold:schema:local-api:run-mutation-result:v1"
 	RunLossResolutionSchema           = "urn:crewfold:schema:local-api:run-loss-resolution-result:v1"
 	RunShowSchema                     = "urn:crewfold:schema:local-api:run-show-result:v1"
@@ -1164,6 +1166,18 @@ type ParticipantThreadResult struct {
 type ThreadQueryParams struct {
 	Workspace string `json:"workspace"`
 	Thread    string `json:"thread"`
+}
+
+type ThreadListParams struct {
+	Workspace string `json:"workspace"`
+	Project   string `json:"project,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
+type ThreadListResult struct {
+	Schema  string                 `json:"schema"`
+	Type    string                 `json:"type"`
+	Threads []domain.ThreadSummary `json:"threads"`
 }
 
 type ThreadShowResult struct {

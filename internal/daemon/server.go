@@ -809,6 +809,8 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleThreadInvite(request), false
 	case localapi.MethodThreadParticipants:
 		return s.handleThreadParticipants(request), false
+	case localapi.MethodThreadList:
+		return s.handleThreadList(request), false
 	case localapi.MethodThreadShow:
 		return s.handleThreadShow(request), false
 	case localapi.MethodRunStart:

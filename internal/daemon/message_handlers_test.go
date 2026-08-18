@@ -68,6 +68,10 @@ func TestParticipantThreadLocalAPIMapsCompleteResultsAndStaleRevision(t *testing
 	if created.Schema != localapi.ParticipantThreadMutationSchema || created.Type != "participant_thread_mutation" || created.EventSequence < 1 || created.Collaboration.Kind != domain.ThreadKindParticipantBound || created.Collaboration.ParticipantRevision != 1 || len(created.Collaboration.Participants) != 2 {
 		t.Fatalf("ThreadCreate() = %#v", created)
 	}
+	threads, err := client.ThreadList(context.Background(), "personal", consumerProject.Project.ID, 50)
+	if err != nil || threads.Schema != localapi.ThreadListSchema || threads.Type != "thread_list" || len(threads.Threads) != 1 || threads.Threads[0].Thread.ID != created.Collaboration.Thread.ID || threads.Threads[0].MessageCount != 0 {
+		t.Fatalf("ThreadList() = %#v, %v", threads, err)
+	}
 	for _, participant := range created.Collaboration.Participants {
 		if !strings.HasPrefix(participant.ID, "participant_") || participant.InvitedBy != "local-owner" {
 			t.Errorf("participant binding = %#v", participant)

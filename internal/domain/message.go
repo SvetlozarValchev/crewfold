@@ -134,6 +134,15 @@ type ThreadDetail struct {
 	Recipients []MessageDelivery `json:"recipients"`
 }
 
+// ThreadSummary is the bounded discovery shape used before an owner opens the
+// full message history. A thread is coordination state; it is never presented
+// as an accepted knowledge revision.
+type ThreadSummary struct {
+	Thread       MessageThread `json:"thread"`
+	MessageCount int           `json:"message_count"`
+	AgentIDs     []string      `json:"agent_ids"`
+}
+
 type InboxSummaryItem struct {
 	MessageID       string `json:"message_id"`
 	ThreadID        string `json:"thread_id"`

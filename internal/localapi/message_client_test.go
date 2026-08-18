@@ -99,6 +99,21 @@ func TestThreadParticipantsClientUsesReadOnlyQueryShape(t *testing.T) {
 	}
 }
 
+func TestThreadListClientUsesBoundedProjectQuery(t *testing.T) {
+	t.Parallel()
+	request := captureThreadClientRequest(t, MethodThreadList, func(client *Client) error {
+		_, err := client.ThreadList(context.Background(), "ws_00000000000000000000000000000001", "prj_00000000000000000000000000000001", 25)
+		return err
+	}, ThreadListResult{Schema: ThreadListSchema, Type: "thread_list", Threads: []domain.ThreadSummary{}})
+	var params map[string]any
+	if err := json.Unmarshal(request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if len(params) != 3 || params["workspace"] != "ws_00000000000000000000000000000001" || params["project"] != "prj_00000000000000000000000000000001" || params["limit"] != float64(25) {
+		t.Fatalf("thread.list params = %#v", params)
+	}
+}
+
 func captureThreadClientRequest(t *testing.T, method string, invoke func(*Client) error, response any) Request {
 	t.Helper()
 	socketPath := filepath.Join(t.TempDir(), "local-api.sock")

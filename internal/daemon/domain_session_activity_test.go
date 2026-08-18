@@ -21,7 +21,8 @@ func TestM22DomainSessionHostProjectsExactLiveCodexActivity(t *testing.T) {
 	record("item/completed", `{"threadId":"thread-1","turnId":"turn-1","completedAtMs":2,"item":{"id":"command-1","type":"commandExecution","command":"find . -name '*.md'","commandActions":[],"cwd":"/work","aggregatedOutput":"./README.md\n./docs/plan.md\n","status":"completed"}}`)
 	record("item/agentMessage/delta", `{"threadId":"thread-1","turnId":"turn-1","itemId":"message-1","delta":"I found the project documentation. "}`)
 	record("item/completed", `{"threadId":"thread-1","turnId":"turn-1","completedAtMs":3,"item":{"id":"message-1","type":"agentMessage","text":"I found the project documentation. I am reading it now."}}`)
-	record("item/completed", `{"threadId":"thread-1","turnId":"turn-1","completedAtMs":4,"item":{"id":"change-1","type":"fileChange","status":"completed","changes":[{"path":"docs/plan.md","kind":{"type":"update"}}]}}`)
+	record("item/fileChange/patchUpdated", `{"threadId":"thread-1","turnId":"turn-1","itemId":"change-1","changes":[{"path":"docs/plan.md","kind":{"type":"update"},"diff":"@@ -1 +1 @@\n-old\n+new"}]}`)
+	record("item/completed", `{"threadId":"thread-1","turnId":"turn-1","completedAtMs":4,"item":{"id":"change-1","type":"fileChange","status":"completed","changes":[{"path":"docs/plan.md","kind":{"type":"update"},"diff":"@@ -1 +1 @@\n-old\n+new"}]}}`)
 	record("turn/completed", `{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}`)
 
 	live := host.liveActivity("thread-1")
@@ -37,7 +38,8 @@ func TestM22DomainSessionHostProjectsExactLiveCodexActivity(t *testing.T) {
 	if live[0].Items[2].Type != "agentMessage" || live[0].Items[2].Text != "I found the project documentation. I am reading it now." {
 		t.Fatalf("message activity = %#v", live[0].Items[2])
 	}
-	if live[0].Items[3].Type != "fileChange" || live[0].Items[3].Text != "update docs/plan.md" {
+	if live[0].Items[3].Type != "fileChange" || len(live[0].Items[3].Changes) != 1 ||
+		live[0].Items[3].Changes[0].Path != "docs/plan.md" || live[0].Items[3].Changes[0].Diff != "@@ -1 +1 @@\n-old\n+new" {
 		t.Fatalf("file activity = %#v", live[0].Items[3])
 	}
 

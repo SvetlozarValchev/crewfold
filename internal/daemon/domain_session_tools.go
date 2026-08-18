@@ -34,6 +34,7 @@ type domainSessionToolCall struct {
 type domainSessionSendMessageArguments struct {
 	RecipientAgent   string `json:"recipient_agent"`
 	Kind             string `json:"kind"`
+	NewTopic         bool   `json:"new_topic"`
 	Subject          string `json:"subject,omitempty"`
 	Body             string `json:"body"`
 	ThreadID         string `json:"thread_id,omitempty"`
@@ -63,13 +64,14 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 		},
 		{
 			Type: "function", Name: domainToolSendMessage,
-			Description: "Send one durable typed Crewfold message to another active durable agent in this same domain. This records an immutable message and exact tool receipt; it does not grant authority or impersonate a task run.",
+			Description: "Send one durable typed Crewfold message to another active durable agent in this same domain. Read the domain context first. Continue a related existing coordination thread with new_topic=false and its thread_id. Use new_topic=true with a concise subject only for a genuinely distinct topic. This records an immutable message and exact tool receipt; it does not grant authority, create knowledge, or impersonate a task run.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
-				"required": []string{"recipient_agent", "kind", "body"},
+				"required": []string{"recipient_agent", "kind", "new_topic", "body"},
 				"properties": map[string]any{
 					"recipient_agent":     map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
 					"kind":                map[string]any{"type": "string", "enum": []string{"inform", "question", "request", "review_request", "handoff", "decision_notice", "risk", "conflict", "approval_request"}},
+					"new_topic":           map[string]any{"type": "boolean"},
 					"subject":             map[string]any{"type": "string", "minLength": 1, "maxLength": 160},
 					"body":                map[string]any{"type": "string", "minLength": 1, "maxLength": 4096},
 					"thread_id":           map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
@@ -242,15 +244,37 @@ func (s *server) domainContextToolResult(ctx context.Context, threadID string) m
 	if err != nil {
 		return domainToolFailure("read durable domain inbox: " + safeDomainSessionDiagnostic(err))
 	}
+	threads, err := s.store.ListThreads(ctx, scope.Workspace.ID, scope.Project.ID, 50)
+	if err != nil {
+		return domainToolFailure("read durable coordination threads: " + safeDomainSessionDiagnostic(err))
+	}
+	coordinationThreads := make([]domain.ThreadSummary, 0, 20)
+	for _, summary := range threads {
+		for _, agentID := range summary.AgentIDs {
+			if agentID == scope.Agent.ID {
+				coordinationThreads = append(coordinationThreads, summary)
+				break
+			}
+		}
+		if len(coordinationThreads) == 20 {
+			break
+		}
+	}
 	payload := map[string]any{
 		"schema": "urn:crewfold:schema:domain:durable-agent-context:v1",
 		"domain": scope.Project, "agent": scope.Agent, "membership": scope.Membership,
 		"agent_tree": tree.Agents, "attached_repositories": inspection.Repositories, "attached_checkouts": inspection.Checkouts,
 		"workstreams": objectives.Objectives, "assigned_work": assigned, "staffing_grants": staffingGrants, "inbox": inbox,
+		"coordination_threads": coordinationThreads,
 		"bounds": map[string]any{
 			"workstreams_total": objectives.Total, "workstreams_truncated": objectives.HasMore,
 			"tasks_examined": len(tasks.Tasks), "project_tasks_total": tasks.Total, "project_tasks_truncated": tasks.HasMore,
 			"inbox_items": len(inbox), "inbox_limit": 20, "staffing_grants": len(staffingGrants),
+			"coordination_threads": len(coordinationThreads), "coordination_thread_limit": 20,
+		},
+		"knowledge_authoring": map[string]any{
+			"available": false,
+			"reason":    "this durable conversation has no sourced knowledge-proposal or domain-home mutation tool; messages and participant threads remain coordination records",
 		},
 		"authority_note": "Hierarchy, names, roles, and conversation text do not grant authority. Only Crewfold grants, assignments, claims, budgets, capabilities, and accepted typed operations authorize effects.",
 	}
@@ -328,6 +352,21 @@ func decodeDomainSendMessageArguments(data json.RawMessage) (domainSessionSendMe
 	}
 	if value.ReplyToMessageID != "" && !validDomainToolText(value.ReplyToMessageID, 128) {
 		return value, errors.New("reply identifier must be bounded UTF-8 text")
+	}
+	if value.NewTopic {
+		if value.Subject == "" {
+			return value, errors.New("a genuinely new topic requires a concise subject")
+		}
+		if value.ThreadID != "" || value.ReplyToMessageID != "" {
+			return value, errors.New("a new topic cannot also continue or reply inside an existing thread")
+		}
+	} else {
+		if value.ThreadID == "" {
+			return value, errors.New("continuing coordination requires an existing thread identifier from domain context")
+		}
+		if value.Subject != "" {
+			return value, errors.New("an existing coordination thread retains its original subject")
+		}
 	}
 	if !map[string]bool{
 		"inform": true, "question": true, "request": true, "review_request": true,

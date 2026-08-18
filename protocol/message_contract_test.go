@@ -15,6 +15,7 @@ func TestMessageResultSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 		"schemas/local/v1/message-send.result.schema.json":                localapi.MessageSendSchema,
 		"schemas/local/v1/inbox-list.result.schema.json":                  localapi.InboxListSchema,
 		"schemas/local/v1/thread-show.result.schema.json":                 localapi.ThreadShowSchema,
+		"schemas/local/v1/thread-list.result.schema.json":                 localapi.ThreadListSchema,
 		"schemas/local/v1/participant-thread-mutation.result.schema.json": localapi.ParticipantThreadMutationSchema,
 		"schemas/local/v1/participant-thread.result.schema.json":          localapi.ParticipantThreadSchema,
 	} {
@@ -112,6 +113,7 @@ func TestMessageMethodsRemainProviderNeutral(t *testing.T) {
 	for _, method := range []string{
 		localapi.MethodMessageSend, localapi.MethodInboxList, localapi.MethodThreadCreate,
 		localapi.MethodThreadInvite, localapi.MethodThreadParticipants, localapi.MethodThreadShow,
+		localapi.MethodThreadList,
 	} {
 		if method == "" {
 			t.Fatal("message method name is empty")

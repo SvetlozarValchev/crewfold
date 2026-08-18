@@ -44,6 +44,7 @@ var operatorRequestParamContracts = map[string]string{
 	localapi.MethodApprovalList:                "local/v1/approval-list.params.schema.json",
 	localapi.MethodCheckList:                   "local/v1/check-list.params.schema.json",
 	localapi.MethodInboxList:                   "local/v1/inbox-list.params.schema.json",
+	localapi.MethodThreadList:                  "local/v1/thread-list.params.schema.json",
 	localapi.MethodEventsList:                  "local/v1/events-list.params.schema.json",
 	localapi.MethodEventsTimeline:              "local/v1/events-timeline.params.schema.json",
 	localapi.MethodBriefingShow:                "local/v1/briefing-show.params.schema.json",

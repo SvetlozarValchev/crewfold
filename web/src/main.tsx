@@ -1,4 +1,4 @@
-import { StrictMode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { StrictMode, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
@@ -44,11 +44,18 @@ const staffingTaskClasses = [
 const staffingTaskClassLabel = (value: string) => staffingTaskClasses.find((item) => item.value === value)?.label ?? value;
 const staffingBudgetLabel = (value: number, finiteUnit: string) => value === 0 ? `unlimited ${finiteUnit}` : `${value.toLocaleString()} ${finiteUnit}`;
 type DomainAgentSession = { project_id: string; agent_id: string; provider?: string; state: "unbound" | "ready" | "detached"; cwd?: string; has_conversation: boolean; revision: number; created_at?: string; updated_at?: string };
-type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "mcpToolCall" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "webSearch" | "subAgentActivity" | "reasoning" | "error"; text?: string; command?: string; status?: string };
+type DomainAgentSessionCommandAction = { type: "read" | "listFiles" | "search" | "unknown"; command?: string; name?: string; path?: string; query?: string };
+type DomainAgentSessionFileChange = { path: string; kind: "add" | "delete" | "update"; diff?: string };
+type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "mcpToolCall" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "webSearch" | "subAgentActivity" | "reasoning" | "error"; text?: string; command?: string; status?: string; cwd?: string; process_id?: string; exit_code?: number; duration_ms?: number; command_actions?: DomainAgentSessionCommandAction[]; changes?: DomainAgentSessionFileChange[] };
 type DomainAgentSessionTurn = { id: string; status: string; items: DomainAgentSessionItem[] };
 type DomainAgentSessionResult = { schema: string; type: "domain_agent_session"; view: { session: DomainAgentSession; thread_status: string; turns: DomainAgentSessionTurn[] }; accepted_turn?: DomainAgentSessionTurn };
 type DomainStaffingProfile = { provider: string; runtime: string; max_concurrency: number };
 type DomainStaffingGrant = { id: string; project_id: string; manager_agent_id: string; manager_membership_revision: number; profiles: DomainStaffingProfile[]; task_classes: string[]; max_descendants: number; max_concurrency: number; budget: Budget; expires_at?: string; status: "active" | "revoked" | "expired"; revision: number; created_at: string; updated_at: string };
+type KnowledgeRevision = { id: string; item_id: string; project_id: string; task_scope_id?: string; type: "decision" | "finding"; revision_number: number; state_revision: number; title: string; body: string; review_status: "proposed" | "accepted" | "rejected"; currency_status: "pending" | "current" | "stale" | "superseded"; confidence: string; verification_status: string; proposed_at: string; proposed_by: string; proposed_by_type: string; accepted_at?: string; sources: Array<{ type: string; id: string; revision: number; role: string; ordinal: number }> };
+type MessageThread = { id: string; workspace_id: string; project_id?: string; task_id?: string; subject: string; status: "open" | "closed"; revision: number; created_at: string; updated_at: string; created_by: string; updated_by: string };
+type ThreadSummary = { thread: MessageThread; message_count: number; agent_ids: string[] };
+type ThreadMessage = { id: string; thread_id: string; sender_type: string; sender_agent_name?: string; kind: string; body: string; created_at: string };
+type ThreadDetail = { thread: MessageThread; messages: ThreadMessage[]; recipients: Array<{ message_id: string; recipient_name: string; status: string; wake_status: string }> };
 type Objective = { id: string; project_id: string; title: string; status: "active" | "completed" | "cancelled"; revision: number; updated_at: string };
 type Task = { id: string; project_id: string; objective_id?: string; title: string; description?: string; status: string; blocked_reason?: string; priority: number; revision: number; assigned_agent_id?: string; updated_at: string };
 type TaskDetail = { task: Task; dependencies: Array<{ depends_on_task_id: string }>; assignment?: { agent_id: string }; readiness: { ready: boolean; reason: string } };
@@ -71,6 +78,8 @@ type WorkbenchData = {
   tasks: TaskDetail[];
   runs: Run[];
   checks: CheckRunItem[];
+  knowledge: KnowledgeRevision[];
+  threads: ThreadSummary[];
   highWater: number;
 };
 
@@ -97,7 +106,7 @@ type SessionResponse = {
 
 const expectedStatusSchema = "urn:crewfold:schema:web:workbench-status:v1";
 const expectedSessionSchema = "urn:crewfold:schema:web:workbench-session:v1";
-const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], domainAgents: [], objectives: [], tasks: [], runs: [], checks: [], highWater: 0 };
+const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], domainAgents: [], objectives: [], tasks: [], runs: [], checks: [], knowledge: [], threads: [], highWater: 0 };
 
 class RPCFailure extends Error {
   readonly apiError: APIError;
@@ -306,11 +315,13 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
     rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: eventAfter, limit: 200 }),
   ]);
   const project = projectPage.projects.find((item) => item.id === preferredProject) ?? projectPage.projects[0] ?? null;
-  const [checkouts, checks, domainAgents] = project ? await Promise.all([
+  const [checkouts, checks, domainAgents, knowledge, threads] = project ? await Promise.all([
     rpc<{ checkouts: Checkout[] }>(apiBase, csrf, "checkout.list", { workspace: workspace.id, project: project.id }).then((value) => value.checkouts),
     rpc<{ runs: CheckRunItem[] } & Page>(apiBase, csrf, "check.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.runs),
     rpc<{ project_id: string; agents: DomainAgent[] }>(apiBase, csrf, "domain.agent.tree", { workspace: workspace.id, project: project.id }).then((value) => value.agents),
-  ]) : [[], [], []];
+    rpc<{ list: { revisions: KnowledgeRevision[] } }>(apiBase, csrf, "knowledge.list", { workspace: workspace.id, project: project.id }).then((value) => value.list.revisions),
+    rpc<{ threads: ThreadSummary[] }>(apiBase, csrf, "thread.list", { workspace: workspace.id, project: project.id, limit: 50 }).then((value) => value.threads),
+  ]) : [[], [], [], [], []];
   const after = await rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: before.high_water, limit: 1 });
   if (after.high_water !== before.high_water) {
     if (attempt >= 2) throw new Error("Canonical state kept changing during refresh; retry when the current event cut settles.");
@@ -319,7 +330,7 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
   return {
     workspaces: workspacePage.workspaces, workspace, projects: projectPage.projects, project, checkouts,
     agents: agentPage.agents, domainAgents, objectives: objectivePage.objectives, tasks: taskPage.tasks,
-    runs: runPage.runs, checks,
+    runs: runPage.runs, checks, knowledge, threads,
     highWater: eventPage.high_water,
   };
 }
@@ -579,7 +590,38 @@ function StaffingPanel({ data, agent, apiBase, csrf, mutable }: { data: Workbenc
   </div>;
 }
 
-function DomainHome({ data, chooseAgent, reviewWorkstream, inspectRun, notice = "" }: { data: WorkbenchData; chooseAgent: (agent: DomainAgent) => void; reviewWorkstream: (objective: Objective) => void; inspectRun: (run: Run) => void; notice?: string }) {
+function CheckoutAttach({ data, apiBase, csrf, mutable, reload }: { data: WorkbenchData; apiBase: string; csrf: string; mutable: boolean; reload: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [path, setPath] = useState("");
+  const [writeMode, setWriteMode] = useState("shared");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const attach = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!data.workspace || !data.project || busy || !path.trim()) return;
+    setBusy(true); setError("");
+    try {
+      await rpc(apiBase, csrf, "checkout.add", {
+        workspace: data.workspace.id, project: data.project.id, repository_path: path.trim(), write_mode: writeMode,
+        idempotency_key: newKey("checkout-attach"),
+      });
+      setPath(""); setOpen(false); await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not attach the checkout."); }
+    finally { setBusy(false); }
+  };
+  return <div className="m22-checkout-attach">
+    <button className="m22-command" disabled={!mutable || busy} onClick={() => { setOpen((value) => !value); setError(""); }}><Plus size={13} /> attach checkout</button>
+    {open && <form onSubmit={attach}>
+      <label><span>existing local Git checkout</span><input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/home/you/depot/dev/world-engine-5" autoFocus /></label>
+      <label><span>write policy</span><select value={writeMode} onChange={(event) => setWriteMode(event.target.value)}><option value="shared">Shared · coordinate claims before writes</option><option value="claimed">Claimed · writes require declared claims</option><option value="exclusive">Exclusive · one active writer</option><option value="read_only">Read only · observation only</option></select></label>
+      <p>The directory must already be an inspectable Git checkout. Attaching records it as a resource of this domain; it does not move files, create work, or grant an agent write authority.</p>
+      <div className="m22-form-actions"><button type="button" onClick={() => setOpen(false)}>cancel</button><button className="m22-send" disabled={!path.trim() || busy}>{busy ? <LoaderCircle className="spin" size={14} /> : <Plus size={14} />} attach exact checkout</button></div>
+    </form>}
+    {error && <p className="m22-session-error">{error}</p>}
+  </div>;
+}
+
+function DomainHome({ data, chooseAgent, reviewWorkstream, inspectRun, notice = "", apiBase, csrf, mutable, reload }: { data: WorkbenchData; chooseAgent: (agent: DomainAgent) => void; reviewWorkstream: (objective: Objective) => void; inspectRun: (run: Run) => void; notice?: string; apiBase: string; csrf: string; mutable: boolean; reload: () => Promise<void> }) {
   const projectObjectives = data.objectives.filter((objective) => objective.project_id === data.project?.id);
   const activeObjectives = projectObjectives.filter((objective) => objective.status === "active");
   const closedObjectives = projectObjectives.filter((objective) => objective.status !== "active");
@@ -589,6 +631,8 @@ function DomainHome({ data, chooseAgent, reviewWorkstream, inspectRun, notice = 
   const projectRuns = data.runs.filter((run) => run.project_id === data.project?.id);
   const attention = projectTasks.filter((detail) => ["blocked", "changes_requested", "failed"].includes(detail.task.status));
   const activeRuns = projectRuns.filter((run) => ["requested", "starting", "active", "blocked", "stopping", "lost"].includes(run.status));
+  const currentKnowledge = data.knowledge.filter((revision) => revision.review_status === "accepted" && revision.currency_status === "current");
+  const proposedKnowledge = data.knowledge.filter((revision) => revision.review_status === "proposed");
   const objectiveTitleCounts = activeObjectives.reduce((counts, objective) => {
     const key = objective.title.trim().toLocaleLowerCase();
     counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -604,14 +648,45 @@ function DomainHome({ data, chooseAgent, reviewWorkstream, inspectRun, notice = 
     {attention.length > 0 && <section className="m22-block"><h2>needs attention</h2>{attention.map((detail) => <button key={detail.task.id} className="m22-line"><span><strong>{detail.task.title}</strong><small>{detail.task.blocked_reason || detail.task.status.replaceAll("_", " ")}</small></span><StatusPill value={detail.task.status} /></button>)}</section>}
     <div className="m22-columns">
       <section className="m22-block"><h2>active workstreams</h2>{activeObjectives.length ? activeObjectives.map((objective) => <button className="m22-line" key={objective.id} onClick={() => reviewWorkstream(objective)}><span><strong>{objective.title}</strong><small>{projectTasks.filter((detail) => detail.task.objective_id === objective.id && !["completed", "failed", "cancelled"].includes(detail.task.status)).length} open tasks{(objectiveTitleCounts.get(objective.title.trim().toLocaleLowerCase()) ?? 0) > 1 ? ` · duplicate title · revision ${objective.revision}` : ""} · open lifecycle</small></span><StatusPill value={objective.status} /></button>) : <p className="m22-empty">No active workstreams.</p>}</section>
-      <section className="m22-block"><h2>attached checkouts</h2>{data.checkouts.map((checkout) => <div className="m22-line static" key={checkout.id}><span><strong>{checkout.path}</strong><small>{checkout.branch || "detached"} · {checkout.write_mode}</small></span><StatusPill value={checkout.availability} /></div>)}</section>
+      <section className="m22-block"><div className="m22-block-heading"><h2>attached checkouts</h2><CheckoutAttach data={data} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} /></div>{data.checkouts.length ? data.checkouts.map((checkout) => <div className="m22-line static" key={checkout.id}><span><strong>{checkout.path}</strong><small>{checkout.branch || "detached"} · {checkout.write_mode}{checkout.diagnostic ? ` · ${checkout.diagnostic}` : ""}</small></span><StatusPill value={checkout.availability} /></div>) : <p className="m22-empty">No checkout is attached. Attach an existing local Git checkout to give sessions and assigned runs an exact resource.</p>}</section>
     </div>
     <div className="m22-columns">
       <section className="m22-block"><h2>durable agents</h2>{activeAgents.length ? activeAgents.map((agent) => <button className="m22-line" key={agent.definition.id} onClick={() => chooseAgent(agent)}><span><strong>{agent.definition.name}</strong><small>{agent.definition.role} · {agent.definition.provider} through {agent.definition.runtime}</small></span><StatusPill value={latestRunForAgent(projectRuns, agent.definition.id)?.status ?? "idle"} /></button>) : <p className="m22-empty">No active durable agents.</p>}</section>
       <section className="m22-block"><h2>current runs</h2>{activeRuns.length ? activeRuns.map((run) => <button className="m22-line" key={run.id} onClick={() => inspectRun(run)}><span><strong>{projectTasks.find((detail) => detail.task.id === run.task_id)?.task.title ?? run.id}</strong><small>{data.agents.find((agent) => agent.id === run.agent_id)?.name ?? run.agent_id}</small></span><StatusPill value={run.status} /></button>) : <p className="m22-empty">No live or unresolved run.</p>}</section>
     </div>
-    <section className="m22-block"><h2>domain home</h2><p className="m22-empty">No attributed domain note or pinned shared-memory item has been recorded. M22 will only render authored, revisioned pins here; it will not invent a project summary.</p></section>
+    <section className="m22-block"><h2>shared domain knowledge</h2>
+      {currentKnowledge.length ? currentKnowledge.map((revision) => <details className="m22-knowledge" key={revision.id}><summary><span><strong>{revision.title}</strong><small>{revision.type} · {revision.verification_status} · revision {revision.revision_number} · accepted {displayTime(revision.accepted_at)}</small></span><StatusPill value="current" /></summary><p>{revision.body}</p><footer>proposed by {revision.proposed_by_type} {revision.proposed_by} · {revision.sources.length} exact source{revision.sources.length === 1 ? "" : "s"}</footer></details>) : <p className="m22-empty">No accepted current knowledge is recorded for this domain.</p>}
+      {proposedKnowledge.length > 0 && <div className="m22-knowledge-pending"><strong>{proposedKnowledge.length} knowledge proposal{proposedKnowledge.length === 1 ? "" : "s"} await owner governance.</strong>{proposedKnowledge.map((revision) => <span key={revision.id}>{revision.title} · {revision.verification_status} · proposed {displayTime(revision.proposed_at)}</span>)}</div>}
+      {!currentKnowledge.length && !proposedKnowledge.length && <p className="m22-caveat">Durable messages and participant threads are coordination records, not canonical knowledge. A conversation must not claim it updated shared memory unless a sourced knowledge revision was actually proposed and accepted.</p>}
+    </section>
+    <CoordinationThreads data={data} apiBase={apiBase} csrf={csrf} />
     {(retiredAgents.length > 0 || closedObjectives.length > 0) && <details className="m22-history"><summary><Archive size={14} /> retired and closed history <span>{retiredAgents.length + closedObjectives.length}</span></summary><div>{retiredAgents.map((agent) => <div className="m22-line static" key={agent.definition.id}><span><strong>{agent.definition.name}</strong><small>retired agent · {agent.definition.role} · updated {displayTime(agent.membership.updated_at)}</small></span><StatusPill value="retired" /></div>)}{closedObjectives.map((objective) => <div className="m22-line static" key={objective.id}><span><strong>{objective.title}</strong><small>closed workstream · revision {objective.revision} · updated {displayTime(objective.updated_at)}</small></span><StatusPill value={objective.status} /></div>)}</div></details>}
+  </section>;
+}
+
+function CoordinationThreads({ data, apiBase, csrf, threads = data.threads, heading = "coordination threads" }: { data: WorkbenchData; apiBase: string; csrf: string; threads?: ThreadSummary[]; heading?: string }) {
+  const [selected, setSelected] = useState<ThreadDetail | null>(null);
+  const [loading, setLoading] = useState("");
+  const [error, setError] = useState("");
+  const open = async (summary: ThreadSummary) => {
+    if (!data.workspace) return;
+    setLoading(summary.thread.id); setError("");
+    try {
+      const result = await rpc<{ detail: ThreadDetail }>(apiBase, csrf, "thread.show", { workspace: data.workspace.id, thread: summary.thread.id });
+      setSelected(result.detail);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not read the coordination thread.");
+    } finally {
+      setLoading("");
+    }
+  };
+  return <section className="m22-block m22-threads"><h2>{heading}</h2><p className="m22-caveat">Durable messages exchanged by owners and agents. Accepted domain knowledge is kept separately.</p>
+    {threads.length ? <details className="m22-thread-index"><summary><span>{threads.length} thread{threads.length === 1 ? "" : "s"}</span><small>latest {displayTime(threads[0]?.thread.updated_at)}</small></summary><div>{threads.map((summary) => <button className="m22-line" key={summary.thread.id} onClick={() => void open(summary)}><span><strong>{summary.thread.subject}</strong><small>{summary.message_count} message{summary.message_count === 1 ? "" : "s"} · updated {displayTime(summary.thread.updated_at)}</small></span>{loading === summary.thread.id ? <LoaderCircle className="spin" size={14} /> : <StatusPill value={summary.thread.status} />}</button>)}</div></details> : <p className="m22-empty">No durable coordination thread is recorded in this scope.</p>}
+    {error && <p className="m22-session-error" role="alert">{error}</p>}
+    {selected && <article className="m22-thread-detail"><header><div><p className="m22-kicker">coordination thread</p><h3>{selected.thread.subject}</h3><small>{selected.messages.length} message{selected.messages.length === 1 ? "" : "s"} · audit ID {selected.thread.id}</small></div><button onClick={() => setSelected(null)} aria-label="Close coordination thread"><X size={14} /></button></header>{selected.messages.map((message) => {
+      const delivery = selected.recipients.filter((recipient) => recipient.message_id === message.id);
+      return <div className="m22-thread-message" key={message.id}><p><strong>{message.sender_agent_name || (message.sender_type === "owner" ? "You" : message.sender_type)}</strong><span>{message.kind.replaceAll("_", " ")} · {displayTime(message.created_at)}</span></p><div>{message.body}</div>{delivery.length > 0 && <small>to {delivery.map((recipient) => `${recipient.recipient_name} · ${recipient.status}${recipient.wake_status === "not_requested" ? "" : ` · wake ${recipient.wake_status}`}`).join("; ")}</small>}</div>;
+    })}</article>}
   </section>;
 }
 
@@ -757,15 +832,119 @@ function sessionItemCommand(item: DomainAgentSessionItem) {
   } as Record<string, string>)[item.command ?? ""] ?? item.command;
 }
 
+function formatActivityDuration(milliseconds?: number) {
+  if (!milliseconds || milliseconds < 1) return "";
+  if (milliseconds < 1000) return `${milliseconds}ms`;
+  const seconds = Math.floor(milliseconds / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function isActiveSessionItem(item: DomainAgentSessionItem) {
+  return ["inProgress", "in_progress", "running"].includes(item.status ?? "");
+}
+
+function isExplorationCommand(item: DomainAgentSessionItem) {
+  return item.type === "commandExecution" && Boolean(item.command_actions?.length) && item.command_actions!.every((action) => action.type !== "unknown");
+}
+
+function explorationActionText(action: DomainAgentSessionCommandAction) {
+  if (action.type === "read") return `Read ${action.name || action.path || action.command || "file"}`;
+  if (action.type === "listFiles") return `List ${action.path || action.command || "files"}`;
+  if (action.type === "search") return `Search ${action.query || action.command || "repository"}${action.path ? ` in ${action.path}` : ""}`;
+  return action.command || "Inspect repository";
+}
+
+function outputPreview(value: string) {
+  const lines = value.trimEnd().split("\n");
+  if (lines.length <= 9) return { text: lines.join("\n"), omitted: 0 };
+  return { text: [...lines.slice(0, 5), ...lines.slice(-3)].join("\n"), omitted: lines.length - 8 };
+}
+
+function diffStats(change: DomainAgentSessionFileChange) {
+  if (change.kind === "add" && change.diff) return { added: change.diff.split("\n").length, removed: 0 };
+  if (change.kind === "delete" && change.diff) return { added: 0, removed: change.diff.split("\n").length };
+  let added = 0; let removed = 0;
+  for (const line of (change.diff ?? "").split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) added++;
+    if (line.startsWith("-") && !line.startsWith("---")) removed++;
+  }
+  return { added, removed };
+}
+
+function DiffLines({ change }: { change: DomainAgentSessionFileChange }) {
+  const lines = (change.diff ?? "").split("\n");
+  return <pre className="m22-diff">{lines.map((line, index) => {
+    const tone = change.kind === "add" || line.startsWith("+") && !line.startsWith("+++") ? "add" : change.kind === "delete" || line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : "context";
+    const content = change.kind === "update" && (tone === "add" || tone === "del") ? line.slice(1) : line;
+    return <span className={tone} key={`${index}-${line.slice(0, 16)}`}><i>{index + 1}</i><b>{tone === "add" ? "+" : tone === "del" ? "-" : " "}</b>{content}{"\n"}</span>;
+  })}</pre>;
+}
+
+function SessionExplorationGroup({ items }: { items: DomainAgentSessionItem[] }) {
+  const active = items.some(isActiveSessionItem);
+  const actions = items.flatMap((item) => item.command_actions ?? []);
+  return <article className="m22-activity-group exploration">
+    <header><strong>{active ? "Exploring" : "Explored"}</strong>{active && <LoaderCircle className="spin" size={13} />}</header>
+    <ul>{actions.map((action, index) => <li key={`${index}-${action.type}-${action.name ?? action.path ?? action.query ?? action.command}`}>{explorationActionText(action)}</li>)}</ul>
+  </article>;
+}
+
 function SessionThreadItem({ item, agentName }: { item: DomainAgentSessionItem; agentName: string }) {
-  const isCommandOutput = item.type === "commandExecution" && Boolean(item.text);
   const command = sessionItemCommand(item);
+  if (item.type === "commandExecution") {
+    const active = isActiveSessionItem(item);
+    const failed = item.status === "failed" || item.exit_code !== undefined && item.exit_code !== 0;
+    const preview = item.text ? outputPreview(item.text) : null;
+    return <article className={`m22-activity-group command ${failed ? "failed" : ""}`}>
+      <header><strong>{active ? item.process_id ? "Running background terminal" : "Running" : failed ? "Command failed" : "Ran"}</strong>{active && <LoaderCircle className="spin" size={13} />}{item.duration_ms ? <small>{formatActivityDuration(item.duration_ms)}</small> : null}</header>
+      <code>{command}</code>
+      {item.cwd && <p className="m22-activity-meta">in {item.cwd}</p>}
+      {preview && <pre className="m22-output-preview">{preview.text}</pre>}
+      {preview && (preview.omitted > 0 || item.text!.split("\n").length > 9) && <details><summary>+{preview.omitted} lines · view full command transcript</summary><pre>{item.text}</pre></details>}
+      {failed && item.exit_code !== undefined && <p className="m22-command-result">exit {item.exit_code}</p>}
+    </article>;
+  }
+  if (item.type === "fileChange") {
+    const changes = item.changes ?? [];
+    const stats = changes.reduce((total, change) => { const next = diffStats(change); return { added: total.added + next.added, removed: total.removed + next.removed }; }, { added: 0, removed: 0 });
+    return <article className="m22-activity-group files">
+      <header><strong>{isActiveSessionItem(item) ? "Editing" : `Edited ${changes.length} ${changes.length === 1 ? "file" : "files"}`}</strong>{isActiveSessionItem(item) && <LoaderCircle className="spin" size={13} />}<small><em>+{stats.added}</em> <del>-{stats.removed}</del></small></header>
+      {changes.map((change) => { const changeStats = diffStats(change); return <details className="m22-file-change" key={`${change.kind}-${change.path}`}><summary><span>{change.path}</span><small><em>+{changeStats.added}</em> <del>-{changeStats.removed}</del></small></summary>{change.diff ? <DiffLines change={change} /> : <p>Patch content has not arrived yet.</p>}</details>; })}
+    </article>;
+  }
   return <article className={`m22-thread-item ${item.type}`}>
     <span>{sessionItemLabel(item, agentName)}</span>
     {command && <code>{command}</code>}
-    {isCommandOutput ? <details><summary>show command output</summary><pre>{item.text}</pre></details> : item.text && <p>{item.text}</p>}
-    {item.status && <small>{item.status.replaceAll("_", " ")}</small>}
+    {item.text && <p>{item.text}</p>}
+    {(item.status || item.duration_ms) && <small>{[item.status?.replaceAll("_", " "), formatActivityDuration(item.duration_ms)].filter(Boolean).join(" · ")}</small>}
   </article>;
+}
+
+function SessionTurnItems({ items, agentName }: { items: DomainAgentSessionItem[]; agentName: string }) {
+  const rendered: ReactNode[] = [];
+  for (let index = 0; index < items.length;) {
+    if (isExplorationCommand(items[index])) {
+      const group: DomainAgentSessionItem[] = [];
+      while (index < items.length && isExplorationCommand(items[index])) group.push(items[index++]);
+      rendered.push(<SessionExplorationGroup items={group} key={`exploration-${group[0].id}`} />);
+      continue;
+    }
+    const item = items[index++];
+    rendered.push(<SessionThreadItem item={item} agentName={agentName} key={item.id} />);
+  }
+  return <>{rendered}</>;
+}
+
+function ActiveTurnProgress({ turn }: { turn: DomainAgentSessionTurn }) {
+  const [startedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer); }, []);
+  const activeItem = [...turn.items].reverse().find(isActiveSessionItem);
+  const elapsed = formatActivityDuration(now - startedAt);
+  const label = activeItem?.type === "commandExecution" ? isExplorationCommand(activeItem) ? "Exploring repository" : activeItem.process_id ? "Waiting for background terminal" : "Running command" : activeItem?.type === "fileChange" ? "Applying file changes" : activeItem?.type === "mcpToolCall" || activeItem?.type === "dynamicToolCall" ? "Waiting for tool" : "Working";
+  const detail = activeItem?.type === "commandExecution" ? activeItem.command : activeItem?.command;
+  return <div className="m22-turn-progress"><LoaderCircle className="spin" size={14} /><strong>{label}</strong><span>{elapsed}</span>{detail && <code>{detail}</code>}</div>;
 }
 
 function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csrf }: { data: WorkbenchData; agent: DomainAgent; currentRun: Run | null; inspectRun: (run: Run) => void; apiBase: string; csrf: string }) {
@@ -792,7 +971,7 @@ function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csr
   const providerTurns = result?.view.turns ?? [];
   const turns = result ? [...providerTurns, ...(accepted && !providerTurns.some((turn) => turn.id === accepted.id) ? [accepted] : [])].map((turn) => ({ ...turn, items: turn.items ?? [] })) : [];
   const activeTurn = [...turns].reverse().find((turn) => ["inProgress", "in_progress"].includes(turn.status));
-  const activityKey = turns.map((turn) => `${turn.id}:${turn.status}:${turn.items.map((item) => `${item.id}:${item.status ?? ""}:${item.text?.length ?? 0}`).join(",")}`).join("|");
+  const activityKey = turns.map((turn) => `${turn.id}:${turn.status}:${turn.items.map((item) => `${item.id}:${item.status ?? ""}:${item.text?.length ?? 0}:${item.duration_ms ?? 0}:${item.changes?.reduce((size, change) => size + (change.diff?.length ?? 0), 0) ?? 0}`).join(",")}`).join("|");
   useEffect(() => {
     setResult(null); setInput(""); setError("");
     setCheckout(data.checkouts.length === 1 ? data.checkouts[0].id : "");
@@ -856,9 +1035,9 @@ function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csr
         followThreadRef.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48;
       }}>
         {turns.length === 0 ? <p className="m22-empty">The provider thread is ready. Send the first owner message below.</p> : turns.map((turn) => <section className="m22-turn" key={turn.id}>
-          {turn.items.map((item) => <SessionThreadItem item={item} agentName={agent.definition.name} key={item.id} />)}
-          {["inProgress", "in_progress"].includes(turn.status) && turn.items.length <= 1 && <div className="m22-turn-waiting"><LoaderCircle className="spin" size={13} /> Waiting for the next structured Codex activity event…</div>}
-          <footer>{turn.status.replaceAll("_", " ")}</footer>
+          <SessionTurnItems items={turn.items} agentName={agent.definition.name} />
+          {["inProgress", "in_progress"].includes(turn.status) && <ActiveTurnProgress turn={turn} />}
+          {!(["inProgress", "in_progress"].includes(turn.status)) && <footer>{turn.status.replaceAll("_", " ")}</footer>}
         </section>)}
       </div>
       <div className="m22-composer">
@@ -886,11 +1065,11 @@ function DomainAgentCenter({ data, agent, view, setView, inspectRun, apiBase, cs
   return <section className="m22-agent-center">
     <header><p className="m22-kicker">durable agent</p><h1>{definition.name}</h1><p>{definition.role || "No descriptive role"} · {definition.provider} through {definition.runtime}{workstream ? ` · ${workstream.title}` : ""}</p></header>
     <nav className="m22-tabs" aria-label="Selected agent views">{tabs.map(([id, label]) => <button className={view === id ? "active" : ""} key={id} onClick={() => setView(id)}>{label}</button>)}</nav>
-    {view === "session" && <DurableAgentSession data={data} agent={agent} currentRun={currentRun} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} />}
-    {view === "assignment" && <div className="m22-block"><h2>assigned work</h2>{assigned.length ? assigned.map((detail) => <div className="m22-line static" key={detail.task.id}><span><strong>{detail.task.title}</strong><small>{detail.task.description || "No additional description"}</small></span><StatusPill value={detail.task.status} /></div>) : <p className="m22-empty">No task is assigned to this agent.</p>}</div>}
+    {view === "session" && <><DurableAgentSession data={data} agent={agent} currentRun={currentRun} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} /><CoordinationThreads data={data} apiBase={apiBase} csrf={csrf} threads={data.threads.filter((thread) => thread.agent_ids.includes(definition.id))} heading={`${definition.name} coordination`} /></>}
+    {view === "assignment" && <div className="m22-block"><h2>assigned work</h2>{assigned.length ? assigned.map((detail) => <div className="m22-line static" key={detail.task.id}><span><strong>{detail.task.title}</strong><small>{detail.task.description || "No additional description"}</small></span><StatusPill value={detail.task.status} /></div>) : <><p className="m22-empty">No canonical task is assigned to this agent.</p><p className="m22-caveat">Conversation and coordination messages are not assignments. This view fills only after a task is created and explicitly assigned.</p></>}</div>}
     {view === "changes" && <div className="m22-block"><h2>observed checkout changes</h2>{data.checkouts.flatMap((checkout) => checkout.dirty_paths ?? []).length ? data.checkouts.flatMap((checkout) => (checkout.dirty_paths ?? []).map((path) => <code className="m22-path" key={`${checkout.id}-${path}`}>{path}</code>)) : <p className="m22-empty">No changed paths are present in the bounded checkout observation.</p>}<p className="m22-caveat">These are project checkout observations, not an inferred per-agent diff.</p></div>}
-    {view === "briefing" && <div className="m22-block"><h2>assigned context</h2><dl className="m22-facts"><div><dt>domain</dt><dd>{data.project?.name}</dd></div><div><dt>workstream</dt><dd>{workstream?.title ?? "not scoped"}</dd></div><div><dt>parent</dt><dd>{data.domainAgents.find((candidate) => candidate.definition.id === agent.membership.parent_agent_id)?.definition.name ?? "domain root"}</dd></div><div><dt>provider/runtime</dt><dd>{definition.provider} / {definition.runtime}</dd></div></dl><p className="m22-caveat">A run-specific context packet appears only after a real run is created.</p></div>}
-    {view === "verification" && <div className="m22-block"><h2>verification owned by assigned tasks</h2>{data.checks.filter((check) => assigned.some((detail) => detail.task.id === check.run.task_id)).length ? data.checks.filter((check) => assigned.some((detail) => detail.task.id === check.run.task_id)).map((check) => <div className="m22-line static" key={check.run.id}><span><strong>{assigned.find((detail) => detail.task.id === check.run.task_id)?.task.title}</strong><small>{check.requirement_state}</small></span><StatusPill value={check.run.status} /></div>) : <p className="m22-empty">No canonical check run is attached to this agent's assigned work.</p>}</div>}
+    {view === "briefing" && <div className="m22-block"><h2>scope and available context</h2><dl className="m22-facts"><div><dt>domain</dt><dd>{data.project?.name}</dd></div><div><dt>workstream</dt><dd>{workstream?.title ?? "domain-wide"}</dd></div><div><dt>parent</dt><dd>{data.domainAgents.find((candidate) => candidate.definition.id === agent.membership.parent_agent_id)?.definition.name ?? "domain root"}</dd></div><div><dt>attached checkouts</dt><dd>{data.checkouts.length}</dd></div><div><dt>accepted knowledge</dt><dd>{data.knowledge.filter((revision) => revision.review_status === "accepted" && revision.currency_status === "current").length}</dd></div><div><dt>coordination threads</dt><dd>{data.threads.filter((thread) => thread.agent_ids.includes(definition.id)).length}</dd></div></dl><p className="m22-caveat">This is the durable domain scope available to the conversation. A task-specific frozen context packet exists only for an assigned execution run.</p></div>}
+    {view === "verification" && <div className="m22-block"><h2>verification owned by assigned tasks</h2>{data.checks.filter((check) => assigned.some((detail) => detail.task.id === check.run.task_id)).length ? data.checks.filter((check) => assigned.some((detail) => detail.task.id === check.run.task_id)).map((check) => <div className="m22-line static" key={check.run.id}><span><strong>{assigned.find((detail) => detail.task.id === check.run.task_id)?.task.title}</strong><small>{check.requirement_state}</small></span><StatusPill value={check.run.status} /></div>) : <><p className="m22-empty">No canonical check run is attached to this agent’s assigned work.</p><p className="m22-caveat">Verification is derived from explicit check requirements and check runs on assigned tasks—not from conversation claims or message threads.</p></>}</div>}
     {view === "staffing" && <StaffingPanel data={data} agent={agent} apiBase={apiBase} csrf={csrf} mutable={mutable} />}
   </section>;
 }
@@ -917,7 +1096,7 @@ function DomainConsole({ data, selectedAgentID, selectAgent, selectProject, insp
       {data.project && <button className="m22-add-agent" disabled={!mutable} onClick={() => { setCreatingWorkstream(false); setRetiringAgentID(""); setReviewingWorkstreamID(""); setWorkstreamNotice(""); setCreating(true); }}><Plus size={13} /> add durable agent</button>}
       <div className="m22-cut">canonical through event {data.highWater}</div>
     </aside>
-    <main className="m22-center">{retiringAgent ? <DomainAgentRetirementPanel data={data} agent={retiringAgent} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setRetiringAgentID("")} retired={() => { setRetiringAgentID(""); selectAgent(null); setWorkstreamNotice(`Agent “${retiringAgent.definition.name}” was retired. Its canonical history remains under retired and closed history.`); }} reload={reload} /> : reviewingWorkstream ? <DomainWorkstreamLifecyclePanel data={data} objective={reviewingWorkstream} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setReviewingWorkstreamID("")} cancelled={() => { setReviewingWorkstreamID(""); selectAgent(null); setWorkstreamNotice(`Workstream “${reviewingWorkstream.title}” was cancelled and moved to closed history.`); }} reload={reload} /> : creatingWorkstream ? <DomainWorkstreamCreatePanel data={data} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setCreatingWorkstream(false)} created={(title) => { setCreatingWorkstream(false); setWorkstreamNotice(`Workstream “${title}” was created. It is empty until you place durable agents or work inside it.`); selectAgent(null); }} reload={reload} /> : creating ? <DomainAgentCreatePanel data={data} suggestedParent={selected?.definition.id ?? ""} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setCreating(false)} created={(agent) => { setCreating(false); selectAgent(agent); }} reload={reload} /> : selected ? <DomainAgentCenter data={data} agent={selected} view={view} setView={setView} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} mutable={mutable} /> : <DomainHome data={data} chooseAgent={selectAgent} reviewWorkstream={(objective) => { setWorkstreamNotice(""); setReviewingWorkstreamID(objective.id); }} inspectRun={inspectRun} notice={workstreamNotice} />}</main>
+    <main className="m22-center">{retiringAgent ? <DomainAgentRetirementPanel data={data} agent={retiringAgent} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setRetiringAgentID("")} retired={() => { setRetiringAgentID(""); selectAgent(null); setWorkstreamNotice(`Agent “${retiringAgent.definition.name}” was retired. Its canonical history remains under retired and closed history.`); }} reload={reload} /> : reviewingWorkstream ? <DomainWorkstreamLifecyclePanel data={data} objective={reviewingWorkstream} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setReviewingWorkstreamID("")} cancelled={() => { setReviewingWorkstreamID(""); selectAgent(null); setWorkstreamNotice(`Workstream “${reviewingWorkstream.title}” was cancelled and moved to closed history.`); }} reload={reload} /> : creatingWorkstream ? <DomainWorkstreamCreatePanel data={data} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setCreatingWorkstream(false)} created={(title) => { setCreatingWorkstream(false); setWorkstreamNotice(`Workstream “${title}” was created. It is empty until you place durable agents or work inside it.`); selectAgent(null); }} reload={reload} /> : creating ? <DomainAgentCreatePanel data={data} suggestedParent={selected?.definition.id ?? ""} apiBase={apiBase} csrf={csrf} mutable={mutable} close={() => setCreating(false)} created={(agent) => { setCreating(false); selectAgent(agent); }} reload={reload} /> : selected ? <DomainAgentCenter data={data} agent={selected} view={view} setView={setView} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} mutable={mutable} /> : <DomainHome data={data} chooseAgent={selectAgent} reviewWorkstream={(objective) => { setWorkstreamNotice(""); setReviewingWorkstreamID(objective.id); }} inspectRun={inspectRun} notice={workstreamNotice} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />}</main>
     <aside className="m22-context">
       <p className="m22-rail-label">selected {selected ? "agent" : "domain"}</p>
       <h2>{selected?.definition.name ?? data.project?.name}</h2>

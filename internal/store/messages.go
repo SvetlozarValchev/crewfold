@@ -28,6 +28,7 @@ const (
 	maximumMessageBytes       = 4096
 	maximumMessageArtifacts   = 16
 	maximumInboxItems         = 50
+	maximumThreadListItems    = 50
 	contextInboxItems         = 10
 	minimumThreadParticipants = 2
 	maximumThreadParticipants = 8
@@ -850,6 +851,69 @@ func (s *Store) Thread(ctx context.Context, workspaceIdentifier, threadID string
 		return domain.ThreadDetail{}, err
 	}
 	return domain.ThreadDetail{Thread: thread, Messages: messages, Recipients: recipients}, nil
+}
+
+// ListThreads discovers bounded durable coordination threads in a workspace
+// or project. Participant-bound threads are included when any frozen
+// participant binding belongs to the requested project.
+func (s *Store) ListThreads(ctx context.Context, workspaceIdentifier, projectIdentifier string, limit int) ([]domain.ThreadSummary, error) {
+	workspace, err := s.Workspace(ctx, strings.TrimSpace(workspaceIdentifier))
+	if err != nil {
+		return nil, err
+	}
+	projectID := ""
+	if strings.TrimSpace(projectIdentifier) != "" {
+		project, projectErr := s.Project(ctx, workspace.ID, strings.TrimSpace(projectIdentifier))
+		if projectErr != nil {
+			return nil, projectErr
+		}
+		projectID = project.ID
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > maximumThreadListItems {
+		return nil, &Error{Code: CodeInvalidMessage, Message: "thread list limit must be between 1 and 50"}
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT th.id, th.workspace_id, COALESCE(th.project_id, ''), COALESCE(th.task_id, ''),
+       th.subject, th.status, th.revision, th.created_at, th.updated_at, th.created_by, th.updated_by,
+       (SELECT COUNT(*) FROM messages m WHERE m.thread_id = th.id),
+       (SELECT COALESCE(group_concat(agent_id, ','), '') FROM (
+          SELECT sender_agent_id AS agent_id FROM messages WHERE thread_id = th.id AND sender_agent_id IS NOT NULL
+          UNION
+          SELECT r.recipient_agent_id AS agent_id FROM message_recipients r JOIN messages m ON m.id = r.message_id WHERE m.thread_id = th.id
+          UNION
+          SELECT p.agent_id AS agent_id FROM thread_participants p WHERE p.thread_id = th.id
+          ORDER BY agent_id LIMIT 100))
+FROM message_threads th
+WHERE th.workspace_id = ?
+  AND (? = '' OR th.project_id = ?
+       OR EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = th.id AND m.project_id = ?)
+       OR EXISTS (SELECT 1 FROM thread_participants p WHERE p.thread_id = th.id AND p.project_id = ?))
+ORDER BY th.updated_at DESC, th.id DESC
+LIMIT ?`, workspace.ID, projectID, projectID, projectID, projectID, limit)
+	if err != nil {
+		return nil, storageFailure("list message threads", err)
+	}
+	defer rows.Close()
+	result := make([]domain.ThreadSummary, 0)
+	for rows.Next() {
+		var summary domain.ThreadSummary
+		var agentIDsText string
+		thread := &summary.Thread
+		if err := rows.Scan(&thread.ID, &thread.WorkspaceID, &thread.ProjectID, &thread.TaskID, &thread.Subject, &thread.Status, &thread.Revision, &thread.CreatedAt, &thread.UpdatedAt, &thread.CreatedBy, &thread.UpdatedBy, &summary.MessageCount, &agentIDsText); err != nil {
+			return nil, storageFailure("scan message thread summary", err)
+		}
+		summary.AgentIDs = []string{}
+		if agentIDsText != "" {
+			summary.AgentIDs = strings.Split(agentIDsText, ",")
+		}
+		result = append(result, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageFailure("iterate message thread summaries", err)
+	}
+	return result, nil
 }
 
 const expiredMessageWakeDiagnostic = "wake lease expired before durable completion; external delivery outcome is unknown"

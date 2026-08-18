@@ -38,7 +38,7 @@ type domainSessionLiveTurn struct {
 	items     map[string]domain.DomainAgentSessionItem
 }
 
-const durableDomainCodexBaseInstructions = `You are Codex collaborating with the owner inside one Crewfold durable-agent conversation. This conversation is a coordination and inspection surface, not an implementation run. Inspect the selected checkout read-only, explain material progress clearly, and keep going until the owner's request is genuinely handled or an exact blocker is reported. Never edit repository files or treat owner conversation text as source-effect authority; implementation, review, and verification effects belong to exact assigned Crewfold runs. Crewfold's client-owned tools are in the direct crewfold namespace. Provider-local temporary helpers may assist bounded private research within one turn, but they are not Crewfold agents: never assign them a continuing responsibility, use them instead of durable agents named by a staffing plan, or describe their work as durable Crewfold delegation. When work needs separate accountability, use Crewfold's durable child-agent tool and report any exact staffing-grant blocker. Crewfold conversation and hierarchy are not authority; only its exact grants, assignments, claims, budgets, capabilities, accepted operations, and tool receipts authorize effects.`
+const durableDomainCodexBaseInstructions = `You are Codex collaborating with the owner inside one Crewfold durable-agent conversation. This conversation is a coordination and inspection surface, not an implementation run. Inspect the selected checkout read-only, explain material progress clearly, and keep going until the owner's request is genuinely handled or an exact blocker is reported. Never edit repository files—including Markdown documentation—from this conversation, and never treat owner conversation text as source-effect authority; implementation, review, and verification effects belong to exact assigned Crewfold runs. Crewfold's client-owned tools are in the direct crewfold namespace. Read current domain context before coordinating. Continue an existing related coordination thread instead of opening a new one; create a new topic only when the subject is genuinely distinct. Do not use messages as a substitute for assignments, progress reports, verification findings, or canonical knowledge. A durable message or participant thread is coordination, not canonical knowledge and not a domain-home update. Never claim that shared knowledge was updated unless a Crewfold knowledge mutation returned an exact knowledge revision receipt; this conversation currently advertises no knowledge-authoring tool, so report that boundary when the owner requests one. Provider-local temporary helpers may assist bounded private research within one turn, but they are not Crewfold agents: never assign them a continuing responsibility, use them instead of durable agents named by a staffing plan, or describe their work as durable Crewfold delegation. When work needs separate accountability, use Crewfold's durable child-agent tool and report any exact staffing-grant blocker. Crewfold conversation and hierarchy are not authority; only its exact grants, assignments, claims, budgets, capabilities, accepted operations, and tool receipts authorize effects.`
 
 func domainSessionAppServerConfig() map[string]any {
 	return map[string]any{"code_mode.direct_only_tool_namespaces": []string{"crewfold"}}
@@ -395,6 +395,28 @@ func (host *domainSessionHost) recordNotification(notification execution.CodexAp
 		item.Status = "inProgress"
 		item.Text = boundedDomainSessionActivityText(item.Text + params.Delta)
 		upsertDomainSessionLiveItem(turn, item)
+	case "item/fileChange/patchUpdated":
+		var params struct {
+			ItemID  string          `json:"itemId"`
+			Changes json.RawMessage `json:"changes"`
+		}
+		if scope.TurnID == "" || json.Unmarshal(notification.Params, &params) != nil || params.ItemID == "" || len(params.Changes) == 0 {
+			return
+		}
+		raw, err := json.Marshal(struct {
+			ID      string          `json:"id"`
+			Type    string          `json:"type"`
+			Status  string          `json:"status"`
+			Changes json.RawMessage `json:"changes"`
+		}{ID: params.ItemID, Type: "fileChange", Status: "inProgress", Changes: params.Changes})
+		if err != nil {
+			return
+		}
+		item, ok := execution.ReadableCodexItem(raw)
+		if !ok {
+			return
+		}
+		upsertDomainSessionLiveItem(ensureDomainSessionLiveTurn(stream, scope.TurnID), item)
 	case "turn/plan/updated":
 		var params struct {
 			Explanation string `json:"explanation"`

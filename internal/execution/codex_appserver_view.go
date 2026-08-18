@@ -12,6 +12,8 @@ const (
 	maximumReadableCodexTurns     = 100
 	maximumReadableCodexItems     = 512
 	maximumReadableCodexItemBytes = 64 * 1024
+	maximumReadableCommandActions = 64
+	maximumReadableFileChanges    = 128
 )
 
 // ReadableCodexTurns converts the provider's persisted structured thread items
@@ -58,6 +60,10 @@ func ReadableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool
 		Command          string `json:"command"`
 		AggregatedOutput string `json:"aggregatedOutput"`
 		Status           string `json:"status"`
+		CWD              string `json:"cwd"`
+		ProcessID        string `json:"processId"`
+		ExitCode         *int   `json:"exitCode"`
+		DurationMillis   int64  `json:"durationMs"`
 		Server           string `json:"server"`
 		Query            string `json:"query"`
 		Prompt           string `json:"prompt"`
@@ -68,10 +74,18 @@ func ReadableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool
 		} `json:"error"`
 		Changes []struct {
 			Path string `json:"path"`
+			Diff string `json:"diff"`
 			Kind struct {
 				Type string `json:"type"`
 			} `json:"kind"`
 		} `json:"changes"`
+		CommandActions []struct {
+			Type    string `json:"type"`
+			Command string `json:"command"`
+			Name    string `json:"name"`
+			Path    string `json:"path"`
+			Query   string `json:"query"`
+		} `json:"commandActions"`
 		Content json.RawMessage `json:"content"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil || envelope.ID == "" || envelope.Type == "" {
@@ -99,25 +113,50 @@ func ReadableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool
 	case "commandExecution":
 		item.Command = boundedCodexText(envelope.Command)
 		item.Text = boundedCodexText(envelope.AggregatedOutput)
+		item.CWD = boundedCodexText(envelope.CWD)
+		item.ProcessID = boundedCodexText(envelope.ProcessID)
+		item.ExitCode = envelope.ExitCode
+		item.DurationMillis = max(envelope.DurationMillis, 0)
+		for _, action := range envelope.CommandActions {
+			if len(item.CommandActions) == maximumReadableCommandActions {
+				break
+			}
+			if action.Type == "" {
+				continue
+			}
+			item.CommandActions = append(item.CommandActions, domain.DomainAgentSessionCommandAction{
+				Type: boundedCodexText(action.Type), Command: boundedCodexText(action.Command), Name: boundedCodexText(action.Name),
+				Path: boundedCodexText(action.Path), Query: boundedCodexText(action.Query),
+			})
+		}
 	case "mcpToolCall":
 		item.Command = boundedCodexText(strings.Trim(strings.Join([]string{envelope.Server, envelope.Tool}, "."), "."))
+		item.DurationMillis = max(envelope.DurationMillis, 0)
 		if envelope.Error != nil {
 			item.Text = boundedCodexText(envelope.Error.Message)
 		}
 	case "dynamicToolCall":
 		item.Command = boundedCodexText(envelope.Tool)
+		item.DurationMillis = max(envelope.DurationMillis, 0)
 	case "collabAgentToolCall":
 		item.Command = boundedCodexText(envelope.Tool)
 		item.Text = boundedCodexText(envelope.Prompt)
 	case "fileChange":
-		changes := make([]string, 0, len(envelope.Changes))
+		remaining := maximumReadableCodexItemBytes
 		for _, change := range envelope.Changes {
-			label := strings.TrimSpace(strings.Join([]string{change.Kind.Type, change.Path}, " "))
-			if label != "" {
-				changes = append(changes, label)
+			if len(item.Changes) == maximumReadableFileChanges {
+				break
 			}
+			label := strings.TrimSpace(strings.Join([]string{change.Kind.Type, change.Path}, " "))
+			if label == "" {
+				continue
+			}
+			diff := boundedCodexTextLimit(change.Diff, remaining)
+			remaining -= len(diff)
+			item.Changes = append(item.Changes, domain.DomainAgentSessionFileChange{
+				Path: boundedCodexText(change.Path), Kind: boundedCodexText(change.Kind.Type), Diff: diff,
+			})
 		}
-		item.Text = boundedCodexText(strings.Join(changes, "\n"))
 	case "webSearch":
 		item.Command = boundedCodexText(envelope.Query)
 	case "subAgentActivity":
@@ -134,10 +173,17 @@ func ReadableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool
 }
 
 func boundedCodexText(value string) string {
-	if len([]byte(value)) <= maximumReadableCodexItemBytes {
+	return boundedCodexTextLimit(value, maximumReadableCodexItemBytes)
+}
+
+func boundedCodexTextLimit(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if len([]byte(value)) <= limit {
 		return value
 	}
-	data := []byte(value)[:maximumReadableCodexItemBytes]
+	data := []byte(value)[:limit]
 	for len(data) != 0 && !utf8.Valid(data) {
 		data = data[:len(data)-1]
 	}

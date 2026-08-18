@@ -755,6 +755,32 @@ func (c *Client) ThreadShow(ctx context.Context, workspace, thread string) (Thre
 	return result, nil
 }
 
+func (c *Client) ThreadList(ctx context.Context, workspace, project string, limit int) (ThreadListResult, error) {
+	if limit == 0 {
+		limit = 20
+	}
+	if limit < 1 || limit > 50 {
+		return ThreadListResult{}, fmt.Errorf("thread.list limit must be from 1 to 50")
+	}
+	workspaceID, projectID, err := c.resolveOperatorScope(ctx, workspace, project)
+	if err != nil {
+		return ThreadListResult{}, err
+	}
+	var result ThreadListResult
+	if err := c.callParamsStrict(ctx, MethodThreadList, ThreadListParams{Workspace: workspaceID, Project: projectID, Limit: limit}, &result); err != nil {
+		return ThreadListResult{}, err
+	}
+	if len(result.Threads) > limit {
+		return ThreadListResult{}, fmt.Errorf("decode local API result %s: result exceeds the requested bound", MethodThreadList)
+	}
+	for _, summary := range result.Threads {
+		if summary.Thread.WorkspaceID != workspaceID {
+			return ThreadListResult{}, fmt.Errorf("decode local API result %s: thread violates requested workspace scope", MethodThreadList)
+		}
+	}
+	return result, nil
+}
+
 func (c *Client) RunStart(ctx context.Context, paramsValue RunStartParams) (RunMutationResult, error) {
 	paramsValue.IdempotencyKey = defaultIdempotencyKey(paramsValue.IdempotencyKey)
 	var result RunMutationResult

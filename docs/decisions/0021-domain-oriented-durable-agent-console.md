@@ -336,6 +336,14 @@ retrospective delivery assessment backed by evidence. The UI never labels an
 intended goal as an outcome or implies that assignment activity is accepted
 delivery.
 
+Coordination threads remain a fourth, deliberately narrower concept. They are
+durable addressed conversations between agents or the owner, not assignments,
+progress records, verification evidence, or accepted knowledge. Domain Home
+shows a collapsed project-scoped index and each agent Session shows only threads
+in which that agent actually participates. A durable-agent tool call must choose
+explicitly between continuing an existing thread and opening a genuinely new
+topic; omission never silently creates another thread.
+
 Likewise, one selected agent has one **Session** surface: its resumable provider
 conversation. An **active run** is the current bounded execution of that agent,
 and the **advanced terminal** is a raw Herdr PTY attachment to that run. The UI

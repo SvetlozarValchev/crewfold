@@ -81,6 +81,7 @@ var operatorResultContracts = map[string]operatorResultContract{
 	MethodApprovalList:                {"local/v1/approval-list.result.schema.json", ApprovalListSchema, "approval_list"},
 	MethodCheckList:                   {"local/v1/check-run-list.result.schema.json", CheckRunListSchema, "check_run_list"},
 	MethodInboxList:                   {"local/v1/inbox-list.result.schema.json", InboxListSchema, "inbox"},
+	MethodThreadList:                  {"local/v1/thread-list.result.schema.json", ThreadListSchema, "thread_list"},
 	MethodEventsList:                  {"local/v1/events-list.result.schema.json", EventsListSchema, "event_list"},
 	MethodEventsTimeline:              {"local/v1/events-timeline.result.schema.json", EventsTimelineSchema, "event_timeline"},
 	MethodBriefingShow:                {"local/v1/briefing-show.result.schema.json", BriefingShowSchema, "management_briefing"},
