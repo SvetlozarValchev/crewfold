@@ -342,13 +342,16 @@ func runAuthorizedForMessage(ctx context.Context, tx *sql.Tx, run domain.Run, me
 func (s *Store) SendMessage(ctx context.Context, command SendMessageCommand) (MutationResult[domain.MessageMutation], error) {
 	workspaceIdentifier := strings.TrimSpace(command.WorkspaceIdentifier)
 	recipientIdentifier := strings.TrimSpace(command.RecipientAgent)
-	senderRunID, threadID := strings.TrimSpace(command.SenderRunID), strings.TrimSpace(command.ThreadID)
+	senderRunID, senderDomainThreadID, threadID := strings.TrimSpace(command.SenderRunID), strings.TrimSpace(command.SenderDomainThreadID), strings.TrimSpace(command.ThreadID)
 	projectIdentifier, taskID := strings.TrimSpace(command.ProjectIdentifier), strings.TrimSpace(command.TaskID)
 	kind, subject, body := strings.TrimSpace(command.Kind), strings.TrimSpace(command.Subject), strings.TrimSpace(command.Body)
 	replyTo, key, correlationID := strings.TrimSpace(command.ReplyToMessageID), strings.TrimSpace(command.IdempotencyKey), strings.TrimSpace(command.CorrelationID)
 	artifactIDs := normalizedIdentifiers(command.ArtifactIDs)
 	if workspaceIdentifier == "" || recipientIdentifier == "" || !supportedMessageKinds[kind] || !validMessageText(body, maximumMessageBytes) || len(artifactIDs) > maximumMessageArtifacts {
 		return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeInvalidMessage, Message: "message requires workspace, one agent recipient, supported kind, and a UTF-8 body from 1 to 4096 bytes"}
+	}
+	if senderRunID != "" && senderDomainThreadID != "" {
+		return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeInvalidMessage, Message: "message must have only one authenticated sender origin"}
 	}
 	if len(command.ArtifactIDs) != len(artifactIDs) {
 		return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeInvalidMessage, Message: "message artifact identifiers must be unique, bounded, and non-empty"}
@@ -384,21 +387,34 @@ func (s *Store) SendMessage(ctx context.Context, command SendMessageCommand) (Mu
 		}
 		senderType, senderID, senderAgentID, senderAgentName, actorType = "agent_run", senderRun.ID, sender.ID, sender.Name, "agent_run"
 		projectIdentifier, taskID = senderRun.ProjectID, senderRun.TaskID
+	} else if senderDomainThreadID != "" {
+		scope, scopeErr := s.domainAgentSessionScopeInTransaction(ctx, tx, senderDomainThreadID)
+		if scopeErr != nil || scope.Workspace.ID != workspace.ID {
+			return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "durable-agent sender session is outside the authorized workspace", Cause: scopeErr}
+		}
+		senderType, senderID, senderAgentID, senderAgentName, actorType = "durable_agent", scope.Agent.ID, scope.Agent.ID, scope.Agent.Name, domain.EventActorIntegration
+		projectIdentifier, taskID = scope.Project.ID, ""
 	}
 	recipient, err := queryAgent(ctx, tx, workspace.ID, recipientIdentifier)
 	if err != nil {
 		return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "recipient must be one enabled agent in this workspace"}
 	}
 	if senderAgentID != "" && recipient.ID == senderAgentID {
-		return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "an agent run cannot message itself"}
+		return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "an agent cannot message itself"}
 	}
 
 	projectID, resolvedTaskID, err := resolveMessageScope(ctx, tx, workspace.ID, projectIdentifier, taskID)
 	if err != nil {
 		return MutationResult[domain.MessageMutation]{}, err
 	}
+	if senderDomainThreadID != "" {
+		recipientMembership, membershipErr := queryDomainAgentMembership(ctx, tx, projectID, recipient.ID)
+		if membershipErr != nil || recipientMembership.Status != domain.DomainAgentActive {
+			return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "recipient must be one active durable agent in the sender's domain", Cause: membershipErr}
+		}
+	}
 	request := map[string]any{
-		"workspace_id": workspace.ID, "sender_run_id": senderRunID, "recipient_agent_id": recipient.ID,
+		"workspace_id": workspace.ID, "sender_run_id": senderRunID, "sender_domain_thread_id": senderDomainThreadID, "recipient_agent_id": recipient.ID,
 		"thread_id": threadID, "project_id": projectID, "task_id": resolvedTaskID, "kind": kind,
 		"subject": subject, "body": body, "artifact_ids": artifactIDs, "reply_to_message_id": replyTo,
 	}
@@ -459,6 +475,9 @@ VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, 1, ?, ?, ?, ?)`, thread.ID, th
 			}
 			if len(artifactIDs) != 0 {
 				return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "participant-bound messages cannot attach artifacts"}
+			}
+			if senderDomainThreadID != "" {
+				return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "durable-agent sessions cannot send as task-bound thread participants"}
 			}
 			if senderAgentID != "" {
 				senderParticipant, participantErr := findThreadParticipantBinding(ctx, tx, thread.ID, senderAgentID, senderRun.ProjectID, senderRun.TaskID)
@@ -585,6 +604,96 @@ func (s *Store) Inbox(ctx context.Context, workspaceIdentifier, agentIdentifier 
 		return nil, err
 	}
 	return queryInbox(ctx, s.db, agent.ID, limit)
+}
+
+// DomainAgentInbox returns only messages explicitly scoped to one durable
+// agent's selected domain. A workspace-level inbox is broader and must never be
+// copied wholesale into an unrelated provider conversation.
+func (s *Store) DomainAgentInbox(ctx context.Context, workspaceIdentifier, projectIdentifier, agentIdentifier string, limit int) ([]domain.InboxItem, error) {
+	if limit == 0 {
+		limit = 20
+	}
+	if limit < 1 || limit > maximumInboxItems {
+		return nil, &Error{Code: CodeInvalidMessage, Message: "domain agent inbox limit must be from 1 to 50"}
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, storageFailure("begin domain agent inbox", err)
+	}
+	defer tx.Rollback()
+	workspace, err := workspaceInTransaction(ctx, tx, strings.TrimSpace(workspaceIdentifier))
+	if err != nil {
+		return nil, err
+	}
+	project, err := projectInTransaction(ctx, tx, workspace.ID, strings.TrimSpace(projectIdentifier))
+	if err != nil {
+		return nil, err
+	}
+	agent, err := queryAgent(ctx, tx, workspace.ID, strings.TrimSpace(agentIdentifier))
+	if err != nil {
+		return nil, err
+	}
+	membership, err := queryDomainAgentMembership(ctx, tx, project.ID, agent.ID)
+	if err != nil || membership.Status != domain.DomainAgentActive {
+		return nil, &Error{Code: CodeMessageDenied, Message: "domain inbox requires one active durable agent membership", Cause: err}
+	}
+	return queryInboxWithCondition(ctx, tx, agent.ID, limit, " AND m.project_id = ?", project.ID)
+}
+
+// DeliverDomainAgentSessionInbox makes one current-node durable session's
+// same-domain queue visible to its provider context. Delivery is a durable
+// lifecycle fact; repeated context reads do not append duplicate events.
+func (s *Store) DeliverDomainAgentSessionInbox(ctx context.Context, threadID string, limit int) ([]domain.InboxItem, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" || limit < 1 || limit > maximumInboxItems {
+		return nil, &Error{Code: CodeInvalidMessage, Message: "domain session inbox requires one private thread and a limit from 1 to 50"}
+	}
+	tx, err := s.beginTx(ctx, nil)
+	if err != nil {
+		return nil, storageFailure("begin domain session inbox", err)
+	}
+	defer tx.Rollback()
+	scope, err := s.domainAgentSessionScopeInTransaction(ctx, tx, threadID)
+	if err != nil {
+		return nil, err
+	}
+	items, err := queryInboxWithCondition(ctx, tx, scope.Agent.ID, limit, " AND m.project_id = ?", scope.Project.ID)
+	if err != nil {
+		return nil, err
+	}
+	now := s.nowText()
+	for index := range items {
+		if items[index].Delivery.Status != domain.DeliveryQueued {
+			continue
+		}
+		result, updateErr := tx.ExecContext(ctx, `UPDATE message_recipients
+SET status='delivered', delivered_at=?
+WHERE message_id=? AND recipient_agent_id=? AND status='queued'`, now, items[index].Message.ID, scope.Agent.ID)
+		if updateErr != nil {
+			return nil, storageFailure("deliver durable-agent inbox message", updateErr)
+		}
+		changed, updateErr := result.RowsAffected()
+		if updateErr != nil {
+			return nil, storageFailure("count durable-agent inbox delivery", updateErr)
+		}
+		if changed != 1 {
+			continue
+		}
+		items[index].Delivery.Status = domain.DeliveryDelivered
+		items[index].Delivery.DeliveredAt = now
+		if _, err := appendEventForActor(ctx, tx, scope.Workspace.ID, "message", items[index].Message.ID, 2,
+			messageDeliveredEvent, "domain-inbox-"+items[index].Message.ID, now, scope.Agent.ID,
+			domain.EventActorIntegration, map[string]any{
+				"recipient_agent_id": scope.Agent.ID,
+				"delivery_surface":   "durable_agent_session",
+			}); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, storageFailure("commit domain session inbox", err)
+	}
+	return items, nil
 }
 
 func (s *Store) RunInbox(ctx context.Context, runID string, limit int) ([]domain.InboxItem, error) {

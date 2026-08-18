@@ -132,6 +132,40 @@ inside that write transaction, so concurrent stale writers cannot both succeed.
 Readiness is a deterministic query over task state and incomplete dependencies;
 it is not stored as an independently drifting boolean.
 
+### M22 domain membership, sessions, and staffing
+
+`domain_agent_memberships` places a workspace agent definition in one Project
+presented as a domain. The optional parent is another active membership in that
+same domain; optional workstream is an Objective in that Project. Triggers and
+Store transactions keep the relation acyclic and same-domain. Parentage,
+preferred entry, name, and role organize owner attention only and grant no
+authority. One domain may have zero, one, or many roots and arbitrary bounded
+depth; `domain-steward` has no special storage meaning.
+
+`domain_agent_session_bindings` binds the durable agent identity to one private
+Codex provider thread and current node fingerprint. Public results expose only
+whether a conversation exists, its bounded readable turns, current thread state,
+and selected checkout directory. Thread IDs, node identity, node fingerprint,
+raw reasoning, credentials, and capability material never cross the public JSON
+boundary. A provider process may exit between turns; the durable binding resumes
+the same thread when possible and records an explicit detached state otherwise.
+
+`domain_agent_tool_receipts` makes each dynamic-tool call replay-safe by exact
+agent/session revision, private call+turn identity, tool, argument hash, response
+hash, status, and bounded response. It never turns provider output into canonical
+knowledge implicitly.
+
+Owner-authored authority for descendant creation is normalized across
+`domain_agent_staffing_grants`, `domain_agent_staffing_profiles`, and
+`domain_agent_staffing_task_classes`. Every successful child atomically inserts
+its agent definition, same-domain membership, immutable
+`domain_agent_staffing_allocations` receipt, and three events. The grant's manager
+membership revision, status/expiry, provider/runtime profile, task class,
+descendant ceiling, cumulative concurrency, and token/cost/time allocation are
+checked in that same transaction. An expired grant is reported as expired at the
+read boundary without appending an event; it cannot authorize a child. A revoke
+racing creation cannot leave a definition without membership or allocation.
+
 ## Runs and deterministic execution
 
 The task state constraint includes `review`, `changes_requested`, and `failed`

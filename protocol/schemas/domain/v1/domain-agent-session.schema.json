@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:domain-agent-session:v1",
+  "title": "Crewfold domain agent session v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project_id", "agent_id", "state", "has_conversation", "revision"],
+  "properties": {
+    "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "agent_id": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
+    "provider": {"type": "string", "pattern": "^[a-z0-9._-]{1,64}$"},
+    "state": {"enum": ["unbound", "ready", "detached"]},
+    "cwd": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "has_conversation": {"type": "boolean"},
+    "revision": {"type": "integer", "minimum": 0},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {"if": {"properties": {"state": {"const": "unbound"}}}, "then": {"properties": {"has_conversation": {"const": false}, "revision": {"const": 0}}}},
+    {"if": {"properties": {"state": {"enum": ["ready", "detached"]}}}, "then": {"required": ["provider", "cwd", "created_at", "updated_at"], "properties": {"has_conversation": {"const": true}, "revision": {"minimum": 1}}}}
+  ]
+}

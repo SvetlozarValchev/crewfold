@@ -557,6 +557,83 @@ type UpdateAgentCommand struct {
 	CorrelationID       string
 }
 
+type AttachDomainAgentCommand struct {
+	WorkspaceIdentifier   string
+	ProjectIdentifier     string
+	AgentIdentifier       string
+	ParentAgentIdentifier string
+	WorkstreamIdentifier  string
+	PreferredEntry        bool
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type CreateDomainAgentCommand struct {
+	WorkspaceIdentifier   string
+	ProjectIdentifier     string
+	Name                  string
+	Role                  string
+	Provider              string
+	Runtime               string
+	MaxConcurrency        int
+	ParentAgentIdentifier string
+	WorkstreamIdentifier  string
+	PreferredEntry        bool
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type UpdateDomainAgentCommand struct {
+	WorkspaceIdentifier   string
+	ProjectIdentifier     string
+	AgentIdentifier       string
+	ParentAgentIdentifier *string
+	WorkstreamIdentifier  *string
+	PreferredEntry        *bool
+	Status                *string
+	ExpectedRevision      int64
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type CreateDomainAgentStaffingGrantCommand struct {
+	WorkspaceIdentifier        string
+	ProjectIdentifier          string
+	ManagerAgentIdentifier     string
+	ExpectedMembershipRevision int64
+	Profiles                   []domain.DomainAgentStaffingProfile
+	TaskClasses                []string
+	MaxDescendants             int
+	MaxConcurrency             int
+	Budget                     domain.Budget
+	ExpiresAt                  string
+	IdempotencyKey             string
+	CorrelationID              string
+}
+
+type RevokeDomainAgentStaffingGrantCommand struct {
+	WorkspaceIdentifier string
+	GrantID             string
+	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type CreateDomainAgentChildCommand struct {
+	ThreadID       string
+	GrantID        string
+	Name           string
+	Role           string
+	Provider       string
+	Runtime        string
+	MaxConcurrency int
+	Workstream     string
+	TaskClass      string
+	Budget         domain.Budget
+	IdempotencyKey string
+	CorrelationID  string
+}
+
 type CreateObjectiveCommand struct {
 	WorkspaceIdentifier string
 	ProjectIdentifier   string
@@ -731,19 +808,20 @@ type PublishRunArtifactCommand struct {
 }
 
 type SendMessageCommand struct {
-	WorkspaceIdentifier string
-	SenderRunID         string
-	RecipientAgent      string
-	ThreadID            string
-	ProjectIdentifier   string
-	TaskID              string
-	Kind                string
-	Subject             string
-	Body                string
-	ArtifactIDs         []string
-	ReplyToMessageID    string
-	IdempotencyKey      string
-	CorrelationID       string
+	WorkspaceIdentifier  string
+	SenderRunID          string
+	SenderDomainThreadID string
+	RecipientAgent       string
+	ThreadID             string
+	ProjectIdentifier    string
+	TaskID               string
+	Kind                 string
+	Subject              string
+	Body                 string
+	ArtifactIDs          []string
+	ReplyToMessageID     string
+	IdempotencyKey       string
+	CorrelationID        string
 }
 
 type CreateParticipantThreadCommand struct {

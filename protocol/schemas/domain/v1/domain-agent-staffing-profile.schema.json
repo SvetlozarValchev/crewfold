@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:domain-agent-staffing-profile:v1",
+  "title": "Crewfold domain agent staffing profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["provider", "runtime", "max_concurrency"],
+  "properties": {
+    "provider": {"type": "string", "minLength": 1, "maxLength": 128},
+    "runtime": {"type": "string", "minLength": 1, "maxLength": 128},
+    "max_concurrency": {"type": "integer", "minimum": 1, "maximum": 100}
+  }
+}

@@ -135,6 +135,174 @@ CREATE TABLE objectives (
     updated_by TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE domain_agent_memberships (
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    agent_id TEXT PRIMARY KEY REFERENCES agents(id),
+    parent_agent_id TEXT REFERENCES agents(id),
+    workstream_id TEXT REFERENCES objectives(id),
+    preferred_entry INTEGER NOT NULL CHECK (preferred_entry IN (0, 1)),
+    status TEXT NOT NULL CHECK (status IN ('active', 'retired')),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL CHECK (created_by = 'local-owner'),
+    updated_by TEXT NOT NULL CHECK (updated_by = 'local-owner'),
+    UNIQUE (project_id, agent_id),
+    CHECK (parent_agent_id IS NULL OR parent_agent_id <> agent_id),
+    CHECK (status = 'active' OR preferred_entry = 0),
+    FOREIGN KEY (project_id, parent_agent_id)
+      REFERENCES domain_agent_memberships(project_id, agent_id)
+      DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE domain_agent_session_bindings (
+    project_id TEXT NOT NULL,
+    agent_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL CHECK (
+        length(CAST(provider AS BLOB)) BETWEEN 1 AND 64
+        AND provider = lower(provider)
+        AND provider NOT GLOB '*[^a-z0-9._-]*'
+    ),
+    node_id TEXT NOT NULL CHECK (
+        length(node_id) = 32 AND node_id NOT GLOB '*[^0-9a-f]*'
+    ),
+    node_fingerprint TEXT NOT NULL CHECK (
+        length(node_fingerprint) = 64
+        AND node_fingerprint NOT GLOB '*[^0-9a-f]*'
+    ),
+    thread_id TEXT NOT NULL CHECK (
+        length(CAST(thread_id AS BLOB)) BETWEEN 1 AND 512
+        AND instr(thread_id, char(0)) = 0
+    ),
+    cwd TEXT NOT NULL CHECK (
+        length(CAST(cwd AS BLOB)) BETWEEN 1 AND 4096
+        AND substr(cwd, 1, 1) = '/'
+        AND instr(cwd, char(0)) = 0
+    ),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (project_id, agent_id),
+    UNIQUE (node_fingerprint, provider, thread_id),
+    FOREIGN KEY (project_id, agent_id)
+      REFERENCES domain_agent_memberships(project_id, agent_id)
+) STRICT;
+
+CREATE TABLE domain_agent_tool_receipts (
+    id TEXT PRIMARY KEY CHECK (
+        length(id) = 41 AND substr(id, 1, 9) = 'toolrcpt_'
+        AND substr(id, 10) NOT GLOB '*[^0-9a-f]*'
+    ),
+    project_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    session_revision INTEGER NOT NULL CHECK (session_revision > 0),
+    call_id TEXT NOT NULL CHECK (
+        length(CAST(call_id AS BLOB)) BETWEEN 1 AND 512
+        AND instr(call_id, char(0)) = 0
+    ),
+    turn_id TEXT NOT NULL CHECK (
+        length(CAST(turn_id AS BLOB)) BETWEEN 1 AND 512
+        AND instr(turn_id, char(0)) = 0
+    ),
+    tool_name TEXT NOT NULL CHECK (
+        length(CAST(tool_name AS BLOB)) BETWEEN 1 AND 128
+        AND tool_name = lower(tool_name)
+        AND tool_name NOT GLOB '*[^a-z0-9._-]*'
+    ),
+    request_sha256 TEXT NOT NULL CHECK (
+        length(request_sha256) = 64
+        AND request_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+    response_sha256 TEXT NOT NULL CHECK (
+        length(response_sha256) = 64
+        AND response_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    response_json TEXT NOT NULL CHECK (
+        json_valid(response_json) AND json_type(response_json) = 'object'
+        AND length(CAST(response_json AS BLOB)) BETWEEN 1 AND 262144
+    ),
+    created_at TEXT NOT NULL,
+    UNIQUE (project_id, agent_id, call_id),
+    FOREIGN KEY (project_id, agent_id)
+      REFERENCES domain_agent_session_bindings(project_id, agent_id)
+) STRICT;
+
+CREATE TABLE domain_agent_staffing_grants (
+    id TEXT PRIMARY KEY CHECK (
+        length(id) = 43 AND substr(id, 1, 11) = 'staffgrant_'
+        AND substr(id, 12) NOT GLOB '*[^0-9a-f]*'
+    ),
+    project_id TEXT NOT NULL,
+    manager_agent_id TEXT NOT NULL,
+    manager_membership_revision INTEGER NOT NULL CHECK (manager_membership_revision > 0),
+    max_descendants INTEGER NOT NULL CHECK (max_descendants BETWEEN 1 AND 1000),
+    max_concurrency INTEGER NOT NULL CHECK (max_concurrency BETWEEN 1 AND 100),
+    budget_tokens INTEGER NOT NULL CHECK (budget_tokens >= 0),
+    budget_cost_cents INTEGER NOT NULL CHECK (budget_cost_cents >= 0),
+    budget_time_seconds INTEGER NOT NULL CHECK (budget_time_seconds >= 0),
+    expires_at TEXT,
+    status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'expired')),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL CHECK (created_by = 'local-owner'),
+    updated_by TEXT NOT NULL CHECK (updated_by = 'local-owner'),
+    UNIQUE (id, project_id, manager_agent_id),
+    FOREIGN KEY (project_id, manager_agent_id)
+      REFERENCES domain_agent_memberships(project_id, agent_id)
+) STRICT;
+
+CREATE TABLE domain_agent_staffing_profiles (
+    grant_id TEXT NOT NULL REFERENCES domain_agent_staffing_grants(id),
+    provider TEXT NOT NULL CHECK (length(CAST(provider AS BLOB)) BETWEEN 1 AND 128),
+    runtime TEXT NOT NULL CHECK (length(CAST(runtime AS BLOB)) BETWEEN 1 AND 128),
+    max_concurrency INTEGER NOT NULL CHECK (max_concurrency BETWEEN 1 AND 100),
+    PRIMARY KEY (grant_id, provider, runtime)
+) STRICT;
+
+CREATE TABLE domain_agent_staffing_task_classes (
+    grant_id TEXT NOT NULL REFERENCES domain_agent_staffing_grants(id),
+    task_class TEXT NOT NULL CHECK (
+        length(CAST(task_class AS BLOB)) BETWEEN 1 AND 63
+        AND task_class = lower(task_class)
+        AND task_class NOT GLOB '*[^a-z0-9._-]*'
+    ),
+    PRIMARY KEY (grant_id, task_class)
+) STRICT;
+
+CREATE TABLE domain_agent_staffing_allocations (
+    id TEXT PRIMARY KEY CHECK (
+        length(id) = 43 AND substr(id, 1, 11) = 'staffalloc_'
+        AND substr(id, 12) NOT GLOB '*[^0-9a-f]*'
+    ),
+    grant_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    parent_agent_id TEXT NOT NULL,
+    child_agent_id TEXT NOT NULL UNIQUE,
+    provider TEXT NOT NULL,
+    runtime TEXT NOT NULL,
+    task_class TEXT NOT NULL,
+    budget_tokens INTEGER NOT NULL CHECK (budget_tokens >= 0),
+    budget_cost_cents INTEGER NOT NULL CHECK (budget_cost_cents >= 0),
+    budget_time_seconds INTEGER NOT NULL CHECK (budget_time_seconds >= 0),
+    request_sha256 TEXT NOT NULL CHECK (
+        length(request_sha256) = 64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    event_sequence INTEGER NOT NULL UNIQUE REFERENCES events(sequence),
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    UNIQUE (grant_id, child_agent_id),
+    FOREIGN KEY (grant_id, project_id, parent_agent_id)
+      REFERENCES domain_agent_staffing_grants(id, project_id, manager_agent_id),
+    FOREIGN KEY (project_id, child_agent_id)
+      REFERENCES domain_agent_memberships(project_id, agent_id),
+    FOREIGN KEY (grant_id, provider, runtime)
+      REFERENCES domain_agent_staffing_profiles(grant_id, provider, runtime),
+    FOREIGN KEY (grant_id, task_class)
+      REFERENCES domain_agent_staffing_task_classes(grant_id, task_class)
+) STRICT;
+
 CREATE TABLE tasks (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -1412,7 +1580,7 @@ CREATE TABLE "messages" (
     thread_id TEXT NOT NULL REFERENCES message_threads(id),
     project_id TEXT REFERENCES projects(id),
     task_id TEXT REFERENCES tasks(id),
-    sender_type TEXT NOT NULL CHECK (sender_type IN ('owner','agent_run','subsystem')),
+    sender_type TEXT NOT NULL CHECK (sender_type IN ('owner','agent_run','durable_agent','subsystem')),
     sender_id TEXT NOT NULL,
     sender_agent_id TEXT REFERENCES agents(id),
     sender_run_id TEXT REFERENCES runs(id),
@@ -1728,6 +1896,175 @@ CREATE INDEX tasks_project_status_idx ON tasks(project_id, status, priority DESC
 CREATE INDEX task_dependencies_depends_idx ON task_dependencies(depends_on_task_id, task_id);
 
 CREATE INDEX task_assignments_agent_status_idx ON task_assignments(agent_id, status);
+
+CREATE UNIQUE INDEX domain_agent_one_preferred_entry_idx
+    ON domain_agent_memberships(project_id)
+    WHERE status = 'active' AND preferred_entry = 1;
+
+CREATE INDEX domain_agent_parent_idx
+    ON domain_agent_memberships(project_id, parent_agent_id, status, agent_id);
+
+CREATE INDEX domain_agent_workstream_idx
+    ON domain_agent_memberships(project_id, workstream_id, status, agent_id);
+
+CREATE INDEX domain_agent_tool_receipts_session_idx
+    ON domain_agent_tool_receipts(project_id, agent_id, created_at, id);
+
+CREATE INDEX domain_agent_staffing_grants_manager_idx
+    ON domain_agent_staffing_grants(project_id, manager_agent_id, status, created_at, id);
+
+CREATE INDEX domain_agent_staffing_allocations_grant_idx
+    ON domain_agent_staffing_allocations(grant_id, created_at, id);
+
+CREATE TRIGGER domain_agent_tool_receipt_reject_update
+BEFORE UPDATE ON domain_agent_tool_receipts
+BEGIN SELECT RAISE(ABORT, 'domain agent tool receipts are immutable'); END;
+
+CREATE TRIGGER domain_agent_tool_receipt_reject_delete
+BEFORE DELETE ON domain_agent_tool_receipts
+BEGIN SELECT RAISE(ABORT, 'domain agent tool receipts are immutable'); END;
+
+CREATE TRIGGER domain_agent_staffing_grant_validate_update
+BEFORE UPDATE ON domain_agent_staffing_grants
+BEGIN
+    SELECT CASE WHEN NEW.id<>OLD.id OR NEW.project_id<>OLD.project_id
+      OR NEW.manager_agent_id<>OLD.manager_agent_id
+      OR NEW.manager_membership_revision<>OLD.manager_membership_revision
+      OR NEW.max_descendants<>OLD.max_descendants OR NEW.max_concurrency<>OLD.max_concurrency
+      OR NEW.budget_tokens<>OLD.budget_tokens OR NEW.budget_cost_cents<>OLD.budget_cost_cents
+      OR NEW.budget_time_seconds<>OLD.budget_time_seconds OR NEW.expires_at IS NOT OLD.expires_at
+      OR NEW.created_at<>OLD.created_at OR NEW.created_by<>OLD.created_by
+      OR OLD.status<>'active' OR NEW.status NOT IN ('revoked','expired')
+      OR NEW.revision<>OLD.revision+1 OR NEW.updated_by<>'local-owner'
+      THEN RAISE(ABORT, 'domain staffing grants are immutable except terminal lifecycle') END;
+END;
+
+CREATE TRIGGER domain_agent_staffing_grant_validate_insert
+BEFORE INSERT ON domain_agent_staffing_grants
+BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1 FROM domain_agent_memberships manager
+        WHERE manager.project_id=NEW.project_id AND manager.agent_id=NEW.manager_agent_id
+          AND manager.status='active' AND manager.revision=NEW.manager_membership_revision
+    ) OR crewfold_timestamp_canonical(NEW.created_at)<>1
+      OR NEW.updated_at<>NEW.created_at OR NEW.status<>'active' OR NEW.revision<>1
+      OR (NEW.expires_at IS NOT NULL AND (
+          crewfold_timestamp_canonical(NEW.expires_at)<>1
+          OR crewfold_timestamp_key(NEW.expires_at)<=crewfold_timestamp_key(NEW.created_at)
+      ))
+      THEN RAISE(ABORT, 'domain staffing grant scope or lifecycle is invalid') END;
+END;
+
+CREATE TRIGGER domain_agent_staffing_grant_reject_delete
+BEFORE DELETE ON domain_agent_staffing_grants
+BEGIN SELECT RAISE(ABORT, 'domain staffing grants are durable authority'); END;
+
+CREATE TRIGGER domain_agent_staffing_profile_reject_update
+BEFORE UPDATE ON domain_agent_staffing_profiles
+BEGIN SELECT RAISE(ABORT, 'domain staffing profiles are immutable authority'); END;
+
+CREATE TRIGGER domain_agent_staffing_profile_reject_delete
+BEFORE DELETE ON domain_agent_staffing_profiles
+BEGIN SELECT RAISE(ABORT, 'domain staffing profiles are immutable authority'); END;
+
+CREATE TRIGGER domain_agent_staffing_task_class_reject_update
+BEFORE UPDATE ON domain_agent_staffing_task_classes
+BEGIN SELECT RAISE(ABORT, 'domain staffing task classes are immutable authority'); END;
+
+CREATE TRIGGER domain_agent_staffing_task_class_reject_delete
+BEFORE DELETE ON domain_agent_staffing_task_classes
+BEGIN SELECT RAISE(ABORT, 'domain staffing task classes are immutable authority'); END;
+
+CREATE TRIGGER domain_agent_staffing_allocation_reject_update
+BEFORE UPDATE ON domain_agent_staffing_allocations
+BEGIN SELECT RAISE(ABORT, 'domain staffing allocations are immutable receipts'); END;
+
+CREATE TRIGGER domain_agent_staffing_allocation_reject_delete
+BEFORE DELETE ON domain_agent_staffing_allocations
+BEGIN SELECT RAISE(ABORT, 'domain staffing allocations are immutable receipts'); END;
+
+CREATE TRIGGER domain_agent_staffing_allocation_validate_insert
+BEFORE INSERT ON domain_agent_staffing_allocations
+BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1 FROM domain_agent_staffing_grants grant
+        JOIN domain_agent_memberships parent
+          ON parent.project_id=grant.project_id AND parent.agent_id=grant.manager_agent_id
+        JOIN domain_agent_memberships child
+          ON child.project_id=grant.project_id AND child.agent_id=NEW.child_agent_id
+        JOIN agents child_agent ON child_agent.id=child.agent_id
+        JOIN events event ON event.sequence=NEW.event_sequence
+        WHERE grant.id=NEW.grant_id AND grant.project_id=NEW.project_id
+          AND grant.manager_agent_id=NEW.parent_agent_id AND grant.status='active'
+          AND grant.manager_membership_revision=parent.revision AND parent.status='active'
+          AND child.parent_agent_id=parent.agent_id AND child.status='active'
+          AND child_agent.provider=NEW.provider AND child_agent.runtime=NEW.runtime
+          AND event.type='domain.child_created' AND event.entity_type='domain_staffing_allocation'
+          AND event.entity_id=NEW.id AND event.entity_revision=1
+          AND event.actor_type='integration' AND event.actor_id=NEW.parent_agent_id
+          AND event.occurred_at=NEW.created_at
+    ) OR crewfold_timestamp_canonical(NEW.created_at)<>1
+      THEN RAISE(ABORT, 'domain staffing allocation scope or receipt is invalid') END;
+END;
+
+CREATE TRIGGER domain_agent_membership_validate_insert
+BEFORE INSERT ON domain_agent_memberships
+BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1 FROM projects project JOIN agents agent
+          ON agent.id = NEW.agent_id AND agent.workspace_id = project.workspace_id
+        WHERE project.id = NEW.project_id
+    ) THEN RAISE(ABORT, 'domain agent must share the domain workspace') END;
+    SELECT CASE WHEN NEW.workstream_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM objectives objective
+        WHERE objective.id = NEW.workstream_id AND objective.project_id = NEW.project_id
+    ) THEN RAISE(ABORT, 'domain agent workstream must belong to the domain') END;
+    SELECT CASE WHEN NEW.parent_agent_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM domain_agent_memberships parent
+        WHERE parent.project_id = NEW.project_id AND parent.agent_id = NEW.parent_agent_id
+          AND parent.status = 'active'
+    ) THEN RAISE(ABORT, 'domain agent parent must be active in the domain') END;
+END;
+
+CREATE TRIGGER domain_agent_membership_validate_update
+BEFORE UPDATE ON domain_agent_memberships
+BEGIN
+    SELECT CASE WHEN NEW.project_id <> OLD.project_id OR NEW.agent_id <> OLD.agent_id
+      OR NEW.created_at <> OLD.created_at OR NEW.created_by <> OLD.created_by
+      THEN RAISE(ABORT, 'domain agent identity is immutable') END;
+    SELECT CASE WHEN NEW.workstream_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM objectives objective
+        WHERE objective.id = NEW.workstream_id AND objective.project_id = NEW.project_id
+    ) THEN RAISE(ABORT, 'domain agent workstream must belong to the domain') END;
+    SELECT CASE WHEN NEW.parent_agent_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM domain_agent_memberships parent
+        WHERE parent.project_id = NEW.project_id AND parent.agent_id = NEW.parent_agent_id
+          AND parent.status = 'active'
+    ) THEN RAISE(ABORT, 'domain agent parent must be active in the domain') END;
+    SELECT CASE WHEN NEW.parent_agent_id IS NOT NULL AND EXISTS (
+        WITH RECURSIVE descendants(agent_id) AS (
+            SELECT child.agent_id FROM domain_agent_memberships child
+            WHERE child.project_id = NEW.project_id AND child.parent_agent_id = NEW.agent_id
+              AND child.status = 'active'
+            UNION ALL
+            SELECT child.agent_id FROM domain_agent_memberships child
+            JOIN descendants prior ON child.parent_agent_id = prior.agent_id
+            WHERE child.project_id = NEW.project_id AND child.status = 'active'
+        )
+        SELECT 1 FROM descendants WHERE agent_id = NEW.parent_agent_id
+    ) THEN RAISE(ABORT, 'domain agent ancestry cycle') END;
+    SELECT CASE WHEN NEW.status = 'retired' AND EXISTS (
+        SELECT 1 FROM domain_agent_memberships child
+        WHERE child.project_id = NEW.project_id AND child.parent_agent_id = NEW.agent_id
+          AND child.status = 'active'
+    ) THEN RAISE(ABORT, 'domain agent with active children cannot retire') END;
+END;
+
+CREATE TRIGGER domain_agent_membership_reject_delete
+BEFORE DELETE ON domain_agent_memberships
+BEGIN
+    SELECT RAISE(ABORT, 'domain agent memberships are durable');
+END;
 
 CREATE UNIQUE INDEX runs_one_live_task_idx
     ON runs(task_id) WHERE status IN ('requested', 'starting', 'active', 'blocked', 'stopping', 'lost');
@@ -4150,7 +4487,28 @@ BEGIN
     ) THEN RAISE(ABORT,'participant message sender is outside its bound scope') END;
     SELECT CASE WHEN NEW.sender_type='owner' AND (NEW.sender_id<>'local-owner' OR NEW.sender_agent_id IS NOT NULL OR NEW.sender_run_id IS NOT NULL OR NEW.project_id IS NOT NULL OR NEW.task_id IS NOT NULL)
         THEN RAISE(ABORT,'owner participant messages cannot impersonate an agent') END;
+    SELECT CASE WHEN NEW.sender_type='durable_agent'
+        THEN RAISE(ABORT,'durable-agent sessions cannot impersonate task-bound thread participants') END;
     SELECT CASE WHEN NEW.sender_type='subsystem' THEN RAISE(ABORT,'check notifications require direct threads') END;
+END;
+
+CREATE TRIGGER durable_agent_message_validate_insert
+BEFORE INSERT ON messages
+WHEN NEW.sender_type='durable_agent'
+BEGIN
+    SELECT CASE WHEN NEW.sender_run_id IS NOT NULL OR NEW.sender_agent_id IS NULL
+      OR NEW.sender_id<>NEW.sender_agent_id OR NEW.project_id IS NULL OR NEW.task_id IS NOT NULL
+      OR NOT EXISTS (
+        SELECT 1 FROM agents agent
+        JOIN domain_agent_memberships membership
+          ON membership.agent_id=agent.id AND membership.project_id=NEW.project_id
+        JOIN domain_agent_session_bindings binding
+          ON binding.project_id=membership.project_id AND binding.agent_id=membership.agent_id
+        JOIN projects project ON project.id=membership.project_id
+        WHERE agent.id=NEW.sender_agent_id AND agent.workspace_id=NEW.workspace_id
+          AND project.workspace_id=NEW.workspace_id AND agent.enabled=1 AND membership.status='active'
+      )
+      THEN RAISE(ABORT,'durable-agent message lacks an active session-bound domain sender') END;
 END;
 
 CREATE TRIGGER message_reject_update BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT,'messages are immutable'); END;

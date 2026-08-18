@@ -1441,6 +1441,63 @@ M20 adds these stable failures; no deprecated aliases are accepted:
 | `resource_limit_exceeded` | no | a documented manifest/report/load safety bound was exceeded |
 | `operation_cancelled` | yes | cancellation occurred before publication/commit |
 
+## M22 domains and durable agent sessions
+
+M22 presents an existing canonical Project as a domain and an Objective as a
+workstream. These are current presentation meanings, not compatibility aliases
+and not new authority containers. A repository or checkout is an attached
+resource; it is not the domain's identity. Agent names such as `domain-steward`,
+`lead`, `reviewer`, or `builder` are ordinary owner-authored names and descriptive
+roles. None is reserved, required, or authority-bearing.
+
+The strict domain-agent methods are:
+
+| Method | Effect |
+| --- | --- |
+| `domain.agent.create` | owner atomically creates one agent definition and its membership in the selected domain |
+| `domain.agent.attach` | attach an existing workspace agent definition to the selected domain |
+| `domain.agent.update` | revise parent, workstream, preferred entry, or active/retired state with optimistic revision checking |
+| `domain.agent.tree` | return the flat, canonically ordered definition+membership set from which clients render the proven-acyclic hierarchy |
+| `domain.agent.session.open` | bind or resume the selected agent's private Codex provider thread in one attached checkout |
+| `domain.agent.session.show` | read bounded owner/agent turns and structured activity without exposing provider thread or node identifiers |
+| `domain.agent.session.send` | send one exact owner message to that durable agent's provider conversation |
+| `domain.agent.session.interrupt` | interrupt the exact current turn; it does not retire the agent or discard the durable conversation |
+| `domain.agent.staffing_grant.create` | owner grants one agent bounded authority to create continuing durable descendants |
+| `domain.agent.staffing_grant.list` | list the manager's exact active, revoked, and derived-expired grants |
+| `domain.agent.staffing_grant.revoke` | revoke one exact current grant revision |
+
+`domain.agent.create` accepts exact workspace/project/name/role/provider/runtime,
+`max_concurrency`, optional parent/workstream/preferred-entry, and an idempotency
+key. Its result contains the joined agent plus the two committed event sequences.
+Creation does not open a provider session, create a task, launch a run, grant
+staffing authority, or infer authority from the chosen parent or role.
+
+A staffing grant freezes: the manager membership revision; allowed
+provider/runtime/max-concurrency profiles; task-class slugs; descendant and total
+concurrency ceilings; cumulative token/cost/time allocation; optional expiry; and
+its own revision. Child creation is a provider-originated structured tool effect,
+not prose interpretation. Grant scope, current manager membership, expiry,
+profile, task class, descendant count, concurrency, budget, domain, and
+idempotency are checked together in the child-creation transaction. Revocation
+racing a child request therefore yields either one fully recorded child under the
+still-current grant or a denial with no partial agent/membership/allocation.
+
+Every opened durable Codex thread is advertised exactly three Crewfold dynamic
+tools:
+
+- `crewfold_get_domain_context`: bounded domain, hierarchy, attached resources,
+  workstreams, assignment, delivered inbox, and current staffing grants;
+- `crewfold_send_message`: one immutable typed message to another active durable
+  agent in the same domain; and
+- `crewfold_create_durable_child`: one typed child request under an explicit
+  current staffing grant.
+
+Each tool exchange has a durable, replay-safe receipt. Tool and session results
+exclude the provider thread ID, node identity/fingerprint, capability material,
+private reasoning, and raw transcript. Provider activity is bounded display data;
+accepted messages, hierarchy, grants, tasks, evidence, and knowledge remain
+canonical Crewfold state.
+
 ## Socket startup safety
 
 When the requested socket path already exists, Crewfold behaves conservatively:

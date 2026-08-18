@@ -21,6 +21,14 @@
       }
     },
     {
+      "if": {"properties": {"sender_type": {"const": "durable_agent"}}, "required": ["sender_type"]},
+      "then": {
+        "required": ["project_id", "sender_agent_id", "sender_agent_name"],
+        "properties": {"sender_id": {"pattern": "^agent_[0-9a-f]{32}$"}},
+        "not": {"anyOf": [{"required": ["task_id"]}, {"required": ["sender_run_id"]}]}
+      }
+    },
+    {
       "if": {"properties": {"sender_type": {"const": "subsystem"}}, "required": ["sender_type"]},
       "then": {
         "properties": {"sender_id": {"const": "crewfold-check-worker"}},
@@ -34,7 +42,7 @@
     "thread_id": {"type": "string", "pattern": "^thread_[0-9a-f]{32}$"},
     "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
     "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
-    "sender_type": {"enum": ["owner", "agent_run", "subsystem"]},
+    "sender_type": {"enum": ["owner", "agent_run", "durable_agent", "subsystem"]},
     "sender_id": {"type": "string", "minLength": 1},
     "sender_agent_id": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
     "sender_agent_name": {"type": "string", "minLength": 1, "maxLength": 63},

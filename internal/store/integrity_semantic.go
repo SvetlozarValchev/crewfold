@@ -50,6 +50,45 @@ UNION ALL
 SELECT 'objective:'||objective.id FROM objectives objective JOIN projects project ON project.id=objective.project_id
 WHERE objective.workspace_id<>project.workspace_id
 UNION ALL
+SELECT 'domain_agent:'||membership.agent_id FROM domain_agent_memberships membership
+JOIN projects project ON project.id=membership.project_id
+JOIN agents agent ON agent.id=membership.agent_id
+LEFT JOIN domain_agent_memberships parent
+  ON parent.project_id=membership.project_id AND parent.agent_id=membership.parent_agent_id
+LEFT JOIN objectives workstream ON workstream.id=membership.workstream_id
+WHERE agent.workspace_id<>project.workspace_id
+   OR (membership.parent_agent_id IS NOT NULL AND (parent.agent_id IS NULL OR parent.status<>'active'))
+   OR (workstream.id IS NOT NULL AND workstream.project_id<>membership.project_id)
+   OR (membership.status='retired' AND membership.preferred_entry<>0)
+UNION ALL
+SELECT 'domain_agent_session:'||binding.agent_id FROM domain_agent_session_bindings binding
+JOIN domain_agent_memberships membership
+  ON membership.project_id=binding.project_id AND membership.agent_id=binding.agent_id
+WHERE membership.status<>'active'
+UNION ALL
+SELECT 'domain_agent_tool_receipt:'||receipt.id FROM domain_agent_tool_receipts receipt
+LEFT JOIN domain_agent_session_bindings binding
+  ON binding.project_id=receipt.project_id AND binding.agent_id=receipt.agent_id
+WHERE binding.agent_id IS NULL OR receipt.session_revision<>binding.revision
+   OR receipt.response_sha256<>lower(hex(sha256(CAST(receipt.response_json AS BLOB))))
+   OR (receipt.status='succeeded')<>(json_extract(receipt.response_json,'$.success')=1)
+UNION ALL
+SELECT 'domain_staffing_grant:'||grant.id FROM domain_agent_staffing_grants grant
+JOIN domain_agent_memberships manager
+  ON manager.project_id=grant.project_id AND manager.agent_id=grant.manager_agent_id
+WHERE grant.manager_membership_revision>manager.revision
+   OR NOT EXISTS(SELECT 1 FROM domain_agent_staffing_profiles profile WHERE profile.grant_id=grant.id)
+   OR NOT EXISTS(SELECT 1 FROM domain_agent_staffing_task_classes class WHERE class.grant_id=grant.id)
+UNION ALL
+SELECT 'domain_staffing_allocation:'||allocation.id FROM domain_agent_staffing_allocations allocation
+JOIN domain_agent_staffing_grants grant ON grant.id=allocation.grant_id
+JOIN domain_agent_memberships child
+  ON child.project_id=allocation.project_id AND child.agent_id=allocation.child_agent_id
+JOIN agents child_agent ON child_agent.id=allocation.child_agent_id
+WHERE allocation.project_id<>grant.project_id OR allocation.parent_agent_id<>grant.manager_agent_id
+   OR child.parent_agent_id<>allocation.parent_agent_id
+   OR child_agent.provider<>allocation.provider OR child_agent.runtime<>allocation.runtime
+UNION ALL
 SELECT 'task:'||task.id FROM tasks task JOIN projects project ON project.id=task.project_id
 LEFT JOIN objectives objective ON objective.id=task.objective_id
 WHERE task.workspace_id<>project.workspace_id
@@ -67,9 +106,66 @@ SELECT 'project:'||id AS sample FROM projects WHERE crewfold_timestamp_canonical
 UNION ALL SELECT 'repository:'||id FROM repositories WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR json_type(root_commits_json)<>'array'
 UNION ALL SELECT 'checkout:'||id FROM checkouts WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR crewfold_timestamp_canonical(observed_at)<>1 OR json_type(dirty_paths_json)<>'array'
 UNION ALL SELECT 'agent:'||id FROM agents WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1
+UNION ALL SELECT 'domain_agent:'||agent_id FROM domain_agent_memberships WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR updated_at<created_at
+UNION ALL SELECT 'domain_agent_session:'||agent_id FROM domain_agent_session_bindings
+WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR updated_at<created_at
+UNION ALL SELECT 'domain_agent_tool_receipt:'||id FROM domain_agent_tool_receipts
+WHERE crewfold_timestamp_canonical(created_at)<>1 OR json_type(response_json)<>'object'
+UNION ALL SELECT 'domain_staffing_grant:'||id FROM domain_agent_staffing_grants
+WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR updated_at<created_at
+   OR (expires_at IS NOT NULL AND crewfold_timestamp_canonical(expires_at)<>1)
+UNION ALL SELECT 'domain_staffing_allocation:'||id FROM domain_agent_staffing_allocations
+WHERE crewfold_timestamp_canonical(created_at)<>1
 UNION ALL SELECT 'objective:'||id FROM objectives WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1
 UNION ALL SELECT 'task:'||id FROM tasks WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1
 UNION ALL SELECT 'assignment:'||id FROM task_assignments WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR crewfold_timestamp_canonical(lease_expires_at)<>1`},
+		{name: "domain_attention_tree", query: `
+WITH RECURSIVE ancestry(project_id,origin_agent_id,agent_id,parent_agent_id,depth) AS (
+  SELECT project_id,agent_id,agent_id,parent_agent_id,0 FROM domain_agent_memberships WHERE status='active'
+  UNION ALL
+  SELECT prior.project_id,prior.origin_agent_id,parent.agent_id,parent.parent_agent_id,prior.depth+1
+  FROM ancestry prior JOIN domain_agent_memberships parent
+    ON parent.project_id=prior.project_id AND parent.agent_id=prior.parent_agent_id
+  WHERE parent.status='active' AND prior.depth<1000
+)
+SELECT 'domain_agent_cycle:'||origin_agent_id AS sample FROM ancestry
+WHERE parent_agent_id=origin_agent_id
+UNION ALL
+SELECT 'domain_agent_event:'||membership.agent_id FROM domain_agent_memberships membership
+LEFT JOIN events event ON event.sequence=(
+  SELECT MAX(candidate.sequence) FROM events candidate
+  WHERE candidate.entity_type='domain_agent' AND candidate.entity_id=membership.agent_id
+)
+WHERE event.sequence IS NULL OR event.type NOT IN ('domain.agent_attached','domain.agent_updated')
+   OR event.workspace_id<>(SELECT workspace_id FROM projects WHERE id=membership.project_id)
+   OR event.entity_revision<>membership.revision OR event.occurred_at<>membership.updated_at
+   OR json_extract(event.data_json,'$.project_id')<>membership.project_id
+   OR json_extract(event.data_json,'$.agent_id')<>membership.agent_id
+   OR json_extract(event.data_json,'$.parent_agent_id')<>COALESCE(membership.parent_agent_id,'')
+   OR json_extract(event.data_json,'$.workstream_id')<>COALESCE(membership.workstream_id,'')
+   OR json_extract(event.data_json,'$.preferred_entry')<>membership.preferred_entry
+   OR json_extract(event.data_json,'$.status')<>membership.status
+UNION ALL
+SELECT 'domain_staffing_grant_event:'||grant.id FROM domain_agent_staffing_grants grant
+JOIN projects project ON project.id=grant.project_id
+LEFT JOIN events event ON event.sequence=(
+  SELECT MAX(candidate.sequence) FROM events candidate
+  WHERE candidate.entity_type='domain_staffing_grant' AND candidate.entity_id=grant.id
+)
+WHERE event.sequence IS NULL OR event.type NOT IN ('domain.staffing_grant_created','domain.staffing_grant_revoked')
+   OR event.workspace_id<>project.workspace_id OR event.entity_revision<>grant.revision
+   OR event.occurred_at<>grant.updated_at OR json_extract(event.data_json,'$.project_id')<>grant.project_id
+   OR json_extract(event.data_json,'$.manager_agent_id')<>grant.manager_agent_id
+   OR json_extract(event.data_json,'$.status')<>grant.status
+UNION ALL
+SELECT 'domain_staffing_allocation_event:'||allocation.id FROM domain_agent_staffing_allocations allocation
+LEFT JOIN events event ON event.sequence=allocation.event_sequence
+WHERE event.sequence IS NULL OR event.type<>'domain.child_created'
+   OR event.entity_type<>'domain_staffing_allocation' OR event.entity_id<>allocation.id OR event.entity_revision<>1
+   OR event.actor_type<>'integration' OR event.actor_id<>allocation.parent_agent_id
+   OR event.occurred_at<>allocation.created_at
+   OR json_extract(event.data_json,'$.grant_id')<>allocation.grant_id
+   OR json_extract(event.data_json,'$.child_agent_id')<>allocation.child_agent_id`},
 	},
 	"run": {
 		{name: "lifecycle_job_and_binding_parity", query: `
@@ -395,8 +491,14 @@ WHERE message.workspace_id<>thread.workspace_id OR (message.project_id IS NOT th
    OR (message.reply_to_message_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM messages reply WHERE reply.id=message.reply_to_message_id AND reply.thread_id=message.thread_id))
 UNION ALL
 SELECT 'sender:'||message.id FROM messages message LEFT JOIN runs run ON run.id=message.sender_run_id
+LEFT JOIN agents sender_agent ON sender_agent.id=message.sender_agent_id
+LEFT JOIN domain_agent_memberships durable_membership
+  ON durable_membership.project_id=message.project_id AND durable_membership.agent_id=message.sender_agent_id
 WHERE (message.sender_type='agent_run' AND (run.id IS NULL OR message.sender_id<>run.id OR message.sender_agent_id<>run.agent_id OR message.workspace_id<>run.workspace_id))
-   OR (message.sender_type<>'agent_run' AND (message.sender_agent_id IS NOT NULL OR message.sender_run_id IS NOT NULL))
+   OR (message.sender_type='durable_agent' AND (message.sender_run_id IS NOT NULL OR message.sender_id<>message.sender_agent_id
+       OR sender_agent.id IS NULL OR sender_agent.workspace_id<>message.workspace_id OR sender_agent.enabled<>1
+       OR message.project_id IS NULL OR message.task_id IS NOT NULL OR durable_membership.status IS NOT 'active'))
+   OR (message.sender_type NOT IN ('agent_run','durable_agent') AND (message.sender_agent_id IS NOT NULL OR message.sender_run_id IS NOT NULL))
 UNION ALL
 SELECT 'recipient:'||recipient.message_id||':'||recipient.recipient_agent_id FROM message_recipients recipient
 WHERE (recipient.status='queued' AND (recipient.delivered_at IS NOT NULL OR recipient.read_at IS NOT NULL OR recipient.acknowledged_at IS NOT NULL))

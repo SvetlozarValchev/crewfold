@@ -118,7 +118,7 @@ google-chrome --headless --disable-gpu --no-sandbox --disable-dev-shm-usage \
   --user-data-dir="$scenario_root/chrome" --virtual-time-budget=2000 \
   --dump-dom "$browser_url" >"$scenario_root/browser.dom" 2>"$scenario_root/browser.stderr"
 grep -Fq 'Bring your repository into the workbench.' "$scenario_root/browser.dom"
-grep -Fq 'Set up your workbench' "$scenario_root/browser.dom"
+grep -Fq 'Set up your first domain' "$scenario_root/browser.dom"
 grep -Fq 'Codex subscription' "$scenario_root/browser.dom"
 grep -Fq 'lucide' "$scenario_root/browser.dom"
 
@@ -142,10 +142,10 @@ do
   sleep 0.01
 done
 debugger_port=$(sed -n '1p' "$flow_profile/DevToolsActivePort")
-node "$repo_root/test/scenarios/web-workbench-shell/browser.mjs" \
+node "$repo_root/test/scenarios/web-workbench-shell/browser-m22.mjs" \
   "$debugger_port" "$scenario_root/world-engine-2" "$scenario_root/browser-flow.json"
 grep -Fq '"iconCount"' "$scenario_root/browser-flow.json"
-grep -Fq '"project-briefing"' "$scenario_root/browser-flow.json"
+grep -Fq '"durable-agent-selection"' "$scenario_root/browser-flow.json"
 kill "$chrome_pid" 2>/dev/null || true
 wait "$chrome_pid" 2>/dev/null || true
 chrome_pid=""

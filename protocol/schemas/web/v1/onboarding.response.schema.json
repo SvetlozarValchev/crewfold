@@ -3,7 +3,7 @@
   "$id": "urn:crewfold:schema:web:onboarding:v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "type", "status", "workspace", "project", "checkout", "agent", "executive", "executive_objective", "executive_task", "executive_binding", "provider_diagnosis", "repository"],
+  "required": ["schema", "type", "status", "workspace", "project", "checkout", "agent", "domain_membership", "provider_diagnosis", "repository"],
   "properties": {
     "schema": {"const": "urn:crewfold:schema:web:onboarding:v1"},
     "type": {"const": "workbench_onboarding"},
@@ -12,10 +12,7 @@
     "project": {"$ref": "../../domain/v1/project.schema.json"},
     "checkout": {"$ref": "../../domain/v1/checkout.schema.json"},
     "agent": {"$ref": "../../domain/v1/agent.schema.json"},
-    "executive": {"$ref": "../../domain/v1/agent.schema.json"},
-    "executive_objective": {"$ref": "../../domain/v1/objective.schema.json"},
-    "executive_task": {"$ref": "../../domain/v1/task.schema.json"},
-    "executive_binding": {"$ref": "owner-conversation.response.schema.json#/properties/executive"},
+    "domain_membership": {"$ref": "../../domain/v1/domain-agent-membership.schema.json"},
     "provider_diagnosis": {
       "type": "object", "additionalProperties": false,
       "required": ["provider", "status", "capabilities"],

@@ -37,7 +37,9 @@ var semanticFamilyRegistry = []semanticFamilyDefinition{
 	}},
 	{name: "project", tables: []string{
 		"projects", "repositories", "project_repositories", "checkouts", "agents",
-		"objectives", "tasks", "task_dependencies", "task_assignments",
+		"objectives", "domain_agent_memberships", "domain_agent_session_bindings", "domain_agent_tool_receipts",
+		"domain_agent_staffing_grants", "domain_agent_staffing_profiles", "domain_agent_staffing_task_classes", "domain_agent_staffing_allocations",
+		"tasks", "task_dependencies", "task_assignments",
 	}},
 	{name: "run", tables: []string{
 		"runs", "run_runtime_bindings", "immutable_artifacts", "run_log_artifacts", "run_loss_resolutions",

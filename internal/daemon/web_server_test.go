@@ -250,7 +250,7 @@ func TestM21WorkbenchRPCRequiresExactCSRFAndExposesOnlyOwnerMethods(t *testing.T
 	}
 }
 
-func TestM21OwnerConversationRunsThroughDurableProjectExecutive(t *testing.T) {
+func TestM22WorkbenchOnboardingCreatesOneArbitraryPreferredDomainAgent(t *testing.T) {
 	t.Parallel()
 
 	config := testConfig(t)
@@ -305,160 +305,34 @@ func TestM21OwnerConversationRunsThroughDurableProjectExecutive(t *testing.T) {
 	}
 	onboardingBody, _ := json.Marshal(map[string]any{
 		"repository_path": repository, "workspace": "personal", "project": "world-engine",
-		"agent": "builder", "provider": "fixture-mcp", "runtime": "direct", "write_mode": "shared",
+		"agent": "builder", "role": "arbitrary coordinator", "provider": "fixture-mcp", "runtime": "direct", "write_mode": "shared",
 	})
 	onboardingRaw := post("/onboarding", onboardingBody)
 	if err := protocolschema.ValidateJSON("web/v1/onboarding.response.schema.json", onboardingRaw); err != nil {
 		t.Fatalf("onboarding response schema = %v: %s", err, onboardingRaw)
 	}
 	var onboarding struct {
-		Workspace domain.Workspace             `json:"workspace"`
-		Project   domain.Project               `json:"project"`
-		Executive domain.AgentDefinition       `json:"executive"`
-		Binding   domain.OwnerExecutiveBinding `json:"executive_binding"`
+		Workspace  domain.Workspace             `json:"workspace"`
+		Project    domain.Project               `json:"project"`
+		Agent      domain.AgentDefinition       `json:"agent"`
+		Membership domain.DomainAgentMembership `json:"domain_membership"`
+		Executive  domain.AgentDefinition       `json:"executive"`
+		Binding    domain.OwnerExecutiveBinding `json:"executive_binding"`
 	}
 	if err := json.Unmarshal(onboardingRaw, &onboarding); err != nil {
 		t.Fatal(err)
 	}
-	if onboarding.Executive.Name != "project-executive" || onboarding.Binding.AgentID != onboarding.Executive.ID {
-		t.Fatalf("onboarding executive = %#v, binding = %#v", onboarding.Executive, onboarding.Binding)
+	if onboarding.Agent.Name != "builder" || onboarding.Agent.Role != "arbitrary coordinator" || onboarding.Membership.AgentID != onboarding.Agent.ID ||
+		onboarding.Membership.ProjectID != onboarding.Project.ID || !onboarding.Membership.PreferredEntry {
+		t.Fatalf("onboarding agent = %#v, membership = %#v", onboarding.Agent, onboarding.Membership)
 	}
-
-	type executiveResult struct {
-		Detail   domain.OwnerTurnDetail        `json:"detail"`
-		Exchange domain.OwnerExecutiveExchange `json:"exchange"`
+	tree, err := api.DomainAgentTree(context.Background(), onboarding.Workspace.ID, onboarding.Project.ID)
+	if err != nil || len(tree.Agents) != 1 || tree.Agents[0].Definition.ID != onboarding.Agent.ID {
+		t.Fatalf("DomainAgentTree() = %#v, %v", tree, err)
 	}
-	submit := func(conversationID, instruction, key string) executiveResult {
-		t.Helper()
-		body := map[string]any{"workspace": onboarding.Workspace.ID, "project": onboarding.Project.ID, "instruction": instruction, "idempotency_key": key}
-		if conversationID != "" {
-			body["conversation_id"] = conversationID
-		}
-		raw, _ := json.Marshal(body)
-		response := post("/intent", raw)
-		if err := protocolschema.ValidateJSON("web/v1/owner-intent.response.schema.json", response); err != nil {
-			t.Fatalf("owner executive response schema = %v: %s", err, response)
-		}
-		var result executiveResult
-		if err := json.Unmarshal(response, &result); err != nil {
-			t.Fatal(err)
-		}
-		return result
-	}
-
-	first := submit("", "Explain the current project and propose the next bounded work.", "web-executive-one")
-	replay := submit("", "Explain the current project and propose the next bounded work.", "web-executive-one")
-	if replay.Detail.Turn.ID != first.Detail.Turn.ID || replay.Exchange.ID != first.Exchange.ID {
-		t.Fatalf("owner executive replay changed identity: first=%#v replay=%#v", first, replay)
-	}
-
-	type conversationPage struct {
-		Turns     []domain.OwnerTurnDetail        `json:"turns"`
-		Exchanges []domain.OwnerExecutiveExchange `json:"exchanges"`
-		Executive *domain.OwnerExecutiveBinding   `json:"executive"`
-	}
-	readConversation := func() ([]byte, conversationPage) {
-		t.Helper()
-		response, err := client.Get(origin + session.APIBase + "/conversation?workspace=" + url.QueryEscape(onboarding.Workspace.ID) + "&project=" + url.QueryEscape(onboarding.Project.ID))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer response.Body.Close()
-		raw, err := io.ReadAll(response.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var page conversationPage
-		if err := json.Unmarshal(raw, &page); err != nil {
-			t.Fatal(err)
-		}
-		return raw, page
-	}
-	waitForResponses := func(want int) conversationPage {
-		t.Helper()
-		deadline := time.Now().Add(8 * time.Second)
-		var last conversationPage
-		for time.Now().Before(deadline) {
-			raw, page := readConversation()
-			last = page
-			if err := protocolschema.ValidateJSON("web/v1/owner-conversation.response.schema.json", raw); err != nil {
-				t.Fatalf("owner conversation response schema = %v: %s", err, raw)
-			}
-			respondedOwners := 0
-			turnByID := make(map[string]domain.OwnerTurn, len(page.Turns))
-			for _, detail := range page.Turns {
-				turnByID[detail.Turn.ID] = detail.Turn
-			}
-			for _, exchange := range page.Exchanges {
-				if turnByID[exchange.TurnID].InitiatedBy == "owner" && exchange.Status == "responded" {
-					respondedOwners++
-				}
-			}
-			if respondedOwners == want {
-				return page
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-		if len(last.Exchanges) > 0 && last.Exchanges[0].RunID != "" {
-			logs, _ := api.RunLogs(context.Background(), onboarding.Workspace.ID, last.Exchanges[0].RunID, 0)
-			t.Fatalf("owner executive exchanges did not complete: %#v; logs=%#v", last, logs)
-		}
-		t.Fatalf("owner executive exchanges did not complete: %#v", last)
-		return conversationPage{}
-	}
-
-	settled := waitForResponses(1)
-	if settled.Executive == nil || settled.Executive.ID != onboarding.Binding.ID {
-		t.Fatalf("conversation executive = %#v", settled.Executive)
-	}
-	if turn := settled.Turns[0].Turn; turn.Kind != "instruction" || turn.InitiatedBy != "owner" || turn.Status != "completed" || turn.Answer == "" {
-		t.Fatalf("first executive turn = %#v", turn)
-	}
-	if got := settled.Exchanges[0].ProposalIDs; len(got) != 1 {
-		t.Fatalf("first executive proposal ids = %#v", got)
-	}
-	proposalPage, err := api.ProposalList(context.Background(), localapi.ProposalQueryParams{
-		Workspace: onboarding.Workspace.ID, Project: onboarding.Project.ID, Limit: 100,
-	})
-	if err != nil || len(proposalPage.Proposals) != 1 || proposalPage.Proposals[0].ID != settled.Exchanges[0].ProposalIDs[0] {
-		t.Fatalf("executive proposal list = %#v, %v", proposalPage, err)
-	}
-	accepted, err := api.ProposalAccept(context.Background(), localapi.ProposalDecisionParams{
-		Workspace: onboarding.Workspace.ID, Proposal: proposalPage.Proposals[0].ID, ExpectedRevision: proposalPage.Proposals[0].Revision,
-		DecisionNote: "Accepted the exact reviewed executive proposal.", IdempotencyKey: "web-executive-proposal-accept",
-	})
-	if err != nil || accepted.Proposal.Status != domain.ManagerProposalAccepted || len(accepted.Effects) != 2 || accepted.Effects[0].EntityType != "task" || accepted.Effects[1].EntityType != "scheduling_intent" {
-		t.Fatalf("executive proposal accept = %#v, %v; source=%#v", accepted, err, proposalPage.Proposals[0])
-	}
-	firstRunID := settled.Exchanges[0].RunID
-	firstRun := waitForRunStatus(t, api, firstRunID, domain.RunCompleted)
-	if firstRun.Detail.Task.Status != domain.TaskAssigned || firstRun.Detail.Task.AssignedAgentID != onboarding.Executive.ID {
-		t.Fatalf("executive planning task was consumed by exchange: %#v", firstRun.Detail.Task)
-	}
-	contextResult, err := api.ContextShow(context.Background(), onboarding.Workspace.ID, firstRun.Detail.Run.ContextPacketID)
-	if err != nil {
-		t.Fatalf("ContextShow(executive) = %v", err)
-	}
-	grant := contextResult.Packet.ManagementGrant
-	if grant == nil || !grant.OwnerExecutive || grant.InvocationProfileID != onboarding.Binding.LaunchProfileID ||
-		!containsString(contextResult.Packet.Policy.AllowedTools, "crewfold_get_executive_context") ||
-		!containsString(contextResult.Packet.Policy.AllowedTools, "crewfold_respond_to_owner") {
-		t.Fatalf("executive packet authority = %#v, tools = %#v", grant, contextResult.Packet.Policy.AllowedTools)
-	}
-
-	second := submit(first.Detail.Conversation.ID, "Now summarize what changed since my previous message.", "web-executive-two")
-	if second.Detail.Turn.ID == first.Detail.Turn.ID {
-		t.Fatal("second owner instruction reused the first turn")
-	}
-	settled = waitForResponses(2)
-	var secondExchange domain.OwnerExecutiveExchange
-	for _, exchange := range settled.Exchanges {
-		if exchange.TurnID == second.Detail.Turn.ID {
-			secondExchange = exchange
-		}
-	}
-	if secondExchange.RunID == "" || secondExchange.RunID == firstRunID || secondExchange.Status != "responded" {
-		t.Fatalf("second executive exchange = %#v / %#v", secondExchange, second.Detail.Turn)
+	definitions, err := api.AgentList(context.Background(), localapi.AgentListParams{Workspace: onboarding.Workspace.ID, PageParams: localapi.PageParams{Limit: 100}})
+	if err != nil || len(definitions.Agents) != 1 || definitions.Agents[0].Name == "project-executive" {
+		t.Fatalf("AgentList() = %#v, %v", definitions, err)
 	}
 }
 
@@ -490,7 +364,7 @@ func TestM21WorkbenchOnboardingPreflightsBeforeMutationAndReplaysExactly(t *test
 		t.Helper()
 		body, _ := json.Marshal(map[string]any{
 			"repository_path": filepath.Join(t.TempDir(), "world-engine"), "workspace": "personal", "project": "world-engine",
-			"agent": "builder", "provider": provider, "runtime": "direct", "write_mode": "shared",
+			"agent": "builder", "role": "arbitrary coordinator", "provider": provider, "runtime": "direct", "write_mode": "shared",
 		})
 		request, err := http.NewRequest(http.MethodPost, origin+session.APIBase+"/onboarding", bytes.NewReader(body))
 		if err != nil {
@@ -518,7 +392,7 @@ func TestM21WorkbenchOnboardingPreflightsBeforeMutationAndReplaysExactly(t *test
 
 	// Use one stable path for the exact replay request.
 	path := filepath.Join(t.TempDir(), "world-engine")
-	body, _ := json.Marshal(map[string]any{"repository_path": path, "workspace": "personal", "project": "world-engine", "agent": "builder", "provider": "fixture-mcp", "runtime": "direct", "write_mode": "shared"})
+	body, _ := json.Marshal(map[string]any{"repository_path": path, "workspace": "personal", "project": "world-engine", "agent": "builder", "role": "arbitrary coordinator", "provider": "fixture-mcp", "runtime": "direct", "write_mode": "shared"})
 	validCall := func() []byte {
 		request, _ := http.NewRequest(http.MethodPost, origin+session.APIBase+"/onboarding", bytes.NewReader(body))
 		request.Header.Set("Origin", origin)
@@ -784,7 +658,7 @@ func TestM21HerdrOnboardingRequiresLiveHostBeforeCanonicalMutation(t *testing.T)
 	}
 	body, _ := json.Marshal(map[string]any{
 		"repository_path": filepath.Join(t.TempDir(), "signal-garden"), "workspace": "personal", "project": "signal-garden",
-		"agent": "builder", "provider": "fixture-mcp", "runtime": "herdr", "write_mode": "shared",
+		"agent": "builder", "role": "arbitrary coordinator", "provider": "fixture-mcp", "runtime": "herdr", "write_mode": "shared",
 	})
 	call := func() (int, []byte) {
 		request, _ := http.NewRequest(http.MethodPost, origin+session.APIBase+"/onboarding", bytes.NewReader(body))

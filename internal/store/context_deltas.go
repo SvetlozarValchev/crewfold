@@ -807,7 +807,7 @@ func (s *Store) projectContextChanges(ctx context.Context, tx *sql.Tx, run domai
 		"task.blocked": true, "task.completion_proposed": true, "task.changes_requested": true,
 		"task.completed": true, "task.failed": true, "task.cancelled": true, "task.run_stopped": true,
 		"task.handoff_recorded": true, "task.reassigned": true, "task.role_designated": true,
-		"agent.updated":  true,
+		"agent.updated": true, "domain.agent_attached": true, "domain.agent_updated": true,
 		checkoutObserved: true,
 	}
 	for _, event := range events {

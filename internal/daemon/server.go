@@ -33,43 +33,44 @@ const (
 )
 
 type Config struct {
-	DataDir                   string
-	SocketPath                string
-	WebAddress                string
-	DisableWeb                bool
-	Version                   buildinfo.Info
-	Logger                    *slog.Logger
-	StoreOptions              store.Options
-	GitInspector              gitstate.Inspector
-	RuntimeDrivers            map[string]execution.RuntimeDriver
-	CheckRuntimeDriver        execution.RuntimeDriver
-	ProviderAdapters          map[string]execution.ProviderAdapter
-	RunWorkerHook             func(string, domain.Run) error
-	CheckWorkerHook           func(string, domain.CheckRun) error
-	MessageWake               func(context.Context, domain.MessageWakeJob) error
-	HerdrExecutable           string
-	HerdrSession              string
-	CodexExecutable           string
-	CodexHome                 string
-	CodexSandboxMode          string
-	CodexExternallySandboxed  bool
-	CodexToolNetworkAccess    bool
-	ClaudeExecutable          string
-	ClaudeConfigDir           string
-	ClaudeMaxBudgetUSD        string
-	ClaudeExternallySandboxed bool
-	DisableRunWorker          bool
-	DisableCheckWorker        bool
-	DisableCheckWatcher       bool
-	CheckWatchScanInterval    time.Duration
-	DisableClaimWatcher       bool
-	ClaimScanInterval         time.Duration
-	DisableSupervisor         bool
-	SupervisorScanInterval    time.Duration
-	DisableOwnerManagerReview bool
-	DisableLeaseReconciler    bool
-	LeaseReconcileInterval    time.Duration
-	defaultProviders          bool
+	DataDir                        string
+	SocketPath                     string
+	WebAddress                     string
+	DisableWeb                     bool
+	Version                        buildinfo.Info
+	Logger                         *slog.Logger
+	StoreOptions                   store.Options
+	GitInspector                   gitstate.Inspector
+	RuntimeDrivers                 map[string]execution.RuntimeDriver
+	CheckRuntimeDriver             execution.RuntimeDriver
+	ProviderAdapters               map[string]execution.ProviderAdapter
+	RunWorkerHook                  func(string, domain.Run) error
+	CheckWorkerHook                func(string, domain.CheckRun) error
+	MessageWake                    func(context.Context, domain.MessageWakeJob) error
+	HerdrExecutable                string
+	HerdrSession                   string
+	CodexExecutable                string
+	CodexHome                      string
+	CodexSandboxMode               string
+	CodexExternallySandboxed       bool
+	CodexToolNetworkAccess         bool
+	CodexAppServerTransportFactory func() (execution.CodexAppServerTransport, error)
+	ClaudeExecutable               string
+	ClaudeConfigDir                string
+	ClaudeMaxBudgetUSD             string
+	ClaudeExternallySandboxed      bool
+	DisableRunWorker               bool
+	DisableCheckWorker             bool
+	DisableCheckWatcher            bool
+	CheckWatchScanInterval         time.Duration
+	DisableClaimWatcher            bool
+	ClaimScanInterval              time.Duration
+	DisableSupervisor              bool
+	SupervisorScanInterval         time.Duration
+	DisableOwnerManagerReview      bool
+	DisableLeaseReconciler         bool
+	LeaseReconcileInterval         time.Duration
+	defaultProviders               bool
 }
 
 type server struct {
@@ -109,6 +110,7 @@ type server struct {
 	ownerManagerReviewSignal  chan struct{}
 	ownerExecutiveSignal      chan struct{}
 	web                       *workbenchServer
+	domainSessions            *domainSessionHost
 }
 
 // Run owns the daemon lifecycle until the context is cancelled or system.stop is
@@ -257,7 +259,9 @@ func Run(ctx context.Context, config Config) error {
 		ownerManagerReviewSignal: make(chan struct{}, 1),
 		ownerExecutiveSignal:     make(chan struct{}, 1),
 	}
+	instance.domainSessions = newDomainSessionHost(resolved, instance.handleDomainSessionToolRequest)
 	defer leaseReconcileCancel()
+	defer instance.domainSessions.Close()
 	defer instance.cleanupSocket()
 	if !resolved.DisableWeb {
 		workbench, webErr := newWorkbenchServer(resolved.WebAddress, instance)
@@ -691,6 +695,28 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleAgentShow(request), false
 	case localapi.MethodAgentList:
 		return s.handleAgentList(request), false
+	case localapi.MethodDomainAgentCreate:
+		return s.handleDomainAgentCreate(request), false
+	case localapi.MethodDomainAgentAttach:
+		return s.handleDomainAgentAttach(request), false
+	case localapi.MethodDomainAgentUpdate:
+		return s.handleDomainAgentUpdate(request), false
+	case localapi.MethodDomainAgentTree:
+		return s.handleDomainAgentTree(request), false
+	case localapi.MethodDomainAgentSessionOpen:
+		return s.handleDomainAgentSessionOpen(request), false
+	case localapi.MethodDomainAgentSessionShow:
+		return s.handleDomainAgentSessionShow(request), false
+	case localapi.MethodDomainAgentSessionSend:
+		return s.handleDomainAgentSessionSend(request), false
+	case localapi.MethodDomainAgentSessionInterrupt:
+		return s.handleDomainAgentSessionInterrupt(request), false
+	case localapi.MethodDomainStaffingGrantCreate:
+		return s.handleDomainStaffingGrantCreate(request), false
+	case localapi.MethodDomainStaffingGrantList:
+		return s.handleDomainStaffingGrantList(request), false
+	case localapi.MethodDomainStaffingGrantRevoke:
+		return s.handleDomainStaffingGrantRevoke(request), false
 	case localapi.MethodOwnerCrewConfigure:
 		return s.handleOwnerCrewConfigure(request), false
 	case localapi.MethodObjectiveCreate:

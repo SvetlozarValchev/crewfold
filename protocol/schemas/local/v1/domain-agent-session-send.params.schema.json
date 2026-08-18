@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:domain-agent-session-send-params:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "project", "agent", "text", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "project": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "agent": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
+    "text": {"type": "string", "minLength": 1, "maxLength": 8192},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

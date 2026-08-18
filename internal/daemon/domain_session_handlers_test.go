@@ -1,0 +1,536 @@
+package daemon
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"crewfold/internal/domain"
+	"crewfold/internal/execution"
+	"crewfold/internal/localapi"
+	"crewfold/internal/store"
+)
+
+func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("Git is unavailable: %v", err)
+	}
+	fixture := newCodexDomainSessionFixture(t)
+	config := testConfig(t)
+	config.CodexAppServerTransportFactory = fixture.transport
+	startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+	ctx := context.Background()
+
+	repositoryRoot := t.TempDir()
+	createGitFixture(t, repositoryRoot)
+	workspace, err := client.WorkspaceInit(ctx, "personal", "m22-session-workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := client.ProjectAdd(ctx, workspace.Workspace.Name, "garden", filepath.Join(repositoryRoot, "world-engine"), domain.WriteModeExclusive, "m22-session-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := client.AgentCreate(ctx, localapi.AgentCreateParams{
+		Workspace: workspace.Workspace.Name, Name: "orchid", Role: "owner-defined-whatever",
+		Provider: "codex-subscription", Runtime: "herdr", IdempotencyKey: "m22-session-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, err := client.AgentCreate(ctx, localapi.AgentCreateParams{
+		Workspace: workspace.Workspace.Name, Name: "fern", Role: "another arbitrary durable agent",
+		Provider: "codex-subscription", Runtime: "herdr", IdempotencyKey: "m22-session-recipient-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsupported, err := client.AgentCreate(ctx, localapi.AgentCreateParams{
+		Workspace: workspace.Workspace.Name, Name: "cedar", Role: "non-Codex durable agent",
+		Provider: "claude", Runtime: "herdr", IdempotencyKey: "m22-session-unsupported-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached, err := client.DomainAgentAttach(ctx, localapi.DomainAgentAttachParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		PreferredEntry: true, IdempotencyKey: "m22-session-attach",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DomainAgentAttach(ctx, localapi.DomainAgentAttachParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: recipient.Agent.Name,
+		IdempotencyKey: "m22-session-recipient-attach",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DomainAgentAttach(ctx, localapi.DomainAgentAttachParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: unsupported.Agent.Name,
+		IdempotencyKey: "m22-session-unsupported-attach",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.DomainAgentSessionOpen(ctx, localapi.DomainAgentSessionOpenParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: unsupported.Agent.Name,
+		Checkout: project.Checkout.ID, IdempotencyKey: "m22-open-unsupported",
+	})
+	var apiError *localapi.APIError
+	if !errors.As(err, &apiError) || apiError.Code != store.CodeInvalidDomainAgentSession {
+		t.Fatalf("non-Codex durable session error = %#v", err)
+	}
+	grant, err := client.DomainStaffingGrantCreate(ctx, localapi.DomainStaffingGrantCreateParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, ManagerAgent: agent.Agent.Name,
+		ExpectedMembershipRevision: attached.Membership.Revision,
+		Profiles:                   []domain.DomainAgentStaffingProfile{{Provider: "codex-subscription", Runtime: "herdr", MaxConcurrency: 1}},
+		TaskClasses:                []string{"reviewer"}, MaxDescendants: 1, MaxConcurrency: 1,
+		Budget: domain.Budget{TokenLimit: 100, CostCents: 100, TimeSeconds: 300}, IdempotencyKey: "m22-session-staffing-grant",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.setGrantID(grant.Grant.ID)
+
+	unbound, err := client.DomainAgentSessionShow(ctx, workspace.Workspace.Name, project.Project.Name, agent.Agent.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unbound.View.Session.State != domain.DomainAgentSessionUnbound || len(unbound.View.Turns) != 0 {
+		t.Fatalf("unbound session = %#v", unbound)
+	}
+	opened, err := client.DomainAgentSessionOpen(ctx, localapi.DomainAgentSessionOpenParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		Checkout: project.Checkout.ID, IdempotencyKey: "m22-open-orchid",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.View.Session.State != domain.DomainAgentSessionReady || opened.View.Session.Provider != "codex" || !opened.View.Session.HasConversation {
+		t.Fatalf("opened session = %#v", opened)
+	}
+	if len(opened.View.Turns) != 0 {
+		t.Fatalf("fresh unmaterialized thread exposed turns = %#v", opened.View.Turns)
+	}
+
+	sent, err := client.DomainAgentSessionSend(ctx, localapi.DomainAgentSessionSendParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		Text: "continue the exact work", IdempotencyKey: "m22-turn-one",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sent.AcceptedTurn == nil || sent.AcceptedTurn.ID != "turn-new" || sent.AcceptedTurn.Status != "inProgress" {
+		t.Fatalf("accepted turn = %#v", sent.AcceptedTurn)
+	}
+	replayed, err := client.DomainAgentSessionSend(ctx, localapi.DomainAgentSessionSendParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		Text: "continue the exact work", IdempotencyKey: "m22-turn-one",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.AcceptedTurn == nil || replayed.AcceptedTurn.ID != "turn-new" || fixture.turnStarts() != 1 {
+		t.Fatalf("idempotent replay = %#v, turn starts = %d", replayed.AcceptedTurn, fixture.turnStarts())
+	}
+	interrupted, err := client.DomainAgentSessionInterrupt(ctx, localapi.DomainAgentSessionInterruptParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name, TurnID: "turn-new",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interrupted.View.ThreadStatus != "idle" || fixture.interrupts() != 1 {
+		t.Fatalf("interrupted session = %#v, interrupts = %d", interrupted, fixture.interrupts())
+	}
+	raw, err := json.Marshal(interrupted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, private := range []string{"thread-private-019", "node_id", "node_fingerprint", "thread_id"} {
+		if strings.Contains(string(raw), private) {
+			t.Fatalf("public session leaked %q: %s", private, raw)
+		}
+	}
+	if !fixture.sawArbitraryAgentInstructions() {
+		t.Fatal("thread/start did not bind the arbitrary orchid agent and its authority-neutral role")
+	}
+	inbox, err := client.InboxList(ctx, workspace.Workspace.Name, recipient.Agent.Name, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].Message.SenderType != "durable_agent" ||
+		inbox.Items[0].Message.SenderAgentName != agent.Agent.Name || inbox.Items[0].Message.Body != "freeze the shared interface before changing it" {
+		t.Fatalf("durable agent message inbox = %#v", inbox.Items)
+	}
+	tree, err := client.DomainAgentTree(ctx, workspace.Workspace.Name, project.Project.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var childCount int
+	for _, candidate := range tree.Agents {
+		if candidate.Definition.Name == "moss-reviewer" && candidate.Membership.ParentAgentID == agent.Agent.ID {
+			childCount++
+		}
+	}
+	if childCount != 1 {
+		t.Fatalf("durable child tree = %#v", tree.Agents)
+	}
+}
+
+type codexDomainSessionFixture struct {
+	t              *testing.T
+	mu             sync.Mutex
+	turnStartCount int
+	interruptCount int
+	startedParams  map[string]any
+	turnExists     bool
+	toolChecks     int
+	grantID        string
+}
+
+func newCodexDomainSessionFixture(t *testing.T) *codexDomainSessionFixture {
+	return &codexDomainSessionFixture{t: t}
+}
+
+func (fixture *codexDomainSessionFixture) transport() (execution.CodexAppServerTransport, error) {
+	clientSide, serverSide := net.Pipe()
+	go fixture.serve(serverSide)
+	return clientSide, nil
+}
+
+func (fixture *codexDomainSessionFixture) serve(connection net.Conn) {
+	defer connection.Close()
+	scanner := bufio.NewScanner(connection)
+	encoder := json.NewEncoder(connection)
+	for scanner.Scan() {
+		var request map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+			fixture.t.Errorf("decode app-server request: %v", err)
+			return
+		}
+		method, _ := request["method"].(string)
+		id, hasID := request["id"]
+		if method == "initialized" {
+			continue
+		}
+		var result any
+		switch method {
+		case "initialize":
+			result = map[string]any{"codexHome": "/private/codex", "platformFamily": "unix", "platformOs": "linux", "userAgent": "fixture"}
+		case "thread/start":
+			params, _ := request["params"].(map[string]any)
+			fixture.mu.Lock()
+			fixture.startedParams = params
+			fixture.mu.Unlock()
+			result = map[string]any{"thread": map[string]any{
+				"id": "thread-private-019", "cwd": "/work", "ephemeral": false, "modelProvider": "openai",
+				"status": map[string]any{"type": "idle"}, "turns": []any{},
+			}}
+		case "thread/resume", "thread/read":
+			fixture.mu.Lock()
+			turnExists := fixture.turnExists
+			fixture.mu.Unlock()
+			status := "idle"
+			if turnExists {
+				status = "active"
+			}
+			result = map[string]any{"thread": fixture.thread(status)}
+		case "turn/start":
+			params, _ := request["params"].(map[string]any)
+			if params["clientUserMessageId"] != "crewfold:m22-turn-one" {
+				fixture.t.Errorf("clientUserMessageId = %#v", params["clientUserMessageId"])
+				return
+			}
+			fixture.requireDomainToolResponse(scanner, encoder, 7001, "not_advertised", "thread-private-019", false)
+			fixture.requireDomainToolResponse(scanner, encoder, 7002, domainToolContext, "foreign-thread", false)
+			fixture.requireDomainToolResponse(scanner, encoder, 7003, domainToolContext, "thread-private-019", true)
+			fixture.requireDomainMessageToolResponse(scanner, encoder, 7004)
+			fixture.requireDomainMessageToolResponse(scanner, encoder, 7005)
+			fixture.requireDomainChildToolResponse(scanner, encoder, 7006)
+			fixture.requireDomainChildToolResponse(scanner, encoder, 7007)
+			fixture.mu.Lock()
+			fixture.turnStartCount++
+			fixture.turnExists = true
+			fixture.mu.Unlock()
+			result = map[string]any{"turn": fixture.newTurn("inProgress")}
+		case "turn/interrupt":
+			fixture.mu.Lock()
+			fixture.interruptCount++
+			fixture.turnExists = false
+			fixture.mu.Unlock()
+			result = map[string]any{}
+		case "thread/delete":
+			result = map[string]any{}
+		default:
+			fixture.t.Errorf("unexpected app-server method %q", method)
+			return
+		}
+		if !hasID {
+			fixture.t.Errorf("app-server method %q has no id", method)
+			return
+		}
+		if err := encoder.Encode(map[string]any{"id": id, "result": result}); err != nil {
+			return
+		}
+	}
+}
+
+func (fixture *codexDomainSessionFixture) setGrantID(value string) {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	fixture.grantID = value
+}
+
+func (fixture *codexDomainSessionFixture) requireDomainChildToolResponse(scanner *bufio.Scanner, encoder *json.Encoder, id int64) {
+	fixture.t.Helper()
+	fixture.mu.Lock()
+	grantID := fixture.grantID
+	fixture.mu.Unlock()
+	if err := encoder.Encode(map[string]any{
+		"id": id, "method": "item/tool/call", "params": map[string]any{
+			"arguments": map[string]any{
+				"grant_id": grantID, "name": "moss-reviewer", "role": "independent reviewer",
+				"provider": "codex-subscription", "runtime": "herdr", "max_concurrency": 1,
+				"task_class": "reviewer", "budget": map[string]any{"token_limit": 50, "cost_cents": 50, "time_seconds": 120},
+			},
+			"callId": "call-child-one", "threadId": "thread-private-019",
+			"tool": domainToolCreateChild, "turnId": "turn-new",
+		},
+	}); err != nil {
+		fixture.t.Errorf("emit app-server child tool request: %v", err)
+		return
+	}
+	if !scanner.Scan() {
+		fixture.t.Errorf("read app-server child tool response: %v", scanner.Err())
+		return
+	}
+	var response struct {
+		ID     int64 `json:"id"`
+		Result struct {
+			Success      bool `json:"success"`
+			ContentItems []struct {
+				Text string `json:"text"`
+			} `json:"contentItems"`
+		} `json:"result"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
+		fixture.t.Errorf("decode app-server child tool response: %v", err)
+		return
+	}
+	if response.ID != id || response.Error != nil || !response.Result.Success || len(response.Result.ContentItems) != 1 {
+		fixture.t.Errorf("app-server child tool response = %#v", response)
+		return
+	}
+	var result struct {
+		Schema string `json:"schema"`
+		Agent  struct {
+			Name string `json:"name"`
+		} `json:"agent"`
+		Membership struct {
+			ParentAgentID string `json:"parent_agent_id"`
+		} `json:"membership"`
+	}
+	if err := json.Unmarshal([]byte(response.Result.ContentItems[0].Text), &result); err != nil {
+		fixture.t.Errorf("decode durable child result: %v", err)
+		return
+	}
+	if result.Schema != "urn:crewfold:schema:domain:durable-agent-child-result:v1" || result.Agent.Name != "moss-reviewer" || result.Membership.ParentAgentID == "" {
+		fixture.t.Errorf("durable child result = %#v", result)
+	}
+}
+
+func (fixture *codexDomainSessionFixture) requireDomainMessageToolResponse(scanner *bufio.Scanner, encoder *json.Encoder, id int64) {
+	fixture.t.Helper()
+	if err := encoder.Encode(map[string]any{
+		"id": id, "method": "item/tool/call", "params": map[string]any{
+			"arguments": map[string]any{
+				"recipient_agent": "fern", "kind": "question", "subject": "Shared boundary",
+				"body": "freeze the shared interface before changing it",
+			},
+			"callId": "call-message-one", "threadId": "thread-private-019",
+			"tool": domainToolSendMessage, "turnId": "turn-new",
+		},
+	}); err != nil {
+		fixture.t.Errorf("emit app-server message tool request: %v", err)
+		return
+	}
+	if !scanner.Scan() {
+		fixture.t.Errorf("read app-server message tool response: %v", scanner.Err())
+		return
+	}
+	var response struct {
+		ID     int64 `json:"id"`
+		Result struct {
+			Success      bool `json:"success"`
+			ContentItems []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"contentItems"`
+		} `json:"result"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
+		fixture.t.Errorf("decode app-server message tool response: %v", err)
+		return
+	}
+	if response.ID != id || response.Error != nil || !response.Result.Success || len(response.Result.ContentItems) != 1 {
+		fixture.t.Errorf("app-server message tool response = %#v", response)
+		return
+	}
+	var result struct {
+		Schema  string `json:"schema"`
+		Message struct {
+			SenderType string `json:"sender_type"`
+			Kind       string `json:"kind"`
+			Body       string `json:"body"`
+		} `json:"message"`
+		Recipient struct {
+			RecipientName string `json:"recipient_name"`
+		} `json:"recipient"`
+	}
+	if err := json.Unmarshal([]byte(response.Result.ContentItems[0].Text), &result); err != nil {
+		fixture.t.Errorf("decode durable-agent message result: %v", err)
+		return
+	}
+	if result.Schema != "urn:crewfold:schema:domain:durable-agent-message-result:v1" ||
+		result.Message.SenderType != "durable_agent" || result.Message.Kind != "question" ||
+		result.Message.Body != "freeze the shared interface before changing it" || result.Recipient.RecipientName != "fern" {
+		fixture.t.Errorf("durable-agent message result = %#v", result)
+	}
+}
+
+func (fixture *codexDomainSessionFixture) requireDomainToolResponse(scanner *bufio.Scanner, encoder *json.Encoder, id int64, tool, threadID string, wantSuccess bool) {
+	fixture.t.Helper()
+	if err := encoder.Encode(map[string]any{
+		"id": id, "method": "item/tool/call", "params": map[string]any{
+			"arguments": map[string]any{}, "callId": fmt.Sprintf("call-context-%d", id), "threadId": threadID,
+			"tool": tool, "turnId": "turn-new",
+		},
+	}); err != nil {
+		fixture.t.Errorf("emit app-server tool request: %v", err)
+		return
+	}
+	if !scanner.Scan() {
+		fixture.t.Errorf("read app-server tool response: %v", scanner.Err())
+		return
+	}
+	var response struct {
+		ID     int64 `json:"id"`
+		Result struct {
+			Success      bool `json:"success"`
+			ContentItems []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"contentItems"`
+		} `json:"result"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
+		fixture.t.Errorf("decode app-server tool response: %v", err)
+		return
+	}
+	if response.ID != id || response.Error != nil || response.Result.Success != wantSuccess || len(response.Result.ContentItems) != 1 || response.Result.ContentItems[0].Type != "inputText" {
+		fixture.t.Errorf("app-server tool response = %#v, want id %d success %t", response, id, wantSuccess)
+		return
+	}
+	if wantSuccess {
+		var contextResult struct {
+			Schema string `json:"schema"`
+			Domain struct {
+				Name string `json:"name"`
+			} `json:"domain"`
+			Agent struct {
+				Name string `json:"name"`
+				Role string `json:"role"`
+			} `json:"agent"`
+			AuthorityNote  string                            `json:"authority_note"`
+			StaffingGrants []domain.DomainAgentStaffingGrant `json:"staffing_grants"`
+		}
+		if err := json.Unmarshal([]byte(response.Result.ContentItems[0].Text), &contextResult); err != nil {
+			fixture.t.Errorf("decode exact durable-agent context: %v", err)
+			return
+		}
+		if contextResult.Schema != "urn:crewfold:schema:domain:durable-agent-context:v1" || contextResult.Domain.Name != "garden" || contextResult.Agent.Name != "orchid" || contextResult.Agent.Role != "owner-defined-whatever" || len(contextResult.StaffingGrants) != 1 || !strings.Contains(contextResult.AuthorityNote, "do not grant authority") {
+			fixture.t.Errorf("durable-agent context = %#v", contextResult)
+			return
+		}
+	}
+	fixture.mu.Lock()
+	fixture.toolChecks++
+	fixture.mu.Unlock()
+}
+
+func (fixture *codexDomainSessionFixture) thread(status string) map[string]any {
+	turns := []any{map[string]any{
+		"id": "turn-existing", "status": "completed", "items": []any{
+			map[string]any{"id": "owner-existing", "type": "userMessage", "content": []any{map[string]any{"type": "text", "text": "existing owner instruction"}}},
+			map[string]any{"id": "agent-existing", "type": "agentMessage", "text": "existing provider response"},
+		},
+	}}
+	fixture.mu.Lock()
+	if fixture.turnExists {
+		turns = append(turns, fixture.newTurn("inProgress"))
+	}
+	fixture.mu.Unlock()
+	return map[string]any{
+		"id": "thread-private-019", "cwd": "/work", "ephemeral": false, "modelProvider": "openai",
+		"status": map[string]any{"type": status}, "turns": turns,
+	}
+}
+
+func (fixture *codexDomainSessionFixture) newTurn(status string) map[string]any {
+	return map[string]any{
+		"id": "turn-new", "status": status, "items": []any{
+			map[string]any{"id": "owner-new", "type": "userMessage", "clientId": "crewfold:m22-turn-one", "content": []any{map[string]any{"type": "text", "text": "continue the exact work"}}},
+		},
+	}
+}
+
+func (fixture *codexDomainSessionFixture) turnStarts() int {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return fixture.turnStartCount
+}
+
+func (fixture *codexDomainSessionFixture) interrupts() int {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return fixture.interruptCount
+}
+
+func (fixture *codexDomainSessionFixture) sawArbitraryAgentInstructions() bool {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	if fixture.startedParams == nil || fixture.startedParams["ephemeral"] != false {
+		return false
+	}
+	instructions, _ := fixture.startedParams["developerInstructions"].(string)
+	baseInstructions, _ := fixture.startedParams["baseInstructions"].(string)
+	dynamicTools, _ := fixture.startedParams["dynamicTools"].([]any)
+	if len(dynamicTools) != 1 {
+		return false
+	}
+	namespace, _ := dynamicTools[0].(map[string]any)
+	tools, _ := namespace["tools"].([]any)
+	if namespace["name"] != "crewfold" || namespace["type"] != "namespace" || len(tools) != 3 {
+		return false
+	}
+	tool, _ := tools[0].(map[string]any)
+	messageTool, _ := tools[1].(map[string]any)
+	childTool, _ := tools[2].(map[string]any)
+	config, _ := fixture.startedParams["config"].(map[string]any)
+	directNamespaces, _ := config["code_mode.direct_only_tool_namespaces"].([]any)
+	toolChecks := fixture.toolChecks
+	return strings.Contains(baseInstructions, "direct crewfold namespace") && strings.Contains(instructions, `"orchid"`) && strings.Contains(instructions, `"owner-defined-whatever"`) && strings.Contains(instructions, "grants no authority") &&
+		tool["name"] == domainToolContext && tool["type"] == "function" && messageTool["name"] == domainToolSendMessage && messageTool["type"] == "function" &&
+		childTool["name"] == domainToolCreateChild && childTool["type"] == "function" && len(directNamespaces) == 1 && directNamespaces[0] == "crewfold" && toolChecks == 3
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:domain-agent-create-params:v1",
+  "title": "Crewfold local API domain agent create parameters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "project", "name", "role", "provider", "runtime", "max_concurrency", "idempotency_key"],
+  "properties": {
+    "workspace": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "project": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "role": {"type": "string", "minLength": 1, "maxLength": 128},
+    "provider": {"type": "string", "minLength": 1, "maxLength": 128},
+    "runtime": {"type": "string", "minLength": 1, "maxLength": 128},
+    "max_concurrency": {"type": "integer", "minimum": 1, "maximum": 100},
+    "parent_agent": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
+    "workstream": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
+    "preferred_entry": {"type": "boolean"},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

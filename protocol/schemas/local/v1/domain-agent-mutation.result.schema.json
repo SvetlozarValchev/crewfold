@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:domain-agent-mutation-result:v1",
+  "title": "Crewfold local API domain agent mutation result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "membership", "event_sequence"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:domain-agent-mutation-result:v1"},
+    "type": {"const": "domain_agent_mutation"},
+    "membership": {"$ref": "../../domain/v1/domain-agent-membership.schema.json"},
+    "event_sequence": {"type": "integer", "minimum": 1}
+  }
+}

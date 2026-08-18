@@ -820,6 +820,25 @@ asset bytes, DOM node peak, JavaScript heap when supported, and p50/p95/p99/max.
 | `M21-PUBLIC-02` | authenticated Codex CLI with `OPENAI_API_KEY` absent, Herdr running, and one fresh real repository | browser instruction→typed proposal→request-changes revision→acceptance→dependency-ordered workers→proactive executive reviews→automatic successor→completion survives daemon restart; routine progress creates no owner decision, and desktop/narrow inspection remains understandable |
 | `M21-ALL-01` | clean tree complete gate | frontend format/type/lint/unit/component/browser/security/accessibility suites, Go generated/vet/test/race, M21 public scenario, and every M0–M20 scenario pass; production build performs no network fetch and embeds only pinned assets |
 
+## M22 domain-oriented durable-agent matrix
+
+M22's deterministic gate uses the strict Codex app-server fixture and a real
+browser. Its final opt-in acceptance uses the installed Codex subscription with
+`OPENAI_API_KEY` absent; it must not substitute the old one-response executive
+harness or infer success from fixture output.
+
+| ID | Adversarial setup | Required observable result |
+| --- | --- | --- |
+| `M22-DOM-01` | owner creates several roots and nested agents with arbitrary names/roles, moves one parent, attempts a cycle/cross-domain parent/workstream | one flat canonical tree renders at any bounded depth; valid changes commit once; cycle and cross-domain attempts have no effect; no name, role, or preferred root confers authority |
+| `M22-SES-01` | open two arbitrary agents, exchange several turns, interrupt one, kill/restart provider, Herdr, daemon, and browser | each selected agent resumes its own private Codex thread and bounded readable conversation; agent identity and hierarchy remain; no thread/node/private-reasoning value enters public JSON |
+| `M22-MSG-01` | agent A sends an exact typed message to agent B, retries the same provider tool call, targets foreign/retired agents, restarts before delivery read | one immutable same-domain message and one exact tool receipt survive; replay is identical; invalid recipients receive nothing; no transcript broadcast occurs |
+| `M22-STAFF-01` | owner grants a lead profiles/classes/descendant/concurrency/budget/expiry, then the lead creates implementer, reviewer, and tester children | each allowed child atomically gains definition, same-domain membership, allocation receipt, and three events; no session/task/run starts merely because the child exists |
+| `M22-STAFF-02` | wrong profile/class/domain, stale manager membership, cumulative budget/capacity overflow, expired grant, revoke/create race, response replay | requests fail closed with stable staffing codes; the race leaves either one complete authorized child or none; no orphan definition/membership/allocation/event exists |
+| `M22-CTX-01` | several checkouts/workstreams plus accepted shared knowledge and messages, then each agent calls `crewfold_get_domain_context` | each receives only bounded canonical domain, hierarchy, relevant resources/workstream/assignment/inbox/grants; provider transcript is never treated as knowledge |
+| `M22-UI-01` | create agents/grants and switch domain/session/assignment/changes/briefing/verification/staffing at desktop and narrow widths using keyboard navigation | readable text, stable selection, wrapped tabs, clear exact-effect language, no hidden peer-admin maze, no synthetic project narrative, and advanced raw terminal remains secondary |
+| `M22-REAL-01` | fresh local repository, installed Codex subscription, two owner-created durable agents, one exact staffing grant | browser-only owner flow opens real sessions; one agent reads domain context, messages the other, and creates one authorized child; the tree/session/receipts remain exact after restart |
+| `M22-ALL-01` | clean current tree complete gate | generated DB, protocol/local API/store/daemon/web normal+race gates, browser desktop/narrow scenario, all prior offline scenarios, and the explicit real-provider canary pass; removed M21 `/intent` and `/conversation` routes remain unavailable |
+
 ## Test suite commands
 
 The complete implemented offline gate is:

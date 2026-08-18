@@ -34,7 +34,7 @@ func TestMessageResultSchemaConstantsMatchPublishedDocuments(t *testing.T) {
 	}
 }
 
-func TestMessageSenderContractIncludesOnlyExactOwnerRunAndCheckSubsystemShapes(t *testing.T) {
+func TestMessageSenderContractIncludesOnlyExactOwnerRunDurableAgentAndCheckSubsystemShapes(t *testing.T) {
 	t.Parallel()
 	data, err := os.ReadFile("schemas/domain/v1/message.schema.json")
 	if err != nil {
@@ -67,7 +67,7 @@ func TestMessageSenderContractIncludesOnlyExactOwnerRunAndCheckSubsystemShapes(t
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := document.Properties["sender_type"].Enum, []string{"owner", "agent_run", "subsystem"}; !reflect.DeepEqual(got, want) {
+	if got, want := document.Properties["sender_type"].Enum, []string{"owner", "agent_run", "durable_agent", "subsystem"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("message sender_type = %v, want exact closed set %v", got, want)
 	}
 	conditions := make(map[string]struct {
@@ -100,6 +100,10 @@ func TestMessageSenderContractIncludesOnlyExactOwnerRunAndCheckSubsystemShapes(t
 	}
 	if got := conditions["agent_run"]; !reflect.DeepEqual(got.required, privateFields) || got.pattern != "^run_[0-9a-f]{32}$" {
 		t.Fatalf("agent-run sender shape = %#v", got)
+	}
+	if got := conditions["durable_agent"]; !reflect.DeepEqual(got.required, []string{"project_id", "sender_agent_id", "sender_agent_name"}) ||
+		!reflect.DeepEqual(got.forbidden, []string{"task_id", "sender_run_id"}) || got.pattern != "^agent_[0-9a-f]{32}$" {
+		t.Fatalf("durable-agent sender shape = %#v", got)
 	}
 }
 

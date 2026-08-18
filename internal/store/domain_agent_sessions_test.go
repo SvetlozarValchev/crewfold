@@ -1,0 +1,175 @@
+package store
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	"crewfold/internal/domain"
+)
+
+func TestM22DomainAgentSessionBindingIsPrivateCurrentNodeAndNameNeutral(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, project := initializeWorkTestProject(t, storage)
+	agent := createDomainTestAgent(t, storage, workspace.ID, "orchid", "arbitrary coordinator")
+	if _, err := storage.AttachDomainAgent(ctx, AttachDomainAgentCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		PreferredEntry: true, IdempotencyKey: "attach-orchid-session", CorrelationID: "attach-orchid-session",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	eventsBefore := testWorkspaceEvents(t, storage, workspace.ID, 0, 1000)
+	command := BindDomainAgentSessionCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		Provider: "codex", ThreadID: "019-private-thread", CWD: "/work/orchid",
+	}
+	bound, err := storage.BindDomainAgentSession(ctx, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.State != domain.DomainAgentSessionReady || !bound.HasConversation || bound.Provider != "codex" || bound.ThreadID != "019-private-thread" || bound.NodeID == "" {
+		t.Fatalf("public binding = %#v", bound)
+	}
+	replayed, err := storage.BindDomainAgentSession(ctx, command)
+	if err != nil || replayed != bound {
+		t.Fatalf("BindDomainAgentSession(replay) = %#v, %v; want %#v", replayed, err, bound)
+	}
+	private, err := storage.DomainAgentSession(ctx, workspace.Name, project.Name, agent.Value.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if private.ThreadID != "019-private-thread" || private.NodeID != storage.runtimeNodeID || private.State != domain.DomainAgentSessionReady {
+		t.Fatalf("private session = %#v", private)
+	}
+	scope, err := storage.DomainAgentSessionScopeByThread(ctx, "019-private-thread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope.Workspace.ID != workspace.ID || scope.Project.ID != project.ID || scope.Agent.ID != agent.Value.ID || scope.Membership.AgentID != agent.Value.ID || scope.Session.ThreadID != "019-private-thread" {
+		t.Fatalf("provider thread scope = %#v", scope)
+	}
+	if _, err := storage.DomainAgentSessionScopeByThread(ctx, "unknown-private-thread"); ErrorCode(err) != CodeDomainAgentSessionNotFound {
+		t.Fatalf("unknown provider thread error = %v, code %q", err, ErrorCode(err))
+	}
+	toolCommand := DomainAgentToolReceiptCommand{
+		ThreadID: "019-private-thread", CallID: "call-context-1", TurnID: "turn-one",
+		ToolName: "crewfold_get_domain_context", Arguments: json.RawMessage(`{}`),
+	}
+	receipt, err := storage.RecordDomainAgentToolReceipt(ctx, toolCommand, map[string]any{
+		"success": true, "contentItems": []map[string]string{{"type": "inputText", "text": "exact context"}},
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Status != "succeeded" || receipt.ToolName != "crewfold_get_domain_context" || receipt.CallID != "call-context-1" || len(receipt.ResponseSHA256) != 64 {
+		t.Fatalf("tool receipt = %#v", receipt)
+	}
+	replayedReceipt, found, err := storage.ReplayDomainAgentToolReceipt(ctx, toolCommand)
+	if err != nil || !found || replayedReceipt.ID != receipt.ID || string(replayedReceipt.Response) != string(receipt.Response) {
+		t.Fatalf("tool receipt replay = %#v, %t, %v; want %#v", replayedReceipt, found, err, receipt)
+	}
+	firstWins, err := storage.RecordDomainAgentToolReceipt(ctx, toolCommand, map[string]any{
+		"success": true, "contentItems": []map[string]string{{"type": "inputText", "text": "different late result"}},
+	}, true)
+	if err != nil || firstWins.ID != receipt.ID || string(firstWins.Response) != string(receipt.Response) {
+		t.Fatalf("tool receipt first-write replay = %#v, %v", firstWins, err)
+	}
+	conflictCommand := toolCommand
+	conflictCommand.Arguments = json.RawMessage(`{"unexpected":true}`)
+	if _, _, err := storage.ReplayDomainAgentToolReceipt(ctx, conflictCommand); ErrorCode(err) != CodeDomainAgentToolConflict {
+		t.Fatalf("divergent tool receipt replay error = %v, code %q", err, ErrorCode(err))
+	}
+	publicReceipt, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jsonContainsAnyKey(publicReceipt, "call_id", "turn_id", "request_sha256") {
+		t.Fatalf("public tool receipt leaked private provider ids: %s", publicReceipt)
+	}
+	if _, err := storage.db.ExecContext(ctx, "UPDATE domain_agent_tool_receipts SET status='failed' WHERE id=?", receipt.ID); err == nil {
+		t.Fatal("immutable tool receipt accepted an update")
+	}
+	encoded, err := json.Marshal(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) == "" || jsonContainsAnyKey(encoded, "thread_id", "node_id", "node_fingerprint") {
+		t.Fatalf("public session leaked private binding: %s", encoded)
+	}
+	if eventsAfter := testWorkspaceEvents(t, storage, workspace.ID, 0, 1000); len(eventsAfter) != len(eventsBefore) {
+		t.Fatalf("operational session binding appended a domain event: %d -> %d", len(eventsBefore), len(eventsAfter))
+	}
+	if _, err := storage.BindDomainAgentSession(ctx, BindDomainAgentSessionCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		Provider: "codex", ThreadID: "different-thread", CWD: "/work/orchid",
+	}); ErrorCode(err) != CodeDomainAgentSessionConflict {
+		t.Fatalf("replacement error = %v, code %q", err, ErrorCode(err))
+	}
+}
+
+func TestM22DomainAgentSessionForeignNodeIsDetachedAndUnboundIsHonest(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	first := openTestStore(t, dataDir, Options{
+		RuntimeNodeID:          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		RuntimeNodeFingerprint: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	})
+	workspace, project := initializeWorkTestProject(t, first)
+	agent := createDomainTestAgent(t, first, workspace.ID, "plain-name", "plain-role")
+	if _, err := first.AttachDomainAgent(ctx, AttachDomainAgentCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		IdempotencyKey: "attach-plain", CorrelationID: "attach-plain",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	unbound, err := first.DomainAgentSession(ctx, workspace.ID, project.ID, agent.Value.ID)
+	if err != nil || unbound.State != domain.DomainAgentSessionUnbound || unbound.HasConversation {
+		t.Fatalf("unbound session = %#v, %v", unbound, err)
+	}
+	if _, err := first.BindDomainAgentSession(ctx, BindDomainAgentSessionCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		Provider: "codex", ThreadID: "source-thread", CWD: "/work/source",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := Open(ctx, dataDir, Options{
+		RuntimeNodeID:          "cccccccccccccccccccccccccccccccc",
+		RuntimeNodeFingerprint: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	detached, err := second.DomainAgentSession(ctx, workspace.ID, project.ID, agent.Value.ID)
+	if err != nil || detached.State != domain.DomainAgentSessionDetached || !detached.HasConversation || detached.ThreadID != "source-thread" {
+		t.Fatalf("foreign session = %#v, %v", detached, err)
+	}
+	if _, err := second.BindDomainAgentSession(ctx, BindDomainAgentSessionCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		Provider: "codex", ThreadID: "replacement", CWD: "/work/source",
+	}); ErrorCode(err) != CodeDomainAgentSessionConflict {
+		t.Fatalf("foreign replacement error = %v, code %q", err, ErrorCode(err))
+	}
+	if _, err := second.DomainAgentSessionScopeByThread(ctx, "source-thread"); ErrorCode(err) != CodeDomainAgentSessionDetached {
+		t.Fatalf("foreign provider tool scope error = %v, code %q", err, ErrorCode(err))
+	}
+}
+
+func jsonContainsAnyKey(encoded []byte, keys ...string) bool {
+	var object map[string]any
+	if json.Unmarshal(encoded, &object) != nil {
+		return true
+	}
+	for _, key := range keys {
+		if _, ok := object[key]; ok {
+			return true
+		}
+	}
+	return false
+}

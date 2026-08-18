@@ -31,7 +31,8 @@ func KnownEventType(value string) bool {
 	case
 		"workspace.created",
 		"project.registered", "repository.registered", "checkout.registered", "checkout.git_observed",
-		"agent.created", "agent.updated", "objective.created", "objective.updated",
+		"agent.created", "agent.updated", "domain.agent_attached", "domain.agent_updated",
+		"domain.staffing_grant_created", "domain.staffing_grant_revoked", "domain.child_created", "objective.created", "objective.updated",
 		"task.created", "task.updated", "task.dependency_added", "task.assigned", "task.assignment_expired",
 		"task.started", "task.blocked", "task.readied", "task.cancelled", "task.completion_proposed",
 		"task.changes_requested", "task.completed", "task.failed", "task.handoff_recorded", "task.run_stopped",

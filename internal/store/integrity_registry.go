@@ -20,6 +20,7 @@ const (
 // separately below together with their exact open-state rule.
 var durableControlReceiptTables = map[string]bool{
 	"schema_baseline": true, "idempotency_keys": true,
+	"domain_agent_session_bindings": true, "domain_agent_tool_receipts": true,
 	"run_runtime_bindings": true, "run_loss_resolutions": true,
 	"run_context_bindings": true, "run_capabilities": true, "run_reports": true,
 	"knowledge_authority_checks": true, "knowledge_contradiction_authority_checks": true,

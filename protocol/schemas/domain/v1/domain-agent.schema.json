@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:domain-agent:v1",
+  "title": "Crewfold domain agent v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["definition", "membership"],
+  "properties": {
+    "definition": {"$ref": "agent.schema.json"},
+    "membership": {"$ref": "domain-agent-membership.schema.json"}
+  }
+}

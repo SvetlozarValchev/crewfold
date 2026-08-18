@@ -31,6 +31,7 @@ type workbenchOnboardingRequest struct {
 	Workspace      string `json:"workspace"`
 	Project        string `json:"project"`
 	Agent          string `json:"agent"`
+	Role           string `json:"role"`
 	Provider       string `json:"provider"`
 	Runtime        string `json:"runtime"`
 	WriteMode      string `json:"write_mode"`
@@ -61,7 +62,7 @@ func (w *workbenchServer) handleWorkbenchOnboarding(response http.ResponseWriter
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&params); err != nil || decodeHasTrailingValue(decoder) ||
 		!workbenchNamePattern.MatchString(params.Workspace) || !workbenchNamePattern.MatchString(params.Project) || !workbenchNamePattern.MatchString(params.Agent) ||
-		params.Agent == "project-executive" || !validWorkbenchText(params.Provider, 128) || !validWorkbenchText(params.Runtime, 128) {
+		!validWorkbenchText(params.Role, 256) || !validWorkbenchText(params.Provider, 128) || !validWorkbenchText(params.Runtime, 128) {
 		w.writeError(response, http.StatusBadRequest, "invalid_request", "onboarding request does not match the current exact path and naming contract")
 		return
 	}
@@ -121,14 +122,14 @@ func (w *workbenchServer) handleWorkbenchOnboarding(response http.ResponseWriter
 		w.writeStoreError(response, err)
 		return
 	}
-	agent, err := w.daemon.store.CreateAgent(request.Context(), store.CreateAgentCommand{WorkspaceIdentifier: workspace.Workspace.ID, Name: params.Agent, Role: "implementation", Provider: params.Provider, Runtime: params.Runtime, MaxConcurrency: 2, IdempotencyKey: operation + "-agent", CorrelationID: operation})
+	agent, err := w.daemon.store.CreateAgent(request.Context(), store.CreateAgentCommand{WorkspaceIdentifier: workspace.Workspace.ID, Name: params.Agent, Role: params.Role, Provider: params.Provider, Runtime: params.Runtime, MaxConcurrency: 2, IdempotencyKey: operation + "-agent", CorrelationID: operation})
 	if err != nil {
 		w.writeStoreError(response, err)
 		return
 	}
-	workerProfile, err := w.daemon.store.CreateLaunchProfile(request.Context(), store.CreateLaunchProfileCommand{
+	_, err = w.daemon.store.CreateLaunchProfile(request.Context(), store.CreateLaunchProfileCommand{
 		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID,
-		AgentIdentifier: agent.Value.ID, ExpectedAgentRevision: agent.Value.Revision, Purpose: "implementation",
+		AgentIdentifier: agent.Value.ID, ExpectedAgentRevision: agent.Value.Revision, Purpose: params.Role,
 		Runtime: agent.Value.Runtime, Provider: agent.Value.Provider, CheckoutIdentifier: project.Checkout.ID,
 		Scenario: ownerWorkbenchScenario(), AssignmentLeaseSeconds: 24 * 60 * 60, CapabilityTTLSeconds: 24 * 60 * 60,
 		IdempotencyKey: operation + "-profile", CorrelationID: operation,
@@ -137,96 +138,19 @@ func (w *workbenchServer) handleWorkbenchOnboarding(response http.ResponseWriter
 		w.writeStoreError(response, err)
 		return
 	}
-	objective, err := w.daemon.store.CreateObjective(request.Context(), store.CreateObjectiveCommand{
+	membership, err := w.daemon.store.AttachDomainAgent(request.Context(), store.AttachDomainAgentCommand{
 		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID,
-		Title: "Direct " + project.Project.Name, Budget: domain.Budget{TokenLimit: 1_000_000, TimeSeconds: 30 * 24 * 60 * 60},
-		IdempotencyKey: operation + "-executive-objective", CorrelationID: operation,
+		AgentIdentifier: agent.Value.ID, PreferredEntry: true,
+		IdempotencyKey: operation + "-domain-agent", CorrelationID: operation,
 	})
 	if err != nil {
 		w.writeStoreError(response, err)
 		return
-	}
-	executive, err := w.daemon.store.CreateAgent(request.Context(), store.CreateAgentCommand{
-		WorkspaceIdentifier: workspace.Workspace.ID, Name: "project-executive", Role: "project executive",
-		Provider: params.Provider, Runtime: params.Runtime, MaxConcurrency: 1,
-		IdempotencyKey: operation + "-executive-agent", CorrelationID: operation,
-	})
-	if err != nil {
-		w.writeStoreError(response, err)
-		return
-	}
-	planningTask, err := w.daemon.store.CreateTask(request.Context(), store.CreateTaskCommand{
-		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID, ObjectiveID: objective.Value.ID,
-		Title: "Coordinate " + project.Project.Name, Description: "Maintain the owner conversation, review worker activity, and submit bounded typed proposals through the exact manager grant.",
-		Priority: 0, Budget: domain.Budget{TokenLimit: 50_000, TimeSeconds: 24 * 60 * 60},
-		IdempotencyKey: operation + "-executive-task", CorrelationID: operation,
-	})
-	if err != nil {
-		w.writeStoreError(response, err)
-		return
-	}
-	planningAssignment, err := w.daemon.store.AssignTask(request.Context(), store.AssignTaskCommand{
-		WorkspaceIdentifier: workspace.Workspace.ID, TaskID: planningTask.Detail.Task.ID, AgentIdentifier: executive.Value.ID,
-		LeaseSeconds: 30 * 24 * 60 * 60, ExpectedRevision: planningTask.Detail.Task.Revision,
-		IdempotencyKey: operation + "-executive-assignment", CorrelationID: operation,
-	})
-	if err != nil {
-		w.writeStoreError(response, err)
-		return
-	}
-	grant, err := w.daemon.store.CreateManagerGrant(request.Context(), store.CreateManagerGrantCommand{
-		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID, ObjectiveID: objective.Value.ID,
-		TaskID: planningAssignment.Detail.Task.ID, AgentIdentifier: executive.Value.ID,
-		ExpectedTaskRevision: planningAssignment.Detail.Task.Revision, ExpectedAgentRevision: executive.Value.Revision,
-		ProposalKinds:    []string{domain.ManagerProposalTaskDecomposition, domain.ManagerProposalAssignment, domain.ManagerProposalReview, domain.ManagerProposalEscalation},
-		LaunchProfileIDs: []string{workerProfile.Value.ID}, AllowedClaimKinds: []string{},
-		Limits:         domain.ManagerProposalLimits{MaxOpenProposals: 8, MaxActions: 32, MaxTasks: 16, MaxDependencies: 32, MaxClaimRequirements: 16, Budget: domain.Budget{TokenLimit: 1_000_000, TimeSeconds: 30 * 24 * 60 * 60}},
-		IdempotencyKey: operation + "-executive-grant", CorrelationID: operation,
-	})
-	if err != nil {
-		w.writeStoreError(response, err)
-		return
-	}
-	executiveProfile, err := w.daemon.store.CreateLaunchProfile(request.Context(), store.CreateLaunchProfileCommand{
-		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID,
-		AgentIdentifier: executive.Value.ID, ExpectedAgentRevision: executive.Value.Revision, Purpose: "owner executive",
-		Runtime: executive.Value.Runtime, Provider: executive.Value.Provider, CheckoutIdentifier: project.Checkout.ID,
-		Scenario: ownerExecutiveScenario(), AssignmentLeaseSeconds: 24 * 60 * 60, CapabilityTTLSeconds: 24 * 60 * 60,
-		ManagerGrantID: grant.Value.ID, IdempotencyKey: operation + "-executive-profile", CorrelationID: operation,
-	})
-	if err != nil {
-		w.writeStoreError(response, err)
-		return
-	}
-	executiveBinding, err := w.daemon.store.CreateOwnerExecutiveBinding(request.Context(), store.CreateOwnerExecutiveBindingCommand{
-		WorkspaceIdentifier: workspace.Workspace.ID, ProjectIdentifier: project.Project.ID, ObjectiveID: objective.Value.ID,
-		PlanningTaskID: planningAssignment.Detail.Task.ID, AgentID: executive.Value.ID, ManagerGrantID: grant.Value.ID, LaunchProfileID: executiveProfile.Value.ID,
-	})
-	if err != nil {
-		w.writeStoreError(response, err)
-		return
-	}
-	policy, err := w.daemon.store.SupervisorPolicy(request.Context(), workspace.Workspace.ID)
-	if err != nil {
-		w.writeStoreError(response, err)
-		return
-	}
-	if !policy.Enabled || !policy.AutoSchedule {
-		configured, configureErr := w.daemon.store.ConfigureSupervisorPolicy(request.Context(), store.ConfigureSupervisorPolicyCommand{
-			WorkspaceIdentifier: workspace.Workspace.ID, Enabled: true, Limits: policy.Limits, AutoSchedule: true,
-			AutoRetryLimit: policy.AutoRetryLimit, RetryCooldownSeconds: policy.RetryCooldownSeconds,
-			ExpectedRevision: policy.Revision, IdempotencyKey: operation + "-supervisor", CorrelationID: operation,
-		})
-		if configureErr != nil {
-			w.writeStoreError(response, configureErr)
-			return
-		}
-		policy = configured.Value
 	}
 	w.writeJSON(response, http.StatusOK, map[string]any{
 		"schema": "urn:crewfold:schema:web:onboarding:v1", "type": "workbench_onboarding", "status": "completed",
 		"workspace": workspace.Workspace, "project": project.Project, "checkout": project.Checkout, "agent": agent.Value,
-		"executive": executive.Value, "executive_objective": objective.Value, "executive_task": planningAssignment.Detail.Task, "executive_binding": executiveBinding,
+		"domain_membership":  membership.Value,
 		"provider_diagnosis": diagnosis, "repository": map[string]any{"branch": observation.Branch, "dirty": observation.Dirty, "dirty_path_count": len(observation.DirtyPaths)},
 	})
 }

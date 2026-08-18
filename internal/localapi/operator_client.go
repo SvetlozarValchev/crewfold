@@ -25,21 +25,23 @@ const (
 )
 
 var operatorReadResultDiscriminators = map[string][2]string{
-	MethodWorkspaceShow:  {WorkspaceShowSchema, "workspace"},
-	MethodProjectShow:    {ProjectShowSchema, "project"},
-	MethodAgentShow:      {AgentShowSchema, "agent"},
-	MethodWorkspaceList:  {WorkspaceListSchema, "workspace_list"},
-	MethodProjectList:    {ProjectListSchema, "project_list"},
-	MethodAgentList:      {AgentListSchema, "agent_list"},
-	MethodObjectiveList:  {ObjectiveListSchema, "objective_list"},
-	MethodTaskList:       {TaskListSchema, "task_list"},
-	MethodRunList:        {RunListSchema, "run_list"},
-	MethodClaimList:      {ClaimListSchema, "claim_list"},
-	MethodOverlapList:    {OverlapListSchema, "overlap_list"},
-	MethodDriftList:      {DriftListSchema, "drift_list"},
-	MethodMeetingList:    {MeetingListSchema, "meeting_list"},
-	MethodEventsList:     {EventsListSchema, "event_list"},
-	MethodEventsTimeline: {EventsTimelineSchema, "event_timeline"},
+	MethodWorkspaceShow:          {WorkspaceShowSchema, "workspace"},
+	MethodProjectShow:            {ProjectShowSchema, "project"},
+	MethodAgentShow:              {AgentShowSchema, "agent"},
+	MethodWorkspaceList:          {WorkspaceListSchema, "workspace_list"},
+	MethodProjectList:            {ProjectListSchema, "project_list"},
+	MethodAgentList:              {AgentListSchema, "agent_list"},
+	MethodDomainAgentTree:        {DomainAgentTreeSchema, "domain_agent_tree"},
+	MethodDomainAgentSessionShow: {DomainAgentSessionSchema, "domain_agent_session"},
+	MethodObjectiveList:          {ObjectiveListSchema, "objective_list"},
+	MethodTaskList:               {TaskListSchema, "task_list"},
+	MethodRunList:                {RunListSchema, "run_list"},
+	MethodClaimList:              {ClaimListSchema, "claim_list"},
+	MethodOverlapList:            {OverlapListSchema, "overlap_list"},
+	MethodDriftList:              {DriftListSchema, "drift_list"},
+	MethodMeetingList:            {MeetingListSchema, "meeting_list"},
+	MethodEventsList:             {EventsListSchema, "event_list"},
+	MethodEventsTimeline:         {EventsTimelineSchema, "event_timeline"},
 }
 
 // operatorResultSchemaPaths is the executable current-contract registry for
@@ -51,36 +53,47 @@ type operatorResultContract struct {
 }
 
 var operatorResultContracts = map[string]operatorResultContract{
-	MethodWorkspaceShow:        {"local/v1/workspace-show.result.schema.json", WorkspaceShowSchema, "workspace"},
-	MethodProjectShow:          {"local/v1/project-show.result.schema.json", ProjectShowSchema, "project"},
-	MethodAgentShow:            {"local/v1/agent-show.result.schema.json", AgentShowSchema, "agent"},
-	MethodWorkspaceList:        {"local/v1/workspace-list.result.schema.json", WorkspaceListSchema, "workspace_list"},
-	MethodProjectList:          {"local/v1/project-list.result.schema.json", ProjectListSchema, "project_list"},
-	MethodAgentList:            {"local/v1/agent-list.result.schema.json", AgentListSchema, "agent_list"},
-	MethodObjectiveList:        {"local/v1/objective-list.result.schema.json", ObjectiveListSchema, "objective_list"},
-	MethodTaskList:             {"local/v1/task-list.result.schema.json", TaskListSchema, "task_list"},
-	MethodRunList:              {"local/v1/run-list.result.schema.json", RunListSchema, "run_list"},
-	MethodClaimList:            {"local/v1/claim-list.result.schema.json", ClaimListSchema, "claim_list"},
-	MethodOverlapList:          {"local/v1/overlap-list.result.schema.json", OverlapListSchema, "overlap_list"},
-	MethodDriftList:            {"local/v1/drift-list.result.schema.json", DriftListSchema, "drift_list"},
-	MethodMeetingList:          {"local/v1/meeting-list.result.schema.json", MeetingListSchema, "meeting_list"},
-	MethodApprovalList:         {"local/v1/approval-list.result.schema.json", ApprovalListSchema, "approval_list"},
-	MethodCheckList:            {"local/v1/check-run-list.result.schema.json", CheckRunListSchema, "check_run_list"},
-	MethodInboxList:            {"local/v1/inbox-list.result.schema.json", InboxListSchema, "inbox"},
-	MethodEventsList:           {"local/v1/events-list.result.schema.json", EventsListSchema, "event_list"},
-	MethodEventsTimeline:       {"local/v1/events-timeline.result.schema.json", EventsTimelineSchema, "event_timeline"},
-	MethodBriefingShow:         {"local/v1/briefing-show.result.schema.json", BriefingShowSchema, "management_briefing"},
-	MethodBriefingExplain:      {"local/v1/briefing-explain.result.schema.json", BriefingExplainSchema, "briefing_claim_explanation"},
-	MethodSupervisorActionShow: {"local/v1/supervisor-action-show.result.schema.json", SupervisorActionShowSchema, "supervisor_action"},
-	MethodRunAttach:            {"local/v1/run-attach.result.schema.json", RunAttachSchema, "run_attach"},
-	MethodRunResume:            {"local/v1/run-mutation.result.schema.json", RunMutationSchema, "run_mutation"},
-	MethodRunStop:              {"local/v1/run-mutation.result.schema.json", RunMutationSchema, "run_mutation"},
-	MethodRunLostResolve:       {"local/v1/run-loss-resolution.result.schema.json", RunLossResolutionSchema, "run_loss_resolution"},
-	MethodApprovalAllow:        {"local/v1/approval-mutation.result.schema.json", ApprovalMutationSchema, "approval_mutation"},
-	MethodApprovalDeny:         {"local/v1/approval-mutation.result.schema.json", ApprovalMutationSchema, "approval_mutation"},
-	MethodSystemDoctorFull:     {"local/v1/full-doctor.result.schema.json", FullDoctorSchema, "full_doctor"},
-	MethodBackupCreate:         {"local/v1/backup-create.result.schema.json", BackupCreateSchema, "backup"},
-	MethodWebBootstrap:         {"local/v1/web-bootstrap.result.schema.json", WebBootstrapSchema, "web_bootstrap"},
+	MethodWorkspaceShow:               {"local/v1/workspace-show.result.schema.json", WorkspaceShowSchema, "workspace"},
+	MethodProjectShow:                 {"local/v1/project-show.result.schema.json", ProjectShowSchema, "project"},
+	MethodAgentShow:                   {"local/v1/agent-show.result.schema.json", AgentShowSchema, "agent"},
+	MethodWorkspaceList:               {"local/v1/workspace-list.result.schema.json", WorkspaceListSchema, "workspace_list"},
+	MethodProjectList:                 {"local/v1/project-list.result.schema.json", ProjectListSchema, "project_list"},
+	MethodAgentList:                   {"local/v1/agent-list.result.schema.json", AgentListSchema, "agent_list"},
+	MethodDomainAgentCreate:           {"local/v1/domain-agent-create.result.schema.json", DomainAgentCreateSchema, "domain_agent_create"},
+	MethodDomainAgentAttach:           {"local/v1/domain-agent-mutation.result.schema.json", DomainAgentMutationSchema, "domain_agent_mutation"},
+	MethodDomainAgentUpdate:           {"local/v1/domain-agent-mutation.result.schema.json", DomainAgentMutationSchema, "domain_agent_mutation"},
+	MethodDomainAgentTree:             {"local/v1/domain-agent-tree.result.schema.json", DomainAgentTreeSchema, "domain_agent_tree"},
+	MethodDomainAgentSessionOpen:      {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainAgentSessionShow:      {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainAgentSessionSend:      {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainAgentSessionInterrupt: {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainStaffingGrantCreate:   {"local/v1/domain-staffing-grant-mutation.result.schema.json", DomainStaffingGrantMutationSchema, "domain_staffing_grant_mutation"},
+	MethodDomainStaffingGrantList:     {"local/v1/domain-staffing-grant-list.result.schema.json", DomainStaffingGrantListSchema, "domain_staffing_grant_list"},
+	MethodDomainStaffingGrantRevoke:   {"local/v1/domain-staffing-grant-mutation.result.schema.json", DomainStaffingGrantMutationSchema, "domain_staffing_grant_mutation"},
+	MethodObjectiveList:               {"local/v1/objective-list.result.schema.json", ObjectiveListSchema, "objective_list"},
+	MethodTaskList:                    {"local/v1/task-list.result.schema.json", TaskListSchema, "task_list"},
+	MethodRunList:                     {"local/v1/run-list.result.schema.json", RunListSchema, "run_list"},
+	MethodClaimList:                   {"local/v1/claim-list.result.schema.json", ClaimListSchema, "claim_list"},
+	MethodOverlapList:                 {"local/v1/overlap-list.result.schema.json", OverlapListSchema, "overlap_list"},
+	MethodDriftList:                   {"local/v1/drift-list.result.schema.json", DriftListSchema, "drift_list"},
+	MethodMeetingList:                 {"local/v1/meeting-list.result.schema.json", MeetingListSchema, "meeting_list"},
+	MethodApprovalList:                {"local/v1/approval-list.result.schema.json", ApprovalListSchema, "approval_list"},
+	MethodCheckList:                   {"local/v1/check-run-list.result.schema.json", CheckRunListSchema, "check_run_list"},
+	MethodInboxList:                   {"local/v1/inbox-list.result.schema.json", InboxListSchema, "inbox"},
+	MethodEventsList:                  {"local/v1/events-list.result.schema.json", EventsListSchema, "event_list"},
+	MethodEventsTimeline:              {"local/v1/events-timeline.result.schema.json", EventsTimelineSchema, "event_timeline"},
+	MethodBriefingShow:                {"local/v1/briefing-show.result.schema.json", BriefingShowSchema, "management_briefing"},
+	MethodBriefingExplain:             {"local/v1/briefing-explain.result.schema.json", BriefingExplainSchema, "briefing_claim_explanation"},
+	MethodSupervisorActionShow:        {"local/v1/supervisor-action-show.result.schema.json", SupervisorActionShowSchema, "supervisor_action"},
+	MethodRunAttach:                   {"local/v1/run-attach.result.schema.json", RunAttachSchema, "run_attach"},
+	MethodRunResume:                   {"local/v1/run-mutation.result.schema.json", RunMutationSchema, "run_mutation"},
+	MethodRunStop:                     {"local/v1/run-mutation.result.schema.json", RunMutationSchema, "run_mutation"},
+	MethodRunLostResolve:              {"local/v1/run-loss-resolution.result.schema.json", RunLossResolutionSchema, "run_loss_resolution"},
+	MethodApprovalAllow:               {"local/v1/approval-mutation.result.schema.json", ApprovalMutationSchema, "approval_mutation"},
+	MethodApprovalDeny:                {"local/v1/approval-mutation.result.schema.json", ApprovalMutationSchema, "approval_mutation"},
+	MethodSystemDoctorFull:            {"local/v1/full-doctor.result.schema.json", FullDoctorSchema, "full_doctor"},
+	MethodBackupCreate:                {"local/v1/backup-create.result.schema.json", BackupCreateSchema, "backup"},
+	MethodWebBootstrap:                {"local/v1/web-bootstrap.result.schema.json", WebBootstrapSchema, "web_bootstrap"},
 }
 
 func validateStrictOperatorResultWire(method string, raw []byte) error {
@@ -147,6 +160,27 @@ func validateOperatorReadResult(method string, paramsValue, result any) error {
 			}
 		}
 		return validatePage(method, value.PageResult, len(value.Agents), requestedPageLimit(paramsValue.(AgentListParams).Limit, maximumOperatorPageLimit))
+	case *DomainAgentTreeResult:
+		params := paramsValue.(DomainAgentTreeParams)
+		if value.ProjectID != params.Project || len(value.Agents) > 1000 {
+			return fmt.Errorf("decode local API result %s: domain tree scope or bound mismatch", method)
+		}
+		seen := make(map[string]domain.DomainAgentMembership, len(value.Agents))
+		preferred := 0
+		for _, item := range value.Agents {
+			if item.Definition.WorkspaceID != params.Workspace || item.Membership.ProjectID != params.Project ||
+				item.Definition.ID != item.Membership.AgentID || seen[item.Membership.AgentID].AgentID != "" {
+				return fmt.Errorf("decode local API result %s: domain agent scope or identity mismatch", method)
+			}
+			seen[item.Membership.AgentID] = item.Membership
+			if item.Membership.Status == domain.DomainAgentActive && item.Membership.PreferredEntry {
+				preferred++
+			}
+		}
+		if preferred > 1 || !validReturnedDomainAttentionTree(seen) {
+			return fmt.Errorf("decode local API result %s: domain attention tree is invalid", method)
+		}
+		return nil
 	case *ObjectiveListResult:
 		params := paramsValue.(ObjectiveListParams)
 		for _, item := range value.Objectives {
@@ -273,6 +307,19 @@ func validateOperatorReadResult(method string, paramsValue, result any) error {
 		if value.Detail.Run.ID != run || value.Detail.Run.Revision != expectedRevision+1 || value.Detail.Run.WorkspaceID != workspace {
 			return fmt.Errorf("decode local API result %s: run mutation does not match the requested target", method)
 		}
+	case *DomainAgentMutationResult:
+		var workspace, project, agent string
+		var expectedRevision int64
+		switch params := paramsValue.(type) {
+		case DomainAgentAttachParams:
+			workspace, project, agent, expectedRevision = params.Workspace, params.Project, params.Agent, 0
+		case DomainAgentUpdateParams:
+			workspace, project, agent, expectedRevision = params.Workspace, params.Project, params.Agent, params.ExpectedRevision
+		}
+		if !canonicalWorkspaceIDPattern.MatchString(workspace) || value.Membership.ProjectID != project ||
+			value.Membership.AgentID != agent || value.Membership.Revision != expectedRevision+1 {
+			return fmt.Errorf("decode local API result %s: domain agent mutation does not match the requested target", method)
+		}
 	case *RunLossResolutionResult:
 		params := paramsValue.(RunLostResolveParams)
 		if value.Detail.Run.ID != params.Run || value.Detail.Run.WorkspaceID != params.Workspace ||
@@ -362,6 +409,32 @@ func briefingScopeMatches(params BriefingShowParams, scope domain.BriefingScope)
 	}
 }
 
+func validReturnedDomainAttentionTree(values map[string]domain.DomainAgentMembership) bool {
+	for agentID, membership := range values {
+		if membership.Status != domain.DomainAgentActive || membership.ParentAgentID == "" {
+			continue
+		}
+		parent, ok := values[membership.ParentAgentID]
+		if !ok || parent.Status != domain.DomainAgentActive || membership.ParentAgentID == agentID {
+			return false
+		}
+		seen := map[string]bool{agentID: true}
+		current := membership.ParentAgentID
+		for current != "" {
+			if seen[current] {
+				return false
+			}
+			seen[current] = true
+			ancestor, ok := values[current]
+			if !ok || ancestor.Status != domain.DomainAgentActive {
+				return false
+			}
+			current = ancestor.ParentAgentID
+		}
+	}
+	return true
+}
+
 func validateOperatorScope(method, requestedWorkspace, requestedProject, actualWorkspace, actualProject string) error {
 	if actualWorkspace != requestedWorkspace {
 		return fmt.Errorf("decode local API result %s: record workspace scope mismatch", method)
@@ -386,6 +459,10 @@ func validateOperatorDiscriminator(method string, result any, expected [2]string
 	case *ProjectListResult:
 		schema, kind = value.Schema, value.Type
 	case *AgentListResult:
+		schema, kind = value.Schema, value.Type
+	case *DomainAgentTreeResult:
+		schema, kind = value.Schema, value.Type
+	case *DomainAgentSessionResult:
 		schema, kind = value.Schema, value.Type
 	case *ObjectiveListResult:
 		schema, kind = value.Schema, value.Type

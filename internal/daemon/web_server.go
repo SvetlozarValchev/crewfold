@@ -309,10 +309,6 @@ func (w *workbenchServer) handleSessionAPI(response http.ResponseWriter, request
 		w.handleRPC(response, request, session)
 	case "events":
 		w.handleEventStream(response, request)
-	case "conversation":
-		w.handleOwnerConversation(response, request, session)
-	case "intent":
-		w.handleOwnerIntent(response, request, session)
 	case "onboarding":
 		w.handleWorkbenchOnboarding(response, request, session)
 	case "git":
@@ -491,6 +487,9 @@ var workbenchMethods = map[string]struct{}{
 	localapi.MethodProjectAdd: {}, localapi.MethodProjectShow: {}, localapi.MethodProjectInspect: {}, localapi.MethodProjectList: {},
 	localapi.MethodCheckoutAdd: {}, localapi.MethodCheckoutList: {},
 	localapi.MethodAgentCreate: {}, localapi.MethodAgentUpdate: {}, localapi.MethodAgentShow: {}, localapi.MethodAgentList: {},
+	localapi.MethodDomainAgentCreate: {}, localapi.MethodDomainAgentAttach: {}, localapi.MethodDomainAgentUpdate: {}, localapi.MethodDomainAgentTree: {},
+	localapi.MethodDomainAgentSessionOpen: {}, localapi.MethodDomainAgentSessionShow: {}, localapi.MethodDomainAgentSessionSend: {}, localapi.MethodDomainAgentSessionInterrupt: {},
+	localapi.MethodDomainStaffingGrantCreate: {}, localapi.MethodDomainStaffingGrantList: {}, localapi.MethodDomainStaffingGrantRevoke: {},
 	localapi.MethodOwnerCrewConfigure: {},
 	localapi.MethodObjectiveCreate:    {}, localapi.MethodObjectiveUpdate: {}, localapi.MethodObjectiveShow: {}, localapi.MethodObjectiveList: {},
 	localapi.MethodTaskCreate: {}, localapi.MethodTaskUpdate: {}, localapi.MethodTaskShow: {}, localapi.MethodTaskList: {},
