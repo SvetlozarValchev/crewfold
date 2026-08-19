@@ -7,13 +7,17 @@ commands, failure cases, and exit gates are in the
 [implementation plan](implementation-plan.md). The test infrastructure and quality
 rules are in the [testing strategy](testing.md).
 
-Current status: **M0 through M22 are complete. M23 is next.** M21 proved the
+Current status: **M0 through M23 are complete. M24 is next.** M21 proved the
 owner-local service, browser security, canonical web transport, Herdr stream, and
 first complete browser workflow. Real use showed that its singular short-lived
 project executive and page-oriented navigation are not the intended owner model.
 M22 replaces that interaction with domains, workstreams, owner-visible durable
 agent trees, resumable provider conversations, and a session-first rich console.
-The public OSS release candidate moves to M23. The correction is frozen in
+Live use of M22 then exposed incomplete composition between workstream placement,
+persistent local checkout reuse, dependency handoffs, and attached execution
+continuity. M23 closes those gaps under
+[ADR-0022](decisions/0022-workstream-execution-and-context-continuity.md). The
+public OSS release candidate moves to M24. The M22 correction remains frozen in
 [ADR-0021](decisions/0021-domain-oriented-durable-agent-console.md). Historical
 M21 evidence is
 recorded in the [M0 review](reviews/buildable-repository.md), [M1
@@ -114,6 +118,12 @@ agent tree, resumable Codex conversations, owner-bounded staffing delegation,
 inert coordinator work proposals, serialized durable wake delivery, governed
 knowledge, and the real subscription-backed browser workflow.
 
+M23's [passed workflow-consolidation review](reviews/workstream-execution-continuity.md)
+records primary persistent-checkout ownership, atomic team placement, typed
+dependency-output delivery, exact blocker diagnosis, unified durable-coworker
+activity, and the real subscription-backed implement-review-remediate-verify
+browser workflow.
+
 ## Sequence
 
 | Milestone | Increment | Demonstrable outcome | Depends on |
@@ -141,7 +151,8 @@ knowledge, and the real subscription-backed browser workflow.
 | M20 ✓ | Personal beta | Back up, restore, verify current-baseline integrity, and load-test 100 registered agent definitions | M19 |
 | M21 ✓ | Local web workbench | Orchestrate, inspect, understand, and intervene from one owner-local browser interface | M20 |
 | M22 ✓ | Domain-oriented durable-agent console | Direct resumable agents and coordinate cross-workstream knowledge from one domain tree | M21 |
-| M23 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M22 |
+| M23 ✓ | Workflow and execution consolidation | Run a coherently placed durable team in one persistent workstream checkout with complete handoffs and one agent timeline | M22 |
+| M24 | OSS release candidate | Install, demo, and extend Crewfold from a clean environment | M23 |
 
 ## Capability ladder
 
@@ -169,6 +180,7 @@ buildable binary
   -> personal-scale recovery
   -> local web workbench
   -> domain-oriented durable-agent console
+  -> coherent workstream execution and context continuity
   -> public release readiness
 ```
 
@@ -265,13 +277,17 @@ the Go daemon's authority; Herdr remains the runtime host; raw terminal bytes ar
 an advanced diagnostic surface. The exact contract is
 [ADR-0021](decisions/0021-domain-oriented-durable-agent-console.md).
 
-### Public release candidate — M23
+### Workflow and execution consolidation — M23
 
-Packaging, extension/conformance, clean-machine installation, license, security,
-and public contribution readiness follow only after the corrected domain and
-durable-agent owner experience passes its real-provider acceptance workflow.
+One workstream binds one primary persistent checkout, its placed durable team,
+its task graph, and the predecessor outputs required by each successor. New
+provider processes reuse that warmed filesystem while retaining exact run
+authority. Conversation epochs and attached execution appear as one durable-agent
+timeline, and blockers expose their real missing input and repair. The exact
+contract is
+[ADR-0022](decisions/0022-workstream-execution-and-context-continuity.md).
 
-### Public release detail — M23
+### Public release candidate — M24
 
 An unrelated developer can install, demo, test, and extend Crewfold without model
 credentials. Live provider tests remain explicit opt-in canaries.
@@ -324,10 +340,13 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M23 is next: the public open-source release candidate. Packaging, extension
-conformance, tutorials, licensing, security contacts, and publication must build
-on M22's passed domain, workstream, durable-agent tree, and resumable-provider
-workflow rather than restoring the superseded M21 executive harness.
+M24 is next: public open-source release readiness. M23 now binds each
+implementation workstream to one primary persistent checkout, atomically places
+its proposed team, carries required predecessor handoffs/evidence into successor
+context, and presents conversation epochs plus attached execution as one
+durable-coworker surface. Packaging, extension conformance, tutorials, licensing,
+security contacts, and publication build on that passed real-provider browser
+workflow.
 
 M21's service/browser foundation is recorded at commit
 `6116b5d0b21bfba48007da464ff3bae0c8543416`; its

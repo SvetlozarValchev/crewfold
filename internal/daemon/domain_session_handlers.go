@@ -396,6 +396,20 @@ func (s *server) resolveDomainSessionStart(ctx context.Context, workspace, proje
 	if agent.Definition.Provider != "codex" && agent.Definition.Provider != "codex-subscription" {
 		return "", domain.DomainAgent{}, domain.Project{}, &store.Error{Code: store.CodeInvalidDomainAgentSession, Message: "durable Codex sessions require a Codex subscription agent"}
 	}
+	if agent.Membership.WorkstreamID != "" {
+		objective, objectiveErr := s.store.Objective(ctx, workspace, agent.Membership.WorkstreamID)
+		if objectiveErr != nil {
+			return "", domain.DomainAgent{}, domain.Project{}, objectiveErr
+		}
+		if objective.ProjectID != inspection.Project.ID || objective.PrimaryCheckoutID == "" {
+			return "", domain.DomainAgent{}, domain.Project{}, &store.Error{Code: store.CodeInvalidDomainAgentSession, Message: "workstream-scoped durable agent requires one bound primary checkout"}
+		}
+		if checkoutIdentifier == "" {
+			checkoutIdentifier = objective.PrimaryCheckoutID
+		} else if checkoutIdentifier != objective.PrimaryCheckoutID {
+			return "", domain.DomainAgent{}, domain.Project{}, &store.Error{Code: store.CodeInvalidDomainAgentSession, Message: "workstream-scoped durable session must use its workstream primary checkout"}
+		}
+	}
 	available := make([]domain.Checkout, 0, len(inspection.Checkouts))
 	for _, checkout := range inspection.Checkouts {
 		if checkout.Availability != domain.CheckoutAvailable {

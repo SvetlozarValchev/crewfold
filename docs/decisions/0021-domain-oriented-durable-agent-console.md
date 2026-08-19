@@ -4,6 +4,9 @@
 - Date: 2026-08-18
 - Supersedes: the singular short-lived project-executive and page-oriented
   interaction model in [ADR-0020](0020-local-web-workbench.md)
+- Superseded in part by: the workstream execution-home, atomic placement,
+  dependency-output, and unified-timeline contract in
+  [ADR-0022](0022-workstream-execution-and-context-continuity.md)
 
 ## Context
 
@@ -429,9 +432,10 @@ an alternate authority surface.
 
 M21 remains historical evidence for the service, browser security, canonical
 transport, Herdr stream, and first web implementation. M22 replaces its singular
-executive interaction with the domain-oriented durable-agent console. The former
-public OSS milestone moves to M23; Crewfold is not release-ready while its primary
-owner model contradicts the product vision.
+executive interaction with the domain-oriented durable-agent console. ADR-0022
+subsequently assigns workstream execution and context consolidation to M23 and
+moves public OSS readiness to M24; Crewfold is not release-ready while its primary
+workflow remains compositionally incomplete.
 
 ## Consequences
 

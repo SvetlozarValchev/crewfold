@@ -126,6 +126,77 @@ func TestRunLifecyclePersistsPlacementTimelineAcceptanceAndHandoff(t *testing.T)
 	}
 }
 
+func TestM23RunStartCannotEscapeItsWorkstreamPrimaryCheckout(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, project := initializeWorkTestProject(t, storage)
+	inspection, err := storage.InspectProject(ctx, workspace.ID, project.ID)
+	if err != nil || len(inspection.Checkouts) != 1 {
+		t.Fatalf("InspectProject() = %#v, %v", inspection, err)
+	}
+	primary := inspection.Checkouts[0]
+	adjacent, err := storage.AddCheckout(ctx, AddCheckoutCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, WriteMode: domain.WriteModeExclusive,
+		IdempotencyKey: "m23-adjacent-checkout", CorrelationID: "m23-adjacent-checkout",
+		Observation: sourceTestObservation(filepath.Join(t.TempDir(), "adjacent"), "adjacent"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objective, err := storage.CreateObjective(ctx, CreateObjectiveCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, PrimaryCheckoutID: primary.ID,
+		Title: "Bound workstream", IdempotencyKey: "m23-bound-workstream", CorrelationID: "m23-bound-workstream",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := storage.CreateAgent(ctx, CreateAgentCommand{
+		WorkspaceIdentifier: workspace.ID, Name: "bound-worker", Role: "implementer", Provider: "fake", Runtime: "fake",
+		IdempotencyKey: "m23-bound-worker", CorrelationID: "m23-bound-worker",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := storage.CreateTask(ctx, CreateTaskCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, ObjectiveID: objective.Value.ID,
+		Title: "Work in the persistent checkout", Priority: 100,
+		IdempotencyKey: "m23-bound-task", CorrelationID: "m23-bound-task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assigned, err := storage.AssignTask(ctx, AssignTaskCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: task.Detail.Task.ID, AgentIdentifier: agent.Value.ID,
+		LeaseSeconds: 300, ExpectedRevision: task.Detail.Task.Revision,
+		IdempotencyKey: "m23-bound-assignment", CorrelationID: "m23-bound-assignment",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scenario := domain.FakeScenario{Schema: execution.FakeScenarioSchema, Name: "m23-bound-run", Steps: []domain.FakeStep{{Kind: domain.ObservationProgress, Message: "working"}}}
+	wrong := CreateRunCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: assigned.Detail.Task.ID, CheckoutIdentifier: adjacent.Checkout.ID,
+		Runtime: "fake", Provider: "fake", Scenario: scenario, ExpectedTaskRevision: assigned.Detail.Task.Revision,
+		IdempotencyKey: "m23-wrong-checkout", CorrelationID: "m23-wrong-checkout",
+	}
+	if _, err := storage.CreateRun(ctx, wrong); ErrorCode(err) != CodePlacementUnavailable {
+		t.Fatalf("CreateRun(adjacent) error = %v, code = %q", err, ErrorCode(err))
+	}
+	correct := wrong
+	correct.CheckoutIdentifier = primary.ID
+	correct.IdempotencyKey = "m23-primary-checkout"
+	correct.CorrelationID = "m23-primary-checkout"
+	created, err := storage.CreateRun(ctx, correct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Detail.Run.CheckoutID != primary.ID || created.Detail.Checkout.ID != primary.ID {
+		t.Fatalf("CreateRun(primary) = %#v, want checkout %s", created.Detail, primary.ID)
+	}
+}
+
 func TestRunPlacementEnforcesAgentConcurrency(t *testing.T) {
 	t.Parallel()
 
@@ -295,6 +366,53 @@ func TestBlockedRunResumesFromPersistedCursor(t *testing.T) {
 	work, found, err := storage.ClaimRunControlJob(context.Background(), time.Second)
 	if err != nil || !found || work.Run.StepCursor != 1 || work.Scenario.Name != scenario.Name {
 		t.Fatalf("ClaimRunControlJob() = %#v, %t, %v", work, found, err)
+	}
+}
+
+func TestM23RunDetailCarriesTheExactStructuredBlocker(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, _, _, _, assigned := initializeRunTest(t, storage, "structured blocker")
+	created := createRunTest(t, storage, workspace.ID, assigned, domain.FakeScenario{
+		Schema: execution.FakeScenarioSchema,
+		Name:   "structured-blocker",
+		Steps:  []domain.FakeStep{{Kind: domain.ObservationBlocked, Message: "The predecessor review output is missing."}},
+	}, "start-structured-blocker")
+	if _, err := storage.MarkRunStarting(ctx, created.Run.ID, "structured-blocker-starting"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.MarkRunStarted(ctx, created.Run.ID, "runtime", "provider", "structured-blocker-started"); err != nil {
+		t.Fatal(err)
+	}
+	report, err := storage.SubmitRunReport(ctx, CreateRunReportCommand{
+		RunID: created.Run.ID, Kind: domain.ObservationBlocked,
+		Message:  "The predecessor review output is missing.",
+		Evidence: []string{"task_review", "run_review"},
+		Payload: map[string]any{
+			"reason":   "The predecessor review output is missing.",
+			"needs":    []string{"accepted review handoff", "review evidence references"},
+			"severity": "blocking", "related_ids": []string{"task_review", "run_review"},
+			"idempotency_key": "structured-blocker-report",
+		},
+		IdempotencyKey: "structured-blocker-report",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.ApplyQueuedRunReport(ctx, created.Run.ID, report.ID, true, nil, nil, "", "apply-structured-blocker"); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := storage.RunDetail(ctx, workspace.ID, created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Blocker == nil || detail.Blocker.Reason != "The predecessor review output is missing." ||
+		detail.Blocker.Severity != "blocking" ||
+		strings.Join(detail.Blocker.Needs, ",") != "accepted review handoff,review evidence references" ||
+		strings.Join(detail.Blocker.RelatedIDs, ",") != "task_review,run_review" {
+		t.Fatalf("RunDetail().Blocker = %#v", detail.Blocker)
 	}
 }
 

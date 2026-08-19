@@ -292,7 +292,7 @@ func (s *Store) ListObjectives(ctx context.Context, query ListObjectivesQuery) (
 	values := make([]domain.Objective, len(rows))
 	for index, row := range rows {
 		values[index] = domain.Objective{
-			ID: row.ID, WorkspaceID: row.WorkspaceID, ProjectID: row.ProjectID, Title: row.Title,
+			ID: row.ID, WorkspaceID: row.WorkspaceID, ProjectID: row.ProjectID, PrimaryCheckoutID: row.PrimaryCheckoutID, Title: row.Title,
 			Status: row.Status, Budget: domain.Budget{TokenLimit: row.BudgetTokens, CostCents: row.BudgetCostCents, TimeSeconds: row.BudgetTimeSeconds},
 			Revision: row.Revision, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 			CreatedBy: row.CreatedBy, UpdatedBy: row.UpdatedBy,

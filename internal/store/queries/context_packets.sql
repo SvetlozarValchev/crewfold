@@ -15,7 +15,7 @@ SELECT fingerprint FROM repositories WHERE id = ? AND workspace_id = ?;
 SELECT COUNT(*) FROM task_dependencies WHERE task_id = ?;
 
 -- name: ListContextDependencies :many
-SELECT task.id, task.title, task.status, task.revision
+SELECT task.id, task.title, task.status, task.revision, dependency.delivery_requirement
 FROM task_dependencies dependency JOIN tasks task ON task.id = dependency.depends_on_task_id
 WHERE dependency.task_id = ? ORDER BY task.id;
 

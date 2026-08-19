@@ -668,9 +668,60 @@ func contextDependencies(ctx context.Context, tx *sql.Tx, taskID string) ([]doma
 	}
 	result := make([]domain.ContextDependency, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, domain.ContextDependency{TaskID: row.ID, Title: row.Title, Status: row.Status, Revision: row.Revision})
+		dependency := domain.ContextDependency{TaskID: row.ID, Title: row.Title, Status: row.Status, Revision: row.Revision, DeliveryRequirement: row.DeliveryRequirement}
+		if row.Status == domain.TaskCompleted && row.DeliveryRequirement != domain.DependencyDeliveryCompletion {
+			output, err := contextDependencyOutput(ctx, tx, row.ID)
+			if err != nil {
+				return nil, err
+			}
+			dependency.Output = output
+		}
+		result = append(result, dependency)
 	}
 	return result, nil
+}
+
+func contextDependencyOutput(ctx context.Context, tx *sql.Tx, taskID string) (*domain.ContextDependencyOutput, error) {
+	var output domain.ContextDependencyOutput
+	var evidenceJSON, payloadJSON string
+	err := tx.QueryRowContext(ctx, `
+SELECT run.id, report.message, handoff.summary, report.evidence_json, report.payload_json
+FROM runs run
+JOIN run_handoffs handoff ON handoff.run_id=run.id
+JOIN run_reports report ON report.run_id=run.id AND report.kind='completion' AND report.status='applied'
+WHERE run.task_id=? AND run.status='completed'
+ORDER BY run.finished_at DESC, report.sequence DESC LIMIT 1`, taskID).Scan(&output.RunID, &output.Summary, &output.Handoff, &evidenceJSON, &payloadJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, storageFailure("read dependency delivery", err)
+	}
+	if err := json.Unmarshal([]byte(evidenceJSON), &output.EvidenceIDs); err != nil {
+		return nil, storageFailure("decode dependency evidence", err)
+	}
+	var payload struct {
+		ChangedPaths   []string `json:"changed_paths"`
+		Checks         []string `json:"checks"`
+		RemainingRisks []string `json:"remaining_risks"`
+		Unknowns       []string `json:"unknowns"`
+	}
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		return nil, storageFailure("decode dependency delivery payload", err)
+	}
+	output.ChangedPaths = nonNilStrings(payload.ChangedPaths)
+	output.Checks = nonNilStrings(payload.Checks)
+	output.RemainingRisks = nonNilStrings(payload.RemainingRisks)
+	output.Unknowns = nonNilStrings(payload.Unknowns)
+	output.EvidenceIDs = nonNilStrings(output.EvidenceIDs)
+	return &output, nil
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 func contextDependents(ctx context.Context, tx *sql.Tx, taskID string) ([]domain.ContextDependency, int, error) {

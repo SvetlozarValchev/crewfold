@@ -129,7 +129,23 @@
     },
     "dependency": {
       "type": "object", "additionalProperties": false, "required": ["task_id", "title", "status", "revision"],
-      "properties": {"task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"}, "title": {"type": "string", "minLength": 1}, "status": {"type": "string", "minLength": 1}, "revision": {"type": "integer", "minimum": 1}}
+      "properties": {
+        "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"}, "title": {"type": "string", "minLength": 1}, "status": {"type": "string", "minLength": 1}, "revision": {"type": "integer", "minimum": 1},
+        "delivery_requirement": {"enum": ["completion", "handoff", "handoff_with_evidence"]},
+        "output": {"type": ["object", "null"], "additionalProperties": false,
+          "required": ["run_id", "summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns"],
+          "properties": {
+            "run_id": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
+            "summary": {"type": "string", "minLength": 1, "maxLength": 1024},
+            "handoff": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "evidence_ids": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 128}},
+            "changed_paths": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 128}},
+            "checks": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 128}},
+            "remaining_risks": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 128}},
+            "unknowns": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 128}}
+          }
+        }
+      }
     },
     "inbox": {
       "type": "object", "additionalProperties": false, "required": ["unseen_count", "items"],

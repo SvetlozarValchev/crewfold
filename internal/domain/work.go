@@ -18,6 +18,10 @@ const (
 	AssignmentActive   = "active"
 	AssignmentExpired  = "expired"
 	AssignmentReleased = "released"
+
+	DependencyDeliveryCompletion          = "completion"
+	DependencyDeliveryHandoff             = "handoff"
+	DependencyDeliveryHandoffWithEvidence = "handoff_with_evidence"
 )
 
 type AgentDefinition struct {
@@ -43,17 +47,18 @@ type Budget struct {
 }
 
 type Objective struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
-	ProjectID   string `json:"project_id"`
-	Title       string `json:"title"`
-	Status      string `json:"status"`
-	Budget      Budget `json:"budget"`
-	Revision    int64  `json:"revision"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
-	CreatedBy   string `json:"created_by"`
-	UpdatedBy   string `json:"updated_by"`
+	ID                string `json:"id"`
+	WorkspaceID       string `json:"workspace_id"`
+	ProjectID         string `json:"project_id"`
+	PrimaryCheckoutID string `json:"primary_checkout_id,omitempty"`
+	Title             string `json:"title"`
+	Status            string `json:"status"`
+	Budget            Budget `json:"budget"`
+	Revision          int64  `json:"revision"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+	CreatedBy         string `json:"created_by"`
+	UpdatedBy         string `json:"updated_by"`
 }
 
 type Task struct {
@@ -91,10 +96,11 @@ type TaskAssignment struct {
 }
 
 type TaskDependency struct {
-	TaskID          string `json:"task_id"`
-	DependsOnTaskID string `json:"depends_on_task_id"`
-	CreatedAt       string `json:"created_at"`
-	CreatedBy       string `json:"created_by"`
+	TaskID              string `json:"task_id"`
+	DependsOnTaskID     string `json:"depends_on_task_id"`
+	DeliveryRequirement string `json:"delivery_requirement"`
+	CreatedAt           string `json:"created_at"`
+	CreatedBy           string `json:"created_by"`
 }
 
 type TaskReadiness struct {

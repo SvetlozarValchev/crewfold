@@ -279,16 +279,17 @@ func (q *Queries) ListContextCheckWatchGrantOperations(ctx context.Context, gran
 }
 
 const listContextDependencies = `-- name: ListContextDependencies :many
-SELECT task.id, task.title, task.status, task.revision
+SELECT task.id, task.title, task.status, task.revision, dependency.delivery_requirement
 FROM task_dependencies dependency JOIN tasks task ON task.id = dependency.depends_on_task_id
 WHERE dependency.task_id = ? ORDER BY task.id
 `
 
 type ListContextDependenciesRow struct {
-	ID       string `json:"id"`
-	Title    string `json:"title"`
-	Status   string `json:"status"`
-	Revision int64  `json:"revision"`
+	ID                  string `json:"id"`
+	Title               string `json:"title"`
+	Status              string `json:"status"`
+	Revision            int64  `json:"revision"`
+	DeliveryRequirement string `json:"delivery_requirement"`
 }
 
 func (q *Queries) ListContextDependencies(ctx context.Context, taskID string) ([]ListContextDependenciesRow, error) {
@@ -305,6 +306,7 @@ func (q *Queries) ListContextDependencies(ctx context.Context, taskID string) ([
 			&i.Title,
 			&i.Status,
 			&i.Revision,
+			&i.DeliveryRequirement,
 		); err != nil {
 			return nil, err
 		}

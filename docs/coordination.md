@@ -72,6 +72,13 @@ than terminal scraping. A higher-level domain steward receives accepted outcomes
 interface changes, verification gaps, risks, and owner requests rather than a
 concatenation of every child transcript.
 
+A domain-level agent with no workstream placement may inspect every attached
+checkout through bounded read-only authority. A workstream agent instead inherits
+the workstream's primary checkout, graph, and relevant domain context as its
+default scope. Neither visibility nor attention ancestry grants mutation; the
+assigned task, launch profile, checkout policy, claims, and run capability remain
+authoritative.
+
 Independent duties remain independent. A reviewer should receive the work
 contract, diff, and evidence without inheriting the implementer's private provider
 conversation. A scenario tester receives an explicit domain-specific charter and
@@ -264,8 +271,13 @@ priority changes, but it does not replace the constraint solver.
 
 M16 makes the authority split explicit. An agent with an exact owner grant may
 submit a bounded typed plan, but the plan creates no operational work until one
-owner acceptance transaction revalidates and applies it. Accepted tasks bind exact
-owner-defined agent-bound launch-profile revisions. A role label
+owner acceptance transaction revalidates and applies it. The current proposal
+also freezes the existing primary checkout, intended workstream placement of
+every participating durable agent, exact launch-profile revisions, and each
+dependency's required output. Acceptance atomically creates and binds the
+workstream, places the exact agents, and creates its graph and scheduling intents;
+there is no intermediate visible team with unattached work. Accepted tasks bind
+exact owner-defined agent-bound launch-profile revisions. A role label
 and profile purpose are workflow metadata; neither can choose an executable,
 provider command, capability, or arbitrary scenario.
 
@@ -364,6 +376,14 @@ Multiple agents may read the same checkout safely. Multiple writers in the same
 checkout are inherently risky because filesystem changes are immediate and Git
 does not isolate them.
 
+One source-mutating workstream normally binds one existing writable checkout as
+its persistent execution home. Every task attempt reuses that path and its warm
+dependencies, build trees, generated files, cooked assets, and fixtures. Starting
+a new provider process never implies cloning, cleaning, installing, or rebuilding.
+A coordination-only workstream may omit a home. Two active workstreams may share
+one explicitly, but the UI and scheduling explanation retain a warning and the
+checkout's `exclusive|claimed|shared|read_only` policy still controls admission.
+
 Crewfold therefore:
 
 1. prefers separate Git worktrees for concurrent writers;
@@ -372,6 +392,12 @@ Crewfold therefore:
 4. detects drift outside claimed scope;
 5. can pause or warn based on checkout policy;
 6. never promises isolation that the filesystem does not provide.
+
+Dependency readiness is also an information-flow contract. Every edge stores
+`completion`, `handoff`, or `handoff_with_evidence`. The scheduler wakes a
+successor only after the declared bounded predecessor output exists and can be
+included in its immutable context packet. A reviewer saying “three findings
+exist” without delivering those findings to remediation is not a ready edge.
 
 ## Check-observer capability
 

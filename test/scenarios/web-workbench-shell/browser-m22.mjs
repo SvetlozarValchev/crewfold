@@ -267,7 +267,7 @@ await capture("08-retired-history");
 // The workstream still owns orchid, so cancellation is explained rather than
 // silently detaching it. After an explicit placement change, cancellation can
 // commit and the workstream moves to closed history.
-await evaluate(`(() => { const row = [...document.querySelectorAll('.m22-line')].find((candidate) => candidate.textContent.includes('Independent review') && candidate.textContent.includes('open lifecycle')); row?.click(); return Boolean(row); })()`);
+await evaluate(`(() => { const section = [...document.querySelectorAll('.m22-domain-home .m22-block')].find((candidate) => candidate.querySelector('h2')?.textContent.trim() === 'active workstreams'); const row = [...(section?.querySelectorAll('.m22-line') ?? [])].find((candidate) => candidate.textContent.includes('Independent review')); row?.click(); return Boolean(row); })()`);
 await waitFor("document.body.innerText.includes('Cancellation is blocked') && document.body.innerText.includes('active durable agent')", "scoped-agent workstream cancellation refusal");
 await capture("09-workstream-cancel-blocked");
 await evaluate("document.querySelector('.m22-lifecycle-review button[aria-label=\"Close workstream lifecycle\"]').click(); true");
@@ -283,7 +283,7 @@ await evaluate(`(() => {
 await waitFor("document.body.innerText.includes('Placement updated in the canonical hierarchy.')", "agent released from workstream");
 await evaluate("document.querySelector('.m22-domain-row').click(); true");
 await waitFor("document.querySelector('.m22-domain-home')", "domain home after placement release");
-await evaluate(`(() => { const row = [...document.querySelectorAll('.m22-line')].find((candidate) => candidate.textContent.includes('Independent review') && candidate.textContent.includes('open lifecycle')); row?.click(); return Boolean(row); })()`);
+await evaluate(`(() => { const section = [...document.querySelectorAll('.m22-domain-home .m22-block')].find((candidate) => candidate.querySelector('h2')?.textContent.trim() === 'active workstreams'); const row = [...(section?.querySelectorAll('.m22-line') ?? [])].find((candidate) => candidate.textContent.includes('Independent review')); row?.click(); return Boolean(row); })()`);
 await waitFor("document.querySelector('.m22-lifecycle-review') && document.body.innerText.includes('cancel workstream') && document.querySelector('.m22-confirm input')", "unblocked workstream cancellation review");
 await evaluate("document.querySelector('.m22-confirm input').click(); document.querySelector('.m22-lifecycle-review form').requestSubmit(); true");
 await waitFor("document.body.innerText.includes('was cancelled and moved to closed history') && ![...document.querySelectorAll('.m22-workstream-group')].some((group) => group.textContent.includes('Independent review'))", "cancelled workstream removed from active hierarchy");

@@ -203,13 +203,14 @@ func (s *Store) CreateObjective(ctx context.Context, command CreateObjectiveComm
 	title := strings.TrimSpace(command.Title)
 	key := strings.TrimSpace(command.IdempotencyKey)
 	correlationID := strings.TrimSpace(command.CorrelationID)
+	primaryCheckoutID := strings.TrimSpace(command.PrimaryCheckoutID)
 	if workspaceIdentifier == "" || projectIdentifier == "" || !validTitle(title) || !validBudget(command.Budget) {
 		return MutationResult[domain.Objective]{}, &Error{Code: CodeInvalidObjective, Message: "objective requires workspace, project, a title of at most 256 characters, and non-negative budgets"}
 	}
 	if err := validateMutationMetadata(key, correlationID, CodeInvalidObjective); err != nil {
 		return MutationResult[domain.Objective]{}, err
 	}
-	requestHash, err := hashCommand("objective.create", map[string]any{"workspace": workspaceIdentifier, "project": projectIdentifier, "title": title, "budget": command.Budget})
+	requestHash, err := hashCommand("objective.create", map[string]any{"workspace": workspaceIdentifier, "project": projectIdentifier, "primary_checkout_id": primaryCheckoutID, "reference_checkout_ids": command.ReferenceCheckoutIDs, "title": title, "budget": command.Budget})
 	if err != nil {
 		return MutationResult[domain.Objective]{}, storageFailure("hash objective creation", err)
 	}
@@ -232,18 +233,27 @@ func (s *Store) CreateObjective(ctx context.Context, command CreateObjectiveComm
 	if err != nil {
 		return MutationResult[domain.Objective]{}, err
 	}
+	referenceCheckoutIDs, err := validateObjectiveCheckouts(ctx, tx, project.ID, primaryCheckoutID, command.ReferenceCheckoutIDs)
+	if err != nil {
+		return MutationResult[domain.Objective]{}, err
+	}
 	now := s.nowText()
 	id, err := randomID("obj_")
 	if err != nil {
 		return MutationResult[domain.Objective]{}, storageFailure("generate objective id", err)
 	}
-	objective := domain.Objective{ID: id, WorkspaceID: workspace.ID, ProjectID: project.ID, Title: title, Status: domain.ObjectiveActive, Budget: command.Budget, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID}
+	objective := domain.Objective{ID: id, WorkspaceID: workspace.ID, ProjectID: project.ID, PrimaryCheckoutID: primaryCheckoutID, Title: title, Status: domain.ObjectiveActive, Budget: command.Budget, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID}
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO objectives(id, workspace_id, project_id, title, status, budget_tokens, budget_cost_cents, budget_time_seconds, revision, created_at, updated_at, created_by, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, objective.ID, objective.WorkspaceID, objective.ProjectID, objective.Title, objective.Status, objective.Budget.TokenLimit, objective.Budget.CostCents, objective.Budget.TimeSeconds, objective.Revision, objective.CreatedAt, objective.UpdatedAt, objective.CreatedBy, objective.UpdatedBy); err != nil {
+INSERT INTO objectives(id, workspace_id, project_id, primary_checkout_id, title, status, budget_tokens, budget_cost_cents, budget_time_seconds, revision, created_at, updated_at, created_by, updated_by)
+VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, objective.ID, objective.WorkspaceID, objective.ProjectID, objective.PrimaryCheckoutID, objective.Title, objective.Status, objective.Budget.TokenLimit, objective.Budget.CostCents, objective.Budget.TimeSeconds, objective.Revision, objective.CreatedAt, objective.UpdatedAt, objective.CreatedBy, objective.UpdatedBy); err != nil {
 		return MutationResult[domain.Objective]{}, storageFailure("insert objective projection", err)
 	}
-	sequence, err := appendEvent(ctx, tx, workspace.ID, "objective", objective.ID, objective.Revision, objectiveCreated, correlationID, now, map[string]any{"project_id": objective.ProjectID, "title": objective.Title, "budget": objective.Budget})
+	for ordinal, checkoutID := range referenceCheckoutIDs {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO objective_reference_checkouts(objective_id,checkout_id,ordinal,created_at,created_by) VALUES(?,?,?,?,?)", objective.ID, checkoutID, ordinal, now, localOwnerActorID); err != nil {
+			return MutationResult[domain.Objective]{}, storageFailure("insert objective reference checkout", err)
+		}
+	}
+	sequence, err := appendEvent(ctx, tx, workspace.ID, "objective", objective.ID, objective.Revision, objectiveCreated, correlationID, now, map[string]any{"project_id": objective.ProjectID, "primary_checkout_id": objective.PrimaryCheckoutID, "reference_checkout_ids": referenceCheckoutIDs, "title": objective.Title, "budget": objective.Budget})
 	if err != nil {
 		return MutationResult[domain.Objective]{}, err
 	}
@@ -407,6 +417,14 @@ VALUES (?, ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), ?, NULL, ?, ?, ?, ?, ?, ?, ?, 
 }
 
 func (s *Store) AddTaskDependency(ctx context.Context, command AddTaskDependencyCommand) (TaskMutationResult, error) {
+	deliveryRequirement := strings.TrimSpace(command.DeliveryRequirement)
+	if deliveryRequirement == "" {
+		deliveryRequirement = domain.DependencyDeliveryCompletion
+	}
+	if !validDependencyDelivery(deliveryRequirement) {
+		return TaskMutationResult{}, &Error{Code: CodeInvalidTask, Message: "task dependency delivery requirement is invalid"}
+	}
+	command.DeliveryRequirement = deliveryRequirement
 	return s.mutateTask(ctx, "task.dependency.add", command.IdempotencyKey, command.CorrelationID, command, func(tx *sql.Tx, workspace Workspace, task *domain.Task, now string) (string, map[string]any, error) {
 		dependsOn, err := queryTask(ctx, tx, workspace.ID, strings.TrimSpace(command.DependsOnTaskID))
 		if err != nil {
@@ -440,10 +458,10 @@ SELECT 1 FROM reachable WHERE id = ? LIMIT 1`, dependsOn.ID, task.ID).Scan(&cycl
 		if task.Status != domain.TaskReady {
 			return "", nil, &Error{Code: CodeInvalidTransition, Message: "dependencies can only be added while a task is ready and unassigned"}
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO task_dependencies(task_id, depends_on_task_id, created_at, created_by) VALUES (?, ?, ?, ?)", task.ID, dependsOn.ID, now, localOwnerActorID); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO task_dependencies(task_id, depends_on_task_id, delivery_requirement, created_at, created_by) VALUES (?, ?, ?, ?, ?)", task.ID, dependsOn.ID, deliveryRequirement, now, localOwnerActorID); err != nil {
 			return "", nil, storageFailure("insert task dependency", err)
 		}
-		return taskDependencyAdded, map[string]any{"depends_on_task_id": dependsOn.ID}, nil
+		return taskDependencyAdded, map[string]any{"depends_on_task_id": dependsOn.ID, "delivery_requirement": deliveryRequirement}, nil
 	})
 }
 
@@ -917,8 +935,8 @@ func scanAgent(row rowScanner, agent *domain.AgentDefinition) error {
 func queryObjective(ctx context.Context, database queryRower, workspaceID, identifier string) (domain.Objective, error) {
 	var objective domain.Objective
 	err := database.QueryRowContext(ctx, `
-SELECT id, workspace_id, project_id, title, status, budget_tokens, budget_cost_cents, budget_time_seconds, revision, created_at, updated_at, created_by, updated_by
-FROM objectives WHERE workspace_id = ? AND id = ?`, workspaceID, identifier).Scan(&objective.ID, &objective.WorkspaceID, &objective.ProjectID, &objective.Title, &objective.Status, &objective.Budget.TokenLimit, &objective.Budget.CostCents, &objective.Budget.TimeSeconds, &objective.Revision, &objective.CreatedAt, &objective.UpdatedAt, &objective.CreatedBy, &objective.UpdatedBy)
+SELECT id, workspace_id, project_id, COALESCE(primary_checkout_id,''), title, status, budget_tokens, budget_cost_cents, budget_time_seconds, revision, created_at, updated_at, created_by, updated_by
+FROM objectives WHERE workspace_id = ? AND id = ?`, workspaceID, identifier).Scan(&objective.ID, &objective.WorkspaceID, &objective.ProjectID, &objective.PrimaryCheckoutID, &objective.Title, &objective.Status, &objective.Budget.TokenLimit, &objective.Budget.CostCents, &objective.Budget.TimeSeconds, &objective.Revision, &objective.CreatedAt, &objective.UpdatedAt, &objective.CreatedBy, &objective.UpdatedBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Objective{}, &Error{Code: CodeObjectiveNotFound, Message: fmt.Sprintf("objective %q was not found", identifier)}
 	}
@@ -993,7 +1011,7 @@ type queryContext interface {
 }
 
 func taskDependencies(ctx context.Context, database queryContext, taskID string) ([]domain.TaskDependency, error) {
-	rows, err := database.QueryContext(ctx, "SELECT task_id, depends_on_task_id, created_at, created_by FROM task_dependencies WHERE task_id = ? ORDER BY depends_on_task_id", taskID)
+	rows, err := database.QueryContext(ctx, "SELECT task_id, depends_on_task_id, delivery_requirement, created_at, created_by FROM task_dependencies WHERE task_id = ? ORDER BY depends_on_task_id", taskID)
 	if err != nil {
 		return nil, storageFailure("list task dependencies", err)
 	}
@@ -1001,7 +1019,7 @@ func taskDependencies(ctx context.Context, database queryContext, taskID string)
 	result := make([]domain.TaskDependency, 0)
 	for rows.Next() {
 		var dependency domain.TaskDependency
-		if err := rows.Scan(&dependency.TaskID, &dependency.DependsOnTaskID, &dependency.CreatedAt, &dependency.CreatedBy); err != nil {
+		if err := rows.Scan(&dependency.TaskID, &dependency.DependsOnTaskID, &dependency.DeliveryRequirement, &dependency.CreatedAt, &dependency.CreatedBy); err != nil {
 			return nil, storageFailure("scan task dependency", err)
 		}
 		result = append(result, dependency)
@@ -1025,7 +1043,74 @@ ORDER BY d.depends_on_task_id LIMIT 1`, task.ID).Scan(&dependencyID, &status)
 	if !errors.Is(err, sql.ErrNoRows) {
 		return domain.TaskReadiness{}, storageFailure("evaluate task readiness", err)
 	}
+	var deliveryDependencyID, deliveryRequirement string
+	err = database.QueryRowContext(ctx, `
+SELECT d.depends_on_task_id, d.delivery_requirement
+FROM task_dependencies d
+WHERE d.task_id = ? AND d.delivery_requirement <> 'completion'
+  AND NOT (
+    EXISTS (
+      SELECT 1 FROM runs r JOIN run_handoffs h ON h.run_id=r.id
+      WHERE r.task_id=d.depends_on_task_id AND r.status IN ('completed','review')
+    )
+    AND (
+      d.delivery_requirement='handoff'
+      OR EXISTS (
+        SELECT 1 FROM runs r JOIN run_reports report ON report.run_id=r.id
+        WHERE r.task_id=d.depends_on_task_id AND report.kind='completion' AND report.status='applied'
+          AND (COALESCE(json_array_length(report.evidence_json),0)>0
+               OR COALESCE(json_array_length(json_extract(report.payload_json,'$.changed_paths')),0)>0
+               OR COALESCE(json_array_length(json_extract(report.payload_json,'$.checks')),0)>0
+               OR COALESCE(json_array_length(json_extract(report.payload_json,'$.remaining_risks')),0)>0
+               OR COALESCE(json_array_length(json_extract(report.payload_json,'$.unknowns')),0)>0)
+      )
+    )
+  )
+ORDER BY d.depends_on_task_id LIMIT 1`, task.ID).Scan(&deliveryDependencyID, &deliveryRequirement)
+	if err == nil {
+		return domain.TaskReadiness{Ready: false, Reason: fmt.Sprintf("waiting for %s delivery from dependency %s", deliveryRequirement, deliveryDependencyID)}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return domain.TaskReadiness{}, storageFailure("evaluate dependency delivery readiness", err)
+	}
 	return domain.TaskReadiness{Ready: true, Reason: "task has no incomplete dependencies and is unassigned"}, nil
+}
+
+func validDependencyDelivery(value string) bool {
+	return value == domain.DependencyDeliveryCompletion || value == domain.DependencyDeliveryHandoff || value == domain.DependencyDeliveryHandoffWithEvidence
+}
+
+func validateObjectiveCheckouts(ctx context.Context, tx *sql.Tx, projectID, primary string, references []string) ([]string, error) {
+	if len(references) > 8 {
+		return nil, &Error{Code: CodeInvalidObjective, Message: "objective may reference at most 8 additional checkouts"}
+	}
+	seen := map[string]bool{}
+	result := make([]string, 0, len(references))
+	for index, raw := range append([]string{primary}, references...) {
+		checkoutID := strings.TrimSpace(raw)
+		if checkoutID == "" {
+			if index == 0 {
+				continue
+			}
+			return nil, &Error{Code: CodeInvalidObjective, Message: "objective reference checkout ID is empty"}
+		}
+		if seen[checkoutID] {
+			return nil, &Error{Code: CodeInvalidObjective, Message: "objective checkout selections must be unique"}
+		}
+		seen[checkoutID] = true
+		checkout, err := queryCheckoutByID(ctx, tx, checkoutID)
+		if err != nil || checkout.ProjectID != projectID {
+			return nil, &Error{Code: CodeInvalidObjective, Message: "objective checkout must belong to the selected project", Cause: err}
+		}
+		if index == 0 {
+			if checkout.Availability != domain.CheckoutAvailable || checkout.WriteMode == domain.WriteModeReadOnly {
+				return nil, &Error{Code: CodeInvalidObjective, Message: "objective primary checkout must be available and writable"}
+			}
+			continue
+		}
+		result = append(result, checkout.ID)
+	}
+	return result, nil
 }
 
 func activeAssignment(ctx context.Context, database queryRower, assignmentID string) (*domain.TaskAssignment, error) {

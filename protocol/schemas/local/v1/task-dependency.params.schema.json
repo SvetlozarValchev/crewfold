@@ -9,6 +9,7 @@
     "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
     "task": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
     "depends_on": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "delivery_requirement": {"enum": ["completion", "handoff", "handoff_with_evidence"]},
     "expected_revision": {"type": "integer", "minimum": 1},
     "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
   }

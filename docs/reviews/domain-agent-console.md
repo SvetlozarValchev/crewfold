@@ -121,8 +121,9 @@ remain canonical resources exposed by current APIs rather than a general
 process-orchestration marketplace. Provider-private reasoning is not available.
 Codex is the rich durable-session implementation in M22; other providers retain
 their existing adapter boundaries until a matching rich-session conformance path
-is implemented. Public packaging, adapter SDK polish, tutorials, license, and
-release publication belong to M23.
+is implemented. M23 now closes the workstream execution-home and dependency-output
+gaps found during live use; public packaging, adapter SDK polish, tutorials,
+license, and release publication belong to M24.
 
 ## Decision
 
@@ -131,4 +132,4 @@ release publication belong to M23.
 - Unresolved HIGH findings: `0`
 - Unresolved MEDIUM findings: `0`
 - Next milestone entry criteria met: `yes`
-- Next milestone: `M23 — OSS release candidate`
+- Next milestone: `M23 — workflow and execution consolidation`

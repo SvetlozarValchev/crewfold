@@ -287,7 +287,7 @@ type Querier interface {
 	ListOperatorEntityEvents(ctx context.Context, arg ListOperatorEntityEventsParams) ([]ListOperatorEntityEventsRow, error)
 	ListOperatorEvents(ctx context.Context, arg ListOperatorEventsParams) ([]ListOperatorEventsRow, error)
 	ListOperatorMeetings(ctx context.Context, arg ListOperatorMeetingsParams) ([]ListOperatorMeetingsRow, error)
-	ListOperatorObjectives(ctx context.Context, arg ListOperatorObjectivesParams) ([]Objective, error)
+	ListOperatorObjectives(ctx context.Context, arg ListOperatorObjectivesParams) ([]ListOperatorObjectivesRow, error)
 	ListOperatorOverlapIDs(ctx context.Context, arg ListOperatorOverlapIDsParams) ([]string, error)
 	ListOperatorProjects(ctx context.Context, arg ListOperatorProjectsParams) ([]Project, error)
 	ListOperatorRuns(ctx context.Context, arg ListOperatorRunsParams) ([]ListOperatorRunsRow, error)

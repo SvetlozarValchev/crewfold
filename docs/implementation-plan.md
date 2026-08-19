@@ -1493,15 +1493,124 @@ one-response executive interaction is not retained as a compatibility path.
 
 **Exit gate**
 
-The owner can understand and steer one domain without knowing which checkout
-contains each workstream, can speak directly to every durable agent, can inspect
+The owner can understand and steer one domain, can speak directly to every durable agent, can inspect
 the agent organization and relevant shared knowledge, and sees only genuine
 authority decisions. The same workflow proves multiple writers remain isolated
 by checkout/claim policy. No one-executive cardinality, one-agent-per-checkout
 rule, browser authority, transcript knowledge, or hidden provider-only durable
 employee remains.
 
-### M23 — Public open-source release readiness
+### M23 — Workflow and execution consolidation
+
+**Question answered:** Can a durable team execute one workstream coherently in an
+existing warmed checkout, receive every required predecessor output, and appear
+as understandable continuing coworkers rather than disconnected records and
+processes?
+
+**Visible result**
+
+```sh
+crewfold open
+```
+
+The owner opens a workstream and sees its primary checkout, placed team,
+dependency graph, current work, exact blockers, and required handoffs. Selecting
+an agent shows one timeline containing its durable conversation epochs and
+attached task attempts. A new run reuses the workstream's existing checkout and
+does not create or bootstrap a clone.
+
+**Contract**
+
+The accepted boundary is
+[ADR-0022](decisions/0022-workstream-execution-and-context-continuity.md).
+M22 remains historical evidence for durable sessions and domain organization;
+M23 replaces its resource-neutral workstream and status-only successor context.
+
+**Delivery slices**
+
+1. Add one revisioned primary-checkout binding plus bounded read-only reference
+   checkouts to Objective/workstream state. Refuse source-mutating accepted work
+   without an available writable primary checkout.
+2. Give domain-level durable conversations bounded read-only observation across
+   domain resources; give workstream agents their primary checkout as default
+   context without granting write authority.
+3. Extend inert work proposals with exact checkout binding and agent-placement
+   effects. Acceptance atomically creates the objective, binds the checkout,
+   places agents, creates tasks/dependencies/intents, and records the complete
+   effect set.
+4. Extend each dependency with `completion`, `handoff`, or
+   `handoff_with_evidence` delivery. Gate readiness on the stored requirement and
+   put bounded predecessor output into successor packets.
+5. Authorize successor reads of only the exact evidence referenced by required
+   predecessor outputs. Raw transcripts and private reasoning remain excluded.
+6. Make launch profiles and supervisor placement inherit/revalidate the
+   workstream primary checkout. Reuse its concrete path and show why it was
+   selected; never clone or bootstrap implicitly.
+7. Detect several active workstreams sharing one checkout. Preserve sequential
+   reuse, serialize `exclusive`, enforce non-overlap for `claimed`, and retain a
+   persistent warning for `shared`.
+8. Aggregate durable conversation epochs, attached execution, commands, diffs,
+   messages, blockers, checks, evidence, and handoffs into one selected-agent
+   timeline and one truthful aggregate status.
+9. Replace generic blocked-runtime copy with typed blocker diagnosis. Show the
+   expected input/effect, observed state, supporting records, and exact safe next
+   operation. Offer same-runtime resume only for in-place repairs.
+10. Consolidate the owner surface around domain, workstream, and agent views;
+    remove or collapse empty peer tabs and make task gating/agent placement
+    directly navigable.
+
+**Automated acceptance**
+
+- A real granted coordinator creates a lead and specialists, submits one proposal
+  with primary checkout, placement, implementation, independent review,
+  remediation, and verification, and receives one atomic accepted effect set.
+- The hierarchy and workstream view show every accepted participating agent in
+  the correct workstream; domain-level agents remain outside it and can inspect
+  all attached checkouts read-only.
+- Implementation, review, remediation, and verification reuse the exact same
+  pre-existing checkout path. A sentinel dependency/build-cache fixture survives
+  every provider/run restart and no clone/bootstrap path appears.
+- Review completion records its structured outcome, handoff, checks, and evidence;
+  a clean review does not invent findings.
+  Remediation does not start until that output exists and receives it byte-for-byte
+  in its immutable packet; it never learns only `review: completed`.
+- The selected implementer reports `working` while its durable conversation is
+  idle, and one timeline exposes conversation epochs plus every attached run
+  lifecycle, command, change, blocker, and handoff.
+- A missing handoff blocks before provider launch with an exact predecessor link.
+  Once repaired, the UI performs context rebuild/relaunch rather than blindly
+  resuming the deficient packet.
+- Two workstreams bound to one checkout show the exact warning. Exclusive writers
+  serialize, claimed writers require non-overlap, and sequential reuse is not
+  rejected.
+- Daemon, Herdr, browser, and provider-epoch restart preserve checkout binding,
+  placement, required outputs, aggregate status, and timeline identity.
+- Desktop and narrow real-browser passes confirm readable hierarchy, task graph,
+  blocker actions, keyboard/focus behavior, stable selection, and no hidden work.
+
+**Failure injection**
+
+- Change or remove the primary checkout between proposal and acceptance; retire or
+  reparent a referenced agent; change a launch profile; omit/tamper with a required
+  handoff or evidence item; attempt a shared-checkout concurrent write; kill after
+  each atomic placement/output boundary; and restart with conversation idle while
+  execution remains active.
+
+Every failure is all-or-nothing, produces a stable attributable diagnosis, and
+offers no unsafe same-runtime resume.
+
+**Exit gate**
+
+From the browser, one owner can ask a granted coordinator to create and run a
+small durable team end to end. The accepted workstream visibly owns one existing
+checkout and its complete team; every successor receives the required predecessor
+output; warm filesystem state survives process/epoch replacement; and one agent
+surface explains what that coworker is saying, doing, changing, awaiting, and
+handing off. No clone-per-run, status-only handoff, unplaced accepted team, hidden
+execution, or non-actionable blocker remains. All prior scenarios pass under the
+one current contract.
+
+### M24 — Public open-source release readiness
 
 **Question answered:** Can an unrelated developer install, understand, test, and
 extend Crewfold safely?
@@ -1556,7 +1665,8 @@ an explicit owner decision.
 | Personal beta | M20 | Operable and recoverable at target local scale |
 | Usable personal workbench | M21 | One local browser surface for intent, execution, inspection, and understanding |
 | Domain agent console | M22 | Domains, durable agent trees, resumable conversations, and cross-workstream knowledge |
-| Public release candidate | M23 | Installable, documented, extensible OSS package |
+| Workflow consolidation | M23 | Workstream-owned persistent checkouts, complete handoffs, placed teams, and unified agent activity |
+| Public release candidate | M24 | Installable, documented, extensible OSS package |
 
 These are capability labels, not promises of semantic-version numbers or dates.
 

@@ -61,7 +61,7 @@ func (s *server) handleObjectiveCreate(request localapi.Request) localapi.Respon
 	if err := decodeParams(request.Params, &params); err != nil {
 		return invalidParamsResponse(request, "objective.create requires workspace, project, title, budget, and idempotency_key")
 	}
-	result, err := s.store.CreateObjective(context.Background(), store.CreateObjectiveCommand{WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, Title: params.Title, Budget: params.Budget, IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID})
+	result, err := s.store.CreateObjective(context.Background(), store.CreateObjectiveCommand{WorkspaceIdentifier: params.Workspace, ProjectIdentifier: params.Project, PrimaryCheckoutID: params.PrimaryCheckout, ReferenceCheckoutIDs: params.ReferenceCheckouts, Title: params.Title, Budget: params.Budget, IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID})
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
@@ -157,7 +157,7 @@ func (s *server) handleTaskDepend(request localapi.Request) localapi.Response {
 	if err := decodeParams(request.Params, &params); err != nil {
 		return invalidParamsResponse(request, "task.dependency.add requires workspace, task, depends_on, expected_revision, and idempotency_key")
 	}
-	result, err := s.store.AddTaskDependency(context.Background(), store.AddTaskDependencyCommand{WorkspaceIdentifier: params.Workspace, TaskID: params.Task, DependsOnTaskID: params.DependsOn, ExpectedRevision: params.ExpectedRevision, IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID})
+	result, err := s.store.AddTaskDependency(context.Background(), store.AddTaskDependencyCommand{WorkspaceIdentifier: params.Workspace, TaskID: params.Task, DependsOnTaskID: params.DependsOn, DeliveryRequirement: params.DeliveryRequirement, ExpectedRevision: params.ExpectedRevision, IdempotencyKey: params.IdempotencyKey, CorrelationID: request.ID})
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}

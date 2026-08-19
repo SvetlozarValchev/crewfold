@@ -305,11 +305,17 @@ name selector; `agent.list` returns definitions ordered by name and ID.
 ### Objectives
 
 `objective.create` takes `workspace`, `project`, `title`, an explicit `budget`
-object, and `idempotency_key`. A budget has non-negative `token_limit`,
-`cost_cents`, and `time_seconds`; zero means unlimited/not enforced for that
-dimension. `objective.update` atomically replaces supplied title, status, or
-budget fields and requires `expected_revision`. `objective.show` requires an
-exact objective ID; `objective.list` scopes results to a project.
+object, optional `primary_checkout`, bounded optional `reference_checkouts`, and
+`idempotency_key`. A budget has non-negative `token_limit`, `cost_cents`, and
+`time_seconds`; zero means unlimited/not enforced for that dimension. A
+coordination-only objective may omit the primary. Source-mutating work cannot be
+accepted or scheduled until one current same-project available writable primary
+is bound. `objective.update` atomically replaces supplied title, status, or budget
+and requires `expected_revision`. M23 has no checkout-rebinding operation: close
+the retained workstream and review a new exact graph instead of silently moving
+its work. `objective.show` requires an exact objective
+ID; `objective.list` scopes results to a project. Both expose sharing warnings
+when another active workstream binds the same primary checkout.
 
 Objective status is `active`, `completed`, or `cancelled`. This layer records the
 owner's coordination intent; it does not launch work or automatically cascade a
@@ -323,9 +329,11 @@ objective, when present, must be active and belong to the selected project. New
 tasks begin at revision 1 in `ready` state.
 
 `task.update` changes title, description, priority, or the complete budget and
-requires `expected_revision`. `task.dependency.add` adds a same-project edge,
-rejects duplicate/self/circular edges, and increments the dependent task's
-revision. Dependencies can be added only while that task is ready and unassigned.
+requires `expected_revision`. `task.dependency.add` adds a same-project edge plus
+one exact `delivery_requirement` from
+`completion|handoff|handoff_with_evidence`, rejects duplicate/self/circular
+edges, and increments the dependent task's revision. Dependencies can be added
+only while that task is ready and unassigned.
 
 `task.assign` takes a task, agent ID or name, lease length from one second through
 30 days, and `expected_revision`. It requires an enabled agent and derived-ready
@@ -367,7 +375,8 @@ two writers using the same revision yield exactly one success and one
 `context.build` takes workspace, assigned task, its assigned agent, optional
 checkout, expected task revision, and idempotency key. It creates a bounded
 immutable packet that fixes role/task/checkout revisions, direct dependencies,
-bounded reverse dependents, authorized participant-thread snapshots, policy,
+their declared delivery requirements and required bounded outputs, bounded
+reverse dependents, authorized participant-thread snapshots, policy,
 reporting instructions, the source event high-water, live policy, and explicit
 included/excluded explanations.
 `context.show` returns that exact packet; `context.explain` returns its stable
@@ -417,11 +426,14 @@ workspace/project/provider/node returns retryable
 `execution_capacity_exhausted`, names the exact limiting dimension and counts,
 and appends no event.
 
-Placement is project-scoped and source-layout neutral. An eligible checkout is
-available, writable, and has write-policy capacity. `shared` allows concurrent
-runs; `exclusive` and `claimed` reject another live run. With no explicit
-checkout, selection is deterministic by write-policy preference, normalized path,
-and stable ID. The committed run contains the chosen task, agent, checkout path,
+Placement is workstream-scoped and source-layout neutral. A source-mutating task
+must belong to an Objective with one current primary checkout. That checkout must
+be available, writable, and have write-policy capacity. `shared` allows
+concurrent runs with a warning; `exclusive` and `claimed` reject conflicting live
+runs. An explicit checkout may only repeat the frozen primary unless the accepted
+task contract authorizes an exact read-only reference operation. There is no
+fallback search across project checkouts. The committed run contains the chosen
+task, agent, checkout path,
 write mode, adapter pair, and human-readable reasons. Creating a run and its
 pending worker job, context binding, and expiring capability is one transaction;
 no adapter call occurs in that transaction. Without an explicit packet, the same
@@ -1534,11 +1546,14 @@ dynamic-tool set:
 
 A work proposal freezes its source agent/thread, staffing-grant revision,
 canonical event cut, content hash, objective budget, task keys/classes/budgets,
-exact launch profiles, and dependency keys. Accept and reject require its exact
-current revision plus an idempotency key. Acceptance returns every applied
-objective/task/dependency/scheduling-intent effect and its event sequence. If
-the grant, membership, launch profile, or graph is no longer current, the
-proposal becomes `stale`; the daemon never partially applies it.
+primary checkout revision, participating agent/membership revisions and intended
+workstream placements, exact launch profiles, and dependency keys plus delivery
+requirements. Accept and reject require its exact current revision plus an
+idempotency key. Acceptance returns every applied objective/checkout-binding/
+membership-placement/task/dependency/scheduling-intent effect and its event
+sequence. If the grant, checkout, agent, membership, launch profile, or graph is
+no longer current, the proposal becomes `stale`; the daemon never partially
+applies it.
 
 Message delivery to a durable session never races an owner turn. A wake targeting
 a thread with an active provider turn is returned to pending with a bounded
@@ -1552,6 +1567,21 @@ Owner prose cannot authorize repository writes. Implementation, review, and
 verification source effects require an exact assigned Crewfold run. Creating a
 durable child records only its definition and hierarchy membership; it does not
 assign a task, reserve a checkout, or start that child.
+
+M23 closes those separate operations only at work-proposal acceptance: a pending
+proposal may reference already-created domain-level children, but the successful
+acceptance transaction places every exact participant in the new workstream and
+creates its scheduling graph together. The source-mutating workstream reuses the
+selected existing primary checkout across all later attempts. Launch never
+clones, cleans, installs, or bootstraps that directory implicitly.
+
+The agent-session result is one logical timeline assembled from durable provider
+epochs and every attached execution attempt. It orders owner/provider turns,
+commands, tool receipts, lifecycle, messages, changed paths, blockers, checks,
+evidence, handoffs, and epoch boundaries. The aggregate agent state uses the most
+consequential attached run; an idle durable conversation cannot hide active or
+blocked execution. Record provenance still identifies conversation versus
+execution process when the owner drills in.
 
 Each tool exchange has a durable, replay-safe receipt. Tool and session results
 exclude the provider thread ID, node identity/fingerprint, capability material,

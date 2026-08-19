@@ -78,10 +78,23 @@ type ContextCheckout struct {
 }
 
 type ContextDependency struct {
-	TaskID   string `json:"task_id"`
-	Title    string `json:"title"`
-	Status   string `json:"status"`
-	Revision int64  `json:"revision"`
+	TaskID              string                   `json:"task_id"`
+	Title               string                   `json:"title"`
+	Status              string                   `json:"status"`
+	Revision            int64                    `json:"revision"`
+	DeliveryRequirement string                   `json:"delivery_requirement,omitempty"`
+	Output              *ContextDependencyOutput `json:"output"`
+}
+
+type ContextDependencyOutput struct {
+	RunID          string   `json:"run_id"`
+	Summary        string   `json:"summary"`
+	Handoff        string   `json:"handoff"`
+	EvidenceIDs    []string `json:"evidence_ids"`
+	ChangedPaths   []string `json:"changed_paths"`
+	Checks         []string `json:"checks"`
+	RemainingRisks []string `json:"remaining_risks"`
+	Unknowns       []string `json:"unknowns"`
 }
 
 type ContextPolicy struct {

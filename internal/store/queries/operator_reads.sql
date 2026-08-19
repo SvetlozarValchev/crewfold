@@ -53,7 +53,7 @@ WHERE workspace_id = sqlc.arg(workspace_id)
   AND (CAST(sqlc.arg(project_id) AS TEXT) = '' OR project_id = sqlc.arg(project_id));
 
 -- name: ListOperatorObjectives :many
-SELECT id, workspace_id, project_id, title, status, budget_tokens,
+SELECT id, workspace_id, project_id, COALESCE(primary_checkout_id, '') AS primary_checkout_id, title, status, budget_tokens,
        budget_cost_cents, budget_time_seconds, revision, created_at,
        updated_at, created_by, updated_by
 FROM objectives

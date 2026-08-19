@@ -8,6 +8,8 @@
   "properties": {
     "workspace": {"type": "string", "minLength": 1, "maxLength": 128},
     "project": {"type": "string", "minLength": 1, "maxLength": 128},
+    "primary_checkout": {"type": "string", "pattern": "^co_[0-9a-f]{32}$"},
+    "reference_checkouts": {"type": "array", "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "pattern": "^co_[0-9a-f]{32}$"}},
     "title": {"type": "string", "minLength": 1, "maxLength": 256},
     "budget": {"$ref": "../../domain/v1/budget.schema.json"},
     "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}

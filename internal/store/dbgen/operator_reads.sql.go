@@ -969,7 +969,7 @@ func (q *Queries) ListOperatorMeetings(ctx context.Context, arg ListOperatorMeet
 }
 
 const listOperatorObjectives = `-- name: ListOperatorObjectives :many
-SELECT id, workspace_id, project_id, title, status, budget_tokens,
+SELECT id, workspace_id, project_id, COALESCE(primary_checkout_id, '') AS primary_checkout_id, title, status, budget_tokens,
        budget_cost_cents, budget_time_seconds, revision, created_at,
        updated_at, created_by, updated_by
 FROM objectives
@@ -992,7 +992,24 @@ type ListOperatorObjectivesParams struct {
 	ResultLimit int64  `json:"result_limit"`
 }
 
-func (q *Queries) ListOperatorObjectives(ctx context.Context, arg ListOperatorObjectivesParams) ([]Objective, error) {
+type ListOperatorObjectivesRow struct {
+	ID                string `json:"id"`
+	WorkspaceID       string `json:"workspace_id"`
+	ProjectID         string `json:"project_id"`
+	PrimaryCheckoutID string `json:"primary_checkout_id"`
+	Title             string `json:"title"`
+	Status            string `json:"status"`
+	BudgetTokens      int64  `json:"budget_tokens"`
+	BudgetCostCents   int64  `json:"budget_cost_cents"`
+	BudgetTimeSeconds int64  `json:"budget_time_seconds"`
+	Revision          int64  `json:"revision"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+	CreatedBy         string `json:"created_by"`
+	UpdatedBy         string `json:"updated_by"`
+}
+
+func (q *Queries) ListOperatorObjectives(ctx context.Context, arg ListOperatorObjectivesParams) ([]ListOperatorObjectivesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listOperatorObjectives,
 		arg.WorkspaceID,
 		arg.ProjectID,
@@ -1004,13 +1021,14 @@ func (q *Queries) ListOperatorObjectives(ctx context.Context, arg ListOperatorOb
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Objective{}
+	items := []ListOperatorObjectivesRow{}
 	for rows.Next() {
-		var i Objective
+		var i ListOperatorObjectivesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkspaceID,
 			&i.ProjectID,
+			&i.PrimaryCheckoutID,
 			&i.Title,
 			&i.Status,
 			&i.BudgetTokens,

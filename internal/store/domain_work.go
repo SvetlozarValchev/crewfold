@@ -104,6 +104,13 @@ func validateDomainWorkContent(ctx context.Context, tx *sql.Tx, now time.Time, s
 	if !validTitle(strings.TrimSpace(content.ObjectiveTitle)) || !validBudget(content.ObjectiveBudget) || len(content.Tasks) < 1 || len(content.Tasks) > 16 {
 		return domainAgentError(CodeDomainStaffingDenied, "work proposal must contain one bounded workstream and 1 to 16 tasks")
 	}
+	checkout, err := queryCheckoutByID(ctx, tx, content.PrimaryCheckoutID)
+	if err != nil || checkout.ProjectID != scope.Project.ID || checkout.Revision != content.PrimaryCheckoutRevision || checkout.Availability != domain.CheckoutAvailable || checkout.WriteMode == domain.WriteModeReadOnly {
+		return domainAgentError(CodeDomainStaffingDenied, "work proposal primary checkout is stale, unavailable, read-only, or outside this domain")
+	}
+	if _, err := validateObjectiveCheckouts(ctx, tx, scope.Project.ID, content.PrimaryCheckoutID, content.ReferenceCheckoutIDs); err != nil {
+		return domainAgentError(CodeDomainStaffingDenied, err.Error())
+	}
 	keys := make(map[string]domain.OwnerPlanTask, len(content.Tasks))
 	var total domain.Budget
 	for _, item := range content.Tasks {
@@ -128,10 +135,10 @@ func validateDomainWorkContent(ctx context.Context, tx *sql.Tx, now time.Time, s
 		if !validBudget(item.Budget) {
 			return domainAgentError(CodeDomainStaffingDenied, fmt.Sprintf("work proposal task %q has an invalid budget", item.Key))
 		}
-		if len(item.DependsOn) > 15 {
+		if len(item.DependsOn) > 15 || len(item.DependencyDelivery) != len(item.DependsOn) {
 			return domainAgentError(CodeDomainStaffingDenied, fmt.Sprintf("work proposal task %q has more than 15 dependencies", item.Key))
 		}
-		if item.LaunchProfileID == "" {
+		if item.LaunchProfileID == "" || item.AgentID == "" || item.AgentMembershipRevision < 1 {
 			return domainAgentError(CodeDomainStaffingDenied, fmt.Sprintf("work proposal task %q is missing its durable agent launch profile", item.Key))
 		}
 		if _, exists := keys[item.Key]; exists {
@@ -145,7 +152,11 @@ func validateDomainWorkContent(ctx context.Context, tx *sql.Tx, now time.Time, s
 		if err != nil {
 			return err
 		}
-		if profile.ProjectID != scope.Project.ID || profile.Status != domain.LaunchProfileActive || profile.ManagerGrantID != "" || !agent.Enabled || agent.Revision != profile.AgentRevision || !staffingProfileAllows(grant.Profiles, profile.Provider, profile.Runtime, agent.MaxConcurrency) {
+		membership, err := queryDomainAgentMembership(ctx, tx, scope.Project.ID, agent.ID)
+		if err != nil {
+			return err
+		}
+		if item.AgentID != agent.ID || membership.Revision != item.AgentMembershipRevision || membership.Status != domain.DomainAgentActive || membership.WorkstreamID != "" || profile.ProjectID != scope.Project.ID || profile.CheckoutID != content.PrimaryCheckoutID || profile.Status != domain.LaunchProfileActive || profile.ManagerGrantID != "" || !agent.Enabled || agent.Revision != profile.AgentRevision || !staffingProfileAllows(grant.Profiles, profile.Provider, profile.Runtime, agent.MaxConcurrency) {
 			return domainAgentError(CodeDomainStaffingDenied, "work proposal launch profile is stale or outside the staffing grant")
 		}
 		var descendant int
@@ -169,6 +180,9 @@ func validateDomainWorkContent(ctx context.Context, tx *sql.Tx, now time.Time, s
 			if _, ok := keys[dependency]; !ok {
 				return domainAgentError(CodeDomainStaffingDenied, "work proposal dependency references an unknown task")
 			}
+			if !validDependencyDelivery(item.DependencyDelivery[dependency]) {
+				return domainAgentError(CodeDomainStaffingDenied, "work proposal dependency delivery requirement is invalid")
+			}
 			seen[dependency] = true
 		}
 	}
@@ -186,6 +200,10 @@ func validateDomainWorkContent(ctx context.Context, tx *sql.Tx, now time.Time, s
 
 func normalizeDomainWorkContent(content *domain.DomainWorkProposalContent) {
 	content.ObjectiveTitle = strings.TrimSpace(content.ObjectiveTitle)
+	content.PrimaryCheckoutID = strings.TrimSpace(content.PrimaryCheckoutID)
+	for index := range content.ReferenceCheckoutIDs {
+		content.ReferenceCheckoutIDs[index] = strings.TrimSpace(content.ReferenceCheckoutIDs[index])
+	}
 	for index := range content.Tasks {
 		task := &content.Tasks[index]
 		task.Key = strings.TrimSpace(task.Key)
@@ -193,8 +211,20 @@ func normalizeDomainWorkContent(content *domain.DomainWorkProposalContent) {
 		task.Description = strings.TrimSpace(task.Description)
 		task.TaskClass = strings.TrimSpace(task.TaskClass)
 		task.LaunchProfileID = strings.TrimSpace(task.LaunchProfileID)
+		task.AgentID = strings.TrimSpace(task.AgentID)
 		for dependency := range task.DependsOn {
 			task.DependsOn[dependency] = strings.TrimSpace(task.DependsOn[dependency])
+		}
+		if task.DependencyDelivery == nil {
+			task.DependencyDelivery = map[string]string{}
+		}
+		for key, value := range task.DependencyDelivery {
+			trimmedKey := strings.TrimSpace(key)
+			trimmedValue := strings.TrimSpace(value)
+			if trimmedKey != key {
+				delete(task.DependencyDelivery, key)
+			}
+			task.DependencyDelivery[trimmedKey] = trimmedValue
 		}
 	}
 }
@@ -366,11 +396,16 @@ func (s *Store) applyDomainWorkProposal(ctx context.Context, tx *sql.Tx, proposa
 	if err != nil {
 		return nil, storageFailure("generate workstream id", err)
 	}
-	objective := domain.Objective{ID: objectiveID, WorkspaceID: proposal.WorkspaceID, ProjectID: proposal.ProjectID, Title: strings.TrimSpace(proposal.Content.ObjectiveTitle), Status: domain.ObjectiveActive, Budget: proposal.Content.ObjectiveBudget, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO objectives(id,workspace_id,project_id,title,status,budget_tokens,budget_cost_cents,budget_time_seconds,revision,created_at,updated_at,created_by,updated_by) VALUES(?,?,?,?,'active',?,?,?,1,?,?,?,?)`, objective.ID, objective.WorkspaceID, objective.ProjectID, objective.Title, objective.Budget.TokenLimit, objective.Budget.CostCents, objective.Budget.TimeSeconds, now, now, localOwnerActorID, localOwnerActorID); err != nil {
+	objective := domain.Objective{ID: objectiveID, WorkspaceID: proposal.WorkspaceID, ProjectID: proposal.ProjectID, PrimaryCheckoutID: proposal.Content.PrimaryCheckoutID, Title: strings.TrimSpace(proposal.Content.ObjectiveTitle), Status: domain.ObjectiveActive, Budget: proposal.Content.ObjectiveBudget, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO objectives(id,workspace_id,project_id,primary_checkout_id,title,status,budget_tokens,budget_cost_cents,budget_time_seconds,revision,created_at,updated_at,created_by,updated_by) VALUES(?,?,?,NULLIF(?,''),?,'active',?,?,?,1,?,?,?,?)`, objective.ID, objective.WorkspaceID, objective.ProjectID, objective.PrimaryCheckoutID, objective.Title, objective.Budget.TokenLimit, objective.Budget.CostCents, objective.Budget.TimeSeconds, now, now, localOwnerActorID, localOwnerActorID); err != nil {
 		return nil, storageFailure("create proposed workstream", err)
 	}
-	objectiveEvent, err := appendEvent(ctx, tx, proposal.WorkspaceID, "objective", objective.ID, 1, objectiveCreated, correlationID, now, map[string]any{"project_id": proposal.ProjectID, "title": objective.Title, "budget": objective.Budget})
+	for ordinal, checkoutID := range proposal.Content.ReferenceCheckoutIDs {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO objective_reference_checkouts(objective_id,checkout_id,ordinal,created_at,created_by) VALUES(?,?,?,?,?)", objective.ID, checkoutID, ordinal, now, localOwnerActorID); err != nil {
+			return nil, storageFailure("create proposed reference checkout", err)
+		}
+	}
+	objectiveEvent, err := appendEvent(ctx, tx, proposal.WorkspaceID, "objective", objective.ID, 1, objectiveCreated, correlationID, now, map[string]any{"project_id": proposal.ProjectID, "primary_checkout_id": objective.PrimaryCheckoutID, "reference_checkout_ids": proposal.Content.ReferenceCheckoutIDs, "title": objective.Title, "budget": objective.Budget})
 	if err != nil {
 		return nil, err
 	}
@@ -396,20 +431,50 @@ func (s *Store) applyDomainWorkProposal(ctx context.Context, tx *sql.Tx, proposa
 		task := tasks[item.Key]
 		for _, dependencyKey := range item.DependsOn {
 			dependency := tasks[dependencyKey]
-			if _, err := tx.ExecContext(ctx, "INSERT INTO task_dependencies(task_id,depends_on_task_id,created_at,created_by) VALUES(?,?,?,?)", task.ID, dependency.ID, now, localOwnerActorID); err != nil {
+			deliveryRequirement := item.DependencyDelivery[dependencyKey]
+			if _, err := tx.ExecContext(ctx, "INSERT INTO task_dependencies(task_id,depends_on_task_id,delivery_requirement,created_at,created_by) VALUES(?,?,?,?,?)", task.ID, dependency.ID, deliveryRequirement, now, localOwnerActorID); err != nil {
 				return nil, storageFailure("create proposed dependency", err)
 			}
 			task.Revision++
 			if _, err := tx.ExecContext(ctx, "UPDATE tasks SET revision=?,updated_at=?,updated_by=? WHERE id=?", task.Revision, now, localOwnerActorID, task.ID); err != nil {
 				return nil, storageFailure("advance proposed task dependency", err)
 			}
-			event, err := appendEvent(ctx, tx, proposal.WorkspaceID, "task", task.ID, task.Revision, taskDependencyAdded, correlationID, now, map[string]any{"depends_on_task_id": dependency.ID})
+			event, err := appendEvent(ctx, tx, proposal.WorkspaceID, "task", task.ID, task.Revision, taskDependencyAdded, correlationID, now, map[string]any{"depends_on_task_id": dependency.ID, "delivery_requirement": deliveryRequirement})
 			if err != nil {
 				return nil, err
 			}
 			effects = append(effects, domain.DomainWorkProposalEffect{TaskKey: item.Key, EntityType: "task_dependency", EntityID: task.ID + ":" + dependency.ID, EventSequence: event})
 		}
 		tasks[item.Key] = task
+	}
+	placed := map[string]bool{}
+	for _, item := range proposal.Content.Tasks {
+		if placed[item.AgentID] {
+			continue
+		}
+		membership, err := queryDomainAgentMembership(ctx, tx, proposal.ProjectID, item.AgentID)
+		if err != nil {
+			return nil, err
+		}
+		if membership.Revision != item.AgentMembershipRevision || membership.WorkstreamID != "" {
+			return nil, domainAgentError(CodeDomainStaffingDenied, "proposed durable agent placement is stale")
+		}
+		membership.WorkstreamID = objective.ID
+		membership.Revision++
+		membership.UpdatedAt, membership.UpdatedBy = now, localOwnerActorID
+		result, err := tx.ExecContext(ctx, `UPDATE domain_agent_memberships SET workstream_id=?,revision=?,updated_at=?,updated_by=? WHERE project_id=? AND agent_id=? AND revision=? AND workstream_id IS NULL`, objective.ID, membership.Revision, now, localOwnerActorID, proposal.ProjectID, item.AgentID, item.AgentMembershipRevision)
+		if err != nil {
+			return nil, storageFailure("place proposed durable agent", err)
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			return nil, domainAgentError(CodeDomainStaffingDenied, "proposed durable agent placement changed before acceptance")
+		}
+		event, err := appendEvent(ctx, tx, proposal.WorkspaceID, "domain_agent", item.AgentID, membership.Revision, domainAgentUpdated, correlationID, now, domainAgentEventData(membership))
+		if err != nil {
+			return nil, err
+		}
+		effects = append(effects, domain.DomainWorkProposalEffect{EntityType: "domain_agent_placement", EntityID: item.AgentID, EventSequence: event})
+		placed[item.AgentID] = true
 	}
 	for _, item := range proposal.Content.Tasks {
 		task := tasks[item.Key]

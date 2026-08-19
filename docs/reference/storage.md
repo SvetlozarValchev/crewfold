@@ -116,13 +116,23 @@ that transaction and uses only bounded read commands.
 runtime preference, enabled state, concurrency configuration, revision, and audit
 metadata. It contains no process or provider session handle.
 
-`objectives` scopes a title, lifecycle status, and token/cost/time budget to one
-project. `tasks` stores project/objective scope, title/description, coordination
-state, blocked reason, priority, budget, revision, and audit metadata.
+`objectives` scopes a title, lifecycle status, token/cost/time budget, and optional
+`primary_checkout_id` to one project. The primary checkout is the persistent
+execution home for source-mutating work in that Objective; it must belong to the
+same project and be available/writable before implementation work can be accepted
+or scheduled. `objective_reference_checkouts` stores bounded additional
+read-only resources. The creation receipt retains actor and event provenance.
+M23 does not silently move a retained workstream to another checkout: close it
+and review a new exact work graph instead. `tasks` stores project/objective scope, title/description,
+coordination state, blocked reason, priority, budget, revision, and audit
+metadata.
 
-`task_dependencies` is a same-project directed graph. The store checks cycles with
-a recursive CTE before inserting an edge. `task_assignments` retains assignment
-history and lease timestamps. A partial unique index permits only one row in
+`task_dependencies` is a same-project directed graph. Every row stores exactly
+one `delivery_requirement` from
+`completion|handoff|handoff_with_evidence`; this is lifecycle/readiness input, not
+display metadata. The store checks cycles with a recursive CTE before inserting
+an edge. `task_assignments` retains assignment history and lease timestamps. A
+partial unique index permits only one row in
 `active` state for a task; expiry and cancellation change the row state rather
 than deleting it.
 
@@ -184,10 +194,14 @@ workspace/domain, source agent and private session binding, staffing-grant
 revision, captured event cut, canonical content JSON/SHA-256, decision state,
 revision, and actor/timestamps. Its content contains one objective and a bounded
 set of typed tasks with stable proposal-local keys, launch profiles, budgets,
-and dependency keys. A pending proposal owns no task, objective, assignment,
-checkout, or runtime effect. Owner acceptance revalidates the current source
-membership, grant, profiles, and graph, then atomically creates the objective,
-tasks, task dependencies, and one `scheduling_intents` row per task.
+dependency keys and delivery requirements. It also freezes the primary checkout
+revision and the participating agents' exact membership revisions and intended
+workstream placements. A pending proposal owns no task, objective, assignment,
+checkout binding, membership placement, or runtime effect. Owner acceptance
+revalidates the current source membership, grant, checkout, profiles, agents,
+memberships, and graph, then atomically creates the objective, binds the primary
+checkout, places the agents, creates tasks and task dependencies, and inserts one
+`scheduling_intents` row per task.
 `scheduling_intents.source_domain_work_proposal_id` plus
 `source_domain_task_key` binds every resulting intent to that exact proposal;
 other proposal-source columns remain null.
@@ -265,6 +279,15 @@ or unavailable log receipt.
 byte size, task/agent/checkout scope, and creation provenance. The packet includes
 its own exact entity revisions and selection/exclusion explanation. Each
 `run_context_bindings` row binds one packet to one run; both sides are unique.
+
+Each direct dependency snapshot carries its stored delivery requirement. A
+`completion` snapshot contains identity and terminal status. A `handoff` snapshot
+also contains the exact bounded accepted run handoff. A
+`handoff_with_evidence` snapshot additionally seals the required completion
+summary, changed paths, checks, risks, unknowns, and authorized evidence
+references. The builder fails before creating a packet when a required output is
+missing, inconsistent, inaccessible, or over budget. Provider transcripts and
+private reasoning are never stored as dependency output.
 
 `run_capabilities` stores only expiry—not the credential. A private node key under
 daemon state derives per-run HMAC tokens, and private token files give direct

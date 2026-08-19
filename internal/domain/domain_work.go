@@ -8,20 +8,26 @@ const (
 )
 
 type DomainWorkProposalTask struct {
-	Key             string   `json:"key"`
-	Title           string   `json:"title"`
-	Description     string   `json:"description"`
-	TaskClass       string   `json:"task_class"`
-	Priority        int      `json:"priority"`
-	Budget          Budget   `json:"budget"`
-	LaunchProfileID string   `json:"launch_profile_id"`
-	DependsOn       []string `json:"depends_on"`
+	Key                     string            `json:"key"`
+	Title                   string            `json:"title"`
+	Description             string            `json:"description"`
+	TaskClass               string            `json:"task_class"`
+	Priority                int               `json:"priority"`
+	Budget                  Budget            `json:"budget"`
+	LaunchProfileID         string            `json:"launch_profile_id"`
+	AgentID                 string            `json:"agent_id"`
+	AgentMembershipRevision int64             `json:"agent_membership_revision"`
+	DependsOn               []string          `json:"depends_on"`
+	DependencyDelivery      map[string]string `json:"dependency_delivery"`
 }
 
 type DomainWorkProposalContent struct {
-	ObjectiveTitle  string                   `json:"objective_title"`
-	ObjectiveBudget Budget                   `json:"objective_budget"`
-	Tasks           []DomainWorkProposalTask `json:"tasks"`
+	ObjectiveTitle          string                   `json:"objective_title"`
+	ObjectiveBudget         Budget                   `json:"objective_budget"`
+	PrimaryCheckoutID       string                   `json:"primary_checkout_id"`
+	PrimaryCheckoutRevision int64                    `json:"primary_checkout_revision"`
+	ReferenceCheckoutIDs    []string                 `json:"reference_checkout_ids"`
+	Tasks                   []DomainWorkProposalTask `json:"tasks"`
 }
 
 type DomainWorkProposal struct {

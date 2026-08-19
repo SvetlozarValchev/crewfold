@@ -37,7 +37,7 @@ var semanticFamilyRegistry = []semanticFamilyDefinition{
 	}},
 	{name: "project", tables: []string{
 		"projects", "repositories", "project_repositories", "checkouts", "agents",
-		"objectives", "domain_agent_memberships", "domain_agent_session_bindings", "domain_agent_tool_receipts",
+		"objectives", "objective_reference_checkouts", "domain_agent_memberships", "domain_agent_session_bindings", "domain_agent_tool_receipts",
 		"domain_agent_staffing_grants", "domain_agent_staffing_profiles", "domain_agent_staffing_task_classes", "domain_agent_staffing_allocations",
 		"domain_work_proposals",
 		"tasks", "task_dependencies", "task_assignments",

@@ -179,7 +179,8 @@ An immutable, bounded base briefing built for one exact task/agent/checkout and
 bindable to at most one run. It may exist unbound after an explicit build; a
 successful `run.start` creates the unique binding. It snapshots the assigned agent
 role, exact task revision, selected checkout and repository observation, direct
-dependency revisions, bounded same-project reverse dependents, allowed tools,
+dependency revisions and each dependency's required bounded output, bounded
+same-project reverse dependents, allowed tools,
 denied/approval-required operations, reporting instructions, whole authorized
 participant-thread rosters, and a bounded authority-scoped summary of unseen inbox
 items. This normally means project scope and additionally permits an exact
@@ -447,8 +448,18 @@ resources without becoming one sequential task graph. Cross-workstream interface
 changes use durable messages, meetings, claims, and knowledge rather than shared
 folder conventions.
 
-The implemented subset stores project scope, title, `active|completed|cancelled`
-status, and token/cost/time budget. Success criteria and policy are planned.
+An implementation-bearing workstream also binds one current primary checkout.
+That concrete directory is its persistent execution home across agents, tasks,
+runs, and provider epochs. A coordination-only workstream may omit it. Bounded
+reference checkouts remain read-only unless an exact task/run grants otherwise.
+Several active workstreams may share one checkout, but the relationship is
+explicit and owner-visible and the checkout's existing write policy still governs
+concurrency. Binding a home supplies placement and context, never write authority.
+
+The current Objective stores project scope, title,
+`active|completed|cancelled` status, token/cost/time budget, and optional primary
+checkout with revisioned provenance. Success criteria and broader policy remain
+planned.
 
 ### Task
 
@@ -458,6 +469,8 @@ A schedulable unit of work with:
 - deliverables and acceptance checks;
 - project and optional component scope;
 - dependencies and parent task;
+- one stored delivery requirement per dependency:
+  `completion|handoff|handoff_with_evidence`;
 - expected change surface;
 - assigned agent and assignment lease;
 - priority, budgets, and action policy;
@@ -476,6 +489,13 @@ ready -> assigned -> active -> review -> completed
 
 A run ending does not automatically complete its task. Completion is a domain
 decision backed by evidence and any required review.
+
+A dependency is ready only when both its predecessor lifecycle and stored
+delivery requirement are satisfied. Required output is bounded canonical data:
+the predecessor task/run, summary, handoff, changed paths, checks, risks, unknowns,
+and authorized evidence references. Raw provider transcripts and private model
+reasoning never become dependency output. Missing or invalid required output
+blocks before provider launch and names the exact repair.
 
 The implemented coordination subset starts tasks at `ready` and supports
 `ready -> assigned -> active`, blocking from ready/assigned/active, unblocking to

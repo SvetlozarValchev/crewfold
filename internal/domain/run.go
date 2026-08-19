@@ -263,7 +263,18 @@ type RunDetail struct {
 	Agent    AgentDefinition    `json:"agent"`
 	Checkout Checkout           `json:"checkout"`
 	Timeline []RunTimelineEntry `json:"timeline"`
+	Blocker  *RunBlocker        `json:"blocker,omitempty"`
 	Handoff  *Handoff           `json:"handoff,omitempty"`
+}
+
+// RunBlocker is the structured reason and requested resolution carried by the
+// latest applied blocked report. It lets operator surfaces explain what is
+// missing without reverse-engineering prose from the run projection.
+type RunBlocker struct {
+	Reason     string   `json:"reason"`
+	Needs      []string `json:"needs"`
+	Severity   string   `json:"severity"`
+	RelatedIDs []string `json:"related_ids"`
 }
 
 type RunLossResolution struct {

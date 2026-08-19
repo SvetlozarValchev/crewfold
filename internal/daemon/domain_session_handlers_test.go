@@ -226,6 +226,79 @@ func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *test
 	}
 }
 
+func TestM23WorkstreamDurableSessionUsesOnlyItsPrimaryCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("Git is unavailable: %v", err)
+	}
+	fixture := newCodexDomainSessionFixture(t)
+	config := testConfig(t)
+	config.CodexAppServerTransportFactory = fixture.transport
+	startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+	ctx := context.Background()
+
+	repositoryRoot := t.TempDir()
+	createGitFixture(t, repositoryRoot)
+	workspace, err := client.WorkspaceInit(ctx, "personal", "m23-session-workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := client.ProjectAdd(ctx, workspace.Workspace.Name, "garden", filepath.Join(repositoryRoot, "world-engine"), domain.WriteModeExclusive, "m23-session-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adjacent, err := client.CheckoutAdd(ctx, workspace.Workspace.Name, project.Project.Name, filepath.Join(repositoryRoot, "world-engine-2"), domain.WriteModeExclusive, "m23-session-adjacent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objective, err := client.ObjectiveCreate(ctx, localapi.ObjectiveCreateParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, PrimaryCheckout: project.Checkout.ID,
+		Title: "Bound workstream", Budget: domain.Budget{}, IdempotencyKey: "m23-session-objective",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := client.AgentCreate(ctx, localapi.AgentCreateParams{
+		Workspace: workspace.Workspace.Name, Name: "orchid", Role: "workstream lead",
+		Provider: "codex-subscription", Runtime: "herdr", IdempotencyKey: "m23-session-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DomainAgentAttach(ctx, localapi.DomainAgentAttachParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		Workstream: objective.Objective.ID, OperatingCharter: daemonTestDomainCharter,
+		DelegationPolicy: domain.DomainAgentAdaptive, PreferredEntry: true, IdempotencyKey: "m23-session-attach",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.DomainAgentSessionOpen(ctx, localapi.DomainAgentSessionOpenParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		Checkout: adjacent.Checkout.ID, IdempotencyKey: "m23-session-wrong-checkout",
+	})
+	var apiError *localapi.APIError
+	if !errors.As(err, &apiError) || apiError.Code != store.CodeInvalidDomainAgentSession {
+		t.Fatalf("DomainAgentSessionOpen(adjacent) error = %#v", err)
+	}
+	opened, err := client.DomainAgentSessionOpen(ctx, localapi.DomainAgentSessionOpenParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		IdempotencyKey: "m23-session-primary-checkout",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.View.Session.State != domain.DomainAgentSessionReady {
+		t.Fatalf("opened session = %#v", opened.View)
+	}
+	fixture.mu.Lock()
+	startedCWD := fmt.Sprint(fixture.startedParams["cwd"])
+	fixture.mu.Unlock()
+	if startedCWD != project.Checkout.Path {
+		t.Fatalf("thread/start cwd = %q, want workstream primary checkout %q", startedCWD, project.Checkout.Path)
+	}
+}
+
 func TestM22TerminalDurableTurnRetiresOnlyItsDisposableHostAndResumesTheSameEpoch(t *testing.T) {
 	fixture := newCodexDomainSessionFixture(t)
 	config := testConfig(t)

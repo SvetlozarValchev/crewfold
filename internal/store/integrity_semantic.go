@@ -48,7 +48,15 @@ LEFT JOIN project_repositories link ON link.project_id=checkout.project_id AND l
 WHERE project.workspace_id<>repository.workspace_id OR link.project_id IS NULL
 UNION ALL
 SELECT 'objective:'||objective.id FROM objectives objective JOIN projects project ON project.id=objective.project_id
+LEFT JOIN checkouts primary_checkout ON primary_checkout.id=objective.primary_checkout_id
 WHERE objective.workspace_id<>project.workspace_id
+   OR (objective.primary_checkout_id IS NOT NULL AND (primary_checkout.id IS NULL OR primary_checkout.project_id<>objective.project_id))
+UNION ALL
+SELECT 'objective_reference_checkout:'||reference.objective_id||':'||reference.checkout_id
+FROM objective_reference_checkouts reference
+JOIN objectives objective ON objective.id=reference.objective_id
+JOIN checkouts checkout ON checkout.id=reference.checkout_id
+WHERE checkout.project_id<>objective.project_id OR reference.checkout_id=objective.primary_checkout_id
 UNION ALL
 SELECT 'domain_agent:'||membership.agent_id FROM domain_agent_memberships membership
 JOIN projects project ON project.id=membership.project_id
@@ -144,6 +152,7 @@ WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonica
 UNION ALL SELECT 'domain_staffing_allocation:'||id FROM domain_agent_staffing_allocations
 WHERE crewfold_timestamp_canonical(created_at)<>1
 UNION ALL SELECT 'objective:'||id FROM objectives WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1
+UNION ALL SELECT 'objective_reference_checkout:'||objective_id||':'||checkout_id FROM objective_reference_checkouts WHERE crewfold_timestamp_canonical(created_at)<>1
 UNION ALL SELECT 'task:'||id FROM tasks WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1
 UNION ALL SELECT 'assignment:'||id FROM task_assignments WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR crewfold_timestamp_canonical(lease_expires_at)<>1`},
 		{name: "domain_attention_tree", query: `

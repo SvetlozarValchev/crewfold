@@ -23,6 +23,7 @@ deployment shape, or difficult-to-reverse dependencies.
 
 Current decisions:
 
+- [ADR-0022: Workstream execution homes and durable context continuity](0022-workstream-execution-and-context-continuity.md)
 - [ADR-0021: Domain-oriented durable-agent console](0021-domain-oriented-durable-agent-console.md)
 - [ADR-0020: Local web workbench as the primary owner interface](0020-local-web-workbench.md)
 - [ADR-0019: Personal-scale hardening and quiescent recovery](0019-personal-scale-hardening-and-recovery.md)

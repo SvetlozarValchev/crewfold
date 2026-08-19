@@ -9,6 +9,7 @@
     "id": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
     "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
     "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "primary_checkout_id": {"type": "string", "pattern": "^co_[0-9a-f]{32}$"},
     "title": {"type": "string", "minLength": 1, "maxLength": 256},
     "status": {"enum": ["active", "completed", "cancelled"]},
     "budget": {"$ref": "budget.schema.json"},

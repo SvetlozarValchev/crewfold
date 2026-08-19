@@ -77,6 +77,20 @@ func (s *Store) preflightSchedulingPlacement(ctx context.Context, tx *sql.Tx, po
 	if !profileValid {
 		deferFor(CodePlacementUnavailable, "launch_profile", "launch profile or exact agent authority is stale")
 	}
+	effectiveCheckoutID := profile.CheckoutID
+	if task.ObjectiveID != "" {
+		objective, objectiveErr := queryObjective(ctx, tx, intent.WorkspaceID, task.ObjectiveID)
+		if objectiveErr != nil {
+			return schedulingPlacementPlan{}, objectiveErr
+		}
+		if objective.PrimaryCheckoutID != "" {
+			effectiveCheckoutID = objective.PrimaryCheckoutID
+			plan.evidence["workstream_checkout"] = map[string]any{"objective_id": objective.ID, "checkout_id": effectiveCheckoutID, "objective_revision": objective.Revision}
+			if profile.CheckoutID != effectiveCheckoutID {
+				deferFor(CodePlacementUnavailable, "workstream_checkout", "launch profile checkout differs from the workstream primary checkout")
+			}
+		}
+	}
 
 	reserved := "('requested','starting','active','blocked','stopping','lost')"
 	var nodeActive, workspaceActive, workspaceStarting, projectActive, providerActive, agentActive int
@@ -140,7 +154,7 @@ func (s *Store) preflightSchedulingPlacement(ctx context.Context, tx *sql.Tx, po
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_dependencies WHERE task_id=?`, task.ID).Scan(&dependencyCount); err != nil {
 		return schedulingPlacementPlan{}, storageFailure("count scheduling dependencies", err)
 	}
-	dependencyRows, err := tx.QueryContext(ctx, `SELECT dependency.id,dependency.revision,dependency.status,dependency.updated_at
+	dependencyRows, err := tx.QueryContext(ctx, `SELECT dependency.id,dependency.revision,dependency.status,dependency.updated_at,edge.delivery_requirement
 FROM task_dependencies edge JOIN tasks dependency ON dependency.id=edge.depends_on_task_id
 WHERE edge.task_id=? ORDER BY dependency.id LIMIT ?`, task.ID, maxSchedulingEvidenceItems)
 	if err != nil {
@@ -149,14 +163,14 @@ WHERE edge.task_id=? ORDER BY dependency.id LIMIT ?`, task.ID, maxSchedulingEvid
 	dependencies := make([]map[string]any, 0)
 	dependencyDigest := sha256.New()
 	for dependencyRows.Next() {
-		var id, status, updatedAt string
+		var id, status, updatedAt, deliveryRequirement string
 		var revision int64
-		if err := dependencyRows.Scan(&id, &revision, &status, &updatedAt); err != nil {
+		if err := dependencyRows.Scan(&id, &revision, &status, &updatedAt, &deliveryRequirement); err != nil {
 			dependencyRows.Close()
 			return schedulingPlacementPlan{}, storageFailure("scan scheduling dependency proof", err)
 		}
-		writeSchedulingEvidenceDigest(dependencyDigest, []any{id, revision, status, updatedAt})
-		dependencies = append(dependencies, map[string]any{"task_id": id, "revision": revision, "status": status, "updated_at": updatedAt})
+		writeSchedulingEvidenceDigest(dependencyDigest, []any{id, revision, status, updatedAt, deliveryRequirement})
+		dependencies = append(dependencies, map[string]any{"task_id": id, "revision": revision, "status": status, "updated_at": updatedAt, "delivery_requirement": deliveryRequirement})
 	}
 	if err := dependencyRows.Close(); err != nil {
 		return schedulingPlacementPlan{}, storageFailure("close scheduling dependency proof", err)
@@ -224,7 +238,7 @@ ORDER BY hold.overlap_id LIMIT ?`, task.ID, now, now, maxSchedulingEvidenceItems
 	checkoutCandidatePredicate := `FROM checkouts checkout WHERE checkout.project_id=? AND (?='' OR checkout.id=?)`
 	var candidateCount int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) `+checkoutCandidatePredicate,
-		intent.ProjectID, profile.CheckoutID, profile.CheckoutID).Scan(&candidateCount); err != nil {
+		intent.ProjectID, effectiveCheckoutID, effectiveCheckoutID).Scan(&candidateCount); err != nil {
 		return schedulingPlacementPlan{}, storageFailure("count scheduling checkout candidates", err)
 	}
 	candidateRows, err := tx.QueryContext(ctx, `SELECT checkout.id,checkout.revision,checkout.write_mode,checkout.availability,
@@ -232,7 +246,7 @@ ORDER BY hold.overlap_id LIMIT ?`, task.ID, now, now, maxSchedulingEvidenceItems
     AND reserved.status IN ('requested','starting','active','blocked','stopping','lost')) AS reserved_runs
 `+checkoutCandidatePredicate+`
 ORDER BY CASE checkout.write_mode WHEN 'exclusive' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END,checkout.path,checkout.id LIMIT ?`,
-		intent.ProjectID, profile.CheckoutID, profile.CheckoutID, maxSchedulingEvidenceItems)
+		intent.ProjectID, effectiveCheckoutID, effectiveCheckoutID, maxSchedulingEvidenceItems)
 	if err != nil {
 		return schedulingPlacementPlan{}, storageFailure("read scheduling checkout candidates", err)
 	}
@@ -265,7 +279,7 @@ ORDER BY CASE checkout.write_mode WHEN 'exclusive' THEN 0 WHEN 'claimed' THEN 1 
 		deferFor(CodePlacementUnavailable, "checkout_candidate_bound",
 			fmt.Sprintf("project has %d checkout candidates, exceeding the automatic placement bound %d", candidateCount, maxSchedulingEvidenceItems))
 	}
-	checkout, checkoutErr := selectRunCheckout(ctx, tx, task.ProjectID, profile.CheckoutID)
+	checkout, checkoutErr := selectRunCheckout(ctx, tx, task.ProjectID, effectiveCheckoutID)
 	if checkoutErr != nil {
 		if ErrorCode(checkoutErr) != CodePlacementUnavailable {
 			return schedulingPlacementPlan{}, checkoutErr

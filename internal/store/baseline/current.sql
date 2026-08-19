@@ -100,7 +100,9 @@ CREATE TABLE checkouts (
     updated_at TEXT NOT NULL,
     created_by TEXT NOT NULL,
     updated_by TEXT NOT NULL
-, dirty_paths_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(dirty_paths_json))) STRICT;
+, dirty_paths_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(dirty_paths_json)),
+    UNIQUE (id, project_id)
+) STRICT;
 
 CREATE TABLE agents (
     id TEXT PRIMARY KEY,
@@ -123,6 +125,7 @@ CREATE TABLE objectives (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL REFERENCES workspaces(id),
     project_id TEXT NOT NULL REFERENCES projects(id),
+    primary_checkout_id TEXT,
     title TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'cancelled')),
     budget_tokens INTEGER NOT NULL CHECK (budget_tokens >= 0),
@@ -132,7 +135,19 @@ CREATE TABLE objectives (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     created_by TEXT NOT NULL,
-    updated_by TEXT NOT NULL
+    updated_by TEXT NOT NULL,
+    FOREIGN KEY (primary_checkout_id, project_id)
+      REFERENCES checkouts(id, project_id)
+) STRICT;
+
+CREATE TABLE objective_reference_checkouts (
+    objective_id TEXT NOT NULL REFERENCES objectives(id),
+    checkout_id TEXT NOT NULL REFERENCES checkouts(id),
+    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 7),
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    PRIMARY KEY (objective_id, checkout_id),
+    UNIQUE (objective_id, ordinal)
 ) STRICT;
 
 CREATE TABLE domain_agent_memberships (
@@ -415,6 +430,8 @@ CREATE TABLE tasks (
 CREATE TABLE task_dependencies (
     task_id TEXT NOT NULL REFERENCES tasks(id),
     depends_on_task_id TEXT NOT NULL REFERENCES tasks(id),
+    delivery_requirement TEXT NOT NULL DEFAULT 'completion'
+      CHECK (delivery_requirement IN ('completion', 'handoff', 'handoff_with_evidence')),
     created_at TEXT NOT NULL,
     created_by TEXT NOT NULL,
     PRIMARY KEY (task_id, depends_on_task_id),
@@ -6029,9 +6046,30 @@ BEGIN
           OR json_extract(packet.packet_json, '$.checkout.revision') IS NOT checkout.revision
           OR checkout.availability <> 'available'
           OR json_extract(packet.packet_json, '$.dependencies') IS NOT (
-              SELECT json_group_array(json_object('task_id', dependency_task.id, 'title', dependency_task.title,
-                  'status', dependency_task.status, 'revision', dependency_task.revision))
-              FROM (SELECT depends_on_task_id FROM task_dependencies WHERE task_id = task.id ORDER BY depends_on_task_id) edge
+              SELECT json_group_array(json_object(
+                  'task_id', dependency_task.id, 'title', dependency_task.title,
+                  'status', dependency_task.status, 'revision', dependency_task.revision,
+                  'delivery_requirement', edge.delivery_requirement,
+                  'output', CASE WHEN dependency_task.status='completed' AND edge.delivery_requirement<>'completion' THEN json((
+                    SELECT json_object(
+                      'run_id', completed_run.id,
+                      'summary', completion_report.message,
+                      'handoff', completed_handoff.summary,
+                      'evidence_ids', json(completion_report.evidence_json),
+                      'changed_paths', COALESCE(json_extract(completion_report.payload_json,'$.changed_paths'),json('[]')),
+                      'checks', COALESCE(json_extract(completion_report.payload_json,'$.checks'),json('[]')),
+                      'remaining_risks', COALESCE(json_extract(completion_report.payload_json,'$.remaining_risks'),json('[]')),
+                      'unknowns', COALESCE(json_extract(completion_report.payload_json,'$.unknowns'),json('[]'))
+                    )
+                    FROM runs completed_run
+                    JOIN run_handoffs completed_handoff ON completed_handoff.run_id=completed_run.id
+                    JOIN run_reports completion_report ON completion_report.run_id=completed_run.id
+                      AND completion_report.kind='completion' AND completion_report.status='applied'
+                    WHERE completed_run.task_id=dependency_task.id AND completed_run.status='completed'
+                    ORDER BY completed_run.finished_at DESC,completion_report.sequence DESC LIMIT 1
+                  )) ELSE NULL END
+              ))
+              FROM (SELECT depends_on_task_id,delivery_requirement FROM task_dependencies WHERE task_id = task.id ORDER BY depends_on_task_id) edge
               JOIN tasks dependency_task ON dependency_task.id = edge.depends_on_task_id)
         )
     ) THEN RAISE(ABORT, 'run context packet base differs from canonical authority') END;

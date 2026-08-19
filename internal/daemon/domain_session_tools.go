@@ -74,11 +74,14 @@ type domainSessionDelegateStaffingArguments struct {
 }
 
 type domainSessionProposeWorkArguments struct {
-	StaffingGrantID string                          `json:"staffing_grant_id"`
-	Summary         string                          `json:"summary"`
-	ObjectiveTitle  string                          `json:"objective_title"`
-	ObjectiveBudget domain.Budget                   `json:"objective_budget"`
-	Tasks           []domain.DomainWorkProposalTask `json:"tasks"`
+	StaffingGrantID         string                          `json:"staffing_grant_id"`
+	Summary                 string                          `json:"summary"`
+	ObjectiveTitle          string                          `json:"objective_title"`
+	ObjectiveBudget         domain.Budget                   `json:"objective_budget"`
+	PrimaryCheckoutID       string                          `json:"primary_checkout_id"`
+	PrimaryCheckoutRevision int64                           `json:"primary_checkout_revision"`
+	ReferenceCheckoutIDs    []string                        `json:"reference_checkout_ids"`
+	Tasks                   []domain.DomainWorkProposalTask `json:"tasks"`
 }
 
 type domainSessionProposeKnowledgeArguments struct {
@@ -170,26 +173,32 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 		},
 		{
 			Type: "function", Name: domainToolProposeWork,
-			Description: "Submit one inert, owner-reviewable workstream graph using exact active launch profiles for durable agents in this agent's subtree. Crewfold validates the task classes, aggregate budgets, dependencies, profiles, hierarchy, staffing grant, and frozen event cut. Submission starts nothing. One later owner acceptance atomically creates the objective, tasks, dependencies, and scheduling intents; the supervisor then launches eligible work under current policy.",
+			Description: "Submit one inert, owner-reviewable checkout-bound workstream graph using exact active launch profiles and membership revisions for durable agents in this agent's subtree. Every dependency names the structured delivery it requires. Submission starts nothing. Owner acceptance atomically creates the workstream, places its durable agents, creates tasks and delivery edges, and publishes scheduling intents against the frozen primary checkout.",
 			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
-				"required": []string{"staffing_grant_id", "summary", "objective_title", "objective_budget", "tasks"},
+				"required": []string{"staffing_grant_id", "summary", "objective_title", "objective_budget", "primary_checkout_id", "primary_checkout_revision", "reference_checkout_ids", "tasks"},
 				"properties": map[string]any{
-					"staffing_grant_id": map[string]any{"type": "string", "pattern": "^staffgrant_[0-9a-f]{32}$"},
-					"summary":           map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
-					"objective_title":   map[string]any{"type": "string", "minLength": 1, "maxLength": 256},
-					"objective_budget":  domainStaffingBudgetSchema(),
+					"staffing_grant_id":         map[string]any{"type": "string", "pattern": "^staffgrant_[0-9a-f]{32}$"},
+					"summary":                   map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
+					"objective_title":           map[string]any{"type": "string", "minLength": 1, "maxLength": 256},
+					"objective_budget":          domainStaffingBudgetSchema(),
+					"primary_checkout_id":       map[string]any{"type": "string", "pattern": "^co_[0-9a-f]{32}$"},
+					"primary_checkout_revision": map[string]any{"type": "integer", "minimum": 1},
+					"reference_checkout_ids":    map[string]any{"type": "array", "maxItems": 8, "uniqueItems": true, "items": map[string]any{"type": "string", "pattern": "^co_[0-9a-f]{32}$"}},
 					"tasks": map[string]any{"type": "array", "minItems": 1, "maxItems": 16, "items": map[string]any{
 						"type": "object", "additionalProperties": false,
-						"required": []string{"key", "title", "description", "task_class", "priority", "budget", "launch_profile_id", "depends_on"},
+						"required": []string{"key", "title", "description", "task_class", "priority", "budget", "launch_profile_id", "agent_id", "agent_membership_revision", "depends_on", "dependency_delivery"},
 						"properties": map[string]any{
-							"key":               map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
-							"title":             map[string]any{"type": "string", "minLength": 1, "maxLength": 256},
-							"description":       map[string]any{"type": "string", "maxLength": 4096},
-							"task_class":        map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
-							"priority":          map[string]any{"type": "integer", "minimum": 0, "maximum": 1000},
-							"budget":            domainStaffingBudgetSchema(),
-							"launch_profile_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-							"depends_on":        map[string]any{"type": "array", "maxItems": 15, "uniqueItems": true, "items": map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"}},
+							"key":                       map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+							"title":                     map[string]any{"type": "string", "minLength": 1, "maxLength": 256},
+							"description":               map[string]any{"type": "string", "maxLength": 4096},
+							"task_class":                map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+							"priority":                  map[string]any{"type": "integer", "minimum": 0, "maximum": 1000},
+							"budget":                    domainStaffingBudgetSchema(),
+							"launch_profile_id":         map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+							"agent_id":                  map[string]any{"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
+							"agent_membership_revision": map[string]any{"type": "integer", "minimum": 1},
+							"depends_on":                map[string]any{"type": "array", "maxItems": 15, "uniqueItems": true, "items": map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"}},
+							"dependency_delivery":       map[string]any{"type": "object", "maxProperties": 15, "additionalProperties": map[string]any{"type": "string", "enum": []string{domain.DependencyDeliveryCompletion, domain.DependencyDeliveryHandoff, domain.DependencyDeliveryHandoffWithEvidence}}},
 						},
 					}},
 				},
@@ -326,7 +335,9 @@ func (s *server) domainProposeWorkToolResult(ctx context.Context, call domainSes
 	key := fmt.Sprintf("domain-tool-%x", digest[:])
 	result, err := s.store.SubmitDomainWorkProposal(ctx, store.SubmitDomainWorkProposalCommand{
 		ThreadID: call.ThreadID, StaffingGrantID: arguments.StaffingGrantID, Summary: arguments.Summary,
-		Content:        domain.DomainWorkProposalContent{ObjectiveTitle: arguments.ObjectiveTitle, ObjectiveBudget: arguments.ObjectiveBudget, Tasks: arguments.Tasks},
+		Content: domain.DomainWorkProposalContent{ObjectiveTitle: arguments.ObjectiveTitle, ObjectiveBudget: arguments.ObjectiveBudget,
+			PrimaryCheckoutID: arguments.PrimaryCheckoutID, PrimaryCheckoutRevision: arguments.PrimaryCheckoutRevision,
+			ReferenceCheckoutIDs: arguments.ReferenceCheckoutIDs, Tasks: arguments.Tasks},
 		IdempotencyKey: key, CorrelationID: key,
 	})
 	if err != nil {
@@ -690,7 +701,8 @@ func decodeDomainProposeWorkArguments(data json.RawMessage) (domainSessionPropos
 	value.StaffingGrantID = strings.TrimSpace(value.StaffingGrantID)
 	value.Summary = strings.TrimSpace(value.Summary)
 	value.ObjectiveTitle = strings.TrimSpace(value.ObjectiveTitle)
-	if !validDomainToolText(value.StaffingGrantID, 128) || !validDomainToolText(value.Summary, 2048) || !validDomainToolText(value.ObjectiveTitle, 256) || len(value.Tasks) < 1 || len(value.Tasks) > 16 {
+	value.PrimaryCheckoutID = strings.TrimSpace(value.PrimaryCheckoutID)
+	if !validDomainToolText(value.StaffingGrantID, 128) || !validDomainToolText(value.Summary, 2048) || !validDomainToolText(value.ObjectiveTitle, 256) || value.PrimaryCheckoutID == "" || value.PrimaryCheckoutRevision < 1 || len(value.ReferenceCheckoutIDs) > 8 || len(value.Tasks) < 1 || len(value.Tasks) > 16 {
 		return value, errors.New("work proposal fields are missing or outside their bounded types")
 	}
 	return value, nil

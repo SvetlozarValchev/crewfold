@@ -253,10 +253,14 @@ after the placement is committed.
 
 The implemented deterministic scheduler consumes the task's existing active
 assignment, verifies the agent's enabled state and runtime/provider configuration,
-enforces agent concurrency, and selects a writable checkout in the task's project.
-Checkout eligibility depends on availability and write policy, not Git layout:
-adjacent clones and linked worktrees are equal inputs. The selected placement and
-its reasons are durable before the asynchronous worker sees the job.
+enforces agent concurrency, and uses the task's workstream primary checkout for
+source-mutating work. A coordination-only task may use an explicit read-only
+resource. Checkout eligibility depends on availability, the frozen workstream
+binding, and write policy, not Git layout: adjacent clones and linked worktrees
+are equal inputs. Launch reuses the concrete directory and never performs an
+implicit clone, clean, dependency installation, bootstrap, or rebuild. The
+selected placement and its reasons are durable before the asynchronous worker
+sees the job.
 
 M16 extends placement without moving launch authority into model output. Accepted
 work names an exact owner-defined launch profile whose project and agent revision
@@ -310,7 +314,8 @@ capability advertises no governance operation; probes of a reserved acceptance
 name stop earlier as audited `run.tool_denied` policy violations.
 
 The current context-packet builder starts from the existing role, task, checkout,
-dependency, reverse-dependent, participant-roster, policy, reporting, and
+dependency lifecycle and required predecessor outputs, reverse-dependent,
+participant-roster, policy, reporting, and
 bounded-inbox snapshot. It then evaluates only
 the caller's ordered exact revision IDs—never a search result. Accepted, current,
 fresh, applicable revisions are embedded as complete snapshots. Other known
@@ -328,6 +333,13 @@ prebuilt packet is revalidated once at run binding; after successful binding,
 later governance cannot change its immutable bytes and only explicit refresh can
 carry a withdrawal or rebase. Provider transcripts are neither queried nor
 ingested. This is bounded context authority, not RAG or a transcript accumulator.
+Before construction, every direct dependency is checked against its stored
+delivery requirement. `completion` needs a terminal successful predecessor;
+`handoff` additionally needs its canonical bounded handoff; and
+`handoff_with_evidence` needs the handoff plus every exact referenced evidence
+record accessible to the successor. A missing, inconsistent, or inaccessible
+input prevents packet/run creation. It is never represented as a live agent that
+must rediscover why it cannot proceed.
 An otherwise eligible explicit revision in an
 owner-confirmed open contradiction fails the whole new build before budgeting;
 an already ineligible revision keeps its ordinary exclusion precedence. Existing

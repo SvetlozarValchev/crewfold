@@ -556,22 +556,6 @@ type MeetingProposal struct {
 	DecisionNote *string `json:"decision_note"`
 }
 
-type Objective struct {
-	ID                string `json:"id"`
-	WorkspaceID       string `json:"workspace_id"`
-	ProjectID         string `json:"project_id"`
-	Title             string `json:"title"`
-	Status            string `json:"status"`
-	BudgetTokens      int64  `json:"budget_tokens"`
-	BudgetCostCents   int64  `json:"budget_cost_cents"`
-	BudgetTimeSeconds int64  `json:"budget_time_seconds"`
-	Revision          int64  `json:"revision"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at"`
-	CreatedBy         string `json:"created_by"`
-	UpdatedBy         string `json:"updated_by"`
-}
-
 type OutcomeAssessment struct {
 	ID                     string  `json:"id"`
 	WorkspaceID            string  `json:"workspace_id"`

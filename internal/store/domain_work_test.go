@@ -76,9 +76,11 @@ func TestM22CoordinatorProposalPublishesOneExactAcceptedWorkGraph(t *testing.T) 
 		Summary: "Implement one bounded slice and verify it independently.",
 		Content: domain.DomainWorkProposalContent{
 			ObjectiveTitle: "Deliver one tested slice", ObjectiveBudget: domain.Budget{TokenLimit: 200, TimeSeconds: 600},
+			PrimaryCheckoutID: inspection.Checkouts[0].ID, PrimaryCheckoutRevision: inspection.Checkouts[0].Revision,
+			ReferenceCheckoutIDs: []string{},
 			Tasks: []domain.DomainWorkProposalTask{
-				{Key: "build", Title: "Build the slice", Description: "Implement the bounded deliverable.", TaskClass: "implementation", Priority: 100, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, LaunchProfileID: implementationProfile.ID, DependsOn: []string{}},
-				{Key: "verify", Title: "Verify the slice", Description: "Independently test and review the deliverable.", TaskClass: "verification", Priority: 200, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, LaunchProfileID: verificationProfile.ID, DependsOn: []string{"build"}},
+				{Key: "build", Title: "Build the slice", Description: "Implement the bounded deliverable.", TaskClass: "implementation", Priority: 100, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, LaunchProfileID: implementationProfile.ID, AgentID: implementer.Agent.ID, AgentMembershipRevision: implementer.Membership.Revision, DependsOn: []string{}, DependencyDelivery: map[string]string{}},
+				{Key: "verify", Title: "Verify the slice", Description: "Independently test and review the deliverable.", TaskClass: "verification", Priority: 200, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, LaunchProfileID: verificationProfile.ID, AgentID: verifier.Agent.ID, AgentMembershipRevision: verifier.Membership.Revision, DependsOn: []string{"build"}, DependencyDelivery: map[string]string{"build": domain.DependencyDeliveryHandoffWithEvidence}},
 			},
 		},
 		IdempotencyKey: "submit-domain-work", CorrelationID: "submit-domain-work",
@@ -114,7 +116,7 @@ func TestM22CoordinatorProposalPublishesOneExactAcceptedWorkGraph(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if accepted.Proposal.Status != domain.DomainWorkProposalAccepted || accepted.Proposal.Revision != 2 || len(accepted.Effects) != 6 {
+	if accepted.Proposal.Status != domain.DomainWorkProposalAccepted || accepted.Proposal.Revision != 2 || len(accepted.Effects) != 8 {
 		t.Fatalf("accepted proposal = %#v", accepted)
 	}
 	var objectiveCount, taskCount, dependencyCount, intentCount int
@@ -133,8 +135,91 @@ func TestM22CoordinatorProposalPublishesOneExactAcceptedWorkGraph(t *testing.T) 
 	if objectiveCount != 1 || taskCount != 2 || dependencyCount != 1 || intentCount != 2 {
 		t.Fatalf("accepted graph counts objective=%d task=%d dependency=%d intent=%d", objectiveCount, taskCount, dependencyCount, intentCount)
 	}
+	for _, child := range []domain.DomainAgentChildCreation{implementer, verifier} {
+		placed, placeErr := queryDomainAgentMembership(ctx, storage.db, project.ID, child.Agent.ID)
+		if placeErr != nil || placed.WorkstreamID == "" || placed.Revision != child.Membership.Revision+1 {
+			t.Fatalf("accepted placement %s = %#v, %v", child.Agent.Name, placed, placeErr)
+		}
+	}
 	report, err := storage.VerifyCanonical(ctx, CanonicalVerifyOptions{Full: true})
 	if err != nil || !report.Complete || report.Status != "ok" {
 		t.Fatalf("canonical verification = %#v, %v", report, err)
 	}
+	policy, err := storage.ConfigureSupervisorPolicy(ctx, ConfigureSupervisorPolicyCommand{
+		WorkspaceIdentifier: workspace.ID, Enabled: true, AutoSchedule: true,
+		Limits:           domain.SupervisorLimits{MaxActiveRuns: 4, MaxStartingRuns: 2, DefaultProjectConcurrency: 4, DefaultProviderConcurrency: 4},
+		ExpectedRevision: 1, IdempotencyKey: "m23-work-policy", CorrelationID: "m23-work-policy",
+	})
+	if err != nil || !policy.Value.AutoSchedule {
+		t.Fatalf("ConfigureSupervisorPolicy() = %#v, %v", policy, err)
+	}
+	firstSweep, err := storage.RunSupervisor(ctx, RunSupervisorCommand{
+		WorkspaceIdentifier: workspace.ID, Limit: 100, IdempotencyKey: "m23-first-work-sweep", CorrelationID: "m23-first-work-sweep",
+	})
+	if err != nil || len(firstSweep.ScheduledRunIDs) != 1 {
+		t.Fatalf("RunSupervisor(first) = %#v, %v", firstSweep, err)
+	}
+	firstRun, err := storage.RunDetail(ctx, workspace.ID, firstSweep.ScheduledRunIDs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstRun.Task.Title != "Build the slice" || firstRun.Run.CheckoutID != inspection.Checkouts[0].ID || firstRun.Checkout.Path != inspection.Checkouts[0].Path {
+		t.Fatalf("first scheduled run = %#v", firstRun)
+	}
+	var verificationRuns int
+	if err := storage.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE task_id IN (SELECT id FROM tasks WHERE objective_id=? AND title='Verify the slice')`, objectiveIDFromEffects(accepted.Effects)).Scan(&verificationRuns); err != nil {
+		t.Fatal(err)
+	}
+	if verificationRuns != 0 {
+		t.Fatalf("verification runs before delivered dependency = %d, want 0", verificationRuns)
+	}
+	starting, err := storage.MarkRunStarting(ctx, firstRun.Run.ID, "m23-first-run-starting")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := storage.MarkRunStarted(ctx, starting.ID, "m23-runtime", "m23-provider", "m23-first-run-started")
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := storage.SubmitRunReport(ctx, CreateRunReportCommand{
+		RunID: active.Run.ID, Kind: domain.ObservationCompletion, Message: "built the bounded slice",
+		Handoff: "verify the changed slice independently", Evidence: []string{"artifact:implementation"},
+		Payload:        map[string]any{"changed_paths": []string{"src/slice.ts"}, "checks": []string{"unit"}},
+		IdempotencyKey: "m23-first-run-completion",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.ApplyQueuedRunReport(ctx, active.Run.ID, completion.ID, true, nil,
+		prepareTestRunLogArchive(t, storage, active.Run.ID), "", "m23-apply-first-run-completion"); err != nil {
+		t.Fatal(err)
+	}
+	secondSweep, err := storage.RunSupervisor(ctx, RunSupervisorCommand{
+		WorkspaceIdentifier: workspace.ID, Limit: 100, IdempotencyKey: "m23-second-work-sweep", CorrelationID: "m23-second-work-sweep",
+	})
+	if err != nil || len(secondSweep.ScheduledRunIDs) != 1 {
+		t.Fatalf("RunSupervisor(second) = %#v, %v", secondSweep, err)
+	}
+	secondRun, err := storage.RunDetail(ctx, workspace.ID, secondSweep.ScheduledRunIDs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := storage.ContextPacket(ctx, workspace.ID, secondRun.Run.ContextPacketID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondRun.Task.Title != "Verify the slice" || secondRun.Run.CheckoutID != inspection.Checkouts[0].ID || len(packet.Dependencies) != 1 || packet.Dependencies[0].Output == nil ||
+		packet.Dependencies[0].DeliveryRequirement != domain.DependencyDeliveryHandoffWithEvidence || packet.Dependencies[0].Output.RunID != firstRun.Run.ID ||
+		packet.Dependencies[0].Output.Handoff != "verify the changed slice independently" {
+		t.Fatalf("second scheduled run/context = run %#v packet %#v", secondRun, packet.Dependencies)
+	}
+}
+
+func objectiveIDFromEffects(effects []domain.DomainWorkProposalEffect) string {
+	for _, effect := range effects {
+		if effect.EntityType == "objective" {
+			return effect.EntityID
+		}
+	}
+	return ""
 }

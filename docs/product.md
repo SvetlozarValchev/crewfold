@@ -96,7 +96,7 @@ The owner interface presents the current canonical scopes this way:
 | --- | --- | --- |
 | Workspace | Workspace | One local owner's portfolio and defaults |
 | Domain | Project | Shared knowledge, policy, workstreams, resources, and agents; never one folder |
-| Workstream | Objective | One independently managed outcome inside a domain |
+| Workstream | Objective plus one optional primary checkout | One independently managed outcome with a persistent execution home when it changes source |
 | Attached resource | Repository, checkout, service | A place or process used by work; never the hierarchy |
 | Durable agent | Agent definition plus resumable provider binding | A named continuing actor that can be idle or running |
 | Agent attempt | Run | One provider/runtime execution of that durable agent |
@@ -140,10 +140,15 @@ still supplies the only creation authority.
 ### 3. Assign and launch
 
 The owner creates work directly or accepts an exact bounded proposal containing
-deliverables, dependencies, constraints, and expected change surfaces. The
-scheduler validates its owner-authored agent-bound launch profile and checkout.
-Crewfold builds a context packet, creates a run, and asks a runtime driver to
-launch or attach to the provider session.
+deliverables, dependencies, required predecessor outputs, constraints, intended
+agent placement, and expected change surfaces. An implementation workstream binds
+one existing writable checkout as its primary execution home. Proposal acceptance
+atomically binds that checkout, places every participating durable agent, creates
+the graph, and publishes scheduling intents. The scheduler validates its
+owner-authored agent-bound launch profile and reuses that exact checkout. Crewfold
+builds a context packet, creates a run, and asks a runtime driver to launch the
+provider process without cloning, relocating, cleaning, installing, or rebuilding
+the checkout implicitly.
 
 ### 4. Work and communicate
 
@@ -165,7 +170,11 @@ meeting, or block one run before it writes further.
 ### 6. Complete and hand off
 
 An agent proposes completion with evidence. Required checks or review run. Once
-accepted, Crewfold records a handoff, releases claims, wakes dependents, and asks
+accepted, Crewfold records a handoff, releases claims, and wakes only dependents
+whose declared predecessor-output requirements are satisfied. Review,
+remediation, and verification successors receive the bounded completion summary,
+handoff, findings/risks, checks, changed paths, and authorized evidence references
+they require; a bare `completed` status is not a substitute. Crewfold then asks
 the curator whether durable knowledge changed.
 
 ### 7. Resume after failure
@@ -203,8 +212,15 @@ fallbacks. Every summary drills into the exact canonical records that produced i
 - Register multiple repositories and checkouts without relocating them.
 - Recognize branches and Git worktrees by stable repository identity.
 - Support shared read-only access to a checkout.
-- Prefer one writable checkout per concurrent implementation task.
+- Bind every source-mutating workstream to one owner-selected, persistent,
+  writable primary checkout; coordination-only workstreams may omit one.
+- Let domain-level agents inspect all attached checkouts through bounded
+  read-only authority while workstream agents default to their workstream home.
+- Reuse warm checkout state across provider processes and task attempts; never
+  imply a clone, dependency install, clean, or bootstrap from process launch.
+- Prefer one writable checkout per concurrent implementation workstream.
 - Support an explicitly configured shared-writer mode with claims and warnings.
+- Show an explicit warning when multiple active workstreams share one checkout.
 
 ### Agents and runs
 
@@ -219,10 +235,14 @@ fallbacks. Every summary drills into the exact canonical records that produced i
 - Support a generic terminal provider plus enhanced provider adapters.
 - Track lifecycle as observed, claimed, and reconciled state.
 - Bound concurrency globally and per provider/project.
+- Present the durable conversation and all attached task attempts as one ordered
+  agent timeline and derive status from the most consequential current activity.
 
 ### Tasks and scheduling
 
 - Express parent/child tasks and dependency edges.
+- Declare whether each dependency requires completion only, a handoff, or a
+  handoff plus referenced evidence before the successor can launch.
 - Record deliverables, constraints, priority, budgets, and change-surface hints.
 - Use leases so abandoned assignments can be recovered.
 - Avoid scheduling tasks whose dependencies or required claims are unavailable.

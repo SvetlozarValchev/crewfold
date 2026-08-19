@@ -677,12 +677,14 @@ type DecideDomainWorkProposalCommand struct {
 }
 
 type CreateObjectiveCommand struct {
-	WorkspaceIdentifier string
-	ProjectIdentifier   string
-	Title               string
-	Budget              domain.Budget
-	IdempotencyKey      string
-	CorrelationID       string
+	WorkspaceIdentifier  string
+	ProjectIdentifier    string
+	PrimaryCheckoutID    string
+	ReferenceCheckoutIDs []string
+	Title                string
+	Budget               domain.Budget
+	IdempotencyKey       string
+	CorrelationID        string
 }
 
 type UpdateObjectiveCommand struct {
@@ -712,6 +714,7 @@ type AddTaskDependencyCommand struct {
 	WorkspaceIdentifier string
 	TaskID              string
 	DependsOnTaskID     string
+	DeliveryRequirement string
 	ExpectedRevision    int64
 	IdempotencyKey      string
 	CorrelationID       string

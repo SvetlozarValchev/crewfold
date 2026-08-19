@@ -3,7 +3,7 @@ set -eu
 
 if [ "${CREWFOLD_RUN_LIVE_CODEX:-}" != "1" ]
 then
-  printf 'SKIP: set CREWFOLD_RUN_LIVE_CODEX=1 to run the subscription-backed M22 browser canary\n'
+  printf 'SKIP: set CREWFOLD_RUN_LIVE_CODEX=1 to run the subscription-backed M23 browser canary\n'
   exit 0
 fi
 
@@ -23,7 +23,7 @@ cleanup() {
   status=$?
   if [ "$status" -ne 0 ]
   then
-    printf 'M22 live domain-agent acceptance failed; diagnostics follow\n' >&2
+    printf 'M23 live domain-agent acceptance failed; diagnostics follow\n' >&2
     [ ! -f "$daemon_log" ] || tail -n 200 "$daemon_log" >&2
     [ ! -f "$scenario_root/browser-result.json" ] || sed -n '1,240p' "$scenario_root/browser-result.json" >&2
     if [ -n "${CREWFOLD_SCREENSHOT_DIR:-}" ]
@@ -59,7 +59,7 @@ command -v google-chrome >/dev/null 2>&1 || { printf 'Google Chrome is unavailab
 GOTOOLCHAIN=local GOPROXY=off "$go_runner" build -trimpath -o "$binary" "$repo_root/cmd/crewfold"
 mkdir -m 0700 -p "$runtime_dir" "$scenario_root/fakebin" "$scenario_root/domain-repository" "$scenario_root/config/herdr"
 git -C "$scenario_root/domain-repository" init -q -b main
-printf '# M22 live domain\n\nThis repository exists only for the durable-agent subscription canary.\n' >"$scenario_root/domain-repository/README.md"
+printf '# M23 live domain\n\nThis repository exists only for the checkout-bound durable-agent subscription canary.\n' >"$scenario_root/domain-repository/README.md"
 git -C "$scenario_root/domain-repository" add README.md
 git -C "$scenario_root/domain-repository" -c user.name='Crewfold Live Fixture' -c user.email='live@invalid' commit -q -m 'initial fixture'
 
@@ -125,7 +125,9 @@ grep -Fq '"workerCompleted": true' "$scenario_root/browser-result.json"
 grep -Fq '"providerLocalHelper": false' "$scenario_root/browser-result.json"
 grep -Fq '"epochLineage": true' "$scenario_root/browser-result.json"
 grep -Fq '"browserExceptions": []' "$scenario_root/browser-result.json"
-test -z "$(git -C "$scenario_root/domain-repository" status --porcelain=v1)"
+test -s "$scenario_root/domain-repository/M23_DELIVERY.txt"
+test -z "$(git -C "$scenario_root/domain-repository" diff -- README.md)"
+test "$(git -C "$scenario_root/domain-repository" status --porcelain=v1)" = '?? M23_DELIVERY.txt'
 
 "$binary" daemon stop --socket "$socket_path" --output json >/dev/null
 wait "$daemon_pid"
@@ -134,4 +136,4 @@ kill "$chrome_pid" 2>/dev/null || true
 wait "$chrome_pid" 2>/dev/null || true
 chrome_pid=""
 
-printf 'Subscription-backed M22 durable-agent browser acceptance: PASS\n'
+printf 'Subscription-backed M23 checkout-bound durable-agent browser acceptance: PASS\n'

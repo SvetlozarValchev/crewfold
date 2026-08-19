@@ -296,6 +296,18 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	if err != nil {
 		return RunMutationResult{}, err
 	}
+	if task.ObjectiveID != "" {
+		objective, err := queryObjective(ctx, tx, workspace.ID, task.ObjectiveID)
+		if err != nil {
+			return RunMutationResult{}, err
+		}
+		if objective.ProjectID != task.ProjectID {
+			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "task objective is outside the task project"}
+		}
+		if objective.PrimaryCheckoutID != "" && checkout.ID != objective.PrimaryCheckoutID {
+			return RunMutationResult{}, &Error{Code: CodePlacementUnavailable, Message: fmt.Sprintf("task belongs to workstream %s bound to checkout %s; requested checkout %s is outside that workstream", objective.ID, objective.PrimaryCheckoutID, checkout.ID)}
+		}
+	}
 	if contextPacketID != "" {
 		if packet.CheckoutID != checkout.ID || packet.Checkout.Revision != checkout.Revision {
 			return RunMutationResult{}, &Error{Code: CodeInvalidContext, Message: "context packet checkout is stale or differs from placement"}
@@ -1914,7 +1926,39 @@ func runDetail(ctx context.Context, database runQueryContext, run domain.Run) (d
 	if err != nil {
 		return domain.RunDetail{}, err
 	}
-	return domain.RunDetail{Run: run, Task: task, Agent: agent, Checkout: checkout, Timeline: timeline, Handoff: handoff}, nil
+	blocker, err := queryRunBlocker(ctx, database, run)
+	if err != nil {
+		return domain.RunDetail{}, err
+	}
+	return domain.RunDetail{Run: run, Task: task, Agent: agent, Checkout: checkout, Timeline: timeline, Blocker: blocker, Handoff: handoff}, nil
+}
+
+func queryRunBlocker(ctx context.Context, database queryRower, run domain.Run) (*domain.RunBlocker, error) {
+	if run.Status != domain.RunBlocked {
+		return nil, nil
+	}
+	var payloadJSON string
+	err := database.QueryRowContext(ctx, `
+SELECT payload_json FROM run_reports
+WHERE run_id=? AND kind='blocked' AND status='applied'
+ORDER BY sequence DESC LIMIT 1`, run.ID).Scan(&payloadJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &domain.RunBlocker{Reason: run.BlockedQuestion, Needs: []string{}, RelatedIDs: []string{}}, nil
+	}
+	if err != nil {
+		return nil, storageFailure("query run blocker", err)
+	}
+	var blocker domain.RunBlocker
+	if err := json.Unmarshal([]byte(payloadJSON), &blocker); err != nil {
+		return nil, storageFailure("decode run blocker", err)
+	}
+	blocker.Reason = strings.TrimSpace(blocker.Reason)
+	if blocker.Reason == "" {
+		blocker.Reason = run.BlockedQuestion
+	}
+	blocker.Needs = nonNilStrings(blocker.Needs)
+	blocker.RelatedIDs = nonNilStrings(blocker.RelatedIDs)
+	return &blocker, nil
 }
 
 func runDetailInTransaction(ctx context.Context, tx *sql.Tx, run domain.Run) (domain.RunDetail, error) {

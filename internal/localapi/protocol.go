@@ -469,11 +469,13 @@ type AgentListResult struct {
 }
 
 type ObjectiveCreateParams struct {
-	Workspace      string        `json:"workspace"`
-	Project        string        `json:"project"`
-	Title          string        `json:"title"`
-	Budget         domain.Budget `json:"budget"`
-	IdempotencyKey string        `json:"idempotency_key"`
+	Workspace          string        `json:"workspace"`
+	Project            string        `json:"project"`
+	PrimaryCheckout    string        `json:"primary_checkout,omitempty"`
+	ReferenceCheckouts []string      `json:"reference_checkouts,omitempty"`
+	Title              string        `json:"title"`
+	Budget             domain.Budget `json:"budget"`
+	IdempotencyKey     string        `json:"idempotency_key"`
 }
 
 type ObjectiveUpdateParams struct {
@@ -552,11 +554,12 @@ type TaskListParams struct {
 }
 
 type TaskDependencyParams struct {
-	Workspace        string `json:"workspace"`
-	Task             string `json:"task"`
-	DependsOn        string `json:"depends_on"`
-	ExpectedRevision int64  `json:"expected_revision"`
-	IdempotencyKey   string `json:"idempotency_key"`
+	Workspace           string `json:"workspace"`
+	Task                string `json:"task"`
+	DependsOn           string `json:"depends_on"`
+	DeliveryRequirement string `json:"delivery_requirement,omitempty"`
+	ExpectedRevision    int64  `json:"expected_revision"`
+	IdempotencyKey      string `json:"idempotency_key"`
 }
 
 type TaskAssignParams struct {

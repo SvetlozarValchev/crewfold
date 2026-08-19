@@ -81,7 +81,7 @@ await evaluate(`(() => {
   const selects = form.querySelectorAll('select');
   set(inputs[0], ${JSON.stringify(repositoryPath)});
   set(inputs[1], 'personal');
-  set(inputs[2], 'm22-live-domain');
+  set(inputs[2], 'm23-live-domain');
   set(selects[0], 'domain-coordinator');
   return true;
 })()`);
@@ -151,7 +151,12 @@ await waitFor("document.body.innerText.includes('start Codex session')", "unboun
 await clickText("button", "start Codex session");
 await waitFor("document.body.innerText.toLowerCase().includes('codex conversation · epoch 1 · codex') && document.querySelector('.m22-composer textarea')", "opened real Codex thread");
 
-const orchidInstruction = `Coordinate this domain end to end according to your operating charter. Use your current Crewfold staffing grant to create exactly one continuing durable child named m22-reviewer with the descriptive role "independent fixture reviewer", hands_on policy, Codex through Herdr, task class review, one concurrent run, the attached checkout, and a bounded charter to inspect the fixture repository read-only and report exact evidence. Send fern one durable inform message that independent review has been staffed. Then submit one inert Crewfold work proposal under your current grant: objective "Verify the M22 fixture", one task with key review, title "Review the M22 fixture", task class review, priority 100, the m22-reviewer launch profile, no dependencies, and a description requiring it to read README.md without changing repository files, report the exact heading as evidence, and complete through Crewfold. Use sensible bounded token/time budgets within your grant. Do not use provider-local temporary helpers. Once the child, message, and pending proposal are all confirmed by exact Crewfold tool receipts, answer exactly LIVE_M22_OK and explain that the owner must accept the displayed graph before anything runs.`;
+const orchidInstruction = `Coordinate this domain end to end according to your operating charter. Use your current Crewfold staffing grant to create exactly four continuing durable children on the attached checkout, all Codex through Herdr with one concurrent run and hands_on policy: m23-implementer (task class implementation), m23-reviewer (task class review), m23-remediator (task class implementation), and m23-verifier (task class verification). Give each a concise charter limited to its named stage. Send fern one durable inform message that the exact M23 delivery chain has been staffed. Re-read the canonical domain context after all four child receipts so you have their exact agent IDs, membership revisions, and launch profile IDs. Then submit one inert Crewfold work proposal under your current grant with objective "Deliver the M23 checkout chain", the attached checkout as its frozen primary checkout at its exact current revision, no reference checkouts, and these four assigned tasks in order:
+1. key implement, title "Create the M23 fixture delivery", implementation. Create M23_DELIVERY.txt with a short implementation line, preserve README.md, inspect the diff, and complete through Crewfold with changed_paths and a check so a structured handoff is available.
+2. key review, title "Independently review the M23 delivery", review, depending on implement with handoff_with_evidence. Read the predecessor output from the Crewfold briefing, inspect README.md and M23_DELIVERY.txt without editing, and complete with reviewed paths, checks, and an exact handoff.
+3. key remediate, title "Apply the M23 review handoff", implementation, depending on review with handoff_with_evidence. Read the reviewer output from the Crewfold briefing, append one remediation acknowledgement to M23_DELIVERY.txt if absent, inspect the diff, and complete with changed paths, checks, and handoff.
+4. key verify, title "Verify the M23 checkout chain", verification, depending on remediate with handoff_with_evidence. Read the predecessor output from the Crewfold briefing, verify both delivery lines and the preserved README.md without editing, then complete with reviewed paths, checks, and a final handoff.
+Use the exact current agent membership and launch profile for every task, sensible bounded budgets within your grant, and dependency_delivery entries matching every dependency. Do not use provider-local temporary helpers and do not perform the implementation yourself. Once all four children, the fern message, and the pending proposal are confirmed by exact Crewfold receipts, answer exactly LIVE_M23_OK and explain that the owner must accept the displayed graph before anything runs.`;
 await evaluate(`(() => {
   const input = document.querySelector('.m22-composer textarea');
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(orchidInstruction)});
@@ -160,31 +165,36 @@ await evaluate(`(() => {
 })()`);
 await waitFor("!document.querySelector('.m22-composer button').disabled", "enabled orchid send");
 await clickText(".m22-composer button", "send");
-await waitFor("[...document.querySelectorAll('.m22-thread-item.agentMessage p')].some((item) => item.textContent.trim().startsWith('LIVE_M22_OK'))", "orchid tool-backed response");
-await waitFor("document.querySelectorAll('.m22-agent-row').length >= 3", "charter-driven durable child delegation");
-const orchidReplySeen = await evaluate("[...document.querySelectorAll('.m22-thread-item.agentMessage p')].some((item) => item.textContent.trim().startsWith('LIVE_M22_OK'))");
+await waitFor("[...document.querySelectorAll('.m22-thread-item.agentMessage p')].some((item) => item.textContent.trim().startsWith('LIVE_M23_OK'))", "orchid tool-backed response", 600000);
+await waitFor("document.querySelectorAll('.m22-agent-row').length >= 6", "charter-driven durable child delegation");
+const orchidReplySeen = await evaluate("[...document.querySelectorAll('.m22-thread-item.agentMessage p')].some((item) => item.textContent.trim().startsWith('LIVE_M23_OK'))");
 await capture("01-orchid-real-session");
 
-await clickText(".m22-domain-row", "m22-live-domain");
-await waitFor("document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Verify the M22 fixture') && document.querySelector('.m22-work-proposals')?.textContent.includes('Conversation alone has changed nothing')", "inert coordinator work proposal");
+await clickText(".m22-domain-row", "m23-live-domain");
+await waitFor("document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Deliver the M23 checkout chain') && document.querySelector('.m22-work-proposals')?.textContent.includes('Conversation alone has changed nothing')", "inert coordinator work proposal");
 await capture("02-pending-exact-work-graph");
 await clickText(".m22-work-proposal button", "accept exact graph");
 await waitFor("[...document.querySelectorAll('.m22-domain-home .m22-block h2')].some((heading) => heading.textContent.trim() === 'active workstreams') && !document.querySelector('.m22-work-proposal.pending')", "accepted workstream graph");
 const proposalAccepted = true;
-await clickText(".m22-agent-row", "m22-reviewer");
-await waitFor("document.querySelector('.m22-agent-center h1')?.textContent.trim() === 'm22-reviewer'", "durable reviewer selection");
-await clickText(".m22-tabs button", "assignment");
-await waitFor("document.querySelector('.m22-agent-center')?.textContent.includes('No canonical task is assigned to this agent.')", "durable reviewer terminalization");
-await clickText(".m22-domain-row", "m22-live-domain");
-await waitFor("[...document.querySelectorAll('.m22-domain-home .m22-line')].some((item) => item.textContent.includes('Verify the M22 fixture') && item.textContent.includes('0 open tasks')) && ![...document.querySelectorAll('.m22-domain-home .m22-block h2')].some((heading) => heading.textContent.trim() === 'needs attention')", "dependency-free durable reviewer completion");
-const workerCompleted = await evaluate("[...document.querySelectorAll('.m22-domain-home .m22-line')].some((item) => item.textContent.includes('Verify the M22 fixture') && item.textContent.includes('0 open tasks')) && ![...document.querySelectorAll('.m22-domain-home .m22-block h2')].some((heading) => heading.textContent.trim() === 'needs attention')");
+await waitFor("[...document.querySelectorAll('.m22-domain-home .m22-line')].some((item) => item.textContent.includes('Deliver the M23 checkout chain') && item.textContent.includes('0 open tasks')) && ![...document.querySelectorAll('.m22-domain-home .m22-block h2')].some((heading) => heading.textContent.trim() === 'needs attention')", "checkout-bound implement-review-remediate-verify completion", 900000);
+await evaluate(`(() => { const section = [...document.querySelectorAll('.m22-domain-home .m22-block')].find((candidate) => candidate.querySelector('h2')?.textContent.trim() === 'active workstreams'); const row = [...(section?.querySelectorAll('.m22-line') ?? [])].find((candidate) => candidate.textContent.includes('Deliver the M23 checkout chain')); row?.click(); return Boolean(row); })()`);
+await waitFor("document.querySelector('.m22-workstream-graph') && JSON.stringify([...document.querySelectorAll('.m22-workstream-graph .m22-line strong')].map((item) => item.textContent.trim())) === JSON.stringify(['Create the M23 fixture delivery', 'Independently review the M23 delivery', 'Apply the M23 review handoff', 'Verify the M23 checkout chain']) && [...document.querySelectorAll('.m22-workstream-graph .status-pill')].every((item) => item.textContent.trim().toLowerCase() === 'completed') && document.body.innerText.includes(" + JSON.stringify(repositoryPath) + ") && [...document.querySelectorAll('.m22-workstream-group')].some((group) => group.textContent.includes('Deliver the M23 checkout chain') && ['m23-implementer', 'm23-reviewer', 'm23-remediator', 'm23-verifier'].every((name) => group.textContent.includes(name)))", "completed exact workstream chain");
+const workerCompleted = await evaluate("JSON.stringify([...document.querySelectorAll('.m22-workstream-graph .m22-line strong')].map((item) => item.textContent.trim())) === JSON.stringify(['Create the M23 fixture delivery', 'Independently review the M23 delivery', 'Apply the M23 review handoff', 'Verify the M23 checkout chain']) && [...document.querySelectorAll('.m22-workstream-graph .status-pill')].every((item) => item.textContent.trim().toLowerCase() === 'completed') && [...document.querySelectorAll('.m22-workstream-group')].some((group) => group.textContent.includes('Deliver the M23 checkout chain') && ['m23-implementer', 'm23-reviewer', 'm23-remediator', 'm23-verifier'].every((name) => group.textContent.includes(name)))");
 await capture("03-completed-durable-work");
+
+await evaluate("document.querySelector('.m22-lifecycle-review button[aria-label=\"Close workstream lifecycle\"]').click(); true");
+await clickText(".m22-agent-row", "m23-reviewer");
+await waitFor("document.querySelector('.m22-execution-lane')?.textContent.includes('latest completed attempt') && document.querySelector('.m22-execution-lane')?.textContent.includes('Independently review the M23 delivery')", "reviewer task work in durable coworker surface");
+await clickText(".m22-execution-list button", "Independently review the M23 delivery");
+await waitFor("document.querySelector('.inspector')?.textContent.includes('Independently review the M23 delivery') && document.querySelector('.inspector')?.textContent.includes('Readable agent activity')", "reviewer execution activity inspector");
+await capture("04-reviewer-unified-activity");
+await evaluate("document.querySelector('.inspector button[aria-label=\"Close inspector\"]')?.click(); true");
 
 await clickText(".m22-agent-row", "fern");
 await waitFor("document.body.innerText.includes('start Codex session')", "unbound fern session");
 await clickText("button", "start Codex session");
 await waitFor("document.querySelector('.m22-composer textarea') && document.body.innerText.toLowerCase().includes('codex conversation · epoch 1 · codex')", "opened fern thread");
-const fernInstruction = `Read your canonical Crewfold domain context and confirm your delivered inbox contains the durable coordination message from orchid about staffing independent review. If and only if it does, answer exactly LIVE_FERN_ACK.`;
+const fernInstruction = `Read your canonical Crewfold domain context and confirm your delivered inbox contains the durable coordination message from orchid about staffing the exact M23 delivery chain. If and only if it does, answer exactly LIVE_FERN_ACK.`;
 await evaluate(`(() => {
   const input = document.querySelector('.m22-composer textarea');
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(fernInstruction)});
@@ -195,13 +205,13 @@ await waitFor("!document.querySelector('.m22-composer button').disabled", "enabl
 await clickText(".m22-composer button", "send");
 await waitFor("[...document.querySelectorAll('.m22-thread-item.agentMessage p')].some((item) => item.textContent.trim() === 'LIVE_FERN_ACK')", "fern inbox acknowledgement");
 const fernReplySeen = await evaluate("[...document.querySelectorAll('.m22-thread-item.agentMessage p')].some((item) => item.textContent.trim() === 'LIVE_FERN_ACK')");
-await capture("04-fern-real-session");
+await capture("05-fern-real-session");
 
 await command("Page.reload", { ignoreCache: true });
-await waitFor("document.querySelector('.m22-console') && document.querySelectorAll('.m22-agent-row').length >= 3", "canonical tree after browser reload");
+await waitFor("document.querySelector('.m22-console') && document.querySelectorAll('.m22-agent-row').length >= 6", "canonical tree after browser reload");
 await clickText(".m22-agent-row", "orchid");
-await waitFor("document.body.innerText.includes('LIVE_M22_OK')", "orchid conversation after reload");
-await capture("05-reloaded-session");
+await waitFor("document.body.innerText.includes('LIVE_M23_OK')", "orchid conversation after reload");
+await capture("06-reloaded-session");
 
 await evaluate("document.querySelector('.m22-session-lifecycle summary').click(); true");
 await waitFor("[...document.querySelectorAll('.m22-session-lifecycle-actions button')].some((button) => button.textContent.includes('compact and recycle host') && !button.disabled)", "idle native compaction control");
@@ -210,14 +220,14 @@ await waitFor("[...document.querySelectorAll('.m22-session-lifecycle-actions but
 await clickText(".m22-session-lifecycle-actions button", "hand off to fresh epoch");
 await waitFor("document.body.innerText.toLowerCase().includes('codex conversation · epoch 2 · codex') && document.body.innerText.includes('epoch 1 archived')", "fresh canonical handoff epoch");
 await clickText(".m22-session-epochs button", "epoch 1");
-await waitFor("document.body.innerText.includes('This epoch is immutable history') && document.body.innerText.includes('LIVE_M22_OK')", "readable inert archived epoch");
+await waitFor("document.body.innerText.includes('This epoch is immutable history') && document.body.innerText.includes('LIVE_M23_OK')", "readable inert archived epoch");
 const epochLineage = true;
 await capture("06-archived-epoch");
 
 const result = await evaluate(`(() => ({
   orchidReply: ${JSON.stringify(orchidReplySeen)},
   fernReply: ${JSON.stringify(fernReplySeen)},
-  childVisible: [...document.querySelectorAll('.m22-agent-row')].some((candidate) => candidate.textContent.includes('m22-reviewer')),
+  childVisible: ['m23-implementer', 'm23-reviewer', 'm23-remediator', 'm23-verifier'].every((name) => [...document.querySelectorAll('.m22-agent-row')].some((candidate) => candidate.textContent.includes(name))),
   proposalAccepted: ${JSON.stringify(proposalAccepted)},
   workerCompleted: ${JSON.stringify(workerCompleted)},
   legacyExecutive: document.body.innerText.includes('project-executive'),
@@ -227,7 +237,7 @@ const result = await evaluate(`(() => ({
 }))()`);
 result.browserExceptions = browserExceptions;
 if (!result.orchidReply || !result.fernReply || !result.childVisible || !result.proposalAccepted || !result.workerCompleted || !result.epochLineage || result.legacyExecutive || result.leakedPrivateBinding || result.providerLocalHelper || browserExceptions.length) {
-  throw new Error(`live M22 invariant failed: ${JSON.stringify(result)}`);
+  throw new Error(`live M23 invariant failed: ${JSON.stringify(result)}`);
 }
 fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));
 socket.close();

@@ -131,6 +131,207 @@ func TestTaskDependenciesRejectCyclesAndExplainReadiness(t *testing.T) {
 	}
 }
 
+func TestM23DependencyDeliveryGatesReadinessAndBecomesSuccessorContext(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, project := initializeWorkTestProject(t, storage)
+	inspection, err := storage.InspectProject(ctx, workspace.ID, project.ID)
+	if err != nil || len(inspection.Checkouts) != 1 {
+		t.Fatalf("InspectProject() = %#v, %v", inspection, err)
+	}
+	checkout := inspection.Checkouts[0]
+	agent, err := storage.CreateAgent(ctx, CreateAgentCommand{
+		WorkspaceIdentifier: workspace.ID, Name: "delivery-agent", Role: "implementer", Provider: "fake", Runtime: "fake",
+		IdempotencyKey: "m23-delivery-agent", CorrelationID: "m23-delivery-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	missingSource := createWorkTestTask(t, storage, workspace.ID, project.ID, "source without output", "m23-missing-source")
+	missingSuccessor := createWorkTestTask(t, storage, workspace.ID, project.ID, "successor requiring output", "m23-missing-successor")
+	missingSuccessorMutation, err := storage.AddTaskDependency(ctx, AddTaskDependencyCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: missingSuccessor.Task.ID, DependsOnTaskID: missingSource.Task.ID,
+		DeliveryRequirement: domain.DependencyDeliveryHandoffWithEvidence, ExpectedRevision: missingSuccessor.Task.Revision,
+		IdempotencyKey: "m23-missing-dependency", CorrelationID: "m23-missing-dependency",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingAssigned, err := storage.AssignTask(ctx, AssignTaskCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: missingSource.Task.ID, AgentIdentifier: agent.Value.ID,
+		LeaseSeconds: 300, ExpectedRevision: missingSource.Task.Revision,
+		IdempotencyKey: "m23-assign-missing-source", CorrelationID: "m23-assign-missing-source",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingPacket, err := storage.BuildContextPacket(ctx, BuildContextCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: missingSource.Task.ID, AgentIdentifier: agent.Value.ID,
+		CheckoutIdentifier: checkout.ID, ExpectedTaskRevision: missingAssigned.Detail.Task.Revision,
+		IdempotencyKey: "m23-missing-context", CorrelationID: "m23-missing-context",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingRun, err := storage.CreateRun(ctx, CreateRunCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: missingSource.Task.ID, CheckoutIdentifier: checkout.ID,
+		ContextPacketID: missingPacket.Value.ID, Runtime: "fake", Provider: "fake",
+		Scenario: managementProgressScenario("m23-missing-delivery"), ExpectedTaskRevision: missingAssigned.Detail.Task.Revision,
+		IdempotencyKey: "m23-missing-run", CorrelationID: "m23-missing-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingStarting, err := storage.MarkRunStarting(ctx, missingRun.Detail.Run.ID, "m23-missing-starting")
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingRunning, err := storage.MarkRunStarted(ctx, missingStarting.ID, "m23-missing-runtime", "m23-missing-provider", "m23-missing-started")
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingReport, err := storage.SubmitRunReport(ctx, CreateRunReportCommand{
+		RunID: missingRunning.Run.ID, Kind: domain.ObservationCompletion, Message: "completed without structured evidence",
+		Handoff: "a narrative handoff without evidence", Payload: map[string]any{}, IdempotencyKey: "m23-missing-completion",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.ApplyQueuedRunReport(ctx, missingRunning.Run.ID, missingReport.ID, true, nil,
+		prepareTestRunLogArchive(t, storage, missingRunning.Run.ID), "", "m23-apply-missing-completion"); err != nil {
+		t.Fatal(err)
+	}
+	missingAfter, err := storage.TaskDetail(ctx, workspace.ID, missingSuccessorMutation.Detail.Task.ID)
+	if err != nil || missingAfter.Readiness.Ready || !strings.Contains(missingAfter.Readiness.Reason, "waiting for handoff_with_evidence delivery") {
+		t.Fatalf("successor without delivery = %#v, %v", missingAfter.Readiness, err)
+	}
+
+	source := createWorkTestTask(t, storage, workspace.ID, project.ID, "source with exact output", "m23-source")
+	successor := createWorkTestTask(t, storage, workspace.ID, project.ID, "successor receives output", "m23-successor")
+	successorMutation, err := storage.AddTaskDependency(ctx, AddTaskDependencyCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: successor.Task.ID, DependsOnTaskID: source.Task.ID,
+		DeliveryRequirement: domain.DependencyDeliveryHandoffWithEvidence, ExpectedRevision: successor.Task.Revision,
+		IdempotencyKey: "m23-delivery-dependency", CorrelationID: "m23-delivery-dependency",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignedSource, err := storage.AssignTask(ctx, AssignTaskCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: source.Task.ID, AgentIdentifier: agent.Value.ID,
+		LeaseSeconds: 300, ExpectedRevision: source.Task.Revision,
+		IdempotencyKey: "m23-assign-source", CorrelationID: "m23-assign-source",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := storage.BuildContextPacket(ctx, BuildContextCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: source.Task.ID, AgentIdentifier: agent.Value.ID,
+		CheckoutIdentifier: checkout.ID, ExpectedTaskRevision: assignedSource.Detail.Task.Revision,
+		IdempotencyKey: "m23-source-context", CorrelationID: "m23-source-context",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := storage.CreateRun(ctx, CreateRunCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: source.Task.ID, CheckoutIdentifier: checkout.ID,
+		ContextPacketID: packet.Value.ID, Runtime: "fake", Provider: "fake",
+		Scenario: managementProgressScenario("m23-delivery"), ExpectedTaskRevision: assignedSource.Detail.Task.Revision,
+		IdempotencyKey: "m23-source-run", CorrelationID: "m23-source-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	starting, err := storage.MarkRunStarting(ctx, run.Detail.Run.ID, "m23-source-starting")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := storage.MarkRunStarted(ctx, starting.ID, "m23-runtime", "m23-provider", "m23-source-started")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := storage.SubmitRunReport(ctx, CreateRunReportCommand{
+		RunID: active.Run.ID, Kind: domain.ObservationCompletion, Message: "implemented the storage seam",
+		Evidence: []string{"artifact:test-report"}, Handoff: "review the adapter boundary before changing the format",
+		Payload: map[string]any{
+			"changed_paths": []string{"src/storage.ts"}, "checks": []string{"npm test"},
+			"remaining_risks": []string{"migration compatibility"}, "unknowns": []string{"upstream format revision"},
+		},
+		IdempotencyKey: "m23-source-completion",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := storage.ApplyQueuedRunReport(ctx, active.Run.ID, report.ID, true, nil,
+		prepareTestRunLogArchive(t, storage, active.Run.ID), "", "m23-apply-completion")
+	if err != nil || completed.Run.Status != domain.RunCompleted {
+		t.Fatalf("ApplyQueuedRunReport() = %#v, %v", completed, err)
+	}
+	successorAfter, err := storage.TaskDetail(ctx, workspace.ID, successorMutation.Detail.Task.ID)
+	if err != nil || !successorAfter.Readiness.Ready {
+		t.Fatalf("successor after exact delivery = %#v, %v", successorAfter.Readiness, err)
+	}
+	assignedSuccessor, err := storage.AssignTask(ctx, AssignTaskCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: successorAfter.Task.ID, AgentIdentifier: agent.Value.ID,
+		LeaseSeconds: 300, ExpectedRevision: successorAfter.Task.Revision,
+		IdempotencyKey: "m23-assign-successor", CorrelationID: "m23-assign-successor",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	successorPacket, err := storage.BuildContextPacket(ctx, BuildContextCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: successorAfter.Task.ID, AgentIdentifier: agent.Value.ID,
+		CheckoutIdentifier: checkout.ID, ExpectedTaskRevision: assignedSuccessor.Detail.Task.Revision,
+		IdempotencyKey: "m23-successor-context", CorrelationID: "m23-successor-context",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var storedDependencies, canonicalDependencies string
+	if err := storage.db.QueryRowContext(ctx, `SELECT json_extract(packet.packet_json,'$.dependencies'),(
+		SELECT json_group_array(json_object(
+			'task_id', dependency_task.id, 'title', dependency_task.title,
+			'status', dependency_task.status, 'revision', dependency_task.revision,
+			'delivery_requirement', edge.delivery_requirement,
+			'output', CASE WHEN dependency_task.status='completed' AND edge.delivery_requirement<>'completion' THEN json((
+				SELECT json_object(
+					'run_id', completed_run.id, 'summary', completion_report.message,
+					'handoff', completed_handoff.summary, 'evidence_ids', json(completion_report.evidence_json),
+					'changed_paths', COALESCE(json_extract(completion_report.payload_json,'$.changed_paths'),json('[]')),
+					'checks', COALESCE(json_extract(completion_report.payload_json,'$.checks'),json('[]')),
+					'remaining_risks', COALESCE(json_extract(completion_report.payload_json,'$.remaining_risks'),json('[]')),
+					'unknowns', COALESCE(json_extract(completion_report.payload_json,'$.unknowns'),json('[]')))
+				FROM runs completed_run JOIN run_handoffs completed_handoff ON completed_handoff.run_id=completed_run.id
+				JOIN run_reports completion_report ON completion_report.run_id=completed_run.id AND completion_report.kind='completion' AND completion_report.status='applied'
+				WHERE completed_run.task_id=dependency_task.id AND completed_run.status='completed'
+				ORDER BY completed_run.finished_at DESC,completion_report.sequence DESC LIMIT 1))
+			ELSE NULL END))
+		FROM (SELECT depends_on_task_id,delivery_requirement FROM task_dependencies WHERE task_id=task.id ORDER BY depends_on_task_id) edge
+		JOIN tasks dependency_task ON dependency_task.id=edge.depends_on_task_id)
+		FROM context_packets packet JOIN tasks task ON task.id=packet.task_id WHERE packet.id=?`, successorPacket.Value.ID).Scan(&storedDependencies, &canonicalDependencies); err != nil {
+		t.Fatal(err)
+	}
+	if storedDependencies != canonicalDependencies {
+		t.Fatalf("stored dependency output = %s, canonical trigger output = %s", storedDependencies, canonicalDependencies)
+	}
+	if len(successorPacket.Value.Dependencies) != 1 {
+		t.Fatalf("successor dependencies = %#v", successorPacket.Value.Dependencies)
+	}
+	dependency := successorPacket.Value.Dependencies[0]
+	if dependency.DeliveryRequirement != domain.DependencyDeliveryHandoffWithEvidence || dependency.Output == nil ||
+		dependency.Output.RunID != active.Run.ID || dependency.Output.Summary != "implemented the storage seam" ||
+		dependency.Output.Handoff != "review the adapter boundary before changing the format" ||
+		strings.Join(dependency.Output.EvidenceIDs, ",") != "artifact:test-report" ||
+		strings.Join(dependency.Output.ChangedPaths, ",") != "src/storage.ts" ||
+		strings.Join(dependency.Output.Checks, ",") != "npm test" ||
+		strings.Join(dependency.Output.RemainingRisks, ",") != "migration compatibility" ||
+		strings.Join(dependency.Output.Unknowns, ",") != "upstream format revision" {
+		t.Fatalf("successor dependency output = %#v", dependency)
+	}
+}
+
 func TestTaskAssignmentTransitionsAndDoubleAssignment(t *testing.T) {
 	t.Parallel()
 
