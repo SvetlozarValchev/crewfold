@@ -54,6 +54,18 @@ func TestDirectEnvironmentIsAllowlistedAndRejectsSecretOverrides(t *testing.T) {
 	if strings.Contains(joined, "HOME=") || strings.Contains(joined, "API_TOKEN") || strings.Contains(joined, "must-not-pass") {
 		t.Fatalf("environment leaked a non-allowlisted value: %q", joined)
 	}
+	managed, err := buildDirectEnvironment(nil, map[string]string{
+		"HOME": "/home/owner", "NPM_CONFIG_CACHE": "/tmp/crewfold/npm", "XDG_CACHE_HOME": "/tmp/crewfold/xdg",
+	}, "run_managed")
+	if err != nil {
+		t.Fatalf("buildDirectEnvironment(managed provider values) error = %v", err)
+	}
+	managedJoined := strings.Join(managed, "\n")
+	for _, wanted := range []string{"HOME=/home/owner", "NPM_CONFIG_CACHE=/tmp/crewfold/npm", "XDG_CACHE_HOME=/tmp/crewfold/xdg"} {
+		if !strings.Contains(managedJoined, wanted) {
+			t.Fatalf("managed environment omits %q: %q", wanted, managedJoined)
+		}
+	}
 	if _, err := buildDirectEnvironment(nil, map[string]string{"PASSWORD": "not-allowed"}, "run_test"); err == nil {
 		t.Fatal("secret override error = nil, want allowlist rejection")
 	}

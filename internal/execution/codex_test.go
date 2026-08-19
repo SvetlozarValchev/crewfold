@@ -85,7 +85,8 @@ func TestCodexProviderBuildsIsolatedRequiredMCPLaunch(t *testing.T) {
 	preparer := &recordedCapabilityPreparer{access: RunCapabilityAccess{SocketPath: "/tmp/crewfold.sock", CapabilityFile: "/tmp/run.token"}}
 	provider := NewCodexProvider(CodexProviderOptions{
 		CapabilityPreparer: preparer, CodexExecutable: "/opt/codex", CrewfoldExecutable: "/opt/crewfold",
-		CodexHome: "/private/codex", ProbeRunner: compatibleCodexRunner(t),
+		CodexHome: "/private/codex", OwnerHome: "/home/owner", PackageCacheRoot: "/tmp/crewfold-codex-test",
+		ProbeRunner: compatibleCodexRunner(t),
 	})
 	run := domain.Run{ID: "run_11111111111111111111111111111111", Placement: domain.RunPlacement{CheckoutPath: "/work/project"}}
 	scenario := codexScenario()
@@ -107,7 +108,9 @@ func TestCodexProviderBuildsIsolatedRequiredMCPLaunch(t *testing.T) {
 			t.Errorf("launch arguments omit %q: %#v", wanted, launch.Command.Arguments)
 		}
 	}
-	if launch.Command.Environment["CREWFOLD_MCP_SOCKET"] != "/tmp/crewfold.sock" || launch.Command.Environment["CODEX_HOME"] != "/private/codex" {
+	if launch.Command.Environment["CREWFOLD_MCP_SOCKET"] != "/tmp/crewfold.sock" || launch.Command.Environment["CODEX_HOME"] != "/private/codex" ||
+		launch.Command.Environment["HOME"] != "/home/owner" || launch.Command.Environment["NPM_CONFIG_CACHE"] != "/tmp/crewfold-codex-test/npm" ||
+		launch.Command.Environment["XDG_CACHE_HOME"] != "/tmp/crewfold-codex-test/xdg" {
 		t.Fatalf("environment = %#v", launch.Command.Environment)
 	}
 	if strings.Contains(joined, "cf1.") || strings.Contains(strings.Join(mapValues(launch.Command.Environment), "\n"), "cf1.") {

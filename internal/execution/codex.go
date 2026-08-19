@@ -206,6 +206,8 @@ type CodexProviderOptions struct {
 	CodexExecutable     string
 	CrewfoldExecutable  string
 	CodexHome           string
+	OwnerHome           string
+	PackageCacheRoot    string
 	SandboxMode         string
 	ExternallySandboxed bool
 	ToolNetworkAccess   bool
@@ -217,6 +219,8 @@ type CodexProvider struct {
 	codexExecutable     string
 	crewfoldExecutable  string
 	codexHome           string
+	ownerHome           string
+	packageCacheRoot    string
 	sandboxMode         string
 	externallySandboxed bool
 	toolNetworkAccess   bool
@@ -232,10 +236,20 @@ func NewCodexProvider(options CodexProviderOptions) CodexProvider {
 	if sandboxMode == "" {
 		sandboxMode = CodexSandboxWorkspaceWrite
 	}
+	ownerHome := strings.TrimSpace(options.OwnerHome)
+	if ownerHome == "" {
+		ownerHome, _ = os.UserHomeDir()
+	}
+	packageCacheRoot := strings.TrimSpace(options.PackageCacheRoot)
+	if packageCacheRoot == "" {
+		packageCacheRoot = filepath.Join(os.TempDir(), "crewfold-codex-cache-"+strconv.Itoa(os.Getuid()))
+	}
 	return CodexProvider{
 		preparer: options.CapabilityPreparer, codexExecutable: codexExecutable,
 		crewfoldExecutable:  strings.TrimSpace(options.CrewfoldExecutable),
 		codexHome:           firstNonEmpty(strings.TrimSpace(options.CodexHome), defaultCodexHome()),
+		ownerHome:           strings.TrimSpace(ownerHome),
+		packageCacheRoot:    packageCacheRoot,
 		sandboxMode:         sandboxMode,
 		externallySandboxed: options.ExternallySandboxed,
 		toolNetworkAccess:   options.ToolNetworkAccess,
@@ -294,6 +308,17 @@ func (provider CodexProvider) Prepare(ctx context.Context, run domain.Run, scena
 	if provider.codexHome != "" {
 		environment["CODEX_HOME"] = provider.codexHome
 	}
+	if provider.ownerHome != "" {
+		if !filepath.IsAbs(provider.ownerHome) || filepath.Clean(provider.ownerHome) != provider.ownerHome || strings.ContainsRune(provider.ownerHome, '\x00') {
+			return LaunchSpec{}, errors.New("Codex owner home must be a canonical absolute path")
+		}
+		environment["HOME"] = provider.ownerHome
+	}
+	if !filepath.IsAbs(provider.packageCacheRoot) || filepath.Clean(provider.packageCacheRoot) != provider.packageCacheRoot || strings.ContainsRune(provider.packageCacheRoot, '\x00') {
+		return LaunchSpec{}, errors.New("Codex package cache root must be a canonical absolute path")
+	}
+	environment["NPM_CONFIG_CACHE"] = filepath.Join(provider.packageCacheRoot, "npm")
+	environment["XDG_CACHE_HOME"] = filepath.Join(provider.packageCacheRoot, "xdg")
 	return LaunchSpec{Scenario: scenario, Command: &CommandSpec{
 		Executable: codexExecutable, Arguments: arguments, Environment: environment,
 		Timeout: time.Duration(scenario.Process.TimeoutMillis) * time.Millisecond, OutputByteLimit: 1024 * 1024,

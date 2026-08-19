@@ -54,7 +54,13 @@ var (
 	errDirectSpecExists     = errors.New("direct runtime launch specification already exists")
 )
 
-var directEnvironmentAllowlist = []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "CREWFOLD_MCP_CAPABILITY_FILE", "CREWFOLD_MCP_SOCKET", "LANG", "LC_ALL", "LC_CTYPE", "PATH", "TMPDIR", "TZ"}
+var directInheritedEnvironmentAllowlist = []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "CREWFOLD_MCP_CAPABILITY_FILE", "CREWFOLD_MCP_SOCKET", "LANG", "LC_ALL", "LC_CTYPE", "PATH", "TMPDIR", "TZ"}
+
+// Provider adapters are trusted runtime components. They may add these
+// non-secret process settings without allowing arbitrary inherited host values
+// through the runtime boundary. In particular, HOME makes login-shell startup
+// coherent while package caches remain redirected to a writable sandbox path.
+var directProviderEnvironmentAllowlist = []string{"HOME", "NPM_CONFIG_CACHE", "XDG_CACHE_HOME"}
 
 type DirectRuntimeOptions struct {
 	NodeID                         string
@@ -752,22 +758,29 @@ func buildDirectEnvironment(inherited []string, overrides map[string]string, ope
 	if err := validateDirectOperationIDEnvironmentVariable(identityName); err != nil {
 		return nil, err
 	}
-	allowed := make(map[string]struct{}, len(directEnvironmentAllowlist))
-	for _, name := range directEnvironmentAllowlist {
-		allowed[name] = struct{}{}
+	inheritedAllowed := make(map[string]struct{}, len(directInheritedEnvironmentAllowlist))
+	for _, name := range directInheritedEnvironmentAllowlist {
+		inheritedAllowed[name] = struct{}{}
 	}
-	values := make(map[string]string, len(allowed)+1)
+	overrideAllowed := make(map[string]struct{}, len(directInheritedEnvironmentAllowlist)+len(directProviderEnvironmentAllowlist))
+	for name := range inheritedAllowed {
+		overrideAllowed[name] = struct{}{}
+	}
+	for _, name := range directProviderEnvironmentAllowlist {
+		overrideAllowed[name] = struct{}{}
+	}
+	values := make(map[string]string, len(overrideAllowed)+1)
 	for _, entry := range inherited {
 		name, value, ok := strings.Cut(entry, "=")
 		if !ok {
 			continue
 		}
-		if directEnvironmentNameAllowed(allowed, name) {
+		if directEnvironmentNameAllowed(inheritedAllowed, name) {
 			values[name] = value
 		}
 	}
 	for name, value := range overrides {
-		if !directEnvironmentNameAllowed(allowed, name) {
+		if !directEnvironmentNameAllowed(overrideAllowed, name) {
 			return nil, fmt.Errorf("direct runtime environment variable %q is not allowlisted", name)
 		}
 		if strings.ContainsRune(value, '\x00') {

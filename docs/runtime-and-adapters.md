@@ -191,6 +191,13 @@ unmanaged private transcript that Crewfold cannot yet resume. The launch uses th
 workspace-write sandbox, no interactive command approvals, no live web search,
 and no dangerous sandbox bypass.
 
+The direct/Herdr boundary still discards an inherited `HOME` and arbitrary host
+environment. The trusted Codex adapter supplies the canonical owner-home path so
+login shells can read the owner's ordinary shell setup, and redirects
+`NPM_CONFIG_CACHE` and `XDG_CACHE_HOME` beneath Codex's writable `/tmp` sandbox.
+Those are provider-managed process settings, not task-, role-, or grant-derived
+environment authority. Local checks retain their smaller closed environment.
+
 Codex starts the current Crewfold binary in hidden STDIO-bridge mode. The bridge
 reads the run token from its owner-only capability file, injects it into requests
 sent over the local Unix socket, ignores client notifications that need no daemon
