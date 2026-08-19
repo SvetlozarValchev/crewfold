@@ -48,13 +48,12 @@ func TestM23CoordinatorProposalKeepsTheTeamInertUntilExactAcceptance(t *testing.
 		Content: domain.DomainWorkProposalContent{
 			ObjectiveTitle: "Deliver one tested slice", ObjectiveBudget: domain.Budget{TokenLimit: 200, TimeSeconds: 600},
 			PrimaryCheckoutID: inspection.Checkouts[0].ID, PrimaryCheckoutRevision: inspection.Checkouts[0].Revision,
-			ReferenceCheckoutIDs: []string{},
 			Agents: []domain.DomainWorkProposalAgent{
 				{Key: "implementer", Name: "implementer", Role: "implementation", OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentHandsOn, Provider: "fake", Runtime: "fake", MaxConcurrency: 1, TaskClass: "implementation", Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}},
 				{Key: "verifier", Name: "verifier", Role: "verification", ParentKey: "implementer", OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentHandsOn, Provider: "fake", Runtime: "fake", MaxConcurrency: 1, TaskClass: "verification", Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}},
 			},
 			Tasks: []domain.DomainWorkProposalTask{
-				{Key: "build", Title: "Build the slice", Description: "Implement the bounded deliverable.", TaskClass: "implementation", Priority: 100, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, AssigneeKey: "implementer", DependsOn: []string{}, DependencyDelivery: map[string]string{}},
+				{Key: "build", Title: "Build the slice", Description: "Implement the bounded deliverable.", TaskClass: "implementation", Priority: 100, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, AssigneeKey: "implementer"},
 				{Key: "verify", Title: "Verify the slice", Description: "Independently test and review the deliverable.", TaskClass: "verification", Priority: 200, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, AssigneeKey: "verifier", DependsOn: []string{"build"}, DependencyDelivery: map[string]string{"build": domain.DependencyDeliveryHandoffWithEvidence}},
 			},
 		},
@@ -75,6 +74,9 @@ func TestM23CoordinatorProposalKeepsTheTeamInertUntilExactAcceptance(t *testing.
 	}
 	if submitted.Value.Status != domain.DomainWorkProposalPending || submitted.Value.SourceAgentID != coordinator.Value.ID || submitted.Value.AsOfEventSequence != eventsBefore[len(eventsBefore)-1].Sequence {
 		t.Fatalf("submitted proposal = %#v", submitted)
+	}
+	if submitted.Value.Content.ReferenceCheckoutIDs == nil || submitted.Value.Content.Tasks[0].DependsOn == nil || submitted.Value.Content.Tasks[0].DependencyDelivery == nil {
+		t.Fatalf("proposal emitted nullable collection fields: %#v", submitted.Value.Content)
 	}
 	if objectives, listErr := storage.ListObjectives(ctx, ListObjectivesQuery{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, Limit: 10}); listErr != nil || objectives.Total != 0 {
 		t.Fatalf("inert proposal objectives = %#v, %v", objectives, listErr)

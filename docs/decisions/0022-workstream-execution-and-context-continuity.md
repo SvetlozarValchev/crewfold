@@ -115,6 +115,19 @@ proposal-local definitions until acceptance. Neither kind is displayed as a
 workstream member until the placement effect commits. Acceptance never infers
 placement from a role name, task title, checkout path, or attention ancestry.
 
+The Codex-facing proposal tool is intentionally smaller than this stored
+contract. The proposing agent supplies logical team keys, new-agent
+names/roles/charters, optional proposal-local parent keys, task classes, and the
+task/dependency graph. Crewfold—not the model—selects one current staffing
+grant, resolves exact existing-agent membership and launch-profile revisions,
+freezes the selected checkout revision, chooses a permitted provider/runtime
+profile, and derives priorities and finite/unlimited budgets inside the grant.
+Omitting `parent_key` means a direct child of the proposing coordinator; the
+coordinator is never repeated as a proposal-local agent. An unresolved or
+ambiguous checkout, agent, class, profile, or grant fails once with owner-facing
+guidance. The model is never expected to guess IDs, revisions, profile fields,
+manager aliases, or budget arithmetic.
+
 ### Dependency edges declare the output a successor requires
 
 A dependency is not only an ordering edge. It freezes one delivery requirement:

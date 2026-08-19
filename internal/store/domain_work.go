@@ -278,6 +278,9 @@ func validateDomainWorkContent(ctx context.Context, tx *sql.Tx, now time.Time, s
 func normalizeDomainWorkContent(content *domain.DomainWorkProposalContent) {
 	content.ObjectiveTitle = strings.TrimSpace(content.ObjectiveTitle)
 	content.PrimaryCheckoutID = strings.TrimSpace(content.PrimaryCheckoutID)
+	if content.ReferenceCheckoutIDs == nil {
+		content.ReferenceCheckoutIDs = []string{}
+	}
 	for index := range content.ReferenceCheckoutIDs {
 		content.ReferenceCheckoutIDs[index] = strings.TrimSpace(content.ReferenceCheckoutIDs[index])
 	}
@@ -302,6 +305,9 @@ func normalizeDomainWorkContent(content *domain.DomainWorkProposalContent) {
 		task.Description = strings.TrimSpace(task.Description)
 		task.TaskClass = strings.TrimSpace(task.TaskClass)
 		task.AssigneeKey = strings.TrimSpace(task.AssigneeKey)
+		if task.DependsOn == nil {
+			task.DependsOn = []string{}
+		}
 		for dependency := range task.DependsOn {
 			task.DependsOn[dependency] = strings.TrimSpace(task.DependsOn[dependency])
 		}

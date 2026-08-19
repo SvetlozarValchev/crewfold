@@ -1540,7 +1540,10 @@ dynamic-tool set:
 - `crewfold_create_durable_child`: one typed child request under an explicit
   current staffing grant;
 - `crewfold_propose_work`: one bounded inert objective/task/dependency graph under
-  the coordinator's current staffing grant; and
+  the coordinator's current staffing grant; the Codex-facing call supplies
+  logical team/task intent while the daemon resolves the current grant,
+  checkout revision, exact reused-agent/profile references, permitted
+  provider/runtime, priorities, and budgets; and
 - `crewfold_propose_knowledge`: one sourced proposed domain-knowledge revision
   whose governance state remains pending until an owner decision.
 
@@ -1555,6 +1558,15 @@ agent/allocation/profile/objective/checkout-binding/membership-placement/task/
 dependency/scheduling-intent effect and its event sequence. If the grant,
 checkout, agent, membership, launch profile, name, or graph is no longer current,
 the proposal becomes `stale`; the daemon never partially applies it.
+
+`crewfold_propose_work` does not accept `staffing_grant_id`, manager IDs,
+membership/profile revisions, provider/runtime, or budget fields from the
+provider. Its new-agent items use `key`, `name`, `role`, `operating_charter`,
+`task_class`, and optional `parent_key`, `delegation_policy`, and
+`max_concurrency`; existing-agent items use `key`, `existing_agent`, and
+`task_class`. Tasks use logical `assignee_key` and dependency keys. This is an
+agent ergonomic boundary only: the pending public proposal and acceptance path
+still expose and verify every exact resolved field above.
 
 Message delivery to a durable session never races an owner turn. A wake targeting
 a thread with an active provider turn is returned to pending with a bounded

@@ -24,31 +24,38 @@ turn state from the provider event stream. Private reasoning is neither invented
 nor filled with placeholder rows. Exact PTY bytes remain an advanced Herdr
 diagnostic rather than the primary conversation.
 
-A coordinator with one current owner staffing grant can create durable children
-and their inactive launch profiles, delegate only a strict subset of the
-authority it actually holds, send durable same-domain messages, and submit one
-inert work proposal. The owner reviews the exact objective, task descriptions,
-assignees, classes, budgets, and dependency edges in Domain Home. Acceptance
-atomically creates only that workstream graph and its scheduling intents. The
-deterministic supervisor then starts ready work; dependent implementation,
-independent verification, and knowledge-maintenance work remain visibly gated.
-Conversation text—including a bare `yes`—does not accept the proposal.
+A coordinator with one current owner staffing grant can create domain-level
+durable children, delegate only a strict subset of authority it actually holds,
+send durable same-domain messages, and submit one inert work proposal. For a
+deliverable team the agent supplies only logical names, charters, classes,
+assignees, and dependency intent. Crewfold—not the model—selects the current
+grant, freezes the checkout, resolves existing memberships/profiles, and derives
+bounded budgets and priorities. The owner reviews those exact resolved effects
+in Domain Home. Acceptance atomically creates the team, workstream, task graph,
+profiles, placements, and scheduling intents. Conversation text—including a
+bare `yes`—does not accept the proposal.
 
 The live acceptance used a fresh committed repository, private daemon data,
 installed Codex subscription authentication, Herdr, and headless Chrome. The
 owner created `orchid` and `fern`, granted `orchid`, and sent one ordinary
-instruction. `orchid` read canonical context, created the durable
-`m22-reviewer`, sent `fern` one durable message, and submitted the inert
-`Verify the M22 fixture` graph. The browser displayed zero work before
-acceptance. Owner acceptance created one workstream/task/intent and launched the
-separate reviewer, which inspected `README.md` read-only and completed through
-Crewfold. `fern` then resumed its own thread and confirmed the delivered message.
-Browser reload preserved all three identities, the coordinator conversation,
-tool receipts, work history, and hierarchy. The repository remained byte-clean.
+instruction. `orchid` read canonical context, sent `fern` one durable message,
+and made exactly one successful intent-level proposal call for four nonexistent
+specialists and the checkout-bound implement → review → remediate → verify
+chain. No grant ID, checkout revision, profile reference, provider/runtime, or
+budget came from the model. The browser displayed the frozen checkout, four
+inert agents, four assigned tasks, three evidence-carrying dependencies, and the
+atomic acceptance effect while still showing only `orchid` and `fern` as real.
+Owner acceptance created the team and graph together. All four real Codex runs
+completed in dependency order against the same existing checkout; the reviewer
+remained read-only and its structured activity was inspectable. `fern` resumed
+its own thread and confirmed the delivered message. Browser reload preserved
+all identities, conversations, receipts, work history, and hierarchy; native
+session compaction plus handoff produced a readable archived epoch and a fresh
+current one.
 
 - Public live scenario: `test/scenarios/domain-agent-live/run.sh`
 - Exact command: `CREWFOLD_RUN_LIVE_CODEX=1 ./test/scenarios/domain-agent-live/run.sh`
-- Observed result: `Subscription-backed M22 durable-agent browser acceptance: PASS`
+- Observed result: `Subscription-backed M23 checkout-bound durable-agent browser acceptance: PASS`
 
 The broader three-stage implementation/verification/knowledge workflow was also
 exercised against a fresh real repository. The coordinator created two
@@ -69,7 +76,7 @@ runs and the accepted current knowledge.
 | Agent tree | Same-domain acyclic memberships form arbitrary-depth attention hierarchy; `default` affects navigation only |
 | Conversation | One durable agent binds one resumable provider thread; replacement continuity uses canonical Crewfold context when native resume is unavailable |
 | Staffing | Owner grants exact provider/runtime profiles, task classes, descendants, concurrency, budgets, and expiry; a manager can allocate or delegate only within that envelope |
-| Work proposal | Coordinator submission is inert; explicit owner acceptance revalidates and atomically publishes the exact objective/task/dependency/intent graph |
+| Work proposal | Coordinator supplies logical intent; Crewfold resolves exact current authority; submission is inert; explicit owner acceptance revalidates and atomically publishes the exact team/objective/task/dependency/intent graph |
 | Messaging | Same-domain messages are immutable and replay-safe; wakes wait behind an active turn and arrive later with explicit delivery provenance |
 | Knowledge | Agent proposals include authenticated primary provenance and remain non-current until exact owner acceptance |
 | Source effects | Durable conversation is read-only; implementation/review/verification use exact assigned Crewfold runs and current capabilities |

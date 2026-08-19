@@ -74,15 +74,38 @@ type domainSessionDelegateStaffingArguments struct {
 }
 
 type domainSessionProposeWorkArguments struct {
-	StaffingGrantID         string                           `json:"staffing_grant_id"`
-	Summary                 string                           `json:"summary"`
-	ObjectiveTitle          string                           `json:"objective_title"`
-	ObjectiveBudget         domain.Budget                    `json:"objective_budget"`
-	PrimaryCheckoutID       string                           `json:"primary_checkout_id"`
-	PrimaryCheckoutRevision int64                            `json:"primary_checkout_revision"`
-	ReferenceCheckoutIDs    []string                         `json:"reference_checkout_ids"`
-	Agents                  []domain.DomainWorkProposalAgent `json:"agents"`
-	Tasks                   []domain.DomainWorkProposalTask  `json:"tasks"`
+	Summary            string                                   `json:"summary"`
+	ObjectiveTitle     string                                   `json:"objective_title"`
+	PrimaryCheckout    string                                   `json:"primary_checkout,omitempty"`
+	ReferenceCheckouts []string                                 `json:"reference_checkouts,omitempty"`
+	Agents             []domainSessionProposeWorkAgentArguments `json:"agents"`
+	Tasks              []domainSessionProposeWorkTaskArguments  `json:"tasks"`
+}
+
+// domainSessionProposeWorkAgentArguments is deliberately intent-shaped. The
+// model names and describes a logical coworker; Crewfold resolves the current
+// grant, provider/runtime envelope, exact existing membership/profile
+// revisions, budgets, and the implicit source-agent parent itself.
+type domainSessionProposeWorkAgentArguments struct {
+	Key              string `json:"key"`
+	ExistingAgent    string `json:"existing_agent,omitempty"`
+	Name             string `json:"name,omitempty"`
+	Role             string `json:"role,omitempty"`
+	ParentKey        string `json:"parent_key,omitempty"`
+	OperatingCharter string `json:"operating_charter,omitempty"`
+	DelegationPolicy string `json:"delegation_policy,omitempty"`
+	TaskClass        string `json:"task_class"`
+	MaxConcurrency   int    `json:"max_concurrency,omitempty"`
+}
+
+type domainSessionProposeWorkTaskArguments struct {
+	Key                string            `json:"key"`
+	Title              string            `json:"title"`
+	Description        string            `json:"description,omitempty"`
+	AssigneeKey        string            `json:"assignee_key"`
+	Priority           *int              `json:"priority,omitempty"`
+	DependsOn          []string          `json:"depends_on,omitempty"`
+	DependencyDelivery map[string]string `json:"dependency_delivery,omitempty"`
 }
 
 type domainSessionProposeKnowledgeArguments struct {
@@ -174,50 +197,52 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 		},
 		{
 			Type: "function", Name: domainToolProposeWork,
-			Description: "Submit one inert, owner-reviewable checkout-bound workstream, team, and task graph. New team members are logical proposal entries and do not exist before acceptance; existing durable agents may be referenced exactly. Every task names an assignee_key and every dependency names its structured delivery. Owner acceptance atomically creates proposed agents and profiles, places the whole team, creates tasks and delivery edges, and publishes scheduling intents against the frozen primary checkout.",
+			Description: "Submit one inert, owner-reviewable checkout-bound workstream, team, and task graph. Describe intent only: Crewfold selects a current staffing grant, freezes the checkout revision, resolves any existing agent and launch profile, assigns the permitted provider/runtime, derives bounded budgets and priorities, and treats a missing parent_key as reporting directly to this coordinator. Never include this coordinator in agents and never invent manager keys, IDs, revisions, profiles, providers, runtimes, or budgets. New team members do not exist before acceptance. Every task names an assignee_key; omitted dependency delivery defaults to handoff_with_evidence. Owner acceptance atomically creates and places the team with the graph.",
 			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
-				"required": []string{"staffing_grant_id", "summary", "objective_title", "objective_budget", "primary_checkout_id", "primary_checkout_revision", "reference_checkout_ids", "agents", "tasks"},
+				"required": []string{"summary", "objective_title", "agents", "tasks"},
 				"properties": map[string]any{
-					"staffing_grant_id":         map[string]any{"type": "string", "pattern": "^staffgrant_[0-9a-f]{32}$"},
-					"summary":                   map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
-					"objective_title":           map[string]any{"type": "string", "minLength": 1, "maxLength": 256},
-					"objective_budget":          domainStaffingBudgetSchema(),
-					"primary_checkout_id":       map[string]any{"type": "string", "pattern": "^co_[0-9a-f]{32}$"},
-					"primary_checkout_revision": map[string]any{"type": "integer", "minimum": 1},
-					"reference_checkout_ids":    map[string]any{"type": "array", "maxItems": 8, "uniqueItems": true, "items": map[string]any{"type": "string", "pattern": "^co_[0-9a-f]{32}$"}},
+					"summary":         map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
+					"objective_title": map[string]any{"type": "string", "minLength": 1, "maxLength": 256},
+					"primary_checkout": map[string]any{
+						"type": "string", "minLength": 1, "maxLength": 4096,
+						"description": "An exact checkout ID or absolute path from domain context. Omit when the domain has exactly one available writable checkout.",
+					},
+					"reference_checkouts": map[string]any{"type": "array", "maxItems": 8, "uniqueItems": true, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 4096}},
 					"agents": map[string]any{"type": "array", "minItems": 1, "maxItems": 16, "items": map[string]any{
-						"type": "object", "additionalProperties": false, "required": []string{"key", "budget"},
 						"oneOf": []map[string]any{
-							{"required": []string{"existing_agent_id", "existing_membership_revision", "existing_launch_profile_id"}},
-							{"required": []string{"name", "role", "operating_charter", "delegation_policy", "provider", "runtime", "max_concurrency", "task_class"}},
-						},
-						"properties": map[string]any{
-							"key":                          map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
-							"existing_agent_id":            map[string]any{"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
-							"existing_membership_revision": map[string]any{"type": "integer", "minimum": 1},
-							"existing_launch_profile_id":   map[string]any{"type": "string", "pattern": "^lprof_[0-9a-f]{32}$"},
-							"name":                         map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
-							"role":                         map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-							"parent_key":                   map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
-							"operating_charter":            map[string]any{"type": "string", "minLength": 1, "maxLength": 8192},
-							"delegation_policy":            map[string]any{"type": "string", "enum": []string{"hands_on", "adaptive", "delegation_first"}},
-							"provider":                     map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-							"runtime":                      map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-							"max_concurrency":              map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
-							"task_class":                   map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
-							"budget":                       domainStaffingBudgetSchema(),
+							{
+								"type": "object", "additionalProperties": false,
+								"required": []string{"key", "existing_agent", "task_class"},
+								"properties": map[string]any{
+									"key":            map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+									"existing_agent": map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "description": "Current durable agent name or ID from domain context."},
+									"task_class":     map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+								},
+							},
+							{
+								"type": "object", "additionalProperties": false,
+								"required": []string{"key", "name", "role", "operating_charter", "task_class"},
+								"properties": map[string]any{
+									"key":               map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+									"name":              map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+									"role":              map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+									"parent_key":        map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "description": "Another proposed agent key. Omit for a direct child of this coordinator."},
+									"operating_charter": map[string]any{"type": "string", "minLength": 1, "maxLength": 8192},
+									"delegation_policy": map[string]any{"type": "string", "enum": []string{"hands_on", "adaptive", "delegation_first"}, "default": "hands_on"},
+									"task_class":        map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+									"max_concurrency":   map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "default": 1},
+								},
+							},
 						},
 					}},
 					"tasks": map[string]any{"type": "array", "minItems": 1, "maxItems": 16, "items": map[string]any{
 						"type": "object", "additionalProperties": false,
-						"required": []string{"key", "title", "description", "task_class", "priority", "budget", "assignee_key", "depends_on", "dependency_delivery"},
+						"required": []string{"key", "title", "assignee_key"},
 						"properties": map[string]any{
 							"key":                 map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
 							"title":               map[string]any{"type": "string", "minLength": 1, "maxLength": 256},
 							"description":         map[string]any{"type": "string", "maxLength": 4096},
-							"task_class":          map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
 							"priority":            map[string]any{"type": "integer", "minimum": 0, "maximum": 1000},
-							"budget":              domainStaffingBudgetSchema(),
 							"assignee_key":        map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
 							"depends_on":          map[string]any{"type": "array", "maxItems": 15, "uniqueItems": true, "items": map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"}},
 							"dependency_delivery": map[string]any{"type": "object", "maxProperties": 15, "additionalProperties": map[string]any{"type": "string", "enum": []string{domain.DependencyDeliveryCompletion, domain.DependencyDeliveryHandoff, domain.DependencyDeliveryHandoffWithEvidence}}},
@@ -353,13 +378,14 @@ func (s *server) domainProposeKnowledgeToolResult(ctx context.Context, call doma
 }
 
 func (s *server) domainProposeWorkToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionProposeWorkArguments) map[string]any {
+	grant, content, err := s.resolveDomainWorkProposal(ctx, call.ThreadID, arguments)
+	if err != nil {
+		return domainToolFailure("resolve work proposal intent: " + safeDomainSessionDiagnostic(err))
+	}
 	digest := sha256.Sum256([]byte(call.CallID))
 	key := fmt.Sprintf("domain-tool-%x", digest[:])
 	result, err := s.store.SubmitDomainWorkProposal(ctx, store.SubmitDomainWorkProposalCommand{
-		ThreadID: call.ThreadID, StaffingGrantID: arguments.StaffingGrantID, Summary: arguments.Summary,
-		Content: domain.DomainWorkProposalContent{ObjectiveTitle: arguments.ObjectiveTitle, ObjectiveBudget: arguments.ObjectiveBudget,
-			PrimaryCheckoutID: arguments.PrimaryCheckoutID, PrimaryCheckoutRevision: arguments.PrimaryCheckoutRevision,
-			ReferenceCheckoutIDs: arguments.ReferenceCheckoutIDs, Agents: arguments.Agents, Tasks: arguments.Tasks},
+		ThreadID: call.ThreadID, StaffingGrantID: grant.ID, Summary: arguments.Summary, Content: content,
 		IdempotencyKey: key, CorrelationID: key,
 	})
 	if err != nil {
@@ -373,6 +399,250 @@ func (s *server) domainProposeWorkToolResult(ctx context.Context, call domainSes
 		return domainToolFailure("encode work proposal: " + safeDomainSessionDiagnostic(err))
 	}
 	return domainToolSuccess(string(encoded))
+}
+
+func (s *server) resolveDomainWorkProposal(ctx context.Context, threadID string, arguments domainSessionProposeWorkArguments) (domain.DomainAgentStaffingGrant, domain.DomainWorkProposalContent, error) {
+	var emptyGrant domain.DomainAgentStaffingGrant
+	var emptyContent domain.DomainWorkProposalContent
+	scope, err := s.store.DomainAgentSessionScopeByThread(ctx, threadID)
+	if err != nil {
+		return emptyGrant, emptyContent, err
+	}
+	inspection, err := s.store.InspectProject(ctx, scope.Workspace.ID, scope.Project.ID)
+	if err != nil {
+		return emptyGrant, emptyContent, err
+	}
+	primary, err := resolveDomainWorkCheckout(inspection.Checkouts, arguments.PrimaryCheckout, true)
+	if err != nil {
+		return emptyGrant, emptyContent, err
+	}
+	references := make([]string, 0, len(arguments.ReferenceCheckouts))
+	seenCheckouts := map[string]bool{primary.ID: true}
+	for _, selector := range arguments.ReferenceCheckouts {
+		checkout, resolveErr := resolveDomainWorkCheckout(inspection.Checkouts, selector, false)
+		if resolveErr != nil {
+			return emptyGrant, emptyContent, resolveErr
+		}
+		if seenCheckouts[checkout.ID] {
+			return emptyGrant, emptyContent, fmt.Errorf("checkout %q is selected more than once", selector)
+		}
+		seenCheckouts[checkout.ID] = true
+		references = append(references, checkout.ID)
+	}
+
+	tree, err := s.store.DomainAgentTree(ctx, scope.Workspace.ID, scope.Project.ID)
+	if err != nil {
+		return emptyGrant, emptyContent, err
+	}
+	launchProfiles, err := s.store.LaunchProfiles(ctx, store.ListLaunchProfilesQuery{
+		WorkspaceIdentifier: scope.Workspace.ID,
+		ProjectIdentifier:   scope.Project.ID,
+		Status:              domain.LaunchProfileActive,
+		Limit:               100,
+	})
+	if err != nil {
+		return emptyGrant, emptyContent, err
+	}
+	grants, err := s.store.DomainAgentStaffingGrants(ctx, scope.Workspace.ID, scope.Project.ID, scope.Agent.ID)
+	if err != nil {
+		return emptyGrant, emptyContent, err
+	}
+	for _, grant := range grants {
+		content, resolveErr := resolveDomainWorkWithGrant(scope, primary, references, tree.Agents, launchProfiles, grant, arguments)
+		if resolveErr == nil {
+			return grant, content, nil
+		}
+	}
+	return emptyGrant, emptyContent, errors.New("no current staffing grant can authorize the requested team and task classes; ask the owner to expand this coordinator's staffing scope instead of inventing grant fields")
+}
+
+func resolveDomainWorkCheckout(checkouts []domain.Checkout, selector string, primary bool) (domain.Checkout, error) {
+	selector = strings.TrimSpace(selector)
+	if selector == "" && !primary {
+		return domain.Checkout{}, errors.New("reference checkout cannot be empty")
+	}
+	if selector != "" {
+		for _, checkout := range checkouts {
+			if checkout.ID == selector || checkout.Path == selector {
+				if primary && (checkout.Availability != domain.CheckoutAvailable || checkout.WriteMode == domain.WriteModeReadOnly) {
+					return domain.Checkout{}, fmt.Errorf("primary checkout %q is unavailable or read-only", selector)
+				}
+				return checkout, nil
+			}
+		}
+		return domain.Checkout{}, fmt.Errorf("checkout %q is not attached to this domain", selector)
+	}
+	var selected domain.Checkout
+	for _, checkout := range checkouts {
+		if checkout.Availability != domain.CheckoutAvailable || checkout.WriteMode == domain.WriteModeReadOnly {
+			continue
+		}
+		if selected.ID != "" {
+			return domain.Checkout{}, errors.New("more than one writable checkout is available; name primary_checkout by exact path from domain context")
+		}
+		selected = checkout
+	}
+	if selected.ID == "" {
+		return domain.Checkout{}, errors.New("this domain has no available writable checkout")
+	}
+	return selected, nil
+}
+
+func resolveDomainWorkWithGrant(scope domain.DomainAgentSessionScope, primary domain.Checkout, references []string, tree []domain.DomainAgent, launchProfiles []domain.LaunchProfile, grant domain.DomainAgentStaffingGrant, arguments domainSessionProposeWorkArguments) (domain.DomainWorkProposalContent, error) {
+	var content domain.DomainWorkProposalContent
+	if grant.Status != domain.DomainStaffingGrantActive || grant.ManagerMembershipRevision != scope.Membership.Revision {
+		return content, errors.New("staffing grant is not current")
+	}
+	agentsByName := make(map[string]domain.DomainAgent, len(tree)*2)
+	for _, agent := range tree {
+		agentsByName[agent.Definition.ID] = agent
+		agentsByName[agent.Definition.Name] = agent
+	}
+	newAgentCount := 0
+	for _, item := range arguments.Agents {
+		if item.ExistingAgent == "" {
+			newAgentCount++
+		}
+	}
+	if !domainBudgetCanSplit(grant.Budget, len(arguments.Tasks)) || !domainBudgetCanSplit(grant.Budget, newAgentCount) {
+		return content, errors.New("staffing grant budget is too small for this proposed graph")
+	}
+	resolvedAgents := make([]domain.DomainWorkProposalAgent, 0, len(arguments.Agents))
+	for index, item := range arguments.Agents {
+		if !containsDomainWorkValue(grant.TaskClasses, item.TaskClass) {
+			return content, fmt.Errorf("task class %q is outside the staffing grant", item.TaskClass)
+		}
+		if item.ExistingAgent != "" {
+			existing, found := agentsByName[item.ExistingAgent]
+			if !found || existing.Definition.ID == scope.Agent.ID || existing.Membership.Status != domain.DomainAgentActive || existing.Membership.WorkstreamID != "" || !existing.Definition.Enabled {
+				return content, fmt.Errorf("existing agent %q is not an available durable descendant", item.ExistingAgent)
+			}
+			var selected domain.LaunchProfile
+			for _, profile := range launchProfiles {
+				if profile.AgentID == existing.Definition.ID && profile.AgentRevision == existing.Definition.Revision && profile.CheckoutID == primary.ID && profile.Purpose == item.TaskClass && profile.ManagerGrantID == "" && domainWorkProfileAllows(grant.Profiles, profile.Provider, profile.Runtime, existing.Definition.MaxConcurrency) {
+					selected = profile
+					break
+				}
+			}
+			if selected.ID == "" {
+				return content, fmt.Errorf("existing agent %q has no current %s launch profile for checkout %s inside the staffing grant", item.ExistingAgent, item.TaskClass, primary.Path)
+			}
+			resolvedAgents = append(resolvedAgents, domain.DomainWorkProposalAgent{
+				Key: item.Key, ExistingAgentID: existing.Definition.ID,
+				ExistingMembershipRevision: existing.Membership.Revision,
+				ExistingLaunchProfileID:    selected.ID,
+			})
+			continue
+		}
+		maxConcurrency := item.MaxConcurrency
+		if maxConcurrency == 0 {
+			maxConcurrency = 1
+		}
+		var selected domain.DomainAgentStaffingProfile
+		for _, profile := range grant.Profiles {
+			if maxConcurrency <= profile.MaxConcurrency {
+				selected = profile
+				break
+			}
+		}
+		if selected.Provider == "" {
+			return content, fmt.Errorf("no permitted execution profile supports agent %q concurrency %d", item.Name, maxConcurrency)
+		}
+		delegationPolicy := item.DelegationPolicy
+		if delegationPolicy == "" {
+			delegationPolicy = domain.DomainAgentHandsOn
+		}
+		resolvedAgents = append(resolvedAgents, domain.DomainWorkProposalAgent{
+			Key: item.Key, Name: item.Name, Role: item.Role, ParentKey: item.ParentKey,
+			OperatingCharter: item.OperatingCharter, DelegationPolicy: delegationPolicy,
+			Provider: selected.Provider, Runtime: selected.Runtime, MaxConcurrency: maxConcurrency,
+			TaskClass: item.TaskClass, Budget: domainBudgetPart(grant.Budget, newAgentCount, domainWorkNewAgentOrdinal(arguments.Agents, index)),
+		})
+	}
+	resolvedTasks := make([]domain.DomainWorkProposalTask, 0, len(arguments.Tasks))
+	agentClasses := make(map[string]string, len(arguments.Agents))
+	for _, item := range arguments.Agents {
+		agentClasses[item.Key] = item.TaskClass
+	}
+	for index, item := range arguments.Tasks {
+		priority := 100 - index*5
+		if item.Priority != nil {
+			priority = *item.Priority
+		}
+		delivery := make(map[string]string, len(item.DependsOn))
+		for _, dependency := range item.DependsOn {
+			value := item.DependencyDelivery[dependency]
+			if value == "" {
+				value = domain.DependencyDeliveryHandoffWithEvidence
+			}
+			delivery[dependency] = value
+		}
+		resolvedTasks = append(resolvedTasks, domain.DomainWorkProposalTask{
+			Key: item.Key, Title: item.Title, Description: item.Description,
+			TaskClass: agentClasses[item.AssigneeKey], Priority: priority,
+			Budget:      domainBudgetPart(grant.Budget, len(arguments.Tasks), index),
+			AssigneeKey: item.AssigneeKey, DependsOn: item.DependsOn, DependencyDelivery: delivery,
+		})
+	}
+	return domain.DomainWorkProposalContent{
+		ObjectiveTitle: arguments.ObjectiveTitle, ObjectiveBudget: grant.Budget,
+		PrimaryCheckoutID: primary.ID, PrimaryCheckoutRevision: primary.Revision,
+		ReferenceCheckoutIDs: references, Agents: resolvedAgents, Tasks: resolvedTasks,
+	}, nil
+}
+
+func domainWorkNewAgentOrdinal(items []domainSessionProposeWorkAgentArguments, through int) int {
+	ordinal := 0
+	for index := 0; index < through; index++ {
+		if items[index].ExistingAgent == "" {
+			ordinal++
+		}
+	}
+	return ordinal
+}
+
+func domainBudgetCanSplit(value domain.Budget, count int) bool {
+	if count == 0 {
+		return true
+	}
+	return (value.TokenLimit == 0 || value.TokenLimit >= int64(count)) &&
+		(value.CostCents == 0 || value.CostCents >= int64(count)) &&
+		(value.TimeSeconds == 0 || value.TimeSeconds >= int64(count))
+}
+
+func domainBudgetPart(value domain.Budget, count, index int) domain.Budget {
+	if count == 0 {
+		return domain.Budget{}
+	}
+	part := func(total int64) int64 {
+		if total == 0 {
+			return 0
+		}
+		base, remainder := total/int64(count), total%int64(count)
+		if int64(index) < remainder {
+			base++
+		}
+		return base
+	}
+	return domain.Budget{TokenLimit: part(value.TokenLimit), CostCents: part(value.CostCents), TimeSeconds: part(value.TimeSeconds)}
+}
+
+func domainWorkProfileAllows(profiles []domain.DomainAgentStaffingProfile, provider, runtime string, concurrency int) bool {
+	for _, profile := range profiles {
+		if profile.Provider == provider && profile.Runtime == runtime && concurrency <= profile.MaxConcurrency {
+			return true
+		}
+	}
+	return false
+}
+
+func containsDomainWorkValue(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *server) domainDelegateStaffingToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionDelegateStaffingArguments) map[string]any {
@@ -709,6 +979,9 @@ func decodeDomainDelegateStaffingArguments(data json.RawMessage) (domainSessionD
 
 func decodeDomainProposeWorkArguments(data json.RawMessage) (domainSessionProposeWorkArguments, error) {
 	var value domainSessionProposeWorkArguments
+	if len(data) == 0 {
+		return value, errors.New("arguments are required")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&value); err != nil {
@@ -720,14 +993,170 @@ func decodeDomainProposeWorkArguments(data json.RawMessage) (domainSessionPropos
 		}
 		return value, err
 	}
-	value.StaffingGrantID = strings.TrimSpace(value.StaffingGrantID)
 	value.Summary = strings.TrimSpace(value.Summary)
 	value.ObjectiveTitle = strings.TrimSpace(value.ObjectiveTitle)
-	value.PrimaryCheckoutID = strings.TrimSpace(value.PrimaryCheckoutID)
-	if !validDomainToolText(value.StaffingGrantID, 128) || !validDomainToolText(value.Summary, 2048) || !validDomainToolText(value.ObjectiveTitle, 256) || value.PrimaryCheckoutID == "" || value.PrimaryCheckoutRevision < 1 || len(value.ReferenceCheckoutIDs) > 8 || len(value.Agents) < 1 || len(value.Agents) > 16 || len(value.Tasks) < 1 || len(value.Tasks) > 16 {
+	value.PrimaryCheckout = strings.TrimSpace(value.PrimaryCheckout)
+	for index := range value.ReferenceCheckouts {
+		value.ReferenceCheckouts[index] = strings.TrimSpace(value.ReferenceCheckouts[index])
+	}
+	if !validDomainToolText(value.Summary, 2048) || !validDomainToolText(value.ObjectiveTitle, 256) ||
+		(value.PrimaryCheckout != "" && !validDomainToolText(value.PrimaryCheckout, 4096)) ||
+		len(value.ReferenceCheckouts) > 8 || len(value.Agents) < 1 || len(value.Agents) > 16 || len(value.Tasks) < 1 || len(value.Tasks) > 16 {
 		return value, errors.New("work proposal fields are missing or outside their bounded types")
 	}
+	seenCheckouts := map[string]bool{}
+	for _, checkout := range value.ReferenceCheckouts {
+		if !validDomainToolText(checkout, 4096) || seenCheckouts[checkout] {
+			return value, errors.New("reference checkouts must be distinct bounded paths or identifiers")
+		}
+		seenCheckouts[checkout] = true
+	}
+	agents := make(map[string]string, len(value.Agents))
+	for index := range value.Agents {
+		item := &value.Agents[index]
+		var valid bool
+		item.Key, valid = normalizeDomainWorkSlug(item.Key, 32)
+		if !valid {
+			return value, fmt.Errorf("agent key %q must be a bounded logical label", item.Key)
+		}
+		item.ExistingAgent = strings.TrimSpace(item.ExistingAgent)
+		item.Name = strings.TrimSpace(item.Name)
+		item.Role = strings.TrimSpace(item.Role)
+		if strings.TrimSpace(item.ParentKey) != "" {
+			item.ParentKey, valid = normalizeDomainWorkSlug(item.ParentKey, 32)
+			if !valid {
+				return value, fmt.Errorf("parent key %q must name a proposed agent", item.ParentKey)
+			}
+		}
+		item.OperatingCharter = strings.TrimSpace(item.OperatingCharter)
+		item.DelegationPolicy = strings.TrimSpace(item.DelegationPolicy)
+		item.TaskClass, valid = normalizeDomainWorkSlug(item.TaskClass, 63)
+		if !valid {
+			return value, fmt.Errorf("task class %q must be a bounded logical label", item.TaskClass)
+		}
+		if _, exists := agents[item.Key]; exists {
+			return value, errors.New("agent keys must be unique")
+		}
+		existing := item.ExistingAgent != ""
+		if existing {
+			if !validDomainToolText(item.ExistingAgent, 128) || item.Name != "" || item.Role != "" || item.ParentKey != "" || item.OperatingCharter != "" || item.DelegationPolicy != "" || item.MaxConcurrency != 0 {
+				return value, errors.New("an existing agent needs only key, existing_agent, and task_class")
+			}
+		} else {
+			if !validDomainWorkSlug(item.Name, 63) || !validDomainToolText(item.Role, 128) || !validDomainToolText(item.OperatingCharter, 8192) ||
+				(item.DelegationPolicy != "" && item.DelegationPolicy != domain.DomainAgentHandsOn && item.DelegationPolicy != domain.DomainAgentAdaptive && item.DelegationPolicy != domain.DomainAgentDelegationFirst) ||
+				item.MaxConcurrency < 0 || item.MaxConcurrency > 100 {
+				return value, errors.New("new agent intent is missing a name, role, charter, or valid optional policy")
+			}
+		}
+		agents[item.Key] = item.TaskClass
+	}
+	for _, item := range value.Agents {
+		if item.ParentKey != "" {
+			if _, exists := agents[item.ParentKey]; !exists || item.ParentKey == item.Key {
+				return value, errors.New("parent_key must name a different proposed agent key")
+			}
+		}
+	}
+	tasks := make(map[string]bool, len(value.Tasks))
+	for index := range value.Tasks {
+		item := &value.Tasks[index]
+		var valid bool
+		item.Key, valid = normalizeDomainWorkSlug(item.Key, 32)
+		if !valid {
+			return value, fmt.Errorf("task key %q must be a bounded logical label", item.Key)
+		}
+		item.Title = strings.TrimSpace(item.Title)
+		item.Description = strings.TrimSpace(item.Description)
+		item.AssigneeKey, valid = normalizeDomainWorkSlug(item.AssigneeKey, 32)
+		if !valid {
+			return value, fmt.Errorf("assignee key %q must name a proposed agent", item.AssigneeKey)
+		}
+		if !validDomainToolText(item.Title, 256) ||
+			(item.Description != "" && !validDomainToolText(item.Description, 4096)) || agents[item.AssigneeKey] == "" ||
+			(item.Priority != nil && (*item.Priority < 0 || *item.Priority > 1000)) || len(item.DependsOn) > 15 {
+			return value, errors.New("task intent needs a unique key, title, known assignee_key, and bounded optional fields")
+		}
+		if tasks[item.Key] {
+			return value, errors.New("task keys must be unique")
+		}
+		tasks[item.Key] = true
+		seenDependencies := map[string]bool{}
+		for dependencyIndex := range item.DependsOn {
+			item.DependsOn[dependencyIndex], valid = normalizeDomainWorkSlug(item.DependsOn[dependencyIndex], 32)
+			if !valid {
+				return value, errors.New("task dependencies must name bounded logical task keys")
+			}
+			dependency := item.DependsOn[dependencyIndex]
+			if dependency == item.Key || seenDependencies[dependency] {
+				return value, errors.New("task dependencies must be distinct other task keys")
+			}
+			seenDependencies[dependency] = true
+		}
+		if item.DependencyDelivery == nil {
+			item.DependencyDelivery = map[string]string{}
+		}
+		normalizedDelivery := make(map[string]string, len(item.DependencyDelivery))
+		for dependency, delivery := range item.DependencyDelivery {
+			dependency, valid = normalizeDomainWorkSlug(dependency, 32)
+			delivery = strings.TrimSpace(delivery)
+			if !valid || !seenDependencies[dependency] || (delivery != domain.DependencyDeliveryCompletion && delivery != domain.DependencyDeliveryHandoff && delivery != domain.DependencyDeliveryHandoffWithEvidence) {
+				return value, errors.New("dependency_delivery may only refine a listed dependency")
+			}
+			normalizedDelivery[dependency] = delivery
+		}
+		item.DependencyDelivery = normalizedDelivery
+	}
+	for _, item := range value.Tasks {
+		for _, dependency := range item.DependsOn {
+			if !tasks[dependency] {
+				return value, errors.New("task dependency references an unknown task key")
+			}
+		}
+	}
 	return value, nil
+}
+
+func validDomainWorkSlug(value string, maximum int) bool {
+	if value == "" || len(value) > maximum || value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for _, character := range value[1:] {
+		if character != '-' && (character < 'a' || character > 'z') && (character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// Proposal keys are local glue, not durable identifiers. Accept the common
+// labels models naturally emit and canonicalize them before any authority is
+// resolved; exact stored entities remain subject to their stricter names.
+func normalizeDomainWorkSlug(value string, maximum int) (string, bool) {
+	value = strings.TrimSpace(value)
+	var normalized strings.Builder
+	normalized.Grow(len(value))
+	separator := false
+	for _, character := range value {
+		switch {
+		case character >= 'A' && character <= 'Z':
+			character += 'a' - 'A'
+			normalized.WriteRune(character)
+			separator = false
+		case character >= 'a' && character <= 'z' || character >= '0' && character <= '9':
+			normalized.WriteRune(character)
+			separator = false
+		case character == '-' || character == '_' || character == ' ' || character == '\t':
+			if normalized.Len() > 0 && !separator {
+				normalized.WriteByte('-')
+				separator = true
+			}
+		default:
+			return "", false
+		}
+	}
+	result := strings.TrimSuffix(normalized.String(), "-")
+	return result, validDomainWorkSlug(result, maximum)
 }
 
 func decodeDomainProposeKnowledgeArguments(data json.RawMessage) (domainSessionProposeKnowledgeArguments, error) {
