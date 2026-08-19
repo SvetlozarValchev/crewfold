@@ -357,6 +357,18 @@ func (client *CodexAppServerClient) DeleteThread(ctx context.Context, threadID s
 	return client.call(ctx, "thread/delete", map[string]string{"threadId": threadID}, &response)
 }
 
+// CompactThread starts Codex's native persisted context compaction. The
+// request only acknowledges that compaction was accepted; callers that need
+// to recycle the hosting process must also wait for thread/compacted before
+// closing the transport.
+func (client *CodexAppServerClient) CompactThread(ctx context.Context, threadID string) error {
+	if threadID == "" {
+		return errors.New("Codex thread id is required")
+	}
+	var response map[string]any
+	return client.call(ctx, "thread/compact/start", map[string]string{"threadId": threadID}, &response)
+}
+
 func (client *CodexAppServerClient) InterruptTurn(ctx context.Context, threadID, turnID string) error {
 	if threadID == "" || turnID == "" {
 		return errors.New("Codex interrupt requires thread and turn ids")

@@ -21,7 +21,7 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 		defer serverSide.Close()
 		scanner := bufio.NewScanner(serverSide)
 		encoder := json.NewEncoder(serverSide)
-		methods := []string{"initialize", "initialized", "thread/start", "thread/name/set", "thread/read", "thread/turns/list", "turn/start", "turn/interrupt", "thread/resume"}
+		methods := []string{"initialize", "initialized", "thread/start", "thread/name/set", "thread/read", "thread/turns/list", "turn/start", "turn/interrupt", "thread/compact/start", "thread/resume"}
 		for _, want := range methods {
 			if !scanner.Scan() {
 				t.Errorf("missing %s: %v", want, scanner.Err())
@@ -74,12 +74,15 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 				result = map[string]any{}
 			case "turn/start":
 				result = map[string]any{"turn": map[string]any{"id": "turn-1", "status": "inProgress", "items": []any{}}}
-			case "turn/interrupt":
+			case "turn/interrupt", "thread/compact/start":
 				result = map[string]any{}
 			}
 			if err := encoder.Encode(map[string]any{"id": id, "result": result}); err != nil {
 				t.Errorf("respond %s: %v", want, err)
 				return
+			}
+			if want == "thread/compact/start" {
+				_ = encoder.Encode(map[string]any{"method": "thread/compacted", "params": map[string]any{"threadId": "019-thread", "turnId": "turn-compact"}})
 			}
 			if want == "turn/start" {
 				_ = encoder.Encode(map[string]any{"method": "item/agentMessage/delta", "params": map[string]any{"threadId": "019-thread", "turnId": "turn-1", "itemId": "item-1", "delta": "exact provider text"}})
@@ -140,6 +143,17 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 	}
 	if err := client.InterruptTurn(ctx, thread.ID, turn.ID); err != nil {
 		t.Fatal(err)
+	}
+	if err := client.CompactThread(ctx, thread.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case notification := <-client.Notifications():
+		if notification.Method != "thread/compacted" {
+			t.Fatalf("compaction notification = %#v", notification)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
 	}
 	if _, err := client.ResumeThread(ctx, thread.ID); err != nil {
 		t.Fatal(err)

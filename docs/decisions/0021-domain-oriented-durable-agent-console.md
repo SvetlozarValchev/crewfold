@@ -165,18 +165,23 @@ staffing plan, receive continuing source responsibilities, or be reported as
 Crewfold staffing. The parent session must expose their provider-local lifecycle
 as such.
 
-### A durable agent owns a resumable provider conversation
+### A durable agent owns one logical conversation with replaceable provider epochs
 
-The normal Codex experience binds a durable Crewfold agent to one resumable
-provider conversation. Selecting the agent opens that actual conversation, not a
-one-shot form interpreter. Owner input is delivered to the selected provider
-session; structured provider events, tool calls, diffs, approvals, and responses
-are rendered as the primary activity stream.
+The normal Codex experience gives a durable Crewfold agent one logical owner-facing
+conversation. That logical conversation may contain several immutable provider
+epochs over the agent's lifetime. Selecting the agent opens that actual lineage,
+not a one-shot form interpreter and not an immortal provider process. Owner input
+is delivered only to the current epoch; structured provider events, tool calls,
+diffs, approvals, responses, epoch boundaries, and attached execution activity
+are rendered as one primary activity stream.
 
-Persistence does not require a provider process to consume resources forever.
+Persistence does not require a provider process or provider context to consume
+resources forever.
 An agent may be `idle`, `starting`, `working`, `waiting`, `blocked`, or `failed`.
-When needed, Crewfold resumes the provider conversation through Herdr or the
-provider's structured session transport. If provider continuity is unavailable,
+When needed, Crewfold resumes the provider conversation through the provider's
+structured session transport. Herdr remains the interactive host for separately
+authorized execution runs; it is not a second implementation of the owner-facing
+Codex conversation. If provider continuity is unavailable,
 Crewfold starts a replacement run from the agent's canonical task, messages,
 accepted knowledge, handoff, and evidence. The Crewfold agent identity survives
 either outcome.
@@ -192,28 +197,57 @@ Crewfold leaves that wake pending and retries after the active turn settles. The
 reply becomes a separate provider turn with explicit `crewfold_delivery`
 provenance; it is never spliced into the middle of the owner's instruction.
 
-The app-server conversation resumes with `sandbox=read-only`, including after a
+The current app-server epoch resumes with `sandbox=read-only`, including after a
 daemon/provider restart. It may inspect the selected checkout and use the closed
 audited Crewfold tool set described below. It may not edit that checkout merely because the
 owner said “yes” in conversation. A separately assigned Crewfold execution run
 is the only current path for implementation, review, or verification effects.
 
+An execution run is an auditable authority and environment attached to the same
+durable agent, not a second owner-facing agent identity. The Session surface must
+show its lifecycle, commands, changes, messages, blockers, and verification in
+the same logical timeline. If provider isolation requires a second process or
+thread, that is an implementation detail labelled as an attached execution
+environment; it must not leave the durable agent apparently idle while hidden
+work occurs elsewhere.
+
+Provider epochs are replaceable. A normal rotation happens only between turns,
+with no unresolved provider request or execution effect. Crewfold freezes the old
+epoch, records a bounded mechanical handoff from canonical assignments, runs,
+claims, checkouts, inbox, accepted knowledge, decisions, changed-path observations,
+and verification gaps, and may append an attributed outgoing-agent narrative.
+It then starts one fresh current epoch for the same durable agent. Old epochs stay
+read-only and lazily inspectable; their tool receipts, proposals, messages, and
+knowledge provenance remain bound to the exact historical thread.
+
+Rotation may be owner-requested or recommended from bounded provider health such
+as process RSS, turn/token count, transcript bytes, age, idle time, or repeated
+degradation. Thresholds are owner policy, not authority. Crewfold never silently
+rotates during an active turn or live execution. An emergency provider kill is
+reported honestly and any affected execution remains unknown/lost until its
+ordinary recovery contract resolves it.
+
 For Codex, M22 uses the provider's rich-client protocol rather than reproducing a
-chat harness. A private node-local `codex app-server` is the provider host. Herdr
-supervises that host; the daemon connects over its private local transport and
-binds one non-ephemeral Codex thread id to each durable Crewfold agent. Selecting
-an agent reads that stored thread. Sending owner input resumes the same thread
-and starts or steers a real Codex turn. A host restart resumes the recorded
-thread id rather than constructing a synthetic transcript. Full provider thread
-ids are operational bindings and are not presented as domain identity.
+chat harness. Each active durable agent has a lazily started, resource-bounded,
+private app-server host managed by the daemon. No two durable agents share that
+process. The daemon connects over its private local transport and binds one
+non-ephemeral Codex thread id to each provider epoch.
+Selecting an agent reads its current lineage. Sending owner input resumes the
+current thread and starts or steers a real Codex turn. After a terminal turn, the
+disposable app-server exits following a short observation grace; the next owner or
+message turn resumes the same persisted epoch in a fresh process. Native Codex
+compaction keeps that epoch while compacting its provider context and recycling
+the host. Rotation instead starts a new epoch from the canonical handoff. Full
+provider thread ids are operational bindings and are not presented as domain
+identity.
 
 The current `codex exec --ephemeral` integration is explicitly not this surface.
 It remains historical M21 worker/executive behavior and must not be relabeled as
 a durable session. M22 removes `--ephemeral` from the durable-agent path and uses
 app-server thread lifecycle, streamed item events, and required Crewfold MCP
-configuration. There is one primary Codex integration path in M22; raw Herdr/TUI
-attachment is an advanced diagnostic view of the same provider host, not an
-alternate conversation implementation.
+configuration. There is one primary Codex conversation integration path in M22.
+Raw Herdr/TUI attachment is an advanced diagnostic view of an attached execution
+run and never masquerades as the app-server conversation.
 
 The Session renderer is a faithful adapter with a closed source set:
 
@@ -370,8 +404,9 @@ in which that agent actually participates. A durable-agent tool call must choose
 explicitly between continuing an existing thread and opening a genuinely new
 topic; omission never silently creates another thread.
 
-Likewise, one selected agent has one **Session** surface: its resumable provider
-conversation. An **active run** is the current bounded execution of that agent,
+Likewise, one selected agent has one **Session** surface: its logical provider
+conversation across immutable epochs. An **active run** is the current bounded
+execution authority and environment attached to that agent,
 and the **advanced terminal** is a raw Herdr PTY attachment to that run. The UI
 does not call the terminal a second “live session.” Stopping the current run does
 not delete the durable agent or its conversation history.

@@ -97,6 +97,7 @@ type DomainAgentSessionParams struct {
 	Workspace string `json:"workspace"`
 	Project   string `json:"project"`
 	Agent     string `json:"agent"`
+	Epoch     int64  `json:"epoch,omitempty"`
 }
 
 type DomainAgentSessionOpenParams struct {
@@ -120,6 +121,21 @@ type DomainAgentSessionInterruptParams struct {
 	Project   string `json:"project"`
 	Agent     string `json:"agent"`
 	TurnID    string `json:"turn_id"`
+}
+
+type DomainAgentSessionCompactParams struct {
+	Workspace     string `json:"workspace"`
+	Project       string `json:"project"`
+	Agent         string `json:"agent"`
+	ExpectedEpoch int64  `json:"expected_epoch"`
+}
+
+type DomainAgentSessionRotateParams struct {
+	Workspace     string `json:"workspace"`
+	Project       string `json:"project"`
+	Agent         string `json:"agent"`
+	ExpectedEpoch int64  `json:"expected_epoch"`
+	Reason        string `json:"reason"`
 }
 
 type DomainAgentSessionResult struct {

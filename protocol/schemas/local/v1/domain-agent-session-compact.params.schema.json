@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:crewfold:schema:local-api:domain-agent-session-params:v1",
+  "$id": "urn:crewfold:schema:local-api:domain-agent-session-compact-params:v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["workspace", "project", "agent"],
+  "required": ["workspace", "project", "agent", "expected_epoch"],
   "properties": {
     "workspace": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
     "project": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
     "agent": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
-    "epoch": {"type": "integer", "minimum": 1}
+    "expected_epoch": {"type": "integer", "minimum": 1}
   }
 }

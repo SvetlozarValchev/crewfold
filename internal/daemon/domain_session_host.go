@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"crewfold/internal/domain"
 	"crewfold/internal/execution"
@@ -20,9 +21,12 @@ type domainSessionHost struct {
 	operationMu sync.Mutex
 	factory     func() (execution.CodexAppServerTransport, error)
 	toolHandler func(context.Context, execution.CodexAppServerRequest) (any, error)
-	client      *execution.CodexAppServerClient
+	clients     map[string]*execution.CodexAppServerClient
 	threads     map[string]execution.CodexThread
 	activity    map[string]*domainSessionLiveActivity
+	compactions map[string]chan struct{}
+	idleTimers  map[string]*time.Timer
+	idleAfter   time.Duration
 	closed      bool
 }
 
@@ -67,27 +71,22 @@ func newDomainSessionHost(config Config, toolHandler func(context.Context, execu
 	}
 	return &domainSessionHost{
 		factory: factory, toolHandler: toolHandler,
-		threads: make(map[string]execution.CodexThread), activity: make(map[string]*domainSessionLiveActivity),
+		clients: make(map[string]*execution.CodexAppServerClient), threads: make(map[string]execution.CodexThread),
+		activity: make(map[string]*domainSessionLiveActivity), compactions: make(map[string]chan struct{}),
+		idleTimers: make(map[string]*time.Timer), idleAfter: 5 * time.Second,
 	}
 }
 
-func (host *domainSessionHost) clientFor(ctx context.Context) (*execution.CodexAppServerClient, error) {
+// newClient starts one disposable Codex app-server host. Durable-agent
+// conversations never share a process: compaction, a provider crash, or a
+// pathological resident set in one session must not interrupt another agent.
+func (host *domainSessionHost) newClient(ctx context.Context) (*execution.CodexAppServerClient, error) {
 	host.mu.Lock()
-	defer host.mu.Unlock()
 	if host.closed {
+		host.mu.Unlock()
 		return nil, errors.New("domain session host is closed")
 	}
-	if host.client != nil {
-		select {
-		case <-host.client.Done():
-			_ = host.client.Close()
-			host.client = nil
-			host.threads = make(map[string]execution.CodexThread)
-			host.activity = make(map[string]*domainSessionLiveActivity)
-		default:
-			return host.client, nil
-		}
-	}
+	host.mu.Unlock()
 	transport, err := host.factory()
 	if err != nil {
 		return nil, err
@@ -101,11 +100,40 @@ func (host *domainSessionHost) clientFor(ctx context.Context) (*execution.CodexA
 		_ = client.Close()
 		return nil, fmt.Errorf("initialize Codex app-server: %w", err)
 	}
-	host.client = client
-	host.threads = make(map[string]execution.CodexThread)
-	host.activity = make(map[string]*domainSessionLiveActivity)
 	go host.drain(client)
 	return client, nil
+}
+
+func (host *domainSessionHost) clientForThread(threadID string) (*execution.CodexAppServerClient, bool) {
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	client := host.clients[threadID]
+	if client == nil {
+		return nil, false
+	}
+	select {
+	case <-client.Done():
+		delete(host.clients, threadID)
+		delete(host.threads, threadID)
+		delete(host.activity, threadID)
+		return nil, false
+	default:
+		return client, true
+	}
+}
+
+func (host *domainSessionHost) bindClient(threadID string, client *execution.CodexAppServerClient, thread execution.CodexThread) error {
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if host.closed {
+		return errors.New("domain session host is closed")
+	}
+	if existing := host.clients[threadID]; existing != nil && existing != client {
+		return errors.New("durable Codex thread is already hosted")
+	}
+	host.clients[threadID] = client
+	host.threads[threadID] = thread
+	return nil
 }
 
 func (host *domainSessionHost) drain(client *execution.CodexAppServerClient) {
@@ -146,20 +174,28 @@ func (host *domainSessionHost) drain(client *execution.CodexAppServerClient) {
 
 func (host *domainSessionHost) invalidate(client *execution.CodexAppServerClient) {
 	host.mu.Lock()
-	defer host.mu.Unlock()
-	if host.client == client {
-		_ = client.Close()
-		host.client = nil
-		host.threads = make(map[string]execution.CodexThread)
-		host.activity = make(map[string]*domainSessionLiveActivity)
+	for threadID, candidate := range host.clients {
+		if candidate == client {
+			delete(host.clients, threadID)
+			delete(host.threads, threadID)
+			delete(host.activity, threadID)
+		}
 	}
+	host.mu.Unlock()
+	_ = client.Close()
 }
 
 func (host *domainSessionHost) startThread(ctx context.Context, cwd, threadName, instructions string) (execution.CodexThread, error) {
-	client, err := host.clientFor(ctx)
+	client, err := host.newClient(ctx)
 	if err != nil {
 		return execution.CodexThread{}, err
 	}
+	keepClient := false
+	defer func() {
+		if !keepClient {
+			_ = client.Close()
+		}
+	}()
 	// Durable conversation is deliberately read-only. The daemon's provider
 	// execution path, not owner prose in this thread, owns write authority.
 	sandbox := execution.CodexSandboxReadOnly
@@ -179,33 +215,25 @@ func (host *domainSessionHost) startThread(ctx context.Context, cwd, threadName,
 			_ = client.DeleteThread(ctx, thread.ID)
 		}
 	}
-	if err != nil {
-		select {
-		case <-client.Done():
-			host.invalidate(client)
-		default:
-		}
-	}
 	if err == nil {
-		host.mu.Lock()
-		host.threads[thread.ID] = thread
-		host.mu.Unlock()
+		err = host.bindClient(thread.ID, client, thread)
+		keepClient = err == nil
 	}
 	return thread, err
 }
 
 func (host *domainSessionHost) readThread(ctx context.Context, threadID, cwd, instructions string) (execution.CodexThread, error) {
-	client, err := host.clientFor(ctx)
-	if err != nil {
-		return execution.CodexThread{}, err
-	}
 	// Codex does not materialize a non-ephemeral rollout until its first user
 	// message. Preserve the exact thread/start result in memory so opening a
 	// conversation never requires a synthetic bootstrap turn merely to make it
 	// observable.
+	client, clientOK := host.clientForThread(threadID)
 	host.mu.Lock()
 	cached, cachedOK := host.threads[threadID]
 	host.mu.Unlock()
+	if cachedOK != clientOK {
+		return execution.CodexThread{}, errors.New("durable Codex host state is inconsistent")
+	}
 	if cachedOK && len(cached.Turns) == 0 {
 		return cached, nil
 	}
@@ -218,8 +246,20 @@ func (host *domainSessionHost) readThread(ctx context.Context, threadID, cwd, in
 		defer host.resumeMu.Unlock()
 		host.mu.Lock()
 		cached, cachedOK = host.threads[threadID]
+		client = host.clients[threadID]
 		host.mu.Unlock()
 		if !cachedOK {
+			var err error
+			client, err = host.newClient(ctx)
+			if err != nil {
+				return execution.CodexThread{}, err
+			}
+			keepClient := false
+			defer func() {
+				if !keepClient {
+					_ = client.Close()
+				}
+			}()
 			thread, resumeErr := client.ResumeThreadWithParams(ctx, execution.CodexThreadResumeParams{
 				ThreadID: threadID, CWD: cwd, ApprovalPolicy: "never",
 				BaseInstructions: durableDomainCodexBaseInstructions, DeveloperInstructions: instructions,
@@ -227,11 +267,6 @@ func (host *domainSessionHost) readThread(ctx context.Context, threadID, cwd, in
 				Config: domainSessionAppServerConfig(),
 			})
 			if resumeErr != nil {
-				select {
-				case <-client.Done():
-					host.invalidate(client)
-				default:
-				}
 				return execution.CodexThread{}, resumeErr
 			}
 			turns, turnsErr := client.ListThreadTurns(ctx, thread.ID, 100)
@@ -239,9 +274,10 @@ func (host *domainSessionHost) readThread(ctx context.Context, threadID, cwd, in
 				return execution.CodexThread{}, turnsErr
 			}
 			thread.Turns = turns
-			host.mu.Lock()
-			host.threads[thread.ID] = thread
-			host.mu.Unlock()
+			if err := host.bindClient(thread.ID, client, thread); err != nil {
+				return execution.CodexThread{}, err
+			}
+			keepClient = true
 			return thread, nil
 		}
 		if len(cached.Turns) == 0 {
@@ -270,10 +306,11 @@ func (host *domainSessionHost) readThread(ctx context.Context, threadID, cwd, in
 }
 
 func (host *domainSessionHost) startTurn(ctx context.Context, threadID, clientMessageID, text string) (execution.CodexTurn, error) {
-	client, err := host.clientFor(ctx)
-	if err != nil {
-		return execution.CodexTurn{}, err
+	client, ok := host.clientForThread(threadID)
+	if !ok {
+		return execution.CodexTurn{}, errors.New("durable Codex thread is not loaded")
 	}
+	host.cancelIdleRecycle(threadID)
 	turn, err := client.StartTurnWithClientID(ctx, threadID, clientMessageID, text)
 	if err == nil {
 		host.mu.Lock()
@@ -288,40 +325,125 @@ func (host *domainSessionHost) startTurn(ctx context.Context, threadID, clientMe
 }
 
 func (host *domainSessionHost) interruptTurn(ctx context.Context, threadID, turnID string) error {
-	client, err := host.clientFor(ctx)
-	if err != nil {
+	client, ok := host.clientForThread(threadID)
+	if !ok {
+		return errors.New("durable Codex thread is not loaded")
+	}
+	if err := client.InterruptTurn(ctx, threadID, turnID); err != nil {
 		return err
 	}
-	return client.InterruptTurn(ctx, threadID, turnID)
+	host.mu.Lock()
+	if stream := host.activity[threadID]; stream != nil {
+		if turn := stream.turns[turnID]; turn != nil {
+			turn.status = "interrupted"
+		}
+	}
+	thread := host.threads[threadID]
+	thread.Status.Type = "idle"
+	host.threads[threadID] = thread
+	host.mu.Unlock()
+	return nil
 }
 
 func (host *domainSessionHost) deleteThread(ctx context.Context, threadID string) error {
-	client, err := host.clientFor(ctx)
-	if err != nil {
-		return err
+	client, ok := host.clientForThread(threadID)
+	if !ok {
+		return errors.New("durable Codex thread is not loaded")
 	}
-	err = client.DeleteThread(ctx, threadID)
+	err := client.DeleteThread(ctx, threadID)
 	if err == nil {
 		host.mu.Lock()
+		delete(host.clients, threadID)
 		delete(host.threads, threadID)
 		delete(host.activity, threadID)
 		host.mu.Unlock()
+		_ = client.Close()
 	}
 	return err
+}
+
+// compactThread completes Codex's native persisted compaction and then closes
+// only this agent's disposable app-server. The next read lazily resumes the
+// compacted rollout in a fresh process, which bounds resident memory without
+// changing durable-agent identity or its provider epoch.
+func (host *domainSessionHost) compactThread(ctx context.Context, threadID string) error {
+	client, ok := host.clientForThread(threadID)
+	if !ok {
+		return errors.New("durable Codex thread is not loaded")
+	}
+	waiter := make(chan struct{})
+	host.mu.Lock()
+	if host.compactions[threadID] != nil {
+		host.mu.Unlock()
+		return errors.New("durable Codex thread compaction is already running")
+	}
+	host.compactions[threadID] = waiter
+	host.mu.Unlock()
+	defer func() {
+		host.mu.Lock()
+		if host.compactions[threadID] == waiter {
+			delete(host.compactions, threadID)
+		}
+		host.mu.Unlock()
+	}()
+	if err := client.CompactThread(ctx, threadID); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-client.Done():
+		return errors.New("Codex app-server closed before thread compaction completed")
+	case <-waiter:
+	}
+	host.releaseThreadHost(threadID)
+	return nil
+}
+
+func (host *domainSessionHost) releaseThreadHost(threadID string) {
+	host.mu.Lock()
+	client := host.clients[threadID]
+	if timer := host.idleTimers[threadID]; timer != nil {
+		timer.Stop()
+	}
+	delete(host.clients, threadID)
+	delete(host.threads, threadID)
+	delete(host.activity, threadID)
+	delete(host.compactions, threadID)
+	delete(host.idleTimers, threadID)
+	host.mu.Unlock()
+	if client != nil {
+		_ = client.Close()
+	}
 }
 
 func (host *domainSessionHost) Close() error {
 	host.mu.Lock()
-	defer host.mu.Unlock()
 	host.closed = true
-	if host.client == nil {
-		return nil
+	clients := make([]*execution.CodexAppServerClient, 0, len(host.clients))
+	seen := make(map[*execution.CodexAppServerClient]struct{}, len(host.clients))
+	for _, client := range host.clients {
+		if _, ok := seen[client]; !ok {
+			seen[client] = struct{}{}
+			clients = append(clients, client)
+		}
 	}
-	err := host.client.Close()
-	host.client = nil
+	host.clients = make(map[string]*execution.CodexAppServerClient)
 	host.threads = make(map[string]execution.CodexThread)
 	host.activity = make(map[string]*domainSessionLiveActivity)
-	return err
+	host.compactions = make(map[string]chan struct{})
+	for _, timer := range host.idleTimers {
+		timer.Stop()
+	}
+	host.idleTimers = make(map[string]*time.Timer)
+	host.mu.Unlock()
+	var closeError error
+	for _, client := range clients {
+		if err := client.Close(); err != nil && closeError == nil {
+			closeError = err
+		}
+	}
+	return closeError
 }
 
 // recordNotification retains a bounded, owner-readable projection of the live
@@ -338,6 +460,13 @@ func (host *domainSessionHost) recordNotification(notification execution.CodexAp
 	}
 	host.mu.Lock()
 	defer host.mu.Unlock()
+	if notification.Method == "thread/compacted" {
+		if waiter := host.compactions[scope.ThreadID]; waiter != nil {
+			delete(host.compactions, scope.ThreadID)
+			close(waiter)
+		}
+		return
+	}
 	stream := host.activity[scope.ThreadID]
 	if stream == nil {
 		stream = &domainSessionLiveActivity{turns: make(map[string]*domainSessionLiveTurn)}
@@ -350,6 +479,21 @@ func (host *domainSessionHost) recordNotification(notification execution.CodexAp
 		}
 		if json.Unmarshal(notification.Params, &params) != nil || params.Turn.ID == "" {
 			return
+		}
+		if host.threads != nil {
+			thread := host.threads[scope.ThreadID]
+			thread.ID = scope.ThreadID
+			if notification.Method == "turn/started" {
+				thread.Status.Type = "active"
+			} else {
+				thread.Status.Type = "idle"
+			}
+			host.threads[scope.ThreadID] = thread
+		}
+		if notification.Method == "turn/started" {
+			host.cancelIdleRecycleLocked(scope.ThreadID)
+		} else {
+			host.scheduleIdleRecycleLocked(scope.ThreadID)
 		}
 		turn := ensureDomainSessionLiveTurn(stream, params.Turn.ID)
 		turn.status = params.Turn.Status
@@ -472,6 +616,56 @@ func (host *domainSessionHost) recordNotification(notification execution.CodexAp
 		upsertDomainSessionLiveItem(ensureDomainSessionLiveTurn(stream, scope.TurnID), domain.DomainAgentSessionItem{
 			ID: fmt.Sprintf("turn-error:%s:%d", scope.TurnID, stream.sequence), Type: "error", Text: boundedDomainSessionActivityText(message), Status: status,
 		})
+	}
+}
+
+// A durable agent owns a persisted provider thread, not an immortal provider
+// process. Once a turn is terminal, retain the readable rollout but retire its
+// app-server after a short observation grace. The next owner/message turn
+// resumes the same current epoch in a fresh process.
+func (host *domainSessionHost) scheduleIdleRecycleLocked(threadID string) {
+	if host.idleTimers == nil {
+		host.idleTimers = make(map[string]*time.Timer)
+	}
+	if timer := host.idleTimers[threadID]; timer != nil {
+		timer.Stop()
+	}
+	client := host.clients[threadID]
+	if client == nil || host.closed {
+		delete(host.idleTimers, threadID)
+		return
+	}
+	delay := host.idleAfter
+	if delay <= 0 {
+		delay = 5 * time.Second
+	}
+	host.idleTimers[threadID] = time.AfterFunc(delay, func() {
+		host.mu.Lock()
+		current := host.clients[threadID]
+		thread := host.threads[threadID]
+		if current != client || thread.Status.Type == "active" || host.closed {
+			host.mu.Unlock()
+			return
+		}
+		delete(host.clients, threadID)
+		delete(host.threads, threadID)
+		delete(host.activity, threadID)
+		delete(host.idleTimers, threadID)
+		host.mu.Unlock()
+		_ = client.Close()
+	})
+}
+
+func (host *domainSessionHost) cancelIdleRecycle(threadID string) {
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	host.cancelIdleRecycleLocked(threadID)
+}
+
+func (host *domainSessionHost) cancelIdleRecycleLocked(threadID string) {
+	if timer := host.idleTimers[threadID]; timer != nil {
+		timer.Stop()
+		delete(host.idleTimers, threadID)
 	}
 }
 

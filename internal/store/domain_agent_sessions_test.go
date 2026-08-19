@@ -204,11 +204,16 @@ func TestM22UnavailableProviderSessionReplacementIsExactAndEventFree(t *testing.
 	if replaced.ThreadID != "replacement-provider-thread" || replaced.Revision != bound.Revision+1 || replaced.AgentID != bound.AgentID || replaced.ProjectID != bound.ProjectID {
 		t.Fatalf("replacement binding = %#v; prior = %#v", replaced, bound)
 	}
-	if _, err := storage.DomainAgentSessionScopeByThread(ctx, bound.ThreadID); ErrorCode(err) != CodeDomainAgentSessionNotFound {
+	if _, err := storage.DomainAgentSessionScopeByThread(ctx, bound.ThreadID); ErrorCode(err) != CodeDomainAgentSessionDetached {
 		t.Fatalf("old provider thread scope error = %v, code %q", err, ErrorCode(err))
 	}
 	if scope, err := storage.DomainAgentSessionScopeByThread(ctx, replaced.ThreadID); err != nil || scope.Agent.ID != agent.Value.ID {
 		t.Fatalf("replacement provider scope = %#v, %v", scope, err)
+	}
+	epochs, err := storage.DomainAgentSessionEpochs(ctx, project.ID, agent.Value.ID)
+	if err != nil || len(epochs) != 2 || epochs[0].Epoch != 2 || epochs[0].Status != "current" ||
+		epochs[1].Epoch != 1 || epochs[1].Status != "archived" || epochs[1].RotationReason != "continuity_unavailable" {
+		t.Fatalf("session epochs = %#v, %v", epochs, err)
 	}
 	if eventsAfter := testWorkspaceEvents(t, storage, workspace.ID, 0, 1000); len(eventsAfter) != len(eventsBefore) {
 		t.Fatalf("operational provider replacement appended a domain event: %d -> %d", len(eventsBefore), len(eventsAfter))

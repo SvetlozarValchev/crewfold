@@ -123,6 +123,7 @@ grep -Fq '"childVisible": true' "$scenario_root/browser-result.json"
 grep -Fq '"proposalAccepted": true' "$scenario_root/browser-result.json"
 grep -Fq '"workerCompleted": true' "$scenario_root/browser-result.json"
 grep -Fq '"providerLocalHelper": false' "$scenario_root/browser-result.json"
+grep -Fq '"epochLineage": true' "$scenario_root/browser-result.json"
 grep -Fq '"browserExceptions": []' "$scenario_root/browser-result.json"
 test -z "$(git -C "$scenario_root/domain-repository" status --porcelain=v1)"
 

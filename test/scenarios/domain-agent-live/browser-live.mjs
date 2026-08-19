@@ -149,7 +149,7 @@ await waitFor("document.querySelector('.m22-grant') && document.body.innerText.i
 await clickText(".m22-tabs button", "session");
 await waitFor("document.body.innerText.includes('start Codex session')", "unbound orchid session");
 await clickText("button", "start Codex session");
-await waitFor("document.body.innerText.toLowerCase().includes('codex conversation · codex') && document.querySelector('.m22-composer textarea')", "opened real Codex thread");
+await waitFor("document.body.innerText.toLowerCase().includes('codex conversation · epoch 1 · codex') && document.querySelector('.m22-composer textarea')", "opened real Codex thread");
 
 const orchidInstruction = `Coordinate this domain end to end according to your operating charter. Use your current Crewfold staffing grant to create exactly one continuing durable child named m22-reviewer with the descriptive role "independent fixture reviewer", hands_on policy, Codex through Herdr, task class review, one concurrent run, the attached checkout, and a bounded charter to inspect the fixture repository read-only and report exact evidence. Send fern one durable inform message that independent review has been staffed. Then submit one inert Crewfold work proposal under your current grant: objective "Verify the M22 fixture", one task with key review, title "Review the M22 fixture", task class review, priority 100, the m22-reviewer launch profile, no dependencies, and a description requiring it to read README.md without changing repository files, report the exact heading as evidence, and complete through Crewfold. Use sensible bounded token/time budgets within your grant. Do not use provider-local temporary helpers. Once the child, message, and pending proposal are all confirmed by exact Crewfold tool receipts, answer exactly LIVE_M22_OK and explain that the owner must accept the displayed graph before anything runs.`;
 await evaluate(`(() => {
@@ -183,7 +183,7 @@ await capture("03-completed-durable-work");
 await clickText(".m22-agent-row", "fern");
 await waitFor("document.body.innerText.includes('start Codex session')", "unbound fern session");
 await clickText("button", "start Codex session");
-await waitFor("document.querySelector('.m22-composer textarea') && document.body.innerText.toLowerCase().includes('codex conversation · codex')", "opened fern thread");
+await waitFor("document.querySelector('.m22-composer textarea') && document.body.innerText.toLowerCase().includes('codex conversation · epoch 1 · codex')", "opened fern thread");
 const fernInstruction = `Read your canonical Crewfold domain context and confirm your delivered inbox contains the durable coordination message from orchid about staffing independent review. If and only if it does, answer exactly LIVE_FERN_ACK.`;
 await evaluate(`(() => {
   const input = document.querySelector('.m22-composer textarea');
@@ -203,6 +203,17 @@ await clickText(".m22-agent-row", "orchid");
 await waitFor("document.body.innerText.includes('LIVE_M22_OK')", "orchid conversation after reload");
 await capture("05-reloaded-session");
 
+await evaluate("document.querySelector('.m22-session-lifecycle summary').click(); true");
+await waitFor("[...document.querySelectorAll('.m22-session-lifecycle-actions button')].some((button) => button.textContent.includes('compact and recycle host') && !button.disabled)", "idle native compaction control");
+await clickText(".m22-session-lifecycle-actions button", "compact and recycle host");
+await waitFor("[...document.querySelectorAll('.m22-session-lifecycle-actions button')].some((button) => button.textContent.includes('compact and recycle host') && !button.disabled) && document.body.innerText.includes('epoch 1 current')", "native Codex compaction and host recycle");
+await clickText(".m22-session-lifecycle-actions button", "hand off to fresh epoch");
+await waitFor("document.body.innerText.toLowerCase().includes('codex conversation · epoch 2 · codex') && document.body.innerText.includes('epoch 1 archived')", "fresh canonical handoff epoch");
+await clickText(".m22-session-epochs button", "epoch 1");
+await waitFor("document.body.innerText.includes('This epoch is immutable history') && document.body.innerText.includes('LIVE_M22_OK')", "readable inert archived epoch");
+const epochLineage = true;
+await capture("06-archived-epoch");
+
 const result = await evaluate(`(() => ({
   orchidReply: ${JSON.stringify(orchidReplySeen)},
   fernReply: ${JSON.stringify(fernReplySeen)},
@@ -212,9 +223,10 @@ const result = await evaluate(`(() => ({
   legacyExecutive: document.body.innerText.includes('project-executive'),
   leakedPrivateBinding: ['thread_id', 'node_fingerprint', 'runtime_handle', 'provider_handle'].some((value) => document.documentElement.innerHTML.includes(value)),
   providerLocalHelper: document.querySelector('.m22-thread-item.collabAgentToolCall, .m22-thread-item.subAgentActivity') !== null,
+  epochLineage: ${JSON.stringify(epochLineage)},
 }))()`);
 result.browserExceptions = browserExceptions;
-if (!result.orchidReply || !result.fernReply || !result.childVisible || !result.proposalAccepted || !result.workerCompleted || result.legacyExecutive || result.leakedPrivateBinding || result.providerLocalHelper || browserExceptions.length) {
+if (!result.orchidReply || !result.fernReply || !result.childVisible || !result.proposalAccepted || !result.workerCompleted || !result.epochLineage || result.legacyExecutive || result.leakedPrivateBinding || result.providerLocalHelper || browserExceptions.length) {
   throw new Error(`live M22 invariant failed: ${JSON.stringify(result)}`);
 }
 fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));

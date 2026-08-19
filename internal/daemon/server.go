@@ -713,6 +713,10 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleDomainAgentSessionSend(request), false
 	case localapi.MethodDomainAgentSessionInterrupt:
 		return s.handleDomainAgentSessionInterrupt(request), false
+	case localapi.MethodDomainAgentSessionCompact:
+		return s.handleDomainAgentSessionCompact(request), false
+	case localapi.MethodDomainAgentSessionRotate:
+		return s.handleDomainAgentSessionRotate(request), false
 	case localapi.MethodDomainStaffingGrantCreate:
 		return s.handleDomainStaffingGrantCreate(request), false
 	case localapi.MethodDomainStaffingGrantList:

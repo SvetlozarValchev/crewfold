@@ -69,6 +69,8 @@ var operatorResultContracts = map[string]operatorResultContract{
 	MethodDomainAgentSessionShow:      {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
 	MethodDomainAgentSessionSend:      {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
 	MethodDomainAgentSessionInterrupt: {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainAgentSessionCompact:   {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainAgentSessionRotate:    {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
 	MethodDomainStaffingGrantCreate:   {"local/v1/domain-staffing-grant-mutation.result.schema.json", DomainStaffingGrantMutationSchema, "domain_staffing_grant_mutation"},
 	MethodDomainStaffingGrantList:     {"local/v1/domain-staffing-grant-list.result.schema.json", DomainStaffingGrantListSchema, "domain_staffing_grant_list"},
 	MethodDomainStaffingGrantRevoke:   {"local/v1/domain-staffing-grant-mutation.result.schema.json", DomainStaffingGrantMutationSchema, "domain_staffing_grant_mutation"},

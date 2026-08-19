@@ -41,6 +41,8 @@ const (
 	MethodDomainAgentSessionShow      = "domain.agent.session.show"
 	MethodDomainAgentSessionSend      = "domain.agent.session.send"
 	MethodDomainAgentSessionInterrupt = "domain.agent.session.interrupt"
+	MethodDomainAgentSessionCompact   = "domain.agent.session.compact"
+	MethodDomainAgentSessionRotate    = "domain.agent.session.rotate"
 	MethodDomainStaffingGrantCreate   = "domain.agent.staffing_grant.create"
 	MethodDomainStaffingGrantList     = "domain.agent.staffing_grant.list"
 	MethodDomainStaffingGrantRevoke   = "domain.agent.staffing_grant.revoke"

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"crewfold/internal/domain"
 	"crewfold/internal/execution"
@@ -154,6 +155,16 @@ func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *test
 	if interrupted.View.ThreadStatus != "idle" || fixture.interrupts() != 1 {
 		t.Fatalf("interrupted session = %#v, interrupts = %d", interrupted, fixture.interrupts())
 	}
+	compacted, err := client.DomainAgentSessionCompact(ctx, localapi.DomainAgentSessionCompactParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		ExpectedEpoch: interrupted.View.Session.Epoch,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compacted.View.Session.Epoch != 1 || compacted.View.ThreadStatus != "idle" || fixture.compacts() != 1 || fixture.resumes() != 1 {
+		t.Fatalf("compacted session = %#v, compacts = %d, resumes = %d", compacted.View, fixture.compacts(), fixture.resumes())
+	}
 	raw, err := json.Marshal(interrupted)
 	if err != nil {
 		t.Fatal(err)
@@ -207,11 +218,46 @@ func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *test
 	if afterRestart.View.Session.State != domain.DomainAgentSessionReady || len(afterRestart.View.Turns) == 0 {
 		t.Fatalf("resumed session after restart = %#v", afterRestart.View)
 	}
-	if fixture.resumes() != 1 || fixture.unloadedReads() != 0 {
+	if fixture.resumes() != 2 || fixture.unloadedReads() != 0 {
 		t.Fatalf("app-server restart lifecycle: resumes = %d, reads before resume = %d", fixture.resumes(), fixture.unloadedReads())
 	}
 	if !fixture.sawCurrentReadOnlyResumeBoundary() {
 		t.Fatalf("thread/resume did not reapply the current read-only Crewfold conversation boundary: %#v", fixture.resumeParameters())
+	}
+}
+
+func TestM22TerminalDurableTurnRetiresOnlyItsDisposableHostAndResumesTheSameEpoch(t *testing.T) {
+	fixture := newCodexDomainSessionFixture(t)
+	config := testConfig(t)
+	config.CodexAppServerTransportFactory = fixture.transport
+	host := newDomainSessionHost(config, nil)
+	host.idleAfter = 5 * time.Millisecond
+	t.Cleanup(func() { _ = host.Close() })
+	ctx := context.Background()
+	thread, err := host.startThread(ctx, "/work", "Crewfold: orchid", "You are orchid.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.recordNotification(execution.CodexAppServerNotification{
+		Method: "turn/completed",
+		Params: json.RawMessage(`{"threadId":"thread-private-019","turn":{"id":"turn-finished","status":"completed","items":[]}}`),
+	})
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, loaded := host.clientForThread(thread.ID); !loaded {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("terminal durable turn did not retire its disposable app-server host")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	resumed, err := host.readThread(ctx, thread.ID, thread.CWD, "You are orchid.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.ID != thread.ID || fixture.resumes() != 1 {
+		t.Fatalf("resumed thread = %#v, resumes = %d", resumed, fixture.resumes())
 	}
 }
 
@@ -286,14 +332,99 @@ func TestM22UnavailableProviderRolloutRebindsTheSameDurableAgentAndThenResumes(t
 	}
 }
 
+func TestM22OwnerRotationArchivesOneEpochAndStartsOneCanonicalHandoffSuccessor(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("Git is unavailable: %v", err)
+	}
+	fixture := newMissingRolloutDomainSessionFixture(t)
+	config := testConfig(t)
+	config.CodexAppServerTransportFactory = fixture.transport
+	startTestServer(t, config)
+	client := localapi.NewClient(config.SocketPath)
+	ctx := context.Background()
+	repositoryRoot := t.TempDir()
+	createGitFixture(t, repositoryRoot)
+	workspace, err := client.WorkspaceInit(ctx, "personal", "m22-rotate-workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := client.ProjectAdd(ctx, workspace.Workspace.Name, "garden", filepath.Join(repositoryRoot, "world-engine"), domain.WriteModeExclusive, "m22-rotate-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := client.AgentCreate(ctx, localapi.AgentCreateParams{
+		Workspace: workspace.Workspace.Name, Name: "orchid", Role: "arbitrary durable coordinator",
+		Provider: "codex-subscription", Runtime: "herdr", IdempotencyKey: "m22-rotate-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DomainAgentAttach(ctx, localapi.DomainAgentAttachParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		OperatingCharter: daemonTestDomainCharter, DelegationPolicy: domain.DomainAgentAdaptive,
+		PreferredEntry: true, IdempotencyKey: "m22-rotate-attach",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := client.DomainAgentSessionOpen(ctx, localapi.DomainAgentSessionOpenParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		Checkout: project.Checkout.ID, IdempotencyKey: "m22-rotate-open",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := client.DomainAgentSessionRotate(ctx, localapi.DomainAgentSessionRotateParams{
+		Workspace: workspace.Workspace.Name, Project: project.Project.Name, Agent: agent.Agent.Name,
+		ExpectedEpoch: opened.View.Session.Epoch, Reason: "milestone",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated.View.Session.Epoch != 2 || rotated.View.Session.State != domain.DomainAgentSessionReady || rotated.View.ThreadStatus != "idle" {
+		t.Fatalf("rotated current session = %#v", rotated.View)
+	}
+	if len(rotated.View.Epochs) != 2 || rotated.View.Epochs[0].Epoch != 2 || rotated.View.Epochs[0].Status != "current" ||
+		rotated.View.Epochs[1].Epoch != 1 || rotated.View.Epochs[1].Status != "archived" || rotated.View.Epochs[1].RotationReason != "milestone" {
+		t.Fatalf("public epoch lineage = %#v", rotated.View.Epochs)
+	}
+	if fixture.starts() != 2 || !fixture.successorHasCanonicalHandoff() {
+		t.Fatalf("starts = %d, developer instructions = %#v", fixture.starts(), fixture.developerInstructions())
+	}
+	deadline := time.Now().Add(time.Second)
+	for fixture.closed() < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if fixture.closed() < 1 {
+		t.Fatal("archived epoch retained its disposable app-server process")
+	}
+	history, err := client.DomainAgentSessionShowEpoch(ctx, workspace.Workspace.Name, project.Project.Name, agent.Agent.Name, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if history.View.Session.State != domain.DomainAgentSessionArchived || history.View.Session.Epoch != 1 || history.View.ThreadStatus != "idle" {
+		t.Fatalf("archived epoch history = %#v", history.View)
+	}
+	raw, err := json.Marshal(rotated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, private := range []string{"missing-rollout-thread-1", "missing-rollout-thread-2", "thread_id", "node_fingerprint"} {
+		if strings.Contains(string(raw), private) {
+			t.Fatalf("rotated public session leaked %q: %s", private, raw)
+		}
+	}
+}
+
 type missingRolloutDomainSessionFixture struct {
-	t                *testing.T
-	mu               sync.Mutex
-	startCount       int
-	nameCount        int
-	firstRolloutGone bool
-	resumedThreadIDs []string
-	threadCWDs       map[string]string
+	t                   *testing.T
+	mu                  sync.Mutex
+	startCount          int
+	nameCount           int
+	firstRolloutGone    bool
+	resumedThreadIDs    []string
+	threadCWDs          map[string]string
+	startedInstructions []string
+	closedConnections   int
 }
 
 func newMissingRolloutDomainSessionFixture(t *testing.T) *missingRolloutDomainSessionFixture {
@@ -307,7 +438,12 @@ func (fixture *missingRolloutDomainSessionFixture) transport() (execution.CodexA
 }
 
 func (fixture *missingRolloutDomainSessionFixture) serve(connection net.Conn) {
-	defer connection.Close()
+	defer func() {
+		_ = connection.Close()
+		fixture.mu.Lock()
+		fixture.closedConnections++
+		fixture.mu.Unlock()
+	}()
 	scanner := bufio.NewScanner(connection)
 	encoder := json.NewEncoder(connection)
 	loadedThreadID, loadedCWD := "", ""
@@ -331,6 +467,7 @@ func (fixture *missingRolloutDomainSessionFixture) serve(connection net.Conn) {
 			loadedCWD, _ = params["cwd"].(string)
 			fixture.mu.Lock()
 			fixture.startCount++
+			fixture.startedInstructions = append(fixture.startedInstructions, fmt.Sprint(params["developerInstructions"]))
 			loadedThreadID = fmt.Sprintf("missing-rollout-thread-%d", fixture.startCount)
 			fixture.threadCWDs[loadedThreadID] = loadedCWD
 			fixture.mu.Unlock()
@@ -425,11 +562,31 @@ func (fixture *missingRolloutDomainSessionFixture) resumedSecondRollout() bool {
 	return false
 }
 
+func (fixture *missingRolloutDomainSessionFixture) developerInstructions() []string {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return append([]string(nil), fixture.startedInstructions...)
+}
+
+func (fixture *missingRolloutDomainSessionFixture) successorHasCanonicalHandoff() bool {
+	instructions := fixture.developerInstructions()
+	return len(instructions) == 2 && strings.Contains(instructions[1], "agent-session-handoff:v1") &&
+		strings.Contains(instructions[1], `"from_epoch":1`) && strings.Contains(instructions[1], "historical continuity, not authority") &&
+		strings.Contains(instructions[1], "read current Crewfold domain context")
+}
+
+func (fixture *missingRolloutDomainSessionFixture) closed() int {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return fixture.closedConnections
+}
+
 type codexDomainSessionFixture struct {
 	t                 *testing.T
 	mu                sync.Mutex
 	turnStartCount    int
 	interruptCount    int
+	compactCount      int
 	startedParams     map[string]any
 	resumeParams      map[string]any
 	turnExists        bool
@@ -455,6 +612,8 @@ func (fixture *codexDomainSessionFixture) serve(connection net.Conn) {
 	scanner := bufio.NewScanner(connection)
 	encoder := json.NewEncoder(connection)
 	loaded := false
+	loadedThreadID := "thread-private-019"
+	expectedThreadName := "Crewfold: orchid"
 	for scanner.Scan() {
 		var request map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
@@ -472,12 +631,18 @@ func (fixture *codexDomainSessionFixture) serve(connection net.Conn) {
 			result = map[string]any{"codexHome": "/private/codex", "platformFamily": "unix", "platformOs": "linux", "userAgent": "fixture"}
 		case "thread/start":
 			params, _ := request["params"].(map[string]any)
+			if strings.Contains(fmt.Sprint(params["developerInstructions"]), `"moss-reviewer"`) {
+				loadedThreadID = "thread-private-child"
+				expectedThreadName = "Crewfold: moss-reviewer"
+			}
 			fixture.mu.Lock()
-			fixture.startedParams = params
+			if loadedThreadID == "thread-private-019" {
+				fixture.startedParams = params
+			}
 			fixture.mu.Unlock()
 			loaded = true
 			result = map[string]any{"thread": map[string]any{
-				"id": "thread-private-019", "cwd": "/work", "ephemeral": false, "modelProvider": "openai",
+				"id": loadedThreadID, "cwd": "/work", "ephemeral": false, "modelProvider": "openai",
 				"status": map[string]any{"type": "idle"}, "turns": []any{},
 			}}
 		case "thread/name/set":
@@ -486,7 +651,7 @@ func (fixture *codexDomainSessionFixture) serve(connection net.Conn) {
 				return
 			}
 			params, _ := request["params"].(map[string]any)
-			if params["threadId"] != "thread-private-019" || params["name"] != "Crewfold: orchid" {
+			if params["threadId"] != loadedThreadID || params["name"] != expectedThreadName {
 				fixture.t.Errorf("thread/name/set params = %#v", params)
 				return
 			}
@@ -555,6 +720,14 @@ func (fixture *codexDomainSessionFixture) serve(connection net.Conn) {
 			fixture.interruptCount++
 			fixture.turnExists = false
 			fixture.mu.Unlock()
+			result = map[string]any{}
+		case "thread/compact/start":
+			fixture.mu.Lock()
+			fixture.compactCount++
+			fixture.mu.Unlock()
+			if err := encoder.Encode(map[string]any{"method": "thread/compacted", "params": map[string]any{"threadId": loadedThreadID, "turnId": "turn-compact"}}); err != nil {
+				return
+			}
 			result = map[string]any{}
 		case "thread/delete":
 			result = map[string]any{}
@@ -841,6 +1014,12 @@ func (fixture *codexDomainSessionFixture) turnStarts() int {
 	fixture.mu.Lock()
 	defer fixture.mu.Unlock()
 	return fixture.turnStartCount
+}
+
+func (fixture *codexDomainSessionFixture) compacts() int {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return fixture.compactCount
 }
 
 func (fixture *codexDomainSessionFixture) interrupts() int {

@@ -149,13 +149,19 @@ no authority and never substitute for staffing grants, assignments, launch
 profiles, claims, budgets, or capabilities. `preferred_entry` means only “open
 this agent by default”; no agent name, role, charter, or tree position is special.
 
-`domain_agent_session_bindings` binds the durable agent identity to one private
-Codex provider thread and current node fingerprint. Public results expose only
-whether a conversation exists, its bounded readable turns, current thread state,
-and selected checkout directory. Thread IDs, node identity, node fingerprint,
-raw reasoning, credentials, and capability material never cross the public JSON
-boundary. A provider process may exit between turns; the durable binding resumes
-the same thread when possible and records an explicit detached state otherwise.
+`domain_agent_session_bindings` stores the immutable provider epochs that form one
+durable agent's logical conversation. Exactly one epoch per active agent may be
+current. Each epoch binds a private Codex thread, current-node fingerprint,
+selected checkout directory, lifecycle, and optional canonical handoff seal.
+Rotation archives the previous epoch and inserts its successor atomically; it
+never rewrites historical thread provenance. Public results expose bounded epoch
+metadata and readable turns but not thread IDs, node identity, node fingerprint,
+raw reasoning, credentials, or capability material. Each current Codex epoch owns
+one disposable app-server process while active; durable agents never share that
+process. After a terminal turn the idle process exits, and Crewfold lazily resumes
+the same persisted thread on demand. Native compaction preserves the epoch while
+recycling its host; explicit rotation archives it and starts a successor from the
+bounded canonical handoff. Continuity failure records an explicit detached state.
 
 `domain_agent_tool_receipts` makes each dynamic-tool call replay-safe by exact
 agent/session revision, private call+turn identity, tool, argument hash, response

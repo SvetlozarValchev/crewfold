@@ -298,7 +298,7 @@ await evaluate(`(() => {
   setTimeout(() => [...document.querySelectorAll('.m22-tabs button')].find((candidate) => candidate.textContent.trim() === 'assignment')?.click(), 50);
   return Boolean(agent);
 })()`);
-await waitFor("document.body.innerText.includes('No task is assigned to this agent.')", "empty exact assignment");
+await waitFor("document.body.innerText.includes('No canonical task is assigned to this agent.')", "empty exact assignment");
 await capture("11-agent-assignment");
 
 await command("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });

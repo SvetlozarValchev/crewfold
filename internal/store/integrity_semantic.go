@@ -65,11 +65,30 @@ SELECT 'domain_agent_session:'||binding.agent_id FROM domain_agent_session_bindi
 JOIN domain_agent_memberships membership
   ON membership.project_id=binding.project_id AND membership.agent_id=binding.agent_id
 WHERE membership.status<>'active'
+   OR (binding.status='current' AND (
+       binding.rotation_reason IS NOT NULL OR binding.rotated_at IS NOT NULL
+       OR binding.handoff_json IS NOT NULL OR binding.handoff_sha256 IS NOT NULL
+   ))
+   OR (binding.status='archived' AND (
+       binding.rotation_reason IS NULL OR binding.rotated_at IS NULL
+       OR binding.handoff_json IS NULL OR binding.handoff_sha256 IS NULL
+       OR binding.handoff_sha256<>lower(hex(sha256(CAST(binding.handoff_json AS BLOB))))
+   ))
+   OR binding.revision<>(
+       SELECT COUNT(*) FROM domain_agent_session_bindings sequence
+       WHERE sequence.project_id=binding.project_id AND sequence.agent_id=binding.agent_id
+         AND sequence.revision<=binding.revision
+   )
+   OR (binding.status='current' AND binding.revision<>(
+       SELECT MAX(latest.revision) FROM domain_agent_session_bindings latest
+       WHERE latest.project_id=binding.project_id AND latest.agent_id=binding.agent_id
+   ))
 UNION ALL
 SELECT 'domain_agent_tool_receipt:'||receipt.id FROM domain_agent_tool_receipts receipt
 LEFT JOIN domain_agent_session_bindings binding
   ON binding.project_id=receipt.project_id AND binding.agent_id=receipt.agent_id
-WHERE binding.agent_id IS NULL OR receipt.session_revision<>binding.revision
+ AND binding.revision=receipt.session_revision
+WHERE binding.agent_id IS NULL
    OR receipt.response_sha256<>lower(hex(sha256(CAST(receipt.response_json AS BLOB))))
    OR (receipt.status='succeeded')<>(json_extract(receipt.response_json,'$.success')=1)
 UNION ALL
@@ -116,6 +135,7 @@ UNION ALL SELECT 'agent:'||id FROM agents WHERE crewfold_timestamp_canonical(cre
 UNION ALL SELECT 'domain_agent:'||agent_id FROM domain_agent_memberships WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR updated_at<created_at
 UNION ALL SELECT 'domain_agent_session:'||agent_id FROM domain_agent_session_bindings
 WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR updated_at<created_at
+   OR (rotated_at IS NOT NULL AND (crewfold_timestamp_canonical(rotated_at)<>1 OR rotated_at<created_at OR updated_at<>rotated_at))
 UNION ALL SELECT 'domain_agent_tool_receipt:'||id FROM domain_agent_tool_receipts
 WHERE crewfold_timestamp_canonical(created_at)<>1 OR json_type(response_json)<>'object'
 UNION ALL SELECT 'domain_staffing_grant:'||id FROM domain_agent_staffing_grants

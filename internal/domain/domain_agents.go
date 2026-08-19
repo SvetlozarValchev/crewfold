@@ -116,6 +116,7 @@ const (
 	DomainAgentSessionUnbound  = "unbound"
 	DomainAgentSessionReady    = "ready"
 	DomainAgentSessionDetached = "detached"
+	DomainAgentSessionArchived = "archived"
 )
 
 // DomainAgentSession describes the owner-visible state of one durable
@@ -129,6 +130,7 @@ type DomainAgentSession struct {
 	State           string `json:"state"`
 	CWD             string `json:"cwd,omitempty"`
 	HasConversation bool   `json:"has_conversation"`
+	Epoch           int64  `json:"epoch"`
 	Revision        int64  `json:"revision"`
 	CreatedAt       string `json:"created_at,omitempty"`
 	UpdatedAt       string `json:"updated_at,omitempty"`
@@ -136,6 +138,22 @@ type DomainAgentSession struct {
 	ThreadID        string `json:"-"`
 	NodeID          string `json:"-"`
 	NodeFingerprint string `json:"-"`
+	Lifecycle       string `json:"-"`
+	HandoffJSON     string `json:"-"`
+	HandoffSHA256   string `json:"-"`
+	RotationReason  string `json:"-"`
+	RotatedAt       string `json:"-"`
+}
+
+// DomainAgentSessionEpoch is safe owner-facing lineage metadata. Provider and
+// node identifiers remain private; archived epochs are history and can never
+// authorize a provider-originated Crewfold tool call.
+type DomainAgentSessionEpoch struct {
+	Epoch          int64  `json:"epoch"`
+	Status         string `json:"status"`
+	RotationReason string `json:"rotation_reason,omitempty"`
+	CreatedAt      string `json:"created_at"`
+	RotatedAt      string `json:"rotated_at,omitempty"`
 }
 
 type DomainAgentSessionItem struct {
@@ -181,9 +199,10 @@ type DomainAgentSessionTurn struct {
 }
 
 type DomainAgentSessionView struct {
-	Session      DomainAgentSession       `json:"session"`
-	ThreadStatus string                   `json:"thread_status"`
-	Turns        []DomainAgentSessionTurn `json:"turns"`
+	Session      DomainAgentSession        `json:"session"`
+	Epochs       []DomainAgentSessionEpoch `json:"epochs"`
+	ThreadStatus string                    `json:"thread_status"`
+	Turns        []DomainAgentSessionTurn  `json:"turns"`
 }
 
 // DomainAgentToolReceipt is Crewfold's durable record of one provider-originated

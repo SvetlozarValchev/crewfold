@@ -163,7 +163,7 @@ CREATE TABLE domain_agent_memberships (
 
 CREATE TABLE domain_agent_session_bindings (
     project_id TEXT NOT NULL,
-    agent_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
     provider TEXT NOT NULL CHECK (
         length(CAST(provider AS BLOB)) BETWEEN 1 AND 64
         AND provider = lower(provider)
@@ -185,16 +185,69 @@ CREATE TABLE domain_agent_session_bindings (
         AND substr(cwd, 1, 1) = '/'
         AND instr(cwd, char(0)) = 0
     ),
+    status TEXT NOT NULL CHECK(status IN ('current','archived')),
     revision INTEGER NOT NULL CHECK (revision > 0),
+    handoff_json TEXT CHECK (
+        handoff_json IS NULL OR (
+            json_valid(handoff_json) AND json_type(handoff_json)='object'
+            AND length(CAST(handoff_json AS BLOB)) BETWEEN 2 AND 65536
+        )
+    ),
+    handoff_sha256 TEXT CHECK (
+        (handoff_json IS NULL AND handoff_sha256 IS NULL)
+        OR (handoff_json IS NOT NULL AND length(handoff_sha256)=64
+            AND handoff_sha256 NOT GLOB '*[^0-9a-f]*')
+    ),
+    rotation_reason TEXT CHECK (
+        rotation_reason IS NULL OR rotation_reason IN ('owner_requested','resource_pressure','milestone','provider_degraded','continuity_unavailable')
+    ),
+    rotated_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE (project_id, agent_id),
+	PRIMARY KEY(project_id,agent_id,revision),
 	UNIQUE (project_id, agent_id, thread_id),
 	UNIQUE (thread_id),
     UNIQUE (node_fingerprint, provider, thread_id),
+    CHECK((status='current' AND rotation_reason IS NULL AND rotated_at IS NULL)
+       OR (status='archived' AND rotation_reason IS NOT NULL AND rotated_at IS NOT NULL)),
     FOREIGN KEY (project_id, agent_id)
       REFERENCES domain_agent_memberships(project_id, agent_id)
 ) STRICT;
+
+CREATE UNIQUE INDEX domain_agent_one_current_session
+ON domain_agent_session_bindings(project_id,agent_id)
+WHERE status='current';
+
+CREATE TRIGGER domain_agent_session_validate_insert
+BEFORE INSERT ON domain_agent_session_bindings
+BEGIN
+    SELECT CASE WHEN crewfold_timestamp_canonical(NEW.created_at)<>1
+      OR NEW.updated_at<>NEW.created_at
+      OR (NEW.status='archived' AND (
+          NEW.handoff_sha256<>lower(hex(sha256(CAST(NEW.handoff_json AS BLOB))))
+          OR crewfold_timestamp_canonical(NEW.rotated_at)<>1
+      ))
+      THEN RAISE(ABORT,'domain agent session epoch is invalid') END;
+END;
+
+CREATE TRIGGER domain_agent_session_validate_update
+BEFORE UPDATE ON domain_agent_session_bindings
+BEGIN
+    SELECT CASE WHEN NEW.project_id<>OLD.project_id OR NEW.agent_id<>OLD.agent_id
+      OR NEW.provider<>OLD.provider OR NEW.node_id<>OLD.node_id
+      OR NEW.node_fingerprint<>OLD.node_fingerprint OR NEW.thread_id<>OLD.thread_id
+      OR NEW.cwd<>OLD.cwd OR NEW.revision<>OLD.revision
+      OR NEW.created_at<>OLD.created_at OR OLD.status<>'current' OR NEW.status<>'archived'
+      OR NEW.handoff_json IS NULL
+      OR NEW.handoff_sha256<>lower(hex(sha256(CAST(NEW.handoff_json AS BLOB))))
+      OR NEW.rotation_reason IS NULL OR crewfold_timestamp_canonical(NEW.rotated_at)<>1
+      OR NEW.updated_at<>NEW.rotated_at
+      THEN RAISE(ABORT,'domain agent session epoch may only be archived with an exact handoff') END;
+END;
+
+CREATE TRIGGER domain_agent_session_reject_delete
+BEFORE DELETE ON domain_agent_session_bindings
+BEGIN SELECT RAISE(ABORT,'domain agent session epochs are durable history'); END;
 
 CREATE TABLE domain_agent_tool_receipts (
     id TEXT PRIMARY KEY CHECK (
@@ -231,9 +284,7 @@ CREATE TABLE domain_agent_tool_receipts (
         AND length(CAST(response_json AS BLOB)) BETWEEN 1 AND 262144
     ),
     created_at TEXT NOT NULL,
-    UNIQUE (project_id, agent_id, call_id),
-    FOREIGN KEY (project_id, agent_id)
-      REFERENCES domain_agent_session_bindings(project_id, agent_id)
+    UNIQUE (project_id, agent_id, call_id)
 ) STRICT;
 
 CREATE TABLE domain_agent_staffing_grants (
@@ -1959,6 +2010,19 @@ CREATE INDEX domain_agent_staffing_grants_manager_idx
 CREATE INDEX domain_agent_staffing_allocations_grant_idx
     ON domain_agent_staffing_allocations(grant_id, created_at, id);
 
+CREATE TRIGGER domain_agent_tool_receipt_validate_insert
+BEFORE INSERT ON domain_agent_tool_receipts
+BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1 FROM domain_agent_session_bindings binding
+        WHERE binding.project_id=NEW.project_id AND binding.agent_id=NEW.agent_id
+          AND binding.revision=NEW.session_revision AND binding.status='current'
+    ) OR crewfold_timestamp_canonical(NEW.created_at)<>1
+      OR NEW.response_sha256<>lower(hex(sha256(CAST(NEW.response_json AS BLOB))))
+      OR (NEW.status='succeeded')<>(json_extract(NEW.response_json,'$.success')=1)
+      THEN RAISE(ABORT,'domain agent tool receipt lacks an exact current session epoch') END;
+END;
+
 CREATE TRIGGER domain_agent_tool_receipt_reject_update
 BEFORE UPDATE ON domain_agent_tool_receipts
 BEGIN SELECT RAISE(ABORT, 'domain agent tool receipts are immutable'); END;
@@ -2070,7 +2134,7 @@ CREATE TRIGGER domain_work_proposal_validate_insert BEFORE INSERT ON domain_work
   OR NEW.content_sha256<>lower(hex(sha256(CAST(NEW.content_json AS BLOB))))
   OR json_type(NEW.content_json,'$.objective_title')<>'text' OR json_type(NEW.content_json,'$.objective_budget')<>'object'
   OR json_type(NEW.content_json,'$.tasks')<>'array' OR json_array_length(NEW.content_json,'$.tasks') NOT BETWEEN 1 AND 16
-  OR NOT EXISTS(SELECT 1 FROM domain_agent_session_bindings binding WHERE binding.project_id=NEW.project_id AND binding.agent_id=NEW.source_agent_id AND binding.thread_id=NEW.source_thread_id)
+  OR NOT EXISTS(SELECT 1 FROM domain_agent_session_bindings binding WHERE binding.project_id=NEW.project_id AND binding.agent_id=NEW.source_agent_id AND binding.thread_id=NEW.source_thread_id AND binding.status='current')
   OR NOT EXISTS(SELECT 1 FROM domain_agent_staffing_grants grant WHERE grant.id=NEW.staffing_grant_id AND grant.project_id=NEW.project_id AND grant.manager_agent_id=NEW.source_agent_id AND grant.revision=NEW.staffing_grant_revision AND grant.status='active')
  THEN RAISE(ABORT,'domain work proposal is not an exact current typed proposal') END;
 END;
@@ -4587,7 +4651,7 @@ BEGIN
           ON binding.project_id=membership.project_id AND binding.agent_id=membership.agent_id
         JOIN projects project ON project.id=membership.project_id
         WHERE agent.id=NEW.sender_agent_id AND agent.workspace_id=NEW.workspace_id
-          AND project.workspace_id=NEW.workspace_id AND agent.enabled=1 AND membership.status='active'
+          AND project.workspace_id=NEW.workspace_id AND agent.enabled=1 AND membership.status='active' AND binding.status='current'
       )
       THEN RAISE(ABORT,'durable-agent message lacks an active session-bound domain sender') END;
 END;
@@ -4664,7 +4728,7 @@ BEGIN
           ON membership.project_id=binding.project_id AND membership.agent_id=binding.agent_id
         JOIN agents agent ON agent.id=binding.agent_id
         WHERE m.id=NEW.message_id AND th.kind='direct'
-          AND membership.status='active' AND agent.enabled=1
+          AND membership.status='active' AND agent.enabled=1 AND binding.status='current'
     ) THEN RAISE(ABORT,'durable agent wake target is outside its bound domain') END;
 END;
 

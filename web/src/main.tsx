@@ -43,12 +43,13 @@ const staffingTaskClasses = [
 ] as const;
 const staffingTaskClassLabel = (value: string) => staffingTaskClasses.find((item) => item.value === value)?.label ?? value;
 const staffingBudgetLabel = (value: number, finiteUnit: string) => value === 0 ? `unlimited ${finiteUnit}` : `${value.toLocaleString()} ${finiteUnit}`;
-type DomainAgentSession = { project_id: string; agent_id: string; provider?: string; state: "unbound" | "ready" | "detached"; cwd?: string; has_conversation: boolean; revision: number; created_at?: string; updated_at?: string };
+type DomainAgentSession = { project_id: string; agent_id: string; provider?: string; state: "unbound" | "ready" | "detached" | "archived"; cwd?: string; has_conversation: boolean; epoch: number; revision: number; created_at?: string; updated_at?: string };
+type DomainAgentSessionEpoch = { epoch: number; status: "current" | "archived"; rotation_reason?: string; created_at: string; rotated_at?: string };
 type DomainAgentSessionCommandAction = { type: "read" | "listFiles" | "search" | "unknown"; command?: string; name?: string; path?: string; query?: string };
 type DomainAgentSessionFileChange = { path: string; kind: "add" | "delete" | "update"; diff?: string };
 type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "mcpToolCall" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "webSearch" | "subAgentActivity" | "reasoning" | "error"; origin?: "owner" | "crewfold_delivery"; text?: string; command?: string; status?: string; cwd?: string; process_id?: string; exit_code?: number; duration_ms?: number; command_actions?: DomainAgentSessionCommandAction[]; changes?: DomainAgentSessionFileChange[] };
 type DomainAgentSessionTurn = { id: string; status: string; items: DomainAgentSessionItem[] };
-type DomainAgentSessionResult = { schema: string; type: "domain_agent_session"; view: { session: DomainAgentSession; thread_status: string; turns: DomainAgentSessionTurn[] }; accepted_turn?: DomainAgentSessionTurn };
+type DomainAgentSessionResult = { schema: string; type: "domain_agent_session"; view: { session: DomainAgentSession; epochs: DomainAgentSessionEpoch[]; thread_status: string; turns: DomainAgentSessionTurn[] }; accepted_turn?: DomainAgentSessionTurn };
 type DomainStaffingProfile = { provider: string; runtime: string; max_concurrency: number };
 type DomainStaffingGrant = { id: string; project_id: string; manager_agent_id: string; manager_membership_revision: number; profiles: DomainStaffingProfile[]; task_classes: string[]; max_descendants: number; max_concurrency: number; budget: Budget; expires_at?: string; status: "active" | "revoked" | "expired"; revision: number; created_at: string; updated_at: string };
 type LaunchProfile = { id: string; project_id: string; agent_id: string; runtime: string; provider: string; checkout_id?: string; status: string; revision: number };
@@ -718,7 +719,10 @@ function DomainHome({ data, chooseAgent, reviewWorkstream, inspectRun, notice = 
     </header>
     {notice && <div className="m22-success"><ShieldCheck size={14} />{notice}</div>}
     {pendingWork.length > 0 && <section className="m22-block m22-work-proposals"><header><div><h2>needs your review</h2><p>{pendingWork.length} typed coordinator proposal{pendingWork.length === 1 ? "" : "s"}. Conversation alone has changed nothing.</p></div><span>{pendingWork.length}</span></header>{pendingWork.map((proposal) => <DomainWorkProposalReview key={proposal.id} data={data} proposal={proposal} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />)}</section>}
-    {attention.length > 0 && <section className="m22-block"><h2>needs attention</h2>{attention.map((detail) => <button key={detail.task.id} className="m22-line"><span><strong>{detail.task.title}</strong><small>{detail.task.blocked_reason || detail.task.status.replaceAll("_", " ")}</small></span><StatusPill value={detail.task.status} /></button>)}</section>}
+    {attention.length > 0 && <section className="m22-block"><h2>needs attention</h2>{attention.map((detail) => {
+      const run = projectRuns.filter((candidate) => candidate.task_id === detail.task.id).sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0];
+      return <button key={detail.task.id} className="m22-line" disabled={!run} onClick={() => run && inspectRun(run)}><span><strong>{detail.task.title}</strong><small>{detail.task.blocked_reason || detail.task.status.replaceAll("_", " ")}{run ? " · open exact run" : " · no run record is available"}</small></span><StatusPill value={detail.task.status} /></button>;
+    })}</section>}
     <div className="m22-columns">
       <section className="m22-block"><h2>active workstreams</h2>{activeObjectives.length ? activeObjectives.map((objective) => <button className="m22-line" key={objective.id} onClick={() => reviewWorkstream(objective)}><span><strong>{objective.title}</strong><small>{projectTasks.filter((detail) => detail.task.objective_id === objective.id && !["completed", "failed", "cancelled"].includes(detail.task.status)).length} open tasks{(objectiveTitleCounts.get(objective.title.trim().toLocaleLowerCase()) ?? 0) > 1 ? ` · duplicate title · revision ${objective.revision}` : ""} · open lifecycle</small></span><StatusPill value={objective.status} /></button>) : <p className="m22-empty">No active workstreams.</p>}</section>
       <section className="m22-block"><div className="m22-block-heading"><h2>attached checkouts</h2><CheckoutAttach data={data} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} /></div>{data.checkouts.length ? data.checkouts.map((checkout) => <div className="m22-line static" key={checkout.id}><span><strong>{checkout.path}</strong><small>{checkout.branch || "detached"} · {checkout.write_mode}{checkout.diagnostic ? ` · ${checkout.diagnostic}` : ""}</small></span><StatusPill value={checkout.availability} /></div>) : <p className="m22-empty">No checkout is attached. Attach an existing local Git checkout to give sessions and assigned runs an exact resource.</p>}</section>
@@ -1024,35 +1028,52 @@ function ActiveTurnProgress({ turn }: { turn: DomainAgentSessionTurn }) {
   return <div className="m22-turn-progress"><LoaderCircle className="spin" size={14} /><strong>{label}</strong><span>{elapsed}</span>{detail && <code>{detail}</code>}</div>;
 }
 
-function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csrf }: { data: WorkbenchData; agent: DomainAgent; currentRun: Run | null; inspectRun: (run: Run) => void; apiBase: string; csrf: string }) {
+function AgentExecutionLane({ data, runs, inspectRun }: { data: WorkbenchData; runs: Run[]; inspectRun: (run: Run) => void }) {
+  if (!runs.length) return <section className="m22-execution-lane quiet"><header><span>attached execution</span><StatusPill value="none" /></header><p>No assigned execution has been recorded for this agent. Conversation can coordinate and propose work, but it is not editing the checkout.</p></section>;
+  const unresolvedStatuses = ["requested", "starting", "active", "blocked", "stopping", "lost"];
+  const unresolved = runs.filter((run) => unresolvedStatuses.includes(run.status));
+  const visible = (unresolved.length ? unresolved : runs.slice(0, 1)).slice(0, 4);
+  return <section className={`m22-execution-lane ${unresolved.some((run) => ["blocked", "lost"].includes(run.status)) ? "warn" : unresolved.length ? "good" : statusTone(visible[0].status)}`}>
+    <header><span>attached execution{visible.length === 1 ? "" : "s"}</span><span>{unresolved.length ? `${unresolved.length} unresolved` : "latest terminal run"}</span></header>
+    <p>{unresolved.length ? "These are task-scoped authority and environment attached to this durable agent. They use separate Herdr execution processes, but they are not separate agent identities." : "This immutable run is the latest task execution attached to the durable agent."}</p>
+    <div className="m22-execution-list">{visible.map((run) => {
+      const task = data.tasks.find((detail) => detail.task.id === run.task_id)?.task;
+      const diagnosis = run.blocked_question || run.failure_message || run.result_summary;
+      return <button key={run.id} onClick={() => inspectRun(run)}><span><strong>{task?.title ?? "Bounded assigned work"}</strong><small>{diagnosis || `${run.provider} through ${run.runtime}`}</small></span><StatusPill value={run.status} /></button>;
+    })}</div>
+  </section>;
+}
+
+function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: { data: WorkbenchData; agent: DomainAgent; runs: Run[]; inspectRun: (run: Run) => void; apiBase: string; csrf: string }) {
   const [result, setResult] = useState<DomainAgentSessionResult | null>(null);
+  const [selectedEpoch, setSelectedEpoch] = useState(0);
   const [checkout, setCheckout] = useState(data.checkouts.length === 1 ? data.checkouts[0].id : "");
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState<"loading" | "opening" | "sending" | "interrupting" | "">("loading");
+  const [busy, setBusy] = useState<"loading" | "opening" | "sending" | "interrupting" | "compacting" | "rotating" | "">("loading");
   const [error, setError] = useState("");
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const followThreadRef = useRef(true);
   const scope = { workspace: data.workspace?.id ?? "", project: data.project?.id ?? "", agent: agent.definition.id };
-  const load = useCallback(async (quiet = false) => {
+  const load = useCallback(async (quiet = false, epoch = selectedEpoch) => {
     if (!scope.workspace || !scope.project) return;
     if (!quiet) setBusy("loading");
     try {
-      const next = await rpc<DomainAgentSessionResult>(apiBase, csrf, "domain.agent.session.show", scope);
+      const next = await rpc<DomainAgentSessionResult>(apiBase, csrf, "domain.agent.session.show", epoch > 0 ? { ...scope, epoch } : scope);
       setResult(next); setError("");
     } catch (reason) {
       if (!quiet) setError(reason instanceof Error ? reason.message : "Could not read the durable Codex session.");
     } finally { if (!quiet) setBusy(""); }
-  }, [apiBase, csrf, scope.agent, scope.project, scope.workspace]);
+  }, [apiBase, csrf, scope.agent, scope.project, scope.workspace, selectedEpoch]);
   const accepted = result?.accepted_turn;
   const providerTurns = result?.view.turns ?? [];
   const turns = result ? [...providerTurns, ...(accepted && !providerTurns.some((turn) => turn.id === accepted.id) ? [accepted] : [])].map((turn) => ({ ...turn, items: turn.items ?? [] })) : [];
   const activeTurn = [...turns].reverse().find((turn) => ["inProgress", "in_progress"].includes(turn.status));
   const activityKey = turns.map((turn) => `${turn.id}:${turn.status}:${turn.items.map((item) => `${item.id}:${item.status ?? ""}:${item.text?.length ?? 0}:${item.duration_ms ?? 0}:${item.changes?.reduce((size, change) => size + (change.diff?.length ?? 0), 0) ?? 0}`).join(",")}`).join("|");
   useEffect(() => {
-    setResult(null); setInput(""); setError("");
+    setResult(null); setSelectedEpoch(0); setInput(""); setError("");
     setCheckout(data.checkouts.length === 1 ? data.checkouts[0].id : "");
-    void load();
+    void load(false, 0);
   }, [agent.definition.id, data.project?.id]);
   useEffect(() => {
     if (result?.view.session.state !== "ready" || result.view.thread_status !== "active" && !activeTurn) return;
@@ -1095,18 +1116,44 @@ function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csr
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not interrupt the current Codex turn."); }
     finally { setBusy(""); }
   };
+  const compact = async () => {
+    if (!result || activeTurn) return;
+    setBusy("compacting"); setError("");
+    try {
+      setResult(await rpc<DomainAgentSessionResult>(apiBase, csrf, "domain.agent.session.compact", { ...scope, expected_epoch: result.view.session.epoch })); setSelectedEpoch(0);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not compact and recycle the Codex session."); }
+    finally { setBusy(""); }
+  };
+  const rotate = async () => {
+    if (!result || activeTurn) return;
+    setBusy("rotating"); setError("");
+    try {
+      setResult(await rpc<DomainAgentSessionResult>(apiBase, csrf, "domain.agent.session.rotate", { ...scope, expected_epoch: result.view.session.epoch, reason: "owner_requested" })); setSelectedEpoch(0);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not hand off to a fresh Codex epoch."); }
+    finally { setBusy(""); }
+  };
+  const showEpoch = async (epoch: number) => {
+    setBusy("loading"); setError("");
+    try { setResult(await rpc<DomainAgentSessionResult>(apiBase, csrf, "domain.agent.session.show", epoch > 0 ? { ...scope, epoch } : scope)); setSelectedEpoch(epoch); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not read this durable Codex epoch."); }
+    finally { setBusy(""); }
+  };
   const state = result?.view.session.state ?? (busy === "loading" ? "loading" : "unavailable");
   if (state === "unbound") return <div className="m22-session m22-session-empty">
     <div className="m22-session-state"><span>Codex conversation</span><StatusPill value="not started" /></div>
+    <AgentExecutionLane data={data} runs={runs} inspectRun={inspectRun} />
     <h2>Start this durable agent’s provider thread</h2>
     <p>This creates one real, non-ephemeral Codex app-server thread for <strong>{agent.definition.name}</strong>. Its name and role remain descriptive; Crewfold’s grants still govern effects.</p>
     {data.checkouts.length > 1 && <label className="m22-session-checkout"><span>attached checkout</span><select value={checkout} onChange={(event) => setCheckout(event.target.value)}><option value="">select exact checkout</option>{data.checkouts.filter((item) => item.availability === "available").map((item) => <option key={item.id} value={item.id}>{item.path}</option>)}</select></label>}
     <button className="m22-command" disabled={busy !== "" || !checkout} onClick={() => void open()}>{busy === "opening" ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />} start Codex session</button>
     {error && <p className="m22-session-error">{error}</p>}
   </div>;
+  const unresolvedExecution = runs.find((run) => ["requested", "starting", "active", "blocked", "stopping", "lost"].includes(run.status));
+  const archived = state === "archived";
   return <div className="m22-session">
-    <div className="m22-session-state"><span>Codex conversation · {result?.view.session.provider || agent.definition.provider}</span><StatusPill value={result?.view.thread_status ?? state} /></div>
+    <div className="m22-session-state"><span>Codex conversation · epoch {result?.view.session.epoch || 1} · {result?.view.session.provider || agent.definition.provider}</span><StatusPill value={result?.view.thread_status ?? state} /></div>
     {busy === "loading" && !result ? <p className="m22-session-loading"><LoaderCircle className="spin" size={14} /> reading persisted provider thread…</p> : state === "detached" ? <p className="m22-session-error">This session belongs to another Crewfold node. It is visible as detached and cannot be controlled here.</p> : <>
+      {!archived && <AgentExecutionLane data={data} runs={runs} inspectRun={inspectRun} />}
       <div className="m22-thread" aria-live="polite" ref={threadRef} onScroll={(event) => {
         const thread = event.currentTarget;
         followThreadRef.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48;
@@ -1117,7 +1164,7 @@ function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csr
           {!(["inProgress", "in_progress"].includes(turn.status)) && <footer>{turn.status.replaceAll("_", " ")}</footer>}
         </section>)}
       </div>
-      <div className="m22-composer">
+      {archived ? <div className="m22-archive-banner"><span>This epoch is immutable history. It cannot receive owner input or Crewfold tool authority.</span><button onClick={() => void showEpoch(0)}>return to current epoch</button></div> : <div className="m22-composer">
         <div className="m22-composer-line">
           <textarea ref={composerRef} rows={1} value={input} onChange={(event) => setInput(event.target.value)} placeholder={`Message ${agent.definition.name} directly…`} maxLength={65536} onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); }
@@ -1125,9 +1172,15 @@ function DurableAgentSession({ data, agent, currentRun, inspectRun, apiBase, csr
           <span>{activeTurn && <button disabled={busy !== ""} onClick={() => void interrupt()}><Square size={13} /> interrupt</button>}<button className="m22-send" disabled={busy !== "" || !input.trim() || Boolean(activeTurn)} onClick={() => void send()}>{busy === "sending" ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />} send</button></span>
         </div>
         <small>Enter to send · Shift+Enter for a new line · conversation text is not authority</small>
-      </div>
+      </div>}
+      <details className="m22-session-lifecycle">
+        <summary><RotateCcw size={13} /> session memory and handoff <span>{result?.view.epochs.length ?? 1} epoch{(result?.view.epochs.length ?? 1) === 1 ? "" : "s"}</span></summary>
+        <p>The durable agent, assignments, receipts, and hierarchy survive provider cleanup. Compaction keeps this epoch and restarts only its disposable Codex host. A handoff archives it and starts a fresh epoch from bounded canonical continuity.</p>
+        {unresolvedExecution && <p className="m22-session-lifecycle-warning">Resolve the attached {unresolvedExecution.status} execution before compacting or handing off; Crewfold will not strand uncertain task authority.</p>}
+        <div className="m22-session-epochs">{(result?.view.epochs ?? []).map((epoch) => <button className={(selectedEpoch || result?.view.session.epoch) === epoch.epoch ? "selected" : ""} key={epoch.epoch} disabled={busy !== ""} onClick={() => void showEpoch(epoch.status === "current" ? 0 : epoch.epoch)}><strong>epoch {epoch.epoch}</strong> {epoch.status}{epoch.rotation_reason ? ` · ${epoch.rotation_reason.replaceAll("_", " ")}` : ""}</button>)}</div>
+        {!archived && <div className="m22-session-lifecycle-actions"><button disabled={busy !== "" || Boolean(activeTurn) || Boolean(unresolvedExecution)} onClick={() => void compact()}>{busy === "compacting" ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />} compact and recycle host</button><button disabled={busy !== "" || Boolean(activeTurn) || Boolean(unresolvedExecution)} onClick={() => void rotate()}>{busy === "rotating" ? <LoaderCircle className="spin" size={13} /> : <Archive size={13} />} hand off to fresh epoch</button></div>}
+      </details>
     </>}
-    {currentRun && <button className="m22-command secondary" onClick={() => inspectRun(currentRun)}><TerminalSquare size={15} /> open separate Crewfold execution run</button>}
     {error && <p className="m22-session-error">{error}</p>}
   </div>;
 }
@@ -1136,13 +1189,12 @@ function DomainAgentCenter({ data, agent, view, setView, inspectRun, apiBase, cs
   const definition = agent.definition;
   const assigned = data.tasks.filter((detail) => detail.task.assigned_agent_id === definition.id);
   const runs = data.runs.filter((run) => run.agent_id === definition.id).sort((left, right) => right.updated_at.localeCompare(left.updated_at));
-  const currentRun = runs[0] ?? null;
   const workstream = data.objectives.find((objective) => objective.id === agent.membership.workstream_id);
   const tabs: Array<[DomainConsoleView, string]> = [["session", "session"], ["assignment", "assignment"], ["changes", "changes"], ["briefing", "briefing"], ["verification", "verification"], ["staffing", "staffing"]];
   return <section className="m22-agent-center">
     <header><p className="m22-kicker">durable agent</p><h1>{definition.name}</h1><p>{definition.role || "No descriptive role"} · {definition.provider} through {definition.runtime}{workstream ? ` · ${workstream.title}` : ""}</p></header>
     <nav className="m22-tabs" aria-label="Selected agent views">{tabs.map(([id, label]) => <button className={view === id ? "active" : ""} key={id} onClick={() => setView(id)}>{label}</button>)}</nav>
-    {view === "session" && <><DurableAgentSession data={data} agent={agent} currentRun={currentRun} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} /><CoordinationThreads data={data} apiBase={apiBase} csrf={csrf} threads={data.threads.filter((thread) => thread.agent_ids.includes(definition.id))} heading={`${definition.name} coordination`} /></>}
+    {view === "session" && <><DurableAgentSession data={data} agent={agent} runs={runs} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} /><CoordinationThreads data={data} apiBase={apiBase} csrf={csrf} threads={data.threads.filter((thread) => thread.agent_ids.includes(definition.id))} heading={`${definition.name} coordination`} /></>}
     {view === "assignment" && <div className="m22-block"><h2>assigned work</h2>{assigned.length ? assigned.map((detail) => <div className="m22-line static" key={detail.task.id}><span><strong>{detail.task.title}</strong><small>{detail.task.description || "No additional description"}</small></span><StatusPill value={detail.task.status} /></div>) : <><p className="m22-empty">No canonical task is assigned to this agent.</p><p className="m22-caveat">Conversation and coordination messages are not assignments. This view fills only after a task is created and explicitly assigned.</p></>}</div>}
     {view === "changes" && <div className="m22-block"><h2>observed checkout changes</h2>{data.checkouts.flatMap((checkout) => checkout.dirty_paths ?? []).length ? data.checkouts.flatMap((checkout) => (checkout.dirty_paths ?? []).map((path) => <code className="m22-path" key={`${checkout.id}-${path}`}>{path}</code>)) : <p className="m22-empty">No changed paths are present in the bounded checkout observation.</p>}<p className="m22-caveat">These are project checkout observations, not an inferred per-agent diff.</p></div>}
     {view === "briefing" && <div className="m22-block"><h2>scope and available context</h2><dl className="m22-facts"><div><dt>domain</dt><dd>{data.project?.name}</dd></div><div><dt>workstream</dt><dd>{workstream?.title ?? "domain-wide"}</dd></div><div><dt>parent</dt><dd>{data.domainAgents.find((candidate) => candidate.definition.id === agent.membership.parent_agent_id)?.definition.name ?? "domain root"}</dd></div><div><dt>attached checkouts</dt><dd>{data.checkouts.length}</dd></div><div><dt>accepted knowledge</dt><dd>{data.knowledge.filter((revision) => revision.review_status === "accepted" && revision.currency_status === "current").length}</dd></div><div><dt>coordination threads</dt><dd>{data.threads.filter((thread) => thread.agent_ids.includes(definition.id)).length}</dd></div></dl><p className="m22-caveat">This is the durable domain scope available to the conversation. A task-specific frozen context packet exists only for an assigned execution run.</p></div>}

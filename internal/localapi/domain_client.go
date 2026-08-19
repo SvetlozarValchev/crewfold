@@ -99,10 +99,15 @@ func (c *Client) DomainAgentTree(ctx context.Context, workspace, project string)
 }
 
 func (c *Client) DomainAgentSessionShow(ctx context.Context, workspace, project, agent string) (DomainAgentSessionResult, error) {
+	return c.DomainAgentSessionShowEpoch(ctx, workspace, project, agent, 0)
+}
+
+func (c *Client) DomainAgentSessionShowEpoch(ctx context.Context, workspace, project, agent string, epoch int64) (DomainAgentSessionResult, error) {
 	params, err := c.resolveDomainAgentSessionParams(ctx, workspace, project, agent)
 	if err != nil {
 		return DomainAgentSessionResult{}, err
 	}
+	params.Epoch = epoch
 	var result DomainAgentSessionResult
 	if err := c.callParamsStrict(ctx, MethodDomainAgentSessionShow, params, &result); err != nil {
 		return DomainAgentSessionResult{}, err
@@ -146,6 +151,32 @@ func (c *Client) DomainAgentSessionInterrupt(ctx context.Context, params DomainA
 	params.Workspace, params.Project, params.Agent = resolved.Workspace, resolved.Project, resolved.Agent
 	var result DomainAgentSessionResult
 	if err := c.callParamsStrict(ctx, MethodDomainAgentSessionInterrupt, params, &result); err != nil {
+		return DomainAgentSessionResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) DomainAgentSessionCompact(ctx context.Context, params DomainAgentSessionCompactParams) (DomainAgentSessionResult, error) {
+	resolved, err := c.resolveDomainAgentSessionParams(ctx, params.Workspace, params.Project, params.Agent)
+	if err != nil {
+		return DomainAgentSessionResult{}, err
+	}
+	params.Workspace, params.Project, params.Agent = resolved.Workspace, resolved.Project, resolved.Agent
+	var result DomainAgentSessionResult
+	if err := c.callParamsStrictWithTimeout(ctx, 60*time.Second, MethodDomainAgentSessionCompact, params, &result); err != nil {
+		return DomainAgentSessionResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) DomainAgentSessionRotate(ctx context.Context, params DomainAgentSessionRotateParams) (DomainAgentSessionResult, error) {
+	resolved, err := c.resolveDomainAgentSessionParams(ctx, params.Workspace, params.Project, params.Agent)
+	if err != nil {
+		return DomainAgentSessionResult{}, err
+	}
+	params.Workspace, params.Project, params.Agent = resolved.Workspace, resolved.Project, resolved.Agent
+	var result DomainAgentSessionResult
+	if err := c.callParamsStrictWithTimeout(ctx, 60*time.Second, MethodDomainAgentSessionRotate, params, &result); err != nil {
 		return DomainAgentSessionResult{}, err
 	}
 	return result, nil

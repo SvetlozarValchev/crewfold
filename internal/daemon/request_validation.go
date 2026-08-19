@@ -31,6 +31,8 @@ var operatorRequestParamContracts = map[string]string{
 	localapi.MethodDomainAgentSessionShow:      "local/v1/domain-agent-session.params.schema.json",
 	localapi.MethodDomainAgentSessionSend:      "local/v1/domain-agent-session-send.params.schema.json",
 	localapi.MethodDomainAgentSessionInterrupt: "local/v1/domain-agent-session-interrupt.params.schema.json",
+	localapi.MethodDomainAgentSessionCompact:   "local/v1/domain-agent-session-compact.params.schema.json",
+	localapi.MethodDomainAgentSessionRotate:    "local/v1/domain-agent-session-rotate.params.schema.json",
 	localapi.MethodDomainStaffingGrantCreate:   "local/v1/domain-staffing-grant-create.params.schema.json",
 	localapi.MethodDomainStaffingGrantList:     "local/v1/domain-staffing-grant-list.params.schema.json",
 	localapi.MethodDomainStaffingGrantRevoke:   "local/v1/domain-staffing-grant-revoke.params.schema.json",
