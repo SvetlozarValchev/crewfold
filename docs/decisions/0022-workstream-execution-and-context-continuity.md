@@ -19,11 +19,12 @@ build trees, generated state, cooked assets, local fixtures, and hours of useful
 preparation. Starting a new process must not imply creating a new clone or cold
 environment.
 
-Second, coordinator work proposals create durable specialists before their
-Objective exists. Proposal acceptance creates the objective, tasks, dependencies,
-and scheduling intents but does not place those specialists into the resulting
-workstream. The accepted graph can therefore run while the owner-visible
-workstream says it has no agents.
+Second, the initial coordinator flow created durable specialists before their
+Objective existed. Proposal acceptance created the objective, tasks,
+dependencies, and scheduling intents but did not place those specialists into
+the resulting workstream. The accepted graph could therefore run while the
+owner-visible workstream said it had no agents, and rejecting the graph still
+left an unwanted team behind.
 
 Third, a dependency currently contributes only its task ID, title, status, and
 revision to a successor context packet. A completed reviewer can record a handoff,
@@ -91,20 +92,27 @@ its hierarchy or grants.
 A work proposal freezes, in addition to its objective and task graph:
 
 - the primary checkout and its revision;
-- every referenced agent and membership revision;
+- complete inert definitions for every new durable team member, plus exact
+  agent/membership/profile revisions for any existing participant;
+- the proposed parent relationship, charter, delegation policy, provider,
+  runtime, task class, concurrency, and staffing allocation for every new member;
 - the intended workstream placement for each participating agent;
 - every exact launch-profile revision;
 - each task's agent, class, dependencies, and dependency-output requirements; and
 - the same budgets, claim requirements, and scheduling policy already required.
 
-Acceptance atomically creates the Objective, binds its primary checkout, places
-the exact agents, creates tasks/dependencies/scheduling intents, and records every
-effect. Stale checkout, membership, agent, profile, grant, or graph state rejects
-the entire revision. Submission remains inert. Rejection has no organizational or
-execution effect.
+Acceptance atomically creates every proposed new durable agent and launch
+profile, places the complete team, creates the Objective, binds its primary
+checkout, creates tasks/dependencies/scheduling intents, and records every
+effect. Stale checkout, membership, agent, profile, grant, name, or graph state
+rejects the entire revision. Submission remains inert: no proposed agent,
+membership, profile, objective, task, intent, provider session, or run exists
+before acceptance. Rejection has no organizational or execution effect.
 
-Agents may exist at domain scope before acceptance. They are not displayed as
-workstream members until the placement effect commits. Acceptance never infers
+Explicit continuing domain-level staff may exist before a work proposal and may
+be referenced exactly. Deliverable-specific specialists normally exist only as
+proposal-local definitions until acceptance. Neither kind is displayed as a
+workstream member until the placement effect commits. Acceptance never infers
 placement from a role name, task title, checkout path, or attention ancestry.
 
 ### Dependency edges declare the output a successor requires

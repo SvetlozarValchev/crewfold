@@ -6,6 +6,53 @@ import (
 	"testing"
 )
 
+func TestM23WorkProposalToolStagesACompleteInertTeam(t *testing.T) {
+	t.Parallel()
+	var proposal map[string]any
+	for _, namespace := range domainAgentDynamicToolSpecs() {
+		for _, tool := range namespace.Tools {
+			if tool.Name == domainToolProposeWork {
+				proposal = tool.InputSchema
+			}
+		}
+	}
+	if proposal == nil {
+		t.Fatal("crewfold_propose_work tool is missing")
+	}
+	properties := proposal["properties"].(map[string]any)
+	agents := properties["agents"].(map[string]any)
+	agent := agents["items"].(map[string]any)
+	variants, ok := agent["oneOf"].([]map[string]any)
+	if !ok || len(variants) != 2 {
+		t.Fatalf("proposal agent variants = %#v", agent["oneOf"])
+	}
+	tasks := properties["tasks"].(map[string]any)["items"].(map[string]any)
+	required := tasks["required"].([]string)
+	if !containsRequiredString(required, "assignee_key") || !strings.Contains(strings.ToLower(proposalDescription(domainToolProposeWork)), "do not exist before acceptance") {
+		t.Fatalf("proposal tool does not freeze an inert logical team: required=%#v description=%q", required, proposalDescription(domainToolProposeWork))
+	}
+}
+
+func proposalDescription(name string) string {
+	for _, namespace := range domainAgentDynamicToolSpecs() {
+		for _, tool := range namespace.Tools {
+			if tool.Name == name {
+				return tool.Description
+			}
+		}
+	}
+	return ""
+}
+
+func containsRequiredString(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
 func TestM22DurableAgentMessageRequiresAnExplicitNewOrExistingTopic(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

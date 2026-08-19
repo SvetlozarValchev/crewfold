@@ -140,11 +140,13 @@ still supplies the only creation authority.
 ### 3. Assign and launch
 
 The owner creates work directly or accepts an exact bounded proposal containing
-deliverables, dependencies, required predecessor outputs, constraints, intended
-agent placement, and expected change surfaces. An implementation workstream binds
+deliverables, an inert proposed new/existing team hierarchy, dependencies,
+required predecessor outputs, constraints, intended agent placement, and expected
+change surfaces. An implementation workstream binds
 one existing writable checkout as its primary execution home. Proposal acceptance
-atomically binds that checkout, places every participating durable agent, creates
-the graph, and publishes scheduling intents. The scheduler validates its
+atomically creates any proposed specialists, binds that checkout, places every
+participating durable agent, creates the graph, and publishes scheduling intents.
+Before acceptance the proposed specialists do not exist. The scheduler validates its
 owner-authored agent-bound launch profile and reuses that exact checkout. Crewfold
 builds a context packet, creates a run, and asks a runtime driver to launch the
 provider process without cloning, relocating, cleaning, installing, or rebuilding

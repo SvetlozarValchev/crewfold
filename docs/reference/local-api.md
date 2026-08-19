@@ -1546,14 +1546,15 @@ dynamic-tool set:
 
 A work proposal freezes its source agent/thread, staffing-grant revision,
 canonical event cut, content hash, objective budget, task keys/classes/budgets,
-primary checkout revision, participating agent/membership revisions and intended
-workstream placements, exact launch profiles, and dependency keys plus delivery
-requirements. Accept and reject require its exact current revision plus an
-idempotency key. Acceptance returns every applied objective/checkout-binding/
-membership-placement/task/dependency/scheduling-intent effect and its event
-sequence. If the grant, checkout, agent, membership, launch profile, or graph is
-no longer current, the proposal becomes `stale`; the daemon never partially
-applies it.
+primary checkout revision, complete proposal-local definitions/hierarchy for new
+agents, exact revisions for reused agents/memberships/profiles, intended
+workstream placements, and dependency keys plus delivery requirements. Accept
+and reject require its exact current revision plus an idempotency key. Submission
+creates none of the proposed agents or work. Acceptance returns every applied
+agent/allocation/profile/objective/checkout-binding/membership-placement/task/
+dependency/scheduling-intent effect and its event sequence. If the grant,
+checkout, agent, membership, launch profile, name, or graph is no longer current,
+the proposal becomes `stale`; the daemon never partially applies it.
 
 Message delivery to a durable session never races an owner turn. A wake targeting
 a thread with an active provider turn is returned to pending with a bounded
@@ -1569,11 +1570,12 @@ durable child records only its definition and hierarchy membership; it does not
 assign a task, reserve a checkout, or start that child.
 
 M23 closes those separate operations only at work-proposal acceptance: a pending
-proposal may reference already-created domain-level children, but the successful
-acceptance transaction places every exact participant in the new workstream and
-creates its scheduling graph together. The source-mutating workstream reuses the
-selected existing primary checkout across all later attempts. Launch never
-clones, cleans, installs, or bootstraps that directory implicitly.
+proposal may stage new durable children and reference explicit continuing
+domain-level staff, but the successful acceptance transaction creates and places
+every exact participant with the new workstream and scheduling graph. The
+source-mutating workstream reuses the selected existing primary checkout across
+all later attempts. Launch never clones, cleans, installs, or bootstraps that
+directory implicitly.
 
 The agent-session result is one logical timeline assembled from durable provider
 epochs and every attached execution attempt. It orders owner/provider turns,

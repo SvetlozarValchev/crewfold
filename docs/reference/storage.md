@@ -193,15 +193,16 @@ racing creation cannot leave a definition without membership or allocation.
 workspace/domain, source agent and private session binding, staffing-grant
 revision, captured event cut, canonical content JSON/SHA-256, decision state,
 revision, and actor/timestamps. Its content contains one objective and a bounded
-set of typed tasks with stable proposal-local keys, launch profiles, budgets,
-dependency keys and delivery requirements. It also freezes the primary checkout
-revision and the participating agents' exact membership revisions and intended
-workstream placements. A pending proposal owns no task, objective, assignment,
-checkout binding, membership placement, or runtime effect. Owner acceptance
-revalidates the current source membership, grant, checkout, profiles, agents,
-memberships, and graph, then atomically creates the objective, binds the primary
-checkout, places the agents, creates tasks and task dependencies, and inserts one
-`scheduling_intents` row per task.
+set of typed tasks with stable proposal-local keys, budgets, dependency keys and
+delivery requirements. It also freezes the primary checkout revision, complete
+definitions/hierarchy/launch allocations for proposed new agents, and exact
+membership/profile revisions for reused domain staff. A pending proposal owns no
+agent, launch profile, task, objective, assignment, checkout binding, membership
+placement, provider session, or runtime effect. Owner acceptance revalidates the
+current source membership, grant, checkout, profiles, agents, memberships, names,
+and graph, then atomically creates and places the complete team, creates the
+objective, binds the primary checkout, creates tasks and task dependencies, and
+inserts one `scheduling_intents` row per task.
 `scheduling_intents.source_domain_work_proposal_id` plus
 `source_domain_task_key` binds every resulting intent to that exact proposal;
 other proposal-source columns remain null.

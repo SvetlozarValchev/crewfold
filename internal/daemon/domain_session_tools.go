@@ -74,14 +74,15 @@ type domainSessionDelegateStaffingArguments struct {
 }
 
 type domainSessionProposeWorkArguments struct {
-	StaffingGrantID         string                          `json:"staffing_grant_id"`
-	Summary                 string                          `json:"summary"`
-	ObjectiveTitle          string                          `json:"objective_title"`
-	ObjectiveBudget         domain.Budget                   `json:"objective_budget"`
-	PrimaryCheckoutID       string                          `json:"primary_checkout_id"`
-	PrimaryCheckoutRevision int64                           `json:"primary_checkout_revision"`
-	ReferenceCheckoutIDs    []string                        `json:"reference_checkout_ids"`
-	Tasks                   []domain.DomainWorkProposalTask `json:"tasks"`
+	StaffingGrantID         string                           `json:"staffing_grant_id"`
+	Summary                 string                           `json:"summary"`
+	ObjectiveTitle          string                           `json:"objective_title"`
+	ObjectiveBudget         domain.Budget                    `json:"objective_budget"`
+	PrimaryCheckoutID       string                           `json:"primary_checkout_id"`
+	PrimaryCheckoutRevision int64                            `json:"primary_checkout_revision"`
+	ReferenceCheckoutIDs    []string                         `json:"reference_checkout_ids"`
+	Agents                  []domain.DomainWorkProposalAgent `json:"agents"`
+	Tasks                   []domain.DomainWorkProposalTask  `json:"tasks"`
 }
 
 type domainSessionProposeKnowledgeArguments struct {
@@ -129,7 +130,7 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 		},
 		{
 			Type: "function", Name: domainToolCreateChild,
-			Description: "Create one continuing durable child and its exact inactive execution profile through a current Crewfold staffing grant. Use an exact checkout ID from crewfold_get_domain_context, never a path. workstream is optional and accepts only an existing objective ID (obj_...) returned by current context; omit it while staffing a team before the work proposal exists. It does not create a task, assign work, reserve the checkout, or start a run. The grant, not hierarchy or role text, bounds the domain, provider/runtime, task class, descendants, concurrency, budget, and expiry.",
+			Description: "Create one continuing domain-level durable child immediately through a current Crewfold staffing grant. Use this only when the owner explicitly asks for persistent domain staff outside any proposed workstream. Never use it to assemble a team for a deliverable: put that inert team in crewfold_propose_work instead. This does not create a task, assign work, reserve the checkout, or start a run.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"required": []string{"grant_id", "name", "role", "operating_charter", "delegation_policy", "provider", "runtime", "max_concurrency", "task_class", "budget", "checkout"},
@@ -173,9 +174,9 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 		},
 		{
 			Type: "function", Name: domainToolProposeWork,
-			Description: "Submit one inert, owner-reviewable checkout-bound workstream graph using exact active launch profiles and membership revisions for durable agents in this agent's subtree. Every dependency names the structured delivery it requires. Submission starts nothing. Owner acceptance atomically creates the workstream, places its durable agents, creates tasks and delivery edges, and publishes scheduling intents against the frozen primary checkout.",
+			Description: "Submit one inert, owner-reviewable checkout-bound workstream, team, and task graph. New team members are logical proposal entries and do not exist before acceptance; existing durable agents may be referenced exactly. Every task names an assignee_key and every dependency names its structured delivery. Owner acceptance atomically creates proposed agents and profiles, places the whole team, creates tasks and delivery edges, and publishes scheduling intents against the frozen primary checkout.",
 			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
-				"required": []string{"staffing_grant_id", "summary", "objective_title", "objective_budget", "primary_checkout_id", "primary_checkout_revision", "reference_checkout_ids", "tasks"},
+				"required": []string{"staffing_grant_id", "summary", "objective_title", "objective_budget", "primary_checkout_id", "primary_checkout_revision", "reference_checkout_ids", "agents", "tasks"},
 				"properties": map[string]any{
 					"staffing_grant_id":         map[string]any{"type": "string", "pattern": "^staffgrant_[0-9a-f]{32}$"},
 					"summary":                   map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
@@ -184,21 +185,42 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 					"primary_checkout_id":       map[string]any{"type": "string", "pattern": "^co_[0-9a-f]{32}$"},
 					"primary_checkout_revision": map[string]any{"type": "integer", "minimum": 1},
 					"reference_checkout_ids":    map[string]any{"type": "array", "maxItems": 8, "uniqueItems": true, "items": map[string]any{"type": "string", "pattern": "^co_[0-9a-f]{32}$"}},
+					"agents": map[string]any{"type": "array", "minItems": 1, "maxItems": 16, "items": map[string]any{
+						"type": "object", "additionalProperties": false, "required": []string{"key", "budget"},
+						"oneOf": []map[string]any{
+							{"required": []string{"existing_agent_id", "existing_membership_revision", "existing_launch_profile_id"}},
+							{"required": []string{"name", "role", "operating_charter", "delegation_policy", "provider", "runtime", "max_concurrency", "task_class"}},
+						},
+						"properties": map[string]any{
+							"key":                          map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+							"existing_agent_id":            map[string]any{"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
+							"existing_membership_revision": map[string]any{"type": "integer", "minimum": 1},
+							"existing_launch_profile_id":   map[string]any{"type": "string", "pattern": "^lprof_[0-9a-f]{32}$"},
+							"name":                         map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+							"role":                         map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+							"parent_key":                   map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+							"operating_charter":            map[string]any{"type": "string", "minLength": 1, "maxLength": 8192},
+							"delegation_policy":            map[string]any{"type": "string", "enum": []string{"hands_on", "adaptive", "delegation_first"}},
+							"provider":                     map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+							"runtime":                      map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+							"max_concurrency":              map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
+							"task_class":                   map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+							"budget":                       domainStaffingBudgetSchema(),
+						},
+					}},
 					"tasks": map[string]any{"type": "array", "minItems": 1, "maxItems": 16, "items": map[string]any{
 						"type": "object", "additionalProperties": false,
-						"required": []string{"key", "title", "description", "task_class", "priority", "budget", "launch_profile_id", "agent_id", "agent_membership_revision", "depends_on", "dependency_delivery"},
+						"required": []string{"key", "title", "description", "task_class", "priority", "budget", "assignee_key", "depends_on", "dependency_delivery"},
 						"properties": map[string]any{
-							"key":                       map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
-							"title":                     map[string]any{"type": "string", "minLength": 1, "maxLength": 256},
-							"description":               map[string]any{"type": "string", "maxLength": 4096},
-							"task_class":                map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
-							"priority":                  map[string]any{"type": "integer", "minimum": 0, "maximum": 1000},
-							"budget":                    domainStaffingBudgetSchema(),
-							"launch_profile_id":         map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-							"agent_id":                  map[string]any{"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
-							"agent_membership_revision": map[string]any{"type": "integer", "minimum": 1},
-							"depends_on":                map[string]any{"type": "array", "maxItems": 15, "uniqueItems": true, "items": map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"}},
-							"dependency_delivery":       map[string]any{"type": "object", "maxProperties": 15, "additionalProperties": map[string]any{"type": "string", "enum": []string{domain.DependencyDeliveryCompletion, domain.DependencyDeliveryHandoff, domain.DependencyDeliveryHandoffWithEvidence}}},
+							"key":                 map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+							"title":               map[string]any{"type": "string", "minLength": 1, "maxLength": 256},
+							"description":         map[string]any{"type": "string", "maxLength": 4096},
+							"task_class":          map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+							"priority":            map[string]any{"type": "integer", "minimum": 0, "maximum": 1000},
+							"budget":              domainStaffingBudgetSchema(),
+							"assignee_key":        map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+							"depends_on":          map[string]any{"type": "array", "maxItems": 15, "uniqueItems": true, "items": map[string]any{"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"}},
+							"dependency_delivery": map[string]any{"type": "object", "maxProperties": 15, "additionalProperties": map[string]any{"type": "string", "enum": []string{domain.DependencyDeliveryCompletion, domain.DependencyDeliveryHandoff, domain.DependencyDeliveryHandoffWithEvidence}}},
 						},
 					}},
 				},
@@ -337,7 +359,7 @@ func (s *server) domainProposeWorkToolResult(ctx context.Context, call domainSes
 		ThreadID: call.ThreadID, StaffingGrantID: arguments.StaffingGrantID, Summary: arguments.Summary,
 		Content: domain.DomainWorkProposalContent{ObjectiveTitle: arguments.ObjectiveTitle, ObjectiveBudget: arguments.ObjectiveBudget,
 			PrimaryCheckoutID: arguments.PrimaryCheckoutID, PrimaryCheckoutRevision: arguments.PrimaryCheckoutRevision,
-			ReferenceCheckoutIDs: arguments.ReferenceCheckoutIDs, Tasks: arguments.Tasks},
+			ReferenceCheckoutIDs: arguments.ReferenceCheckoutIDs, Agents: arguments.Agents, Tasks: arguments.Tasks},
 		IdempotencyKey: key, CorrelationID: key,
 	})
 	if err != nil {
@@ -702,7 +724,7 @@ func decodeDomainProposeWorkArguments(data json.RawMessage) (domainSessionPropos
 	value.Summary = strings.TrimSpace(value.Summary)
 	value.ObjectiveTitle = strings.TrimSpace(value.ObjectiveTitle)
 	value.PrimaryCheckoutID = strings.TrimSpace(value.PrimaryCheckoutID)
-	if !validDomainToolText(value.StaffingGrantID, 128) || !validDomainToolText(value.Summary, 2048) || !validDomainToolText(value.ObjectiveTitle, 256) || value.PrimaryCheckoutID == "" || value.PrimaryCheckoutRevision < 1 || len(value.ReferenceCheckoutIDs) > 8 || len(value.Tasks) < 1 || len(value.Tasks) > 16 {
+	if !validDomainToolText(value.StaffingGrantID, 128) || !validDomainToolText(value.Summary, 2048) || !validDomainToolText(value.ObjectiveTitle, 256) || value.PrimaryCheckoutID == "" || value.PrimaryCheckoutRevision < 1 || len(value.ReferenceCheckoutIDs) > 8 || len(value.Agents) < 1 || len(value.Agents) > 16 || len(value.Tasks) < 1 || len(value.Tasks) > 16 {
 		return value, errors.New("work proposal fields are missing or outside their bounded types")
 	}
 	return value, nil

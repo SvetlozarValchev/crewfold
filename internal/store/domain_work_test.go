@@ -7,7 +7,7 @@ import (
 	"crewfold/internal/domain"
 )
 
-func TestM22CoordinatorProposalPublishesOneExactAcceptedWorkGraph(t *testing.T) {
+func TestM23CoordinatorProposalKeepsTheTeamInertUntilExactAcceptance(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	storage := openTestStore(t, t.TempDir(), Options{})
@@ -42,35 +42,6 @@ func TestM22CoordinatorProposalPublishesOneExactAcceptedWorkGraph(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	createChild := func(name, taskClass, key string) domain.DomainAgentChildCreation {
-		created, createErr := storage.CreateDomainAgentChild(ctx, CreateDomainAgentChildCommand{
-			ThreadID: "coordinator-work-thread", GrantID: grant.Value.ID, Name: name, Role: taskClass,
-			Provider: "fake", Runtime: "fake", MaxConcurrency: 1, OperatingCharter: testDomainAgentCharter,
-			DelegationPolicy: domain.DomainAgentHandsOn, TaskClass: taskClass,
-			Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, IdempotencyKey: key, CorrelationID: key,
-		})
-		if createErr != nil {
-			t.Fatal(createErr)
-		}
-		return created
-	}
-	implementer := createChild("implementer", "implementation", "create-work-implementer")
-	verifier := createChild("verifier", "verification", "create-work-verifier")
-	createProfile := func(child domain.DomainAgentChildCreation, purpose, key string) domain.LaunchProfile {
-		created, createErr := storage.CreateLaunchProfile(ctx, CreateLaunchProfileCommand{
-			WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: child.Agent.ID,
-			ExpectedAgentRevision: child.Agent.Revision, Purpose: purpose, Runtime: child.Agent.Runtime, Provider: child.Agent.Provider,
-			CheckoutIdentifier: inspection.Checkouts[0].ID, Scenario: managementProgressScenario(key),
-			AssignmentLeaseSeconds: 3600, CapabilityTTLSeconds: 3600, IdempotencyKey: key, CorrelationID: key,
-		})
-		if createErr != nil {
-			t.Fatal(createErr)
-		}
-		return created.Value
-	}
-	implementationProfile := createProfile(implementer, "implementation", "work-implementation-profile")
-	verificationProfile := createProfile(verifier, "verification", "work-verification-profile")
-
 	command := SubmitDomainWorkProposalCommand{
 		ThreadID: "coordinator-work-thread", StaffingGrantID: grant.Value.ID,
 		Summary: "Implement one bounded slice and verify it independently.",
@@ -78,9 +49,13 @@ func TestM22CoordinatorProposalPublishesOneExactAcceptedWorkGraph(t *testing.T) 
 			ObjectiveTitle: "Deliver one tested slice", ObjectiveBudget: domain.Budget{TokenLimit: 200, TimeSeconds: 600},
 			PrimaryCheckoutID: inspection.Checkouts[0].ID, PrimaryCheckoutRevision: inspection.Checkouts[0].Revision,
 			ReferenceCheckoutIDs: []string{},
+			Agents: []domain.DomainWorkProposalAgent{
+				{Key: "implementer", Name: "implementer", Role: "implementation", OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentHandsOn, Provider: "fake", Runtime: "fake", MaxConcurrency: 1, TaskClass: "implementation", Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}},
+				{Key: "verifier", Name: "verifier", Role: "verification", ParentKey: "implementer", OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentHandsOn, Provider: "fake", Runtime: "fake", MaxConcurrency: 1, TaskClass: "verification", Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}},
+			},
 			Tasks: []domain.DomainWorkProposalTask{
-				{Key: "build", Title: "Build the slice", Description: "Implement the bounded deliverable.", TaskClass: "implementation", Priority: 100, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, LaunchProfileID: implementationProfile.ID, AgentID: implementer.Agent.ID, AgentMembershipRevision: implementer.Membership.Revision, DependsOn: []string{}, DependencyDelivery: map[string]string{}},
-				{Key: "verify", Title: "Verify the slice", Description: "Independently test and review the deliverable.", TaskClass: "verification", Priority: 200, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, LaunchProfileID: verificationProfile.ID, AgentID: verifier.Agent.ID, AgentMembershipRevision: verifier.Membership.Revision, DependsOn: []string{"build"}, DependencyDelivery: map[string]string{"build": domain.DependencyDeliveryHandoffWithEvidence}},
+				{Key: "build", Title: "Build the slice", Description: "Implement the bounded deliverable.", TaskClass: "implementation", Priority: 100, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, AssigneeKey: "implementer", DependsOn: []string{}, DependencyDelivery: map[string]string{}},
+				{Key: "verify", Title: "Verify the slice", Description: "Independently test and review the deliverable.", TaskClass: "verification", Priority: 200, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, AssigneeKey: "verifier", DependsOn: []string{"build"}, DependencyDelivery: map[string]string{"build": domain.DependencyDeliveryHandoffWithEvidence}},
 			},
 		},
 		IdempotencyKey: "submit-domain-work", CorrelationID: "submit-domain-work",
@@ -104,9 +79,50 @@ func TestM22CoordinatorProposalPublishesOneExactAcceptedWorkGraph(t *testing.T) 
 	if objectives, listErr := storage.ListObjectives(ctx, ListObjectivesQuery{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, Limit: 10}); listErr != nil || objectives.Total != 0 {
 		t.Fatalf("inert proposal objectives = %#v, %v", objectives, listErr)
 	}
+	var inertAgentCount int
+	if err := storage.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agents WHERE workspace_id=? AND name IN ('implementer','verifier')", workspace.ID).Scan(&inertAgentCount); err != nil || inertAgentCount != 0 {
+		t.Fatalf("proposal created agents before acceptance: count=%d error=%v", inertAgentCount, err)
+	}
 	replayed, err := storage.SubmitDomainWorkProposal(ctx, command)
 	if err != nil || replayed.Value.ID != submitted.Value.ID || replayed.EventSequence != submitted.EventSequence {
 		t.Fatalf("proposal replay = %#v, %v", replayed, err)
+	}
+	rejectedCommand := command
+	rejectedCommand.IdempotencyKey = "submit-rejected-domain-work"
+	rejectedCommand.CorrelationID = "submit-rejected-domain-work"
+	rejectedCommand.Summary = "This team must remain inert when rejected."
+	rejectedCommand.Content.Agents = []domain.DomainWorkProposalAgent{{Key: "rejected", Name: "rejected-worker", Role: "implementation", OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentHandsOn, Provider: "fake", Runtime: "fake", MaxConcurrency: 1, TaskClass: "implementation", Budget: domain.Budget{TokenLimit: 50, TimeSeconds: 100}}}
+	rejectedCommand.Content.Tasks = []domain.DomainWorkProposalTask{{Key: "rejected", Title: "Never publish this task", TaskClass: "implementation", Priority: 1, Budget: domain.Budget{TokenLimit: 50, TimeSeconds: 100}, AssigneeKey: "rejected", DependsOn: []string{}, DependencyDelivery: map[string]string{}}}
+	rejected, err := storage.SubmitDomainWorkProposal(ctx, rejectedCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejectedDecision, err := storage.RejectDomainWorkProposal(ctx, DecideDomainWorkProposalCommand{WorkspaceIdentifier: workspace.ID, ProposalID: rejected.Value.ID, ExpectedRevision: 1, DecisionNote: "Do not create this team.", IdempotencyKey: "reject-domain-work", CorrelationID: "reject-domain-work"})
+	if err != nil || rejectedDecision.Proposal.Status != domain.DomainWorkProposalRejected || len(rejectedDecision.Effects) != 0 {
+		t.Fatalf("rejected proposal = %#v, %v", rejectedDecision, err)
+	}
+	var rejectedAgentCount int
+	if err := storage.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agents WHERE workspace_id=? AND name='rejected-worker'", workspace.ID).Scan(&rejectedAgentCount); err != nil || rejectedAgentCount != 0 {
+		t.Fatalf("rejected proposal published an agent: count=%d error=%v", rejectedAgentCount, err)
+	}
+
+	staleCommand := rejectedCommand
+	staleCommand.IdempotencyKey = "submit-stale-domain-work"
+	staleCommand.CorrelationID = "submit-stale-domain-work"
+	staleCommand.Summary = "This team must remain atomic when its name becomes stale."
+	staleCommand.Content.Agents = []domain.DomainWorkProposalAgent{{Key: "stale", Name: "stale-worker", Role: "implementation", OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentHandsOn, Provider: "fake", Runtime: "fake", MaxConcurrency: 1, TaskClass: "implementation", Budget: domain.Budget{TokenLimit: 50, TimeSeconds: 100}}}
+	staleCommand.Content.Tasks = []domain.DomainWorkProposalTask{{Key: "stale", Title: "Do not partially publish this task", TaskClass: "implementation", Priority: 1, Budget: domain.Budget{TokenLimit: 50, TimeSeconds: 100}, AssigneeKey: "stale", DependsOn: []string{}, DependencyDelivery: map[string]string{}}}
+	stale, err := storage.SubmitDomainWorkProposal(ctx, staleCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = createDomainTestAgent(t, storage, workspace.ID, "stale-worker", "conflicting owner-created definition")
+	staleDecision, err := storage.AcceptDomainWorkProposal(ctx, DecideDomainWorkProposalCommand{WorkspaceIdentifier: workspace.ID, ProposalID: stale.Value.ID, ExpectedRevision: 1, DecisionNote: "Attempt exact acceptance after a conflicting change.", IdempotencyKey: "accept-stale-domain-work", CorrelationID: "accept-stale-domain-work"})
+	if err != nil || staleDecision.Proposal.Status != domain.DomainWorkProposalStale || len(staleDecision.Effects) != 0 {
+		t.Fatalf("stale proposal = %#v, %v", staleDecision, err)
+	}
+	if objectives, listErr := storage.ListObjectives(ctx, ListObjectivesQuery{WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, Limit: 10}); listErr != nil || objectives.Total != 0 {
+		t.Fatalf("stale acceptance partially published graph = %#v, %v", objectives, listErr)
 	}
 
 	accepted, err := storage.AcceptDomainWorkProposal(ctx, DecideDomainWorkProposalCommand{
@@ -116,8 +132,15 @@ func TestM22CoordinatorProposalPublishesOneExactAcceptedWorkGraph(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if accepted.Proposal.Status != domain.DomainWorkProposalAccepted || accepted.Proposal.Revision != 2 || len(accepted.Effects) != 8 {
+	if accepted.Proposal.Status != domain.DomainWorkProposalAccepted || accepted.Proposal.Revision != 2 || len(accepted.Effects) != 14 {
 		t.Fatalf("accepted proposal = %#v", accepted)
+	}
+	acceptedReplay, err := storage.AcceptDomainWorkProposal(ctx, DecideDomainWorkProposalCommand{
+		WorkspaceIdentifier: workspace.ID, ProposalID: submitted.Value.ID, ExpectedRevision: 1,
+		DecisionNote: "Accept this exact graph for supervised execution.", IdempotencyKey: "accept-domain-work", CorrelationID: "accept-domain-work",
+	})
+	if err != nil || acceptedReplay.EventSequence != accepted.EventSequence || len(acceptedReplay.Effects) != len(accepted.Effects) {
+		t.Fatalf("accepted proposal replay = %#v, %v", acceptedReplay, err)
 	}
 	var objectiveCount, taskCount, dependencyCount, intentCount int
 	if err := storage.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM objectives WHERE project_id=?", project.ID).Scan(&objectiveCount); err != nil {
@@ -135,11 +158,21 @@ func TestM22CoordinatorProposalPublishesOneExactAcceptedWorkGraph(t *testing.T) 
 	if objectiveCount != 1 || taskCount != 2 || dependencyCount != 1 || intentCount != 2 {
 		t.Fatalf("accepted graph counts objective=%d task=%d dependency=%d intent=%d", objectiveCount, taskCount, dependencyCount, intentCount)
 	}
-	for _, child := range []domain.DomainAgentChildCreation{implementer, verifier} {
-		placed, placeErr := queryDomainAgentMembership(ctx, storage.db, project.ID, child.Agent.ID)
-		if placeErr != nil || placed.WorkstreamID == "" || placed.Revision != child.Membership.Revision+1 {
-			t.Fatalf("accepted placement %s = %#v, %v", child.Agent.Name, placed, placeErr)
+	createdAgents := make(map[string]domain.AgentDefinition, 2)
+	for _, name := range []string{"implementer", "verifier"} {
+		created, agentErr := queryAgent(ctx, storage.db, workspace.ID, name)
+		if agentErr != nil {
+			t.Fatalf("accepted agent %s = %v", name, agentErr)
 		}
+		placed, placeErr := queryDomainAgentMembership(ctx, storage.db, project.ID, created.ID)
+		if placeErr != nil || placed.WorkstreamID == "" || placed.Revision != 1 {
+			t.Fatalf("accepted placement %s = %#v, %v", name, placed, placeErr)
+		}
+		createdAgents[name] = created
+	}
+	verifierMembership, err := queryDomainAgentMembership(ctx, storage.db, project.ID, createdAgents["verifier"].ID)
+	if err != nil || verifierMembership.ParentAgentID != createdAgents["implementer"].ID {
+		t.Fatalf("accepted nested hierarchy = %#v, %v", verifierMembership, err)
 	}
 	report, err := storage.VerifyCanonical(ctx, CanonicalVerifyOptions{Full: true})
 	if err != nil || !report.Complete || report.Status != "ok" {

@@ -2135,7 +2135,16 @@ BEGIN
         WHERE grant.id=NEW.grant_id AND grant.project_id=NEW.project_id
           AND grant.manager_agent_id=NEW.parent_agent_id AND grant.status='active'
           AND grant.manager_membership_revision=parent.revision AND parent.status='active'
-          AND child.parent_agent_id=parent.agent_id AND child.status='active'
+          AND child.status='active' AND child.agent_id IN (
+              WITH RECURSIVE descendants(agent_id) AS (
+                  SELECT direct.agent_id FROM domain_agent_memberships direct
+                  WHERE direct.project_id=grant.project_id AND direct.parent_agent_id=parent.agent_id AND direct.status='active'
+                  UNION ALL
+                  SELECT nested.agent_id FROM domain_agent_memberships nested
+                  JOIN descendants ancestor ON nested.parent_agent_id=ancestor.agent_id
+                  WHERE nested.project_id=grant.project_id AND nested.status='active'
+              ) SELECT agent_id FROM descendants
+          )
           AND child_agent.provider=NEW.provider AND child_agent.runtime=NEW.runtime
           AND event.type='domain.child_created' AND event.entity_type='domain_staffing_allocation'
           AND event.entity_id=NEW.id AND event.entity_revision=1
@@ -2150,6 +2159,7 @@ CREATE TRIGGER domain_work_proposal_validate_insert BEFORE INSERT ON domain_work
   OR crewfold_timestamp_canonical(NEW.created_at)<>1 OR NEW.created_by<>'agent:'||NEW.source_agent_id OR NEW.updated_by<>NEW.created_by
   OR NEW.content_sha256<>lower(hex(sha256(CAST(NEW.content_json AS BLOB))))
   OR json_type(NEW.content_json,'$.objective_title')<>'text' OR json_type(NEW.content_json,'$.objective_budget')<>'object'
+  OR json_type(NEW.content_json,'$.agents')<>'array' OR json_array_length(NEW.content_json,'$.agents') NOT BETWEEN 1 AND 16
   OR json_type(NEW.content_json,'$.tasks')<>'array' OR json_array_length(NEW.content_json,'$.tasks') NOT BETWEEN 1 AND 16
   OR NOT EXISTS(SELECT 1 FROM domain_agent_session_bindings binding WHERE binding.project_id=NEW.project_id AND binding.agent_id=NEW.source_agent_id AND binding.thread_id=NEW.source_thread_id AND binding.status='current')
   OR NOT EXISTS(SELECT 1 FROM domain_agent_staffing_grants grant WHERE grant.id=NEW.staffing_grant_id AND grant.project_id=NEW.project_id AND grant.manager_agent_id=NEW.source_agent_id AND grant.revision=NEW.staffing_grant_revision AND grant.status='active')
@@ -5587,13 +5597,21 @@ CREATE TRIGGER scheduling_intent_validate_insert BEFORE INSERT ON scheduling_int
 	(NEW.source_domain_work_proposal_id IS NOT NULL AND EXISTS(
 	 SELECT 1 FROM domain_work_proposals proposal
 	 JOIN json_each(proposal.content_json,'$.tasks') item
+	 JOIN json_each(proposal.content_json,'$.agents') proposed_agent
+	   ON json_extract(proposed_agent.value,'$.key')=json_extract(item.value,'$.assignee_key')
 	 JOIN launch_profiles profile ON profile.id=NEW.launch_profile_id
 	 JOIN agents agent ON agent.id=profile.agent_id
 	 JOIN tasks task ON task.id=NEW.task_id
 	 WHERE proposal.id=NEW.source_domain_work_proposal_id AND proposal.status='accepted'
 	   AND proposal.workspace_id=NEW.workspace_id AND proposal.project_id=NEW.project_id
 	   AND json_extract(item.value,'$.key')=NEW.source_domain_task_key
-	   AND json_extract(item.value,'$.launch_profile_id')=NEW.launch_profile_id
+	   AND (json_extract(proposed_agent.value,'$.existing_launch_profile_id')=NEW.launch_profile_id
+	     OR (json_extract(proposed_agent.value,'$.existing_agent_id') IS NULL
+	       AND json_extract(proposed_agent.value,'$.name')=agent.name
+	       AND json_extract(proposed_agent.value,'$.provider')=profile.provider
+	       AND json_extract(proposed_agent.value,'$.runtime')=profile.runtime
+	       AND json_extract(proposed_agent.value,'$.task_class')=profile.purpose
+	       AND profile.checkout_id=json_extract(proposal.content_json,'$.primary_checkout_id')))
 	   AND profile.workspace_id=NEW.workspace_id AND profile.project_id=NEW.project_id AND profile.agent_id=NEW.agent_id AND profile.status='active' AND profile.manager_grant_id IS NULL
 	   AND agent.enabled=1 AND agent.revision=profile.agent_revision
 	   AND task.workspace_id=NEW.workspace_id AND task.project_id=NEW.project_id AND task.objective_id=NEW.objective_id

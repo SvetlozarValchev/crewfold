@@ -119,6 +119,7 @@ CREWFOLD_SCREENSHOT_DIR="${CREWFOLD_SCREENSHOT_DIR:-$scenario_root/screenshots}"
 
 grep -Fq '"orchidReply": true' "$scenario_root/browser-result.json"
 grep -Fq '"fernReply": true' "$scenario_root/browser-result.json"
+grep -Fq '"inertTeamBeforeAcceptance": true' "$scenario_root/browser-result.json"
 grep -Fq '"childVisible": true' "$scenario_root/browser-result.json"
 grep -Fq '"proposalAccepted": true' "$scenario_root/browser-result.json"
 grep -Fq '"workerCompleted": true' "$scenario_root/browser-result.json"

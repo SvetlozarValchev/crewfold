@@ -81,9 +81,11 @@ budgets, and capabilities remain the authority boundary.
 Every membership also freezes an owner-reviewed operating charter and one
 behavioral policy: `hands_on`, `adaptive`, or `delegation_first`. These are real
 provider instructions, not decorative role labels. A delegation-first agent is
-instructed to use a current staffing grant to create durable specialists before
-absorbing implementation itself, or to explain the missing grant. The charter and
-policy still grant no task, checkout, staffing, budget, or effect authority.
+instructed to use a current staffing grant to propose the durable team and work
+graph it needs before absorbing implementation itself, or to explain the missing
+grant. Immediate child creation is reserved for explicit continuing domain-level
+staff outside a deliverable proposal. The charter and policy still grant no task,
+checkout, staffing, budget, or effect authority.
 Changing them is a revision-checked membership mutation.
 
 The durable conversation itself is read-only coordination and inspection.
@@ -118,20 +120,22 @@ external publication, destructive effects, and authority/budget changes stop at
 the existing owner boundary.
 
 A granted coordinator may also submit one **inert work proposal**. The proposal
-names one workstream objective and a bounded task/dependency graph whose tasks
-reference already-created durable agents through exact launch profiles. It does
-not create an objective, task, assignment, run, checkout claim, or provider
-session when submitted. The owner reviews the exact graph in the browser and
-accepts or rejects one immutable proposal revision. Acceptance atomically creates
-the objective, tasks, dependencies, and scheduling intents; the deterministic
+names one workstream objective, its complete proposed durable team/hierarchy, and
+a bounded task/dependency graph. New team members are proposal-local definitions;
+existing domain staff are exact revisioned references. Submission creates no
+agent, membership, launch profile, objective, task, assignment, run, checkout
+claim, or provider session. The owner reviews one immutable proposal revision in
+the browser. Acceptance atomically creates and places the team together with the
+objective, tasks, dependencies, and scheduling intents; the deterministic
 supervisor starts only ready work and leaves dependent implementation, review,
 verification, and knowledge-maintenance work visibly gated. Conversation text,
 including a bare “yes”, is never that acceptance.
 
 This is the normal end-to-end delegation path. A coordinator with a current
-staffing grant creates the durable specialists it needs, sends each specialist
-its bounded responsibility, submits the graph, and then observes their replies.
-It does not ask the owner to reproduce task records or start each child manually.
+staffing grant plans its durable specialists and their bounded responsibilities,
+submits that inert team and graph, and observes them only after exact acceptance.
+It does not ask the owner to reproduce agent definitions, task records, or start
+each child manually.
 The grant is delegable authority only inside its frozen envelope: a child may
 receive a narrower descendant grant from authority the parent actually holds,
 but no parent can manufacture provider, runtime, task-class, budget, concurrency,

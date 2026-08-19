@@ -20,15 +20,16 @@ than forcing the core to understand every terminal UI.
 
 ## Status
 
-Crewfold has completed M22's domain-oriented durable-agent console. Private XDG
+Crewfold has completed M23's checkout-bound durable-agent workflow. Private XDG
 service defaults, `crewfold service install`, and `crewfold open` lead into one
 embedded React interface organized around domains, attached checkouts,
 objective-backed workstreams, governed shared knowledge, and an arbitrary-depth
 tree of owner-defined durable agents. Selecting an agent opens its real resumable
 provider conversation and readable structured activity. A granted coordinator
-can create durable children, message them, and submit one inert dependency graph;
-only explicit owner acceptance creates the workstream, tasks, dependencies, and
-scheduling intents that the deterministic supervisor may run. The CLI remains
+can message continuing domain staff and submit one inert proposal containing a
+complete new/existing team hierarchy and dependency graph; only explicit owner
+acceptance creates and places the proposed team with the workstream, tasks,
+dependencies, and scheduling intents that the deterministic supervisor may run. The CLI remains
 the typed automation/recovery/administration surface; the TUI is an operational
 fallback; Herdr is the normal interactive runtime host, managed as a companion
 user service when installed. Direct execution remains an explicit advanced

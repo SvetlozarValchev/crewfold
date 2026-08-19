@@ -1534,10 +1534,12 @@ M23 replaces its resource-neutral workstream and status-only successor context.
 2. Give domain-level durable conversations bounded read-only observation across
    domain resources; give workstream agents their primary checkout as default
    context without granting write authority.
-3. Extend inert work proposals with exact checkout binding and agent-placement
-   effects. Acceptance atomically creates the objective, binds the checkout,
-   places agents, creates tasks/dependencies/intents, and records the complete
-   effect set.
+3. Extend inert work proposals with exact checkout binding, complete proposed
+   team definitions/hierarchy, exact references for reused domain staff, and
+   agent-placement effects. Before acceptance none of the proposed team exists.
+   Acceptance atomically creates and places the team, creates the objective,
+   binds the checkout, creates tasks/dependencies/intents, and records the
+   complete effect set.
 4. Extend each dependency with `completion`, `handoff`, or
    `handoff_with_evidence` delivery. Gate readiness on the stored requirement and
    put bounded predecessor output into successor packets.

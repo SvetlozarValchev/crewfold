@@ -8,26 +8,45 @@ const (
 )
 
 type DomainWorkProposalTask struct {
-	Key                     string            `json:"key"`
-	Title                   string            `json:"title"`
-	Description             string            `json:"description"`
-	TaskClass               string            `json:"task_class"`
-	Priority                int               `json:"priority"`
-	Budget                  Budget            `json:"budget"`
-	LaunchProfileID         string            `json:"launch_profile_id"`
-	AgentID                 string            `json:"agent_id"`
-	AgentMembershipRevision int64             `json:"agent_membership_revision"`
-	DependsOn               []string          `json:"depends_on"`
-	DependencyDelivery      map[string]string `json:"dependency_delivery"`
+	Key                string            `json:"key"`
+	Title              string            `json:"title"`
+	Description        string            `json:"description"`
+	TaskClass          string            `json:"task_class"`
+	Priority           int               `json:"priority"`
+	Budget             Budget            `json:"budget"`
+	AssigneeKey        string            `json:"assignee_key"`
+	DependsOn          []string          `json:"depends_on"`
+	DependencyDelivery map[string]string `json:"dependency_delivery"`
+}
+
+// DomainWorkProposalAgent is an inert logical team member. Existing agents
+// carry exact canonical references; new agents carry their complete proposed
+// definition and execution allocation. No new agent exists until acceptance.
+type DomainWorkProposalAgent struct {
+	Key                        string `json:"key"`
+	ExistingAgentID            string `json:"existing_agent_id,omitempty"`
+	ExistingMembershipRevision int64  `json:"existing_membership_revision,omitempty"`
+	ExistingLaunchProfileID    string `json:"existing_launch_profile_id,omitempty"`
+	Name                       string `json:"name,omitempty"`
+	Role                       string `json:"role,omitempty"`
+	ParentKey                  string `json:"parent_key,omitempty"`
+	OperatingCharter           string `json:"operating_charter,omitempty"`
+	DelegationPolicy           string `json:"delegation_policy,omitempty"`
+	Provider                   string `json:"provider,omitempty"`
+	Runtime                    string `json:"runtime,omitempty"`
+	MaxConcurrency             int    `json:"max_concurrency,omitempty"`
+	TaskClass                  string `json:"task_class,omitempty"`
+	Budget                     Budget `json:"budget"`
 }
 
 type DomainWorkProposalContent struct {
-	ObjectiveTitle          string                   `json:"objective_title"`
-	ObjectiveBudget         Budget                   `json:"objective_budget"`
-	PrimaryCheckoutID       string                   `json:"primary_checkout_id"`
-	PrimaryCheckoutRevision int64                    `json:"primary_checkout_revision"`
-	ReferenceCheckoutIDs    []string                 `json:"reference_checkout_ids"`
-	Tasks                   []DomainWorkProposalTask `json:"tasks"`
+	ObjectiveTitle          string                    `json:"objective_title"`
+	ObjectiveBudget         Budget                    `json:"objective_budget"`
+	PrimaryCheckoutID       string                    `json:"primary_checkout_id"`
+	PrimaryCheckoutRevision int64                     `json:"primary_checkout_revision"`
+	ReferenceCheckoutIDs    []string                  `json:"reference_checkout_ids"`
+	Agents                  []DomainWorkProposalAgent `json:"agents"`
+	Tasks                   []DomainWorkProposalTask  `json:"tasks"`
 }
 
 type DomainWorkProposal struct {
@@ -54,6 +73,7 @@ type DomainWorkProposal struct {
 }
 
 type DomainWorkProposalEffect struct {
+	AgentKey      string `json:"agent_key,omitempty"`
 	TaskKey       string `json:"task_key,omitempty"`
 	EntityType    string `json:"entity_type"`
 	EntityID      string `json:"entity_id"`

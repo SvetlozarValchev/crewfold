@@ -120,7 +120,16 @@ JOIN domain_agent_memberships child
   ON child.project_id=allocation.project_id AND child.agent_id=allocation.child_agent_id
 JOIN agents child_agent ON child_agent.id=allocation.child_agent_id
 WHERE allocation.project_id<>grant.project_id OR allocation.parent_agent_id<>grant.manager_agent_id
-   OR child.parent_agent_id<>allocation.parent_agent_id
+   OR child.agent_id NOT IN (
+     WITH RECURSIVE descendants(agent_id) AS (
+       SELECT direct.agent_id FROM domain_agent_memberships direct
+       WHERE direct.project_id=allocation.project_id AND direct.parent_agent_id=allocation.parent_agent_id AND direct.status='active'
+       UNION ALL
+       SELECT nested.agent_id FROM domain_agent_memberships nested
+       JOIN descendants ancestor ON nested.parent_agent_id=ancestor.agent_id
+       WHERE nested.project_id=allocation.project_id AND nested.status='active'
+     ) SELECT agent_id FROM descendants
+   )
    OR child_agent.provider<>allocation.provider OR child_agent.runtime<>allocation.runtime
 UNION ALL
 SELECT 'task:'||task.id FROM tasks task JOIN projects project ON project.id=task.project_id

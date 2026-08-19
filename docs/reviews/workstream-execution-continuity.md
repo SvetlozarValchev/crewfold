@@ -17,11 +17,12 @@ outputs required by every successor. Separate provider processes reuse that
 existing filesystem; Crewfold does not silently clone, bootstrap, install, or
 clean it.
 
-A coordinator may create durable specialists first and then submit one inert
-proposal that freezes the checkout, its revision, exact agent memberships and
-launch profiles, tasks, dependencies, delivery requirements, and scheduling
-intents. Owner acceptance revalidates and publishes that complete set in one
-transaction. Conversation text is still not authority.
+A coordinator submits one inert proposal that freezes the checkout, complete new
+team definitions/hierarchy, exact existing-agent revisions, launch profiles,
+tasks, dependencies, delivery requirements, and scheduling intents. Proposed new
+specialists do not exist before acceptance. Owner acceptance revalidates and
+publishes the team and graph together in one transaction. Conversation text is
+still not authority.
 
 Dependencies now distinguish completion, handoff, and handoff-with-evidence.
 Successors remain unscheduled until the required output exists. Their immutable
@@ -42,9 +43,9 @@ by that same durable identity.
 The opt-in browser scenario used a fresh committed repository, a private daemon,
 the installed Codex subscription login, Herdr, and headless Chrome. The owner
 created two domain-level agents and granted one coordinator. Through its real
-Codex thread, the coordinator created four durable specialists, sent its peer one
-durable message, and submitted one exact inert work graph. Explicit browser
-acceptance then ran:
+Codex thread, the coordinator proposed four inert durable specialists with one
+exact work graph and sent its peer one durable message. Explicit browser
+acceptance created and placed that team, then ran:
 
 1. `m23-implementer` created `M23_DELIVERY.txt` in the existing checkout;
 2. `m23-reviewer` independently inspected the exact predecessor handoff and
@@ -62,7 +63,7 @@ durable inbox delivery. Browser reload, native Codex host compaction, and handof
 to a fresh epoch preserved canonical identity and history.
 
 - Scenario: `test/scenarios/domain-agent-live/run.sh`
-- Command: `CREWFOLD_RUN_LIVE_CODEX=1 CREWFOLD_SCREENSHOT_DIR=/tmp/crewfold-m23-live-final ./test/scenarios/domain-agent-live/run.sh`
+- Command: `CREWFOLD_RUN_LIVE_CODEX=1 CREWFOLD_SCREENSHOT_DIR=/tmp/crewfold-m23-inert-team ./test/scenarios/domain-agent-live/run.sh`
 - Result: `Subscription-backed M23 checkout-bound durable-agent browser acceptance: PASS`
 
 ## Accepted boundary
@@ -83,13 +84,13 @@ to a fresh epoch preserved canonical identity and history.
 
 | Suite | Result |
 | --- | --- |
-| Full Go tree | passed; daemon `71.353s`, loadtest `346.442s`, recovery `47.801s`, Store `128.723s`, all packages green |
-| Full race tree (`-p=1 -timeout 20m`) | passed; daemon `362.003s`, recovery `422.592s`, Store `957.499s`, all packages green |
-| Generated database and web assets | passed; embedded web source hash `e5899f699c37e529b024da851430a7d6b1e7c49ac73efbd0d80f73ca0b91e604` |
+| Full Go tree | passed; daemon `58.690s`, loadtest `294.531s`, recovery `32.071s`, Store `105.697s`, all packages green |
+| Proposal/team race gate | passed; Store `3.913s`, daemon `3.499s`, covering inert submission, atomic acceptance, strict tool schema, and checkout-bound durable-session context |
+| Generated database and web assets | passed; embedded web source hash `2983e866187caa0a7025fde403e928b47a3aa6ed6ea7597995403571425b8b46` |
 | Static analysis and whitespace | `go vet ./...`, formatting, and `git diff --check` passed |
 | Provider-free browser | authenticated local workbench browser acceptance passed after the M23 UI consolidation |
 | Public black-box matrix | every scenario in `scripts/check.sh`, reproducible Linux package, and personal-beta recovery/load passed |
-| Real Codex/Herdr browser | passed twice during stabilization and once against the final reviewer-activity assertion |
+| Real Codex/Herdr browser | passed against the final inert-team-before-acceptance and reviewer-activity assertions |
 
 The unchanged M20 personal-100 profile passed in the full Go tree and again in
 the public personal-beta scenario. M23 does not loosen its frozen counts or
