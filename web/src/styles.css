@@ -201,6 +201,7 @@
 .m22-session-loading { display: flex; align-items: center; gap: 8px; }
 .m22-session-error { padding: 8px 10px; border-left: 2px solid #d16969; color: #e7a6a6 !important; background: #2b2020; }
 .m22-thread { min-height: 280px; max-height: min(62vh, 760px); overflow-y: auto; border: 1px solid var(--m22-line); border-top: 0; }
+.m22-thread > .m22-empty { margin: 0; padding: 13px; }
 .m24-agent-timeline { border-inline: 1px solid var(--m22-line); }
 .m24-agent-records { margin: 12px 0; border: 1px solid var(--m22-line); background: #202020; }
 .m24-agent-records > header { padding: 11px 13px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid #343434; }
