@@ -51,8 +51,12 @@ func (w *workbenchServer) handleWorkbenchRunRetry(response http.ResponseWriter, 
 		w.writeStoreError(response, &store.Error{Code: store.CodeRunConflict, Message: "run or task revision changed before retry"})
 		return
 	}
-	if prior.Run.Status != domain.RunStartFailed && prior.Run.Status != domain.RunStopped && (prior.Run.Status != domain.RunReview || prior.Task.Status != domain.TaskChangesRequested) {
-		w.writeStoreError(response, &store.Error{Code: store.CodeRunConflict, Message: "only an exact start_failed or stopped run, or a review with requested changes, can be retried from the workbench"})
+	if prior.Run.Status != domain.RunStartFailed && prior.Run.Status != domain.RunStopped && prior.Run.Status != domain.RunFailed && (prior.Run.Status != domain.RunReview || prior.Task.Status != domain.TaskChangesRequested) {
+		w.writeStoreError(response, &store.Error{Code: store.CodeRunConflict, Message: "only an exact failed, start_failed, or stopped run, or a review with requested changes, can be retried from the workbench"})
+		return
+	}
+	if prior.Run.Status == domain.RunFailed && prior.Task.Status != domain.TaskFailed {
+		w.writeStoreError(response, &store.Error{Code: store.CodeRunConflict, Message: "terminal run failure no longer matches the failed task"})
 		return
 	}
 	if prior.Run.Status == domain.RunStopped && (prior.Task.Status != domain.TaskAssigned || prior.Task.AssignmentID == "") {
@@ -103,7 +107,13 @@ func (w *workbenchServer) handleWorkbenchRunRetry(response http.ResponseWriter, 
 	digest := sha256.Sum256([]byte(params.IdempotencyKey))
 	correlationID := "web-retry-" + hex.EncodeToString(digest[:12])
 	var result store.RunMutationResult
-	if prior.Run.Status == domain.RunReview {
+	if prior.Run.Status == domain.RunFailed {
+		result, err = w.daemon.store.RetryFailedRun(request.Context(), store.RetryFailedRunCommand{
+			WorkspaceIdentifier: params.Workspace, PriorRunID: prior.Run.ID,
+			ExpectedRunRevision: params.ExpectedRunRevision, ExpectedTaskRevision: params.ExpectedTaskRevision,
+			IdempotencyKey: params.IdempotencyKey, CorrelationID: correlationID,
+		})
+	} else if prior.Run.Status == domain.RunReview {
 		result, err = w.daemon.store.RetryReviewedRun(request.Context(), store.RetryReviewedRunCommand{
 			WorkspaceIdentifier: params.Workspace, PriorRunID: prior.Run.ID,
 			ExpectedRunRevision: params.ExpectedRunRevision, ExpectedTaskRevision: params.ExpectedTaskRevision,

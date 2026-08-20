@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,6 +79,11 @@ func runStartRequestHash(command CreateRunCommand) (string, error) {
 		payload["reviewed_prior_run_id"] = command.reviewedPriorRunID
 		payload["expected_reviewed_run_revision"] = command.expectedReviewedRunRevision
 	}
+	if command.failedPriorRunID != "" {
+		payload["failed_prior_run_id"] = command.failedPriorRunID
+		payload["expected_failed_run_revision"] = command.expectedFailedRunRevision
+		payload["failed_launch_profile_id"] = command.failedLaunchProfileID
+	}
 	return hashCommand("run.start", payload)
 }
 
@@ -102,6 +109,49 @@ func (s *Store) RetryReviewedRun(ctx context.Context, command RetryReviewedRunCo
 		ExpectedTaskRevision: command.ExpectedTaskRevision,
 		IdempotencyKey:       command.IdempotencyKey, CorrelationID: command.CorrelationID,
 		reviewedPriorRunID: command.PriorRunID, expectedReviewedRunRevision: command.ExpectedRunRevision,
+	})
+}
+
+// RetryFailedRun creates a fresh owner-directed attempt after a terminal
+// provider/runtime failure. The failed run stays immutable. The replacement
+// derives its agent, checkout, scenario, lease and capability lifetime from
+// the exact launch profile that produced the failed attempt.
+func (s *Store) RetryFailedRun(ctx context.Context, command RetryFailedRunCommand) (RunMutationResult, error) {
+	command.WorkspaceIdentifier = strings.TrimSpace(command.WorkspaceIdentifier)
+	command.PriorRunID = strings.TrimSpace(command.PriorRunID)
+	command.IdempotencyKey = strings.TrimSpace(command.IdempotencyKey)
+	command.CorrelationID = strings.TrimSpace(command.CorrelationID)
+	if command.WorkspaceIdentifier == "" || command.PriorRunID == "" || command.ExpectedRunRevision < 1 || command.ExpectedTaskRevision < 1 {
+		return RunMutationResult{}, &Error{Code: CodeInvalidRun, Message: "failed retry requires workspace, prior run, and exact run and task revisions"}
+	}
+	workspace, err := s.Workspace(ctx, command.WorkspaceIdentifier)
+	if err != nil {
+		return RunMutationResult{}, err
+	}
+	prior, err := queryRun(ctx, s.db, workspace.ID, command.PriorRunID)
+	if err != nil {
+		return RunMutationResult{}, err
+	}
+	var profileID string
+	if err := s.db.QueryRowContext(ctx, `SELECT launch_profile_id FROM (
+  SELECT launch_profile_id FROM run_scheduling_receipts WHERE run_id=?
+  UNION ALL SELECT launch_profile_id FROM run_retry_receipts WHERE run_id=?
+) LIMIT 1`, prior.ID, prior.ID).Scan(&profileID); err != nil {
+		return RunMutationResult{}, &Error{Code: CodeRunConflict, Message: "failed run has no exact launch profile receipt", Cause: err}
+	}
+	profile, err := queryLaunchProfile(ctx, s.db, workspace.ID, profileID)
+	if err != nil {
+		return RunMutationResult{}, err
+	}
+	return s.CreateRun(ctx, CreateRunCommand{
+		WorkspaceIdentifier: command.WorkspaceIdentifier,
+		TaskID:              prior.TaskID, CheckoutIdentifier: prior.CheckoutID,
+		Runtime: prior.Runtime, Provider: prior.Provider, Scenario: profile.Scenario,
+		ExpectedTaskRevision: command.ExpectedTaskRevision,
+		CapabilityTTL:        time.Duration(profile.CapabilityTTLSeconds) * time.Second,
+		IdempotencyKey:       command.IdempotencyKey, CorrelationID: command.CorrelationID,
+		failedPriorRunID: command.PriorRunID, expectedFailedRunRevision: command.ExpectedRunRevision,
+		failedLaunchProfileID: profile.ID,
 	})
 }
 
@@ -135,6 +185,8 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	contextPacketID := strings.TrimSpace(command.ContextPacketID)
 	checkWatchGrantID := strings.TrimSpace(command.CheckWatchGrantID)
 	command.reviewedPriorRunID = strings.TrimSpace(command.reviewedPriorRunID)
+	command.failedPriorRunID = strings.TrimSpace(command.failedPriorRunID)
+	command.failedLaunchProfileID = strings.TrimSpace(command.failedLaunchProfileID)
 	capabilityTTL := command.CapabilityTTL
 	if capabilityTTL == 0 {
 		capabilityTTL = defaultRunCapabilityTTL
@@ -142,7 +194,9 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	if workspaceIdentifier == "" || taskID == "" || runtimeName == "" || providerName == "" || command.ExpectedTaskRevision < 1 || !validStoredScenario(command.Scenario) {
 		return RunMutationResult{}, &Error{Code: CodeInvalidRun, Message: "run start requires workspace, task, runtime, provider, a valid scenario, and expected task revision"}
 	}
-	if (checkWatchGrantID == "") != (command.ExpectedCheckWatchGrantRevision == 0) || checkWatchGrantID != "" && contextPacketID != "" || command.reviewedPriorRunID != "" && (contextPacketID != "" || checkWatchGrantID != "" || command.expectedReviewedRunRevision < 1) {
+	if (checkWatchGrantID == "") != (command.ExpectedCheckWatchGrantRevision == 0) || checkWatchGrantID != "" && contextPacketID != "" ||
+		command.reviewedPriorRunID != "" && (contextPacketID != "" || checkWatchGrantID != "" || command.expectedReviewedRunRevision < 1 || command.failedPriorRunID != "") ||
+		command.failedPriorRunID != "" && (contextPacketID != "" || checkWatchGrantID != "" || command.expectedFailedRunRevision < 1 || command.failedLaunchProfileID == "" || command.reviewedPriorRunID != "") {
 		return RunMutationResult{}, &Error{Code: CodeInvalidRun, Message: "run start requires both-or-neither exact check-watch grant fields and forbids combining them with a supplied context packet"}
 	}
 	if capabilityTTL < time.Second || capabilityTTL > maximumRunCapabilityTTL {
@@ -207,7 +261,60 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 	if !errors.Is(err, sql.ErrNoRows) {
 		return RunMutationResult{}, storageFailure("check task coordination hold", err)
 	}
-	if command.reviewedPriorRunID == "" {
+	if command.failedPriorRunID != "" {
+		prior, err := queryRun(ctx, tx, workspace.ID, command.failedPriorRunID)
+		if err != nil {
+			return RunMutationResult{}, err
+		}
+		var latestRunID, profileID string
+		if err := tx.QueryRowContext(ctx, "SELECT id FROM runs WHERE task_id=? ORDER BY created_at DESC,id DESC LIMIT 1", task.ID).Scan(&latestRunID); err != nil {
+			return RunMutationResult{}, storageFailure("read latest failed run", err)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT launch_profile_id FROM (
+  SELECT launch_profile_id FROM run_scheduling_receipts WHERE run_id=?
+  UNION ALL SELECT launch_profile_id FROM run_retry_receipts WHERE run_id=?
+) LIMIT 1`, prior.ID, prior.ID).Scan(&profileID); err != nil {
+			return RunMutationResult{}, &Error{Code: CodeRunConflict, Message: "failed run has no exact launch profile receipt", Cause: err}
+		}
+		profile, err := queryLaunchProfile(ctx, tx, workspace.ID, profileID)
+		if err != nil {
+			return RunMutationResult{}, err
+		}
+		scenarioJSON, err := json.Marshal(command.Scenario)
+		if err != nil {
+			return RunMutationResult{}, storageFailure("encode failed retry scenario", err)
+		}
+		scenarioDigest := sha256.Sum256(scenarioJSON)
+		if prior.Revision != command.expectedFailedRunRevision || prior.Status != domain.RunFailed || prior.TaskID != task.ID || latestRunID != prior.ID ||
+			task.Status != domain.TaskFailed || task.AssignmentID != "" || prior.AgentID == "" || prior.CheckoutID != checkoutIdentifier ||
+			prior.Runtime != runtimeName || prior.Provider != providerName || profile.ID != command.failedLaunchProfileID ||
+			profile.Status != domain.LaunchProfileActive || profile.ManagerGrantID != "" || profile.ProjectID != task.ProjectID || profile.AgentID != prior.AgentID ||
+			profile.Runtime != prior.Runtime || profile.Provider != prior.Provider || profile.CheckoutID != "" && profile.CheckoutID != prior.CheckoutID ||
+			profile.ScenarioSHA256 != hex.EncodeToString(scenarioDigest[:]) {
+			return RunMutationResult{}, &Error{Code: CodeRunConflict, Message: "failed run, task, or exact launch profile changed before retry"}
+		}
+		assignmentID, err := randomID("asg_")
+		if err != nil {
+			return RunMutationResult{}, storageFailure("generate failed retry assignment", err)
+		}
+		now := s.nowText()
+		leaseExpiresAt := s.clock().UTC().Add(time.Duration(profile.AssignmentLeaseSeconds) * time.Second).Format(time.RFC3339Nano)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO task_assignments(id,task_id,agent_id,status,lease_expires_at,revision,created_at,updated_at,created_by,updated_by)
+VALUES (?,?,?,'active',?,1,?,?,?,?)`, assignmentID, task.ID, prior.AgentID, leaseExpiresAt, now, now, localOwnerActorID, localOwnerActorID); err != nil {
+			return RunMutationResult{}, storageFailure("insert failed retry assignment", err)
+		}
+		task.Status, task.BlockedReason, task.AssignmentID, task.AssignedAgentID, task.AssignmentLeaseExpiresAt = domain.TaskAssigned, "", assignmentID, prior.AgentID, leaseExpiresAt
+		task.Revision++
+		if err := updateTaskState(ctx, tx, task, now); err != nil {
+			return RunMutationResult{}, err
+		}
+		if _, err := appendEvent(ctx, tx, workspace.ID, "task", task.ID, task.Revision, taskAssigned, correlationID, now, map[string]any{
+			"assignment_id": assignmentID, "agent_id": prior.AgentID, "lease_expires_at": leaseExpiresAt,
+			"prior_run_id": prior.ID, "launch_profile_id": profile.ID, "reason": "owner retried terminal provider or runtime failure",
+		}); err != nil {
+			return RunMutationResult{}, err
+		}
+	} else if command.reviewedPriorRunID == "" {
 		if task.Status != domain.TaskAssigned || task.AssignmentID == "" {
 			return RunMutationResult{}, &Error{Code: CodeRunConflict, Message: "run start requires a task with an active assignment"}
 		}
@@ -346,6 +453,9 @@ func (s *Store) CreateRun(ctx context.Context, command CreateRunCommand) (RunMut
 		fmt.Sprintf("checkout %s is available with %s write policy", checkout.ID, checkout.WriteMode),
 		fmt.Sprintf("agent concurrency %d/%d before placement", activeForAgent, agent.MaxConcurrency),
 		fmt.Sprintf("context packet %s fixes task, role, checkout, and reporting policy", contextPacketID),
+	}
+	if command.failedPriorRunID != "" {
+		reasons = append(reasons, fmt.Sprintf("owner retry preserves failed run %s and launch profile %s", command.failedPriorRunID, command.failedLaunchProfileID))
 	}
 	scenarioJSON, err := json.Marshal(command.Scenario)
 	if err != nil {

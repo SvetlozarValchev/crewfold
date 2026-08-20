@@ -771,6 +771,9 @@ type CreateRunCommand struct {
 	CorrelationID                   string
 	reviewedPriorRunID              string
 	expectedReviewedRunRevision     int64
+	failedPriorRunID                string
+	expectedFailedRunRevision       int64
+	failedLaunchProfileID           string
 }
 
 type RetryReviewedRunCommand struct {
@@ -779,6 +782,15 @@ type RetryReviewedRunCommand struct {
 	ExpectedRunRevision  int64
 	ExpectedTaskRevision int64
 	Scenario             domain.FakeScenario
+	IdempotencyKey       string
+	CorrelationID        string
+}
+
+type RetryFailedRunCommand struct {
+	WorkspaceIdentifier  string
+	PriorRunID           string
+	ExpectedRunRevision  int64
+	ExpectedTaskRevision int64
 	IdempotencyKey       string
 	CorrelationID        string
 }

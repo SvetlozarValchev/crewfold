@@ -100,6 +100,13 @@ or network policy changed, the owner first stops that authority holder; once the
 run is durably stopped, `Start fresh run` launches the retained assignment under
 the current policy. Crewfold never silently swaps a live sandbox.
 
+A terminal provider/runtime failure remains immutable history. After repairing
+the provider condition—for example, signing into another subscription account—
+the failed-run inspector offers `Retry now`. That explicit owner action creates
+a fresh assignment and run for the same durable agent, workstream checkout, and
+accepted launch profile. It does not rewrite the failure, wait for a provider's
+diagnostic date, or silently retry in the background.
+
 ## Operator dashboard
 
 ```sh
