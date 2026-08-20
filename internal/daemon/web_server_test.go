@@ -179,6 +179,9 @@ func TestM21WorkbenchRPCRequiresExactCSRFAndExposesOnlyOwnerMethods(t *testing.T
 	if !workbenchMethodAllowed(localapi.MethodLaunchProfileList) || !workbenchMethodAllowed(localapi.MethodProposalList) || !workbenchMethodAllowed(localapi.MethodProposalInspect) || !workbenchMethodAllowed(localapi.MethodProposalAccept) || !workbenchMethodAllowed(localapi.MethodProposalReject) {
 		t.Fatal("owner workbench must expose launch profiles and the exact manager-proposal review boundary")
 	}
+	if !workbenchMethodAllowed(localapi.MethodContextExplain) {
+		t.Fatal("owner workbench must expose the read-only frozen context explanation used by the run inspector")
+	}
 	for _, method := range []string{localapi.MethodManagedServiceStart, localapi.MethodManagedServiceStop, localapi.MethodManagedServiceRestart, localapi.MethodManagedServiceResolveUnknown, localapi.MethodManagedServiceLogs} {
 		if !workbenchMethodAllowed(method) {
 			t.Fatalf("managed process web method %q is unavailable", method)

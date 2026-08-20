@@ -208,6 +208,7 @@ await evaluate(`(() => {
   return Boolean(button);
 })()`);
 await waitFor("document.querySelector('.m22-agent-center') && document.body.innerText.includes('Start this durable agent') && document.body.innerText.includes('start Codex session')", "honest unbound durable session");
+await clickUntil("document.querySelector('.m22-detail-toggle')", "document.querySelector('.m22-context')", "optional agent details rail");
 await clickUntil("document.querySelector('.m22-placement .m22-command')", "document.querySelector('.m22-placement form')", "existing agent placement editor");
 await evaluate(`(() => {
   const form = document.querySelector('.m22-placement form');
@@ -254,6 +255,7 @@ await evaluate(`(() => {
   const button = [...document.querySelectorAll('.m22-agent-row')].find((candidate) => candidate.textContent.includes('moss-reviewer'));
   button?.click(); return Boolean(button);
 })()`);
+await clickUntil("document.querySelector('.m22-detail-toggle')", "document.querySelector('.m22-context')", "reviewer details before retirement");
 await waitFor("document.querySelector('.m22-context h2')?.textContent.includes('moss-reviewer')", "reviewer selection before retirement");
 await waitFor("document.querySelector('.m22-lifecycle-entry button') && !document.querySelector('.m22-lifecycle-entry button').disabled", "fresh reviewer lifecycle control");
 await evaluate("document.querySelector('.m22-lifecycle-entry button').click(); true");
@@ -272,6 +274,7 @@ await waitFor("document.body.innerText.includes('Cancellation is blocked') && do
 await capture("09-workstream-cancel-blocked");
 await evaluate("document.querySelector('.m22-lifecycle-review button[aria-label=\"Close workstream lifecycle\"]').click(); true");
 await evaluate(`(() => { const button = [...document.querySelectorAll('.m22-agent-row')].find((candidate) => candidate.textContent.includes('orchid')); button?.click(); return Boolean(button); })()`);
+await clickUntil("document.querySelector('.m22-detail-toggle')", "document.querySelector('.m22-context')", "agent details before workstream release");
 await clickUntil("document.querySelector('.m22-placement .m22-command')", "document.querySelector('.m22-placement form')", "placement editor for workstream release");
 await evaluate(`(() => {
   const form = document.querySelector('.m22-placement form');
@@ -294,12 +297,11 @@ await capture("10-closed-history");
 await evaluate(`(() => {
   const agent = [...document.querySelectorAll('.m22-agent-row')].find((candidate) => candidate.textContent.includes('orchid'));
   agent?.click();
-  const button = [...document.querySelectorAll('.m22-tabs button')].find((candidate) => candidate.textContent.trim() === 'assignment');
-  setTimeout(() => [...document.querySelectorAll('.m22-tabs button')].find((candidate) => candidate.textContent.trim() === 'assignment')?.click(), 50);
   return Boolean(agent);
 })()`);
-await waitFor("document.body.innerText.includes('No canonical task is assigned to this agent.')", "empty exact assignment");
-await capture("11-agent-assignment");
+await waitFor("![...document.querySelectorAll('.m22-tabs button')].some((candidate) => candidate.textContent.trim() === 'assignment') && ![...document.querySelectorAll('.m22-tabs button')].some((candidate) => candidate.textContent.trim() === 'verification')", "irrelevant empty tabs omitted");
+await clickUntil("document.querySelector('.m22-detail-toggle')", "document.querySelector('.m22-context')", "agent details before narrow-layout proof");
+await capture("11-adaptive-agent-tabs");
 
 await command("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 await evaluate("window.scrollTo(0, 0)");
@@ -315,7 +317,7 @@ const result = await evaluate(`(() => ({
   unlabelledControls: [...document.querySelectorAll('input, textarea, select')].filter((control) => !control.getAttribute('aria-label') && !control.closest('label')).length,
   leakedHandle: ['runtime_handle', 'provider_handle', 'node.key', 'capability/', 'capabilities/'].some((value) => document.documentElement.innerHTML.includes(value)),
   legacyExecutive: document.body.innerText.includes('project-executive'),
-  completedBrowserActions: ['domain-onboarding', 'domain-home', 'durable-agent-selection', 'staffing-refusal', 'agent-retirement', 'workstream-cancellation', 'literal-assignment-view', 'narrow-layout'],
+  completedBrowserActions: ['domain-onboarding', 'domain-home', 'durable-agent-selection', 'staffing-refusal', 'agent-retirement', 'workstream-cancellation', 'adaptive-agent-tabs', 'narrow-layout'],
 }))()`);
 if (result.title !== "Crewfold Workbench") throw new Error(`unexpected title ${result.title}`);
 if (result.domains !== 1 || result.durableAgents !== 1) throw new Error(`unexpected active domain console cardinality: ${JSON.stringify(result)}`);
