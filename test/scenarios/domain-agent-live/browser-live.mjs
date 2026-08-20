@@ -39,6 +39,19 @@ async function waitFor(expression, label, timeout = 300000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (await evaluate(`Boolean(${expression})`)) return;
+    const providerFailure = await evaluate(`(() => {
+      const item = document.querySelector('.m22-thread-item.failed');
+      return item ? item.innerText.trim() : '';
+    })()`);
+    if (providerFailure) {
+      const diagnostics = process.env.CREWFOLD_SCREENSHOT_DIR;
+      if (diagnostics) {
+        fs.mkdirSync(diagnostics, { recursive: true });
+        fs.writeFileSync(path.join(diagnostics, "failure-provider.txt"), String(providerFailure));
+        await capture("failure-provider");
+      }
+      throw new Error(`provider turn failed while waiting for ${label}\n${providerFailure}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   const body = await evaluate("document.body.innerText");
@@ -181,7 +194,7 @@ if (!inertTeamBeforeAcceptance) throw new Error("proposed team became durable be
 await capture("01-orchid-real-session");
 
 await clickText(".m22-domain-row", "m23-live-domain");
-await waitFor("document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Deliver the M23 checkout chain') && document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Proposed team') && document.querySelector('.m22-work-proposals')?.textContent.includes('Conversation alone has changed nothing')", "inert coordinator team and work proposal");
+await waitFor("document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Deliver the M23 checkout chain') && document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Who will do the work') && document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Work plan') && document.querySelector('.m22-work-proposals')?.textContent.includes('Conversation alone has changed nothing')", "inert coordinator team and decision-shaped work proposal");
 await capture("02-pending-exact-work-graph");
 await clickText(".m22-work-proposal button", "accept exact graph");
 await waitFor("[...document.querySelectorAll('.m22-domain-home .m22-block h2')].some((heading) => heading.textContent.trim() === 'active workstreams') && !document.querySelector('.m22-work-proposal.pending') && document.querySelectorAll('.m22-agent-row').length >= 6", "atomically accepted team and workstream graph");

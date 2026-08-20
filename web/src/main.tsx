@@ -717,6 +717,9 @@ function DomainWorkProposalReview({ data, proposal, apiBase, csrf, mutable, relo
   const checkout = data.checkouts.find((candidate) => candidate.id === proposal.content.primary_checkout_id);
   const taskByKey = new Map(proposal.content.tasks.map((task) => [task.key, task]));
   const agentByKey = new Map(proposal.content.agents.map((agent) => [agent.key, agent]));
+  const newAgentCount = proposal.content.agents.filter((agent) => !agent.existing_agent_id).length;
+  const dependencyCount = proposal.content.tasks.reduce((count, task) => count + (task.depends_on ?? []).length, 0);
+  const summaryLead = proposal.summary.match(/^[\s\S]*?[.!?](?:\s|$)/)?.[0]?.trim() || proposal.summary;
   const decide = async (accept: boolean) => {
     if (!data.workspace || proposal.status !== "pending") return;
     setBusy(accept ? "accept" : "reject"); setError("");
@@ -731,17 +734,20 @@ function DomainWorkProposalReview({ data, proposal, apiBase, csrf, mutable, relo
     finally { setBusy(""); }
   };
   return <article className={`m22-work-proposal ${proposal.status}`}>
-    <header><div><p className="m22-kicker">coordinator proposal · frozen at event {proposal.as_of_event_sequence}</p><h3>{proposal.content.objective_title}</h3><p>{proposal.summary}</p></div><StatusPill value={proposal.status} /></header>
-    <dl className="m22-proposal-facts"><div><dt>proposed by</dt><dd>{source?.name ?? proposal.source_agent_id}</dd></div><div><dt>primary checkout</dt><dd>{checkout?.path ?? proposal.content.primary_checkout_id} · r{proposal.content.primary_checkout_revision}</dd></div><div><dt>owner effect</dt><dd>1 workstream · {proposal.content.agents.filter((agent) => !agent.existing_agent_id).length} new agents · {proposal.content.agents.length} placed agents · {proposal.content.tasks.length} tasks · {proposal.content.tasks.reduce((count, task) => count + (task.depends_on ?? []).length, 0)} dependencies</dd></div><div><dt>objective budget</dt><dd>{staffingBudgetLabel(proposal.content.objective_budget.token_limit, "tokens")} · {staffingBudgetLabel(proposal.content.objective_budget.time_seconds, "seconds")}</dd></div></dl>
-    <section className="m22-proposal-team"><h4>Proposed team — inert until acceptance</h4>{proposal.content.agents.map((agent) => <div key={agent.key}><strong>{agent.name ?? data.agents.find((candidate) => candidate.id === agent.existing_agent_id)?.name ?? agent.key}</strong><span>{agent.role ?? "existing durable agent"}{agent.parent_key ? ` · reports to ${agent.parent_key}` : " · reports to coordinator"}</span></div>)}</section>
-    <ol className="m22-proposal-tasks">{proposal.content.tasks.map((task) => {
-      const proposedAssignee = agentByKey.get(task.assignee_key);
-      const assigneeName = proposedAssignee?.name ?? data.agents.find((candidate) => candidate.id === proposedAssignee?.existing_agent_id)?.name ?? task.assignee_key;
-      const dependencies = task.depends_on ?? [];
-      const delivery = task.dependency_delivery ?? {};
-      return <li key={task.key}><div><strong>{task.title}</strong><small>{task.task_class.replaceAll("-", " ")} · priority {task.priority} · assign to {assigneeName}</small><p>{task.description}</p>{dependencies.length > 0 && <span>after {dependencies.map((key) => `${taskByKey.get(key)?.title ?? key} (${(delivery[key] ?? "completion").replaceAll("_", " ")})`).join(", ")}</span>}</div><code>{task.key}</code></li>;
-    })}</ol>
-    <div className="m22-exact-effect"><ShieldCheck size={15} /><span><strong>Exact effect</strong> Accepting atomically creates the proposed durable agents and profiles, binds the workstream to the checkout, places the whole team, and creates the tasks, dependencies, and scheduling intents shown above. Before acceptance none of the proposed new agents exist.</span></div>
+    <header><div><p className="m22-kicker">review proposed work</p><h3>{proposal.content.objective_title}</h3><p className="m22-proposal-summary">{summaryLead}</p>{summaryLead !== proposal.summary && <details className="m22-proposal-brief"><summary>Read the complete proposal brief</summary><p>{proposal.summary}</p></details>}</div><StatusPill value={proposal.status} /></header>
+    <div className="m22-proposal-impact" aria-label="Proposal effect summary"><span><strong>1</strong> workstream</span><span><strong>{newAgentCount}</strong> new agent{newAgentCount === 1 ? "" : "s"}</span><span><strong>{proposal.content.tasks.length}</strong> task{proposal.content.tasks.length === 1 ? "" : "s"}</span><span><strong>{dependencyCount}</strong> dependenc{dependencyCount === 1 ? "y" : "ies"}</span></div>
+    <div className="m22-proposal-overview">
+      <section className="m22-proposal-team"><h4>Who will do the work</h4><p>These durable coworkers are created or placed only after acceptance.</p>{proposal.content.agents.map((agent) => <div key={agent.key}><strong>{agent.name ?? data.agents.find((candidate) => candidate.id === agent.existing_agent_id)?.name ?? agent.key}</strong><span>{agent.role ?? "existing durable agent"}{agent.parent_key ? ` · reports to ${agent.parent_key}` : " · reports to coordinator"}</span></div>)}</section>
+      <section className="m22-proposal-plan"><h4>Work plan</h4><p>Tasks run in this dependency order.</p><ol className="m22-proposal-tasks">{proposal.content.tasks.map((task, index) => {
+        const proposedAssignee = agentByKey.get(task.assignee_key);
+        const assigneeName = proposedAssignee?.name ?? data.agents.find((candidate) => candidate.id === proposedAssignee?.existing_agent_id)?.name ?? task.assignee_key;
+        const dependencies = task.depends_on ?? [];
+        const delivery = task.dependency_delivery ?? {};
+        return <li key={task.key}><span className="m22-proposal-step">{index + 1}</span><div><strong>{task.title}</strong><small>{task.task_class.replaceAll("-", " ")} · {assigneeName}</small>{dependencies.length > 0 && <span>After {dependencies.map((key) => taskByKey.get(key)?.title ?? key).join(", ")}</span>}<details><summary>View exact task contract</summary><p>{task.description}</p><footer>priority {task.priority} · {task.key}{dependencies.length > 0 ? ` · delivery: ${dependencies.map((key) => (delivery[key] ?? "completion").replaceAll("_", " ")).join(", ")}` : ""}</footer></details></div></li>;
+      })}</ol></section>
+    </div>
+    <details className="m22-proposal-metadata"><summary>Proposal source, checkout, and budget</summary><dl className="m22-proposal-facts"><div><dt>proposed by</dt><dd>{source?.name ?? proposal.source_agent_id}</dd></div><div><dt>primary checkout</dt><dd>{checkout?.path ?? proposal.content.primary_checkout_id} · r{proposal.content.primary_checkout_revision}</dd></div><div><dt>frozen state</dt><dd>event {proposal.as_of_event_sequence} · proposal r{proposal.revision}</dd></div><div><dt>objective budget</dt><dd>{staffingBudgetLabel(proposal.content.objective_budget.token_limit, "tokens")} · {staffingBudgetLabel(proposal.content.objective_budget.time_seconds, "seconds")}</dd></div></dl></details>
+    <div className="m22-exact-effect"><ShieldCheck size={15} /><span><strong>What accepting does</strong> Creates this team and workstream, binds them to the checkout, then schedules {proposal.content.tasks.length} task{proposal.content.tasks.length === 1 ? "" : "s"} in the order shown. Nothing above exists or runs before acceptance.</span></div>
     {proposal.status === "pending" ? <><label className="m22-proposal-note"><span>owner decision note</span><input value={note} maxLength={2048} onChange={(event) => setNote(event.target.value)} placeholder="Optional rationale recorded with the exact decision" /></label><div className="m22-proposal-actions"><button disabled={!mutable || Boolean(busy)} onClick={() => void decide(false)}>{busy === "reject" ? <LoaderCircle className="spin" size={14} /> : <X size={14} />} reject</button><button className="m22-send" disabled={!mutable || Boolean(busy)} onClick={() => void decide(true)}>{busy === "accept" ? <LoaderCircle className="spin" size={14} /> : <Play size={14} />} accept exact graph</button></div></> : <footer>decided {displayTime(proposal.decided_at)} · {proposal.decision_note || "No decision note recorded."}</footer>}
     {error && <p className="m22-session-error" role="alert">{error}</p>}
   </article>;
