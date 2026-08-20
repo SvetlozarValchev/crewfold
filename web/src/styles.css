@@ -276,6 +276,17 @@
 .m22-thread-item.fileChange { border-left: 2px solid var(--m22-green); }
 .m22-thread-item.error { border-left: 2px solid #d16969; background: #2b2020; }
 .m22-thread-item.error > span, .m22-thread-item.error > p { color: #e7a6a6; }
+.m22-tool-retry { margin: 4px 12px 4px 74px; border-left: 2px solid #777; background: #1d1d1d; }
+.m22-tool-retry.revising { border-left-color: var(--m22-amber); background: #242117; }
+.m22-tool-retry.recovered { border-left-color: #66716d; }
+.m22-tool-retry > summary { min-height: 36px; padding: 8px 10px; display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.m22-tool-retry > summary::-webkit-details-marker { display: none; }
+.m22-tool-retry > summary::before { content: "▸"; color: var(--m22-muted); }
+.m22-tool-retry[open] > summary::before { content: "▾"; }
+.m22-tool-retry > summary > span { color: #c8ccca; font-size: 12px; }
+.m22-tool-retry > summary > small { margin-left: auto; color: var(--m22-muted); font-size: 10px; }
+.m22-tool-retry > p { margin: 0; padding: 8px 12px 3px 30px; border-top: 1px solid #343434; overflow-wrap: anywhere; color: #c4aaa6; font-size: 12px; line-height: 1.55; }
+.m22-tool-retry > small { display: block; padding: 2px 12px 10px 30px; color: var(--m22-faint); font-size: 10px; }
 .m22-turn-waiting { margin: 8px 10px 8px 82px; display: flex; align-items: center; gap: 7px; color: var(--m22-muted); font-size: 10px; }
 .m22-activity-group { padding: 11px 10px 11px 74px; color: var(--m22-text); background: #1b1b1b; }
 .m22-activity-group > header { display: flex; align-items: center; gap: 8px; margin-left: -62px; color: #dedede; }
@@ -323,6 +334,21 @@
 .m22-composer button.m22-send { color: #191919; border-color: var(--m22-green); background: var(--m22-green); font-weight: 700; }
 .m22-composer button:disabled, .m22-command:disabled { opacity: .45; cursor: not-allowed; }
 .m22-session-lifecycle { margin-top: 10px; border-top: 1px solid var(--m22-line); color: var(--m22-muted); }
+
+.m24-mailbox .m22-block-heading > div { min-width: 0; }
+.m24-mailbox .m22-block-heading p { margin: 2px 0 8px; color: var(--m22-muted); font-size: 11px; }
+.m24-mailbox-summary { padding: 12px 2px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--m22-line); }
+.m24-mailbox-summary svg { color: var(--m22-cyan); }
+.m24-mailbox-summary strong { font-size: 13px; }
+.m24-mailbox-summary span { color: var(--m22-muted); font-size: 11px; }
+.m24-mailbox-items { margin: 0; padding: 0; list-style: none; }
+.m24-mailbox-items > li { padding: 13px 14px; border-bottom: 1px solid #343434; background: #202020; }
+.m24-mailbox-items header, .m24-mailbox-items footer { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.m24-mailbox-items header > span { min-width: 0; display: grid; gap: 2px; }
+.m24-mailbox-items header strong { color: var(--m22-text); font-size: 13px; }
+.m24-mailbox-items header small, .m24-mailbox-items footer { color: var(--m22-muted); font-size: 10px; }
+.m24-mailbox-items p { margin: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--m22-text); font-size: 14px; line-height: 1.6; }
+.m24-mailbox-items footer code { max-width: 55%; overflow: hidden; text-overflow: ellipsis; color: var(--m22-faint); font: inherit; white-space: nowrap; }
 .m22-session-lifecycle > summary { padding: 9px 2px; display: flex; align-items: center; gap: 7px; cursor: pointer; color: var(--m22-muted); font-size: 10px; list-style: none; }
 .m22-session-lifecycle > summary::-webkit-details-marker { display: none; }
 .m22-session-lifecycle > summary span { margin-left: auto; color: var(--m22-faint); }

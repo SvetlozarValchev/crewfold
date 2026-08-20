@@ -69,7 +69,7 @@ type RunDetailView = { run: Run & { context_packet_id?: string; created_at: stri
 type RunArtifactContent = { artifact: { id: string; run_id: string; name: string; media_type: string; content_hash: string; byte_size: number; created_at: string }; workspace_id: string; project_id: string; task_id: string; agent_id: string; content: string };
 type ContextExplanation = { packet_id: string; content_hash: string; byte_size: number; included: Array<{ section: string; entity_type: string; entity_id: string; revision: number; reason: string }>; excluded: Array<{ section: string; reason: string; reason_code?: string }>; budget: { total: { limit_bytes: number; used_bytes: number; remaining_bytes: number } } };
 type EventRecord = { event_id: string; sequence: number; type: string; recorded_at: string; actor: { actor_type: string }; entity: { type: string; id: string; revision: number } };
-type InboxItem = { message: { id: string; sender_type: string; sender_agent_name?: string; kind: string; body: string; task_id?: string; created_at: string }; delivery: { recipient_agent_id: string; recipient_name: string; status: string; wake_status: string } };
+type InboxItem = { message: { id: string; thread_id?: string; sender_type: string; sender_agent_name?: string; kind: string; body: string; task_id?: string; created_at: string }; delivery: { recipient_agent_id: string; recipient_name: string; status: string; wake_status: string } };
 type CheckRunItem = { run: { id: string; task_id: string; status: string; revision: number; created_at: string; updated_at: string }; outcome?: string; requirement_state: string; current_freshness?: { status?: string } };
 type Budget = { token_limit: number; cost_cents: number; time_seconds: number };
 type ManagedProcessHealth = { type: "process" | "tcp" | "http"; host?: string; port?: number; path?: string; interval_millis: number; timeout_millis: number };
@@ -519,7 +519,7 @@ function Onboarding({ apiBase, csrf, status, onComplete }: { apiBase: string; cs
   </main>;
 }
 
-type DomainConsoleView = "domain" | "session" | "assignment" | "changes" | "briefing" | "verification" | "staffing";
+type DomainConsoleView = "domain" | "session" | "mailbox" | "assignment" | "changes" | "briefing" | "verification" | "staffing";
 
 function DomainAgentTreeList({ agents, objectives, selected, choose }: { agents: DomainAgent[]; objectives: Objective[]; selected: string; choose: (agent: DomainAgent) => void }) {
   const active = agents.filter((agent) => agent.membership.status === "active");
@@ -1322,9 +1322,18 @@ function SessionExplorationGroup({ items }: { items: DomainAgentSessionItem[] })
   </article>;
 }
 
-function SessionThreadItem({ item, agentName }: { item: DomainAgentSessionItem; agentName: string }) {
+type ToolAttemptPresentation = "revising" | "recovered" | "";
+
+function SessionThreadItem({ item, agentName, toolAttempt = "" }: { item: DomainAgentSessionItem; agentName: string; toolAttempt?: ToolAttemptPresentation }) {
   const command = sessionItemCommand(item);
   if (item.type === "reasoning" && !item.text?.trim() && !command) return null;
+  if (item.type === "dynamicToolCall" && item.status === "failed" && toolAttempt) {
+    return <details className={`m22-tool-retry ${toolAttempt}`} open={toolAttempt === "revising"}>
+      <summary><span>{command || "Crewfold operation"} attempt rejected</span><small>{toolAttempt === "recovered" ? "corrected by the agent" : "agent is revising"}</small>{toolAttempt === "revising" && <LoaderCircle className="spin" size={12} />}</summary>
+      <p>{item.text || "Crewfold rejected this draft before it changed canonical state."}</p>
+      <small>This attempt changed no state. Its exact diagnostic remains available for audit.</small>
+    </details>;
+  }
   if (item.type === "commandExecution") {
     const active = isActiveSessionItem(item);
     const failed = item.status === "failed" || item.exit_code !== undefined && item.exit_code !== 0;
@@ -1354,7 +1363,7 @@ function SessionThreadItem({ item, agentName }: { item: DomainAgentSessionItem; 
   </article>;
 }
 
-function SessionTurnItems({ items, agentName }: { items: DomainAgentSessionItem[]; agentName: string }) {
+function SessionTurnItems({ items, agentName, active }: { items: DomainAgentSessionItem[]; agentName: string; active: boolean }) {
   const rendered: ReactNode[] = [];
   for (let index = 0; index < items.length;) {
     if (isExplorationCommand(items[index])) {
@@ -1364,7 +1373,8 @@ function SessionTurnItems({ items, agentName }: { items: DomainAgentSessionItem[
       continue;
     }
     const item = items[index++];
-    rendered.push(<SessionThreadItem item={item} agentName={agentName} key={item.id} />);
+    const laterSuccessfulRetry = item.type === "dynamicToolCall" && item.status === "failed" && items.slice(index).some((candidate) => candidate.type === "dynamicToolCall" && candidate.command === item.command && ["completed", "succeeded", "success"].includes(candidate.status ?? ""));
+    rendered.push(<SessionThreadItem item={item} agentName={agentName} toolAttempt={laterSuccessfulRetry ? "recovered" : item.type === "dynamicToolCall" && item.status === "failed" && active ? "revising" : ""} key={item.id} />);
   }
   return <>{rendered}</>;
 }
@@ -1629,7 +1639,7 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
       }}>
         <div className="m24-provider-boundary"><strong>Codex session</strong><span>epoch {result?.view.session.epoch || 1} · owner and accepted task turns</span></div>
         {turns.length === 0 ? <p className="m22-empty">The provider thread is ready. Send the first owner message below.</p> : turns.map((turn) => <section className="m22-turn" key={turn.id}>
-          <SessionTurnItems items={turn.items} agentName={agent.definition.name} />
+          <SessionTurnItems items={turn.items} agentName={agent.definition.name} active={["inProgress", "in_progress"].includes(turn.status)} />
           {["inProgress", "in_progress"].includes(turn.status) && <ActiveTurnProgress turn={turn} />}
           {!(["inProgress", "in_progress"].includes(turn.status)) && <footer>{turn.status.replaceAll("_", " ")}</footer>}
         </section>)}
@@ -1655,6 +1665,41 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
   </div>;
 }
 
+function AgentMailbox({ data, agent, apiBase, csrf }: { data: WorkbenchData; agent: DomainAgent; apiBase: string; csrf: string }) {
+  const [items, setItems] = useState<InboxItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const load = useCallback(async (quiet = false) => {
+    if (!data.workspace) return;
+    if (!quiet) setLoading(true);
+    try {
+      const result = await rpc<{ items: InboxItem[] }>(apiBase, csrf, "inbox.list", { workspace: data.workspace.id, agent: agent.definition.id, limit: 50 });
+      setItems([...result.items].sort((left, right) => right.message.created_at.localeCompare(left.message.created_at)));
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not read this agent's durable mailbox.");
+    } finally { if (!quiet) setLoading(false); }
+  }, [agent.definition.id, apiBase, csrf, data.workspace?.id]);
+  useEffect(() => {
+    setItems([]); setError(""); void load();
+    const timer = window.setInterval(() => void load(true), 2000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+  const awaiting = items.filter((item) => !["acknowledged", "read", "complete"].includes(item.delivery.status)).length;
+  return <section className="m22-block m24-mailbox" aria-label={`${agent.definition.name} mailbox`}>
+    <div className="m22-block-heading"><div><h2>durable mailbox</h2><p>Messages addressed to this exact agent identity, with delivery and wake state.</p></div><button className="m22-command" type="button" disabled={loading} onClick={() => void load()}>{loading ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />} refresh</button></div>
+    <div className="m24-mailbox-summary"><Inbox size={16} /><strong>{items.length} message{items.length === 1 ? "" : "s"}</strong><span>{awaiting ? `${awaiting} awaiting acknowledgement` : "nothing awaiting acknowledgement"}</span></div>
+    {error && <p className="m22-session-error" role="alert">{error}</p>}
+    {!loading && !error && items.length === 0 && <p className="m22-empty">This agent has no durable inbox messages at the current event cut.</p>}
+    {items.length > 0 && <ol className="m24-mailbox-items">{items.map((item) => <li key={item.message.id}>
+      <header><span><strong>{item.message.sender_agent_name || (item.message.sender_type === "owner" ? "You" : item.message.sender_type)}</strong><small>{item.message.kind.replaceAll("_", " ")} · {displayTime(item.message.created_at)}</small></span><StatusPill value={item.delivery.status} tone={item.delivery.status} /></header>
+      <p>{item.message.body}</p>
+      <footer><span>wake {item.delivery.wake_status.replaceAll("_", " ")}</span>{item.message.thread_id && <code>{item.message.thread_id}</code>}</footer>
+    </li>)}</ol>}
+    <p className="m22-caveat">This view is observational. Opening it does not acknowledge messages on the agent's behalf; acknowledgements are exact agent actions.</p>
+  </section>;
+}
+
 function DomainAgentCenter({ data, agent, view, setView, inspectRun, apiBase, csrf, mutable, detailsOpen, toggleDetails }: { data: WorkbenchData; agent: DomainAgent; view: DomainConsoleView; setView: (view: DomainConsoleView) => void; inspectRun: (run: Run) => void; apiBase: string; csrf: string; mutable: boolean; detailsOpen: boolean; toggleDetails: () => void }) {
   const definition = agent.definition;
   const assigned = data.tasks.filter((detail) => detail.task.assigned_agent_id === definition.id);
@@ -1668,6 +1713,7 @@ function DomainAgentCenter({ data, agent, view, setView, inspectRun, apiBase, cs
   const ownedChecks = data.checks.filter((check) => assigned.some((detail) => detail.task.id === check.run.task_id));
   const agentThreads = data.threads.filter((thread) => thread.agent_ids.includes(definition.id));
   const tabs: Array<[DomainConsoleView, string]> = [["session", "session"]];
+  tabs.push(["mailbox", "mailbox"]);
   if (assigned.length > 0) tabs.push(["assignment", "assignment"]);
   if (changedPaths.length > 0) tabs.push(["changes", "changes"]);
   tabs.push(["briefing", "briefing"]);
@@ -1680,6 +1726,7 @@ function DomainAgentCenter({ data, agent, view, setView, inspectRun, apiBase, cs
     <header><button className={`m22-detail-toggle ${detailsOpen ? "active" : ""}`} type="button" aria-expanded={detailsOpen} onClick={toggleDetails}>{detailsOpen ? "hide details" : "agent details"}</button><p className="m22-kicker">durable agent</p><div className="m22-agent-title"><h1>{definition.name}</h1><StatusPill value={consequentialOutcome?.label ?? "idle"} tone={consequentialOutcome?.tone ?? "idle"} /></div><p>{definition.role || "No descriptive role"} · {definition.provider} through {definition.runtime}{workstream ? ` · ${workstream.title}` : ""}</p>{workstream && <small className="m22-agent-checkout">task work uses {checkout?.path ?? "an unavailable primary checkout"}</small>}</header>
     <nav className="m22-tabs" aria-label="Selected agent views">{tabs.map(([id, label]) => <button className={view === id ? "active" : ""} key={id} onClick={() => setView(id)}>{label}</button>)}</nav>
     {view === "session" && <><DurableAgentSession data={data} agent={agent} runs={runs} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} />{agentThreads.length > 0 && <CoordinationThreads data={data} apiBase={apiBase} csrf={csrf} threads={agentThreads} heading={`${definition.name} coordination`} />}</>}
+    {view === "mailbox" && <AgentMailbox data={data} agent={agent} apiBase={apiBase} csrf={csrf} />}
     {view === "assignment" && <div className="m22-block"><h2>assigned work</h2>{assigned.length ? assigned.map((detail) => <div className="m22-line static" key={detail.task.id}><span><strong>{detail.task.title}</strong><small>{detail.task.description || "No additional description"}</small></span><StatusPill value={detail.task.status} /></div>) : <><p className="m22-empty">No canonical task is assigned to this agent.</p><p className="m22-caveat">Conversation and coordination messages are not assignments. This view fills only after a task is created and explicitly assigned.</p></>}</div>}
     {view === "changes" && <div className="m22-block"><h2>observed checkout changes</h2>{data.checkouts.flatMap((candidate) => (candidate.dirty_paths ?? []).map((path) => <code className="m22-path" key={`${candidate.id}-${path}`}>{path}</code>))}<p className="m22-caveat">These are project checkout observations, not an inferred per-agent diff.</p></div>}
     {view === "briefing" && <div className="m22-block"><h2>scope and available context</h2><dl className="m22-facts"><div><dt>domain</dt><dd>{data.project?.name}</dd></div><div><dt>workstream</dt><dd>{workstream?.title ?? "domain-wide"}</dd></div><div><dt>parent</dt><dd>{data.domainAgents.find((candidate) => candidate.definition.id === agent.membership.parent_agent_id)?.definition.name ?? "domain root"}</dd></div><div><dt>attached checkouts</dt><dd>{data.checkouts.length}</dd></div><div><dt>accepted knowledge</dt><dd>{data.knowledge.filter((revision) => revision.review_status === "accepted" && revision.currency_status === "current").length}</dd></div><div><dt>coordination threads</dt><dd>{data.threads.filter((thread) => thread.agent_ids.includes(definition.id)).length}</dd></div></dl><p className="m22-caveat">This is the durable domain scope available to the conversation. A task-specific frozen context packet exists only for an assigned execution run.</p></div>}
