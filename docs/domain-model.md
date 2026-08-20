@@ -181,10 +181,15 @@ requested -> starting -> active -> completed
 operator stop completed and records whether forced termination was required;
 the task remains assigned for an explicit retry/reassignment decision. `lost`
 means process identity or outcome cannot be trusted, so the task is blocked and
-capacity remains reserved. `review` means the
-provider proposed completion but required acceptance evidence was missing; the
-task becomes `changes_requested` and retains its assignment. Runtime-observed
-state and Crewfold run state are related but not identical. The direct fixture
+capacity remains reserved. `review` means the provider proposed completion but
+required acceptance evidence was missing; the task becomes `changes_requested`
+and retains its assignment for an exact retry. That process-state retry is
+different from an accepted structured review assessment: `block` or
+`changes_requested` is a completed reviewer deliverable, releases the reviewer,
+and gates its declared remediation successor with the immutable handoff,
+findings, checks, and evidence. If no remediation successor exists, the delivery
+remains blocked rather than pretending the review passed. Runtime-observed state
+and Crewfold run state are related but not identical. The direct fixture
 runtime now persists bindings, bounded output, timeout, stop, and restart
 reconciliation. A run-scoped capability exposes its packet and normalized
 reporting tools without granting task-completion authority. Real provider resume

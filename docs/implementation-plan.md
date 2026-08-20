@@ -1573,7 +1573,9 @@ M23 replaces its resource-neutral workstream and status-only successor context.
   pre-existing checkout path. A sentinel dependency/build-cache fixture survives
   every provider/run restart and no clone/bootstrap path appears.
 - Review completion records its structured outcome, handoff, checks, and evidence;
-  a clean review does not invent findings.
+  a clean review does not invent findings. An accepted blocking assessment
+  completes the reviewer and releases its assignment; it does not strand the
+  task in a retry state.
   Remediation does not start until that output exists and receives it byte-for-byte
   in its immutable packet; it never learns only `review: completed`.
 - The selected implementer reports `working` while its durable conversation is

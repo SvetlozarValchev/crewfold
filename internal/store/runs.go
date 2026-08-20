@@ -1147,22 +1147,17 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 		if _, err := tx.ExecContext(ctx, "INSERT INTO run_handoffs(id, run_id, task_id, summary, evidence_json, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)", handoffID, run.ID, task.ID, handoffSummary, string(evidenceJSON), now, run.ID); err != nil {
 			return storageFailure("insert run handoff", err)
 		}
-		blockingAssessment := observation.Assessment == "block" || observation.Assessment == "changes_requested"
-		if blockingAssessment {
-			run.Status, run.FinishedAt = domain.RunReview, now
-			task.Status, task.BlockedReason, task.Revision = domain.TaskChangesRequested, "structured "+observation.Assessment+" assessment: "+summary, task.Revision+1
-		} else {
-			run.Status, run.FinishedAt = domain.RunCompleted, now
-			task.Status, task.Revision = domain.TaskCompleted, task.Revision+1
-		}
+		// Structured assessment describes the reviewed deliverable, not whether
+		// the reviewer completed its own task. PASS, BLOCK, and CHANGES_REQUESTED
+		// all finish an accepted review handoff. A downstream remediation edge
+		// consumes the immutable findings; without one, delivery remains blocked.
+		run.Status, run.FinishedAt = domain.RunCompleted, now
+		task.Status, task.Revision = domain.TaskCompleted, task.Revision+1
 		run.Revision++
 		if err := appendRunTimeline(ctx, tx, run.ID, taskHandoffRecorded, handoffSummary, observation.Evidence, now); err != nil {
 			return err
 		}
 		completionKind := runCompletedEvent
-		if blockingAssessment {
-			completionKind = taskChangesRequestedEvent
-		}
 		if err := appendRunTimeline(ctx, tx, run.ID, completionKind, structuredAssessmentSummary(observation.Assessment, summary), observation.Evidence, now); err != nil {
 			return err
 		}
@@ -1170,9 +1165,6 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 			return err
 		}
 		taskEvent := taskCompletedEvent
-		if blockingAssessment {
-			taskEvent = taskChangesRequestedEvent
-		}
 		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"run_id": run.ID, "status": task.Status, "assessment": observation.Assessment}); err != nil {
 			return err
 		}

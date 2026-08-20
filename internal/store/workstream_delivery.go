@@ -16,15 +16,16 @@ import (
 const maximumWorkstreamDeliverySamples = 20
 
 type workstreamDeliveryTask struct {
-	ID            string   `json:"id"`
-	Class         string   `json:"class"`
-	Status        string   `json:"status"`
-	Revision      int64    `json:"revision"`
-	BlockedReason string   `json:"blocked_reason,omitempty"`
-	ReportID      string   `json:"report_id,omitempty"`
-	Assessment    string   `json:"assessment,omitempty"`
-	ReportSummary string   `json:"report_summary,omitempty"`
-	Evidence      []string `json:"evidence"`
+	ID                   string   `json:"id"`
+	Class                string   `json:"class"`
+	Status               string   `json:"status"`
+	Revision             int64    `json:"revision"`
+	BlockedReason        string   `json:"blocked_reason,omitempty"`
+	ReportID             string   `json:"report_id,omitempty"`
+	Assessment           string   `json:"assessment,omitempty"`
+	ReportSummary        string   `json:"report_summary,omitempty"`
+	RemediationConsumers int      `json:"remediation_consumers"`
+	Evidence             []string `json:"evidence"`
 }
 
 type workstreamDeliveryContent struct {
@@ -65,6 +66,11 @@ SELECT t.id,t.task_class,t.status,t.revision,COALESCE(t.blocked_reason,''),
  COALESCE((SELECT rr.id FROM run_reports rr JOIN runs r ON r.id=rr.run_id WHERE r.task_id=t.id AND rr.kind='completion' AND rr.status='applied' ORDER BY rr.sequence DESC LIMIT 1),''),
  COALESCE((SELECT rr.assessment FROM run_reports rr JOIN runs r ON r.id=rr.run_id WHERE r.task_id=t.id AND rr.kind='completion' AND rr.status='applied' ORDER BY rr.sequence DESC LIMIT 1),''),
  COALESCE((SELECT rr.message FROM run_reports rr JOIN runs r ON r.id=rr.run_id WHERE r.task_id=t.id AND rr.kind='completion' AND rr.status='applied' ORDER BY rr.sequence DESC LIMIT 1),''),
+ (SELECT count(*) FROM task_dependencies downstream
+  JOIN tasks remediation ON remediation.id=downstream.task_id
+  WHERE downstream.depends_on_task_id=t.id
+    AND remediation.task_class='implementation'
+    AND downstream.delivery_requirement IN ('handoff','handoff_with_evidence')),
  COALESCE((
    SELECT json_group_array(artifact.id)
    FROM run_reports evidence_report
@@ -88,7 +94,7 @@ FROM tasks t WHERE t.objective_id=? ORDER BY t.id`, objective.ID)
 	for rows.Next() {
 		var item workstreamDeliveryTask
 		var evidenceJSON string
-		if err := rows.Scan(&item.ID, &item.Class, &item.Status, &item.Revision, &item.BlockedReason, &item.ReportID, &item.Assessment, &item.ReportSummary, &evidenceJSON); err != nil {
+		if err := rows.Scan(&item.ID, &item.Class, &item.Status, &item.Revision, &item.BlockedReason, &item.ReportID, &item.Assessment, &item.ReportSummary, &item.RemediationConsumers, &evidenceJSON); err != nil {
 			return domain.WorkstreamDelivery{}, false, storageFailure("scan workstream delivery task", err)
 		}
 		if err := json.Unmarshal([]byte(evidenceJSON), &item.Evidence); err != nil {
@@ -111,7 +117,7 @@ FROM tasks t WHERE t.objective_id=? ORDER BY t.id`, objective.ID)
 				if item.Class == "verification" {
 					delivery.PassingVerifications++
 				}
-			} else {
+			} else if (item.Assessment != "changes_requested" && item.Assessment != "block") || item.Status != domain.TaskCompleted || item.RemediationConsumers == 0 {
 				eligible = false
 				appendDeliveryBlocker(&delivery, fmt.Sprintf("%s: %s assessment", item.ID, firstNonEmpty(item.Assessment, "missing structured")))
 			}
@@ -185,7 +191,7 @@ func appendDeliveryBlocker(delivery *domain.WorkstreamDelivery, blocker string) 
 
 func hasConsequentialDeliveryBlocker(tasks []workstreamDeliveryTask) bool {
 	for _, task := range tasks {
-		if task.Status == domain.TaskChangesRequested || task.Status == domain.TaskBlocked || task.Status == domain.TaskFailed || task.Assessment == "block" || task.Assessment == "changes_requested" {
+		if task.Status == domain.TaskChangesRequested || task.Status == domain.TaskBlocked || task.Status == domain.TaskFailed || ((task.Assessment == "block" || task.Assessment == "changes_requested") && task.RemediationConsumers == 0) {
 			return true
 		}
 	}

@@ -362,3 +362,155 @@ func objectiveIDFromEffects(effects []domain.DomainWorkProposalEffect) string {
 	}
 	return ""
 }
+
+func TestM24ReviewFindingsDeliverToRemediationInsteadOfDeadlockingTheGraph(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, project := initializeWorkTestProject(t, storage)
+	inspection, err := storage.InspectProject(ctx, workspace.ID, project.ID)
+	if err != nil || len(inspection.Checkouts) != 1 {
+		t.Fatalf("InspectProject() = %#v, %v", inspection, err)
+	}
+	coordinator := createDomainTestAgent(t, storage, workspace.ID, "review-coordinator", "coordinates review remediation")
+	membership, err := storage.AttachDomainAgent(ctx, AttachDomainAgentCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: coordinator.Value.ID,
+		OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentDelegationFirst,
+		PreferredEntry: true, IdempotencyKey: "review-route-membership", CorrelationID: "review-route-membership",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.BindDomainAgentSession(ctx, BindDomainAgentSessionCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: coordinator.Value.ID,
+		Provider: "codex", ThreadID: "review-route-thread", CWD: inspection.Checkouts[0].Path,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := storage.CreateDomainAgentStaffingGrant(ctx, CreateDomainAgentStaffingGrantCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, ManagerAgentIdentifier: coordinator.Value.ID,
+		ExpectedMembershipRevision: membership.Value.Revision,
+		Profiles:                   []domain.DomainAgentStaffingProfile{{Provider: "fake", Runtime: "fake", MaxConcurrency: 3}},
+		TaskClasses:                []string{"review", "implementation", "verification"}, MaxDescendants: 3, MaxConcurrency: 3,
+		Budget: domain.Budget{TokenLimit: 300, TimeSeconds: 900}, IdempotencyKey: "review-route-grant", CorrelationID: "review-route-grant",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := storage.SubmitDomainWorkProposal(ctx, SubmitDomainWorkProposalCommand{
+		ThreadID: "review-route-thread", StaffingGrantID: grant.Value.ID,
+		Summary: "Review, remediate the exact findings, then verify the candidate.",
+		Content: domain.DomainWorkProposalContent{
+			ObjectiveTitle: "Close one independent review loop", ObjectiveBudget: domain.Budget{TokenLimit: 300, TimeSeconds: 900},
+			PrimaryCheckoutID: inspection.Checkouts[0].ID, PrimaryCheckoutRevision: inspection.Checkouts[0].Revision,
+			Agents: []domain.DomainWorkProposalAgent{
+				{Key: "reviewer", Name: "route-reviewer", Role: "independent reviewer", OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentHandsOn, Provider: "fake", Runtime: "fake", MaxConcurrency: 1, TaskClass: "review", Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}},
+				{Key: "remediator", Name: "route-remediator", Role: "implementation owner", OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentHandsOn, Provider: "fake", Runtime: "fake", MaxConcurrency: 1, TaskClass: "implementation", Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}},
+				{Key: "verifier", Name: "route-verifier", Role: "final verifier", OperatingCharter: testDomainAgentCharter, DelegationPolicy: domain.DomainAgentHandsOn, Provider: "fake", Runtime: "fake", MaxConcurrency: 1, TaskClass: "verification", Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}},
+			},
+			Tasks: []domain.DomainWorkProposalTask{
+				{Key: "review", Title: "Review the candidate", TaskClass: "review", Priority: 100, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, AssigneeKey: "reviewer"},
+				{Key: "remediate", Title: "Remediate the review findings", TaskClass: "implementation", Priority: 200, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, AssigneeKey: "remediator", DependsOn: []string{"review"}, DependencyDelivery: map[string]string{"review": domain.DependencyDeliveryHandoffWithEvidence}},
+				{Key: "verify", Title: "Verify the remediated candidate", TaskClass: "verification", Priority: 300, Budget: domain.Budget{TokenLimit: 100, TimeSeconds: 300}, AssigneeKey: "verifier", DependsOn: []string{"remediate"}, DependencyDelivery: map[string]string{"remediate": domain.DependencyDeliveryHandoffWithEvidence}},
+			},
+		},
+		IdempotencyKey: "review-route-proposal", CorrelationID: "review-route-proposal",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := storage.AcceptDomainWorkProposal(ctx, DecideDomainWorkProposalCommand{
+		WorkspaceIdentifier: workspace.ID, ProposalID: proposal.Value.ID, ExpectedRevision: proposal.Value.Revision,
+		DecisionNote: "Exercise the exact review and remediation graph.", IdempotencyKey: "review-route-accept", CorrelationID: "review-route-accept",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.ConfigureSupervisorPolicy(ctx, ConfigureSupervisorPolicyCommand{
+		WorkspaceIdentifier: workspace.ID, Enabled: true, AutoSchedule: true,
+		Limits:           domain.SupervisorLimits{MaxActiveRuns: 3, MaxStartingRuns: 2, DefaultProjectConcurrency: 3, DefaultProviderConcurrency: 3},
+		ExpectedRevision: 1, IdempotencyKey: "review-route-policy", CorrelationID: "review-route-policy",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	startScheduled := func(key, wantTitle string) domain.RunDetail {
+		t.Helper()
+		sweep, sweepErr := storage.RunSupervisor(ctx, RunSupervisorCommand{WorkspaceIdentifier: workspace.ID, Limit: 20, IdempotencyKey: key + "-sweep", CorrelationID: key + "-sweep"})
+		if sweepErr != nil || len(sweep.ScheduledRunIDs) != 1 {
+			t.Fatalf("RunSupervisor(%s) = %#v, %v", key, sweep, sweepErr)
+		}
+		detail, detailErr := storage.RunDetail(ctx, workspace.ID, sweep.ScheduledRunIDs[0])
+		if detailErr != nil || detail.Task.Title != wantTitle {
+			t.Fatalf("scheduled %s = %#v, %v", key, detail, detailErr)
+		}
+		starting, startErr := storage.MarkRunStarting(ctx, detail.Run.ID, key+"-starting")
+		if startErr != nil {
+			t.Fatal(startErr)
+		}
+		active, activeErr := storage.MarkRunStarted(ctx, starting.ID, key+"-runtime", key+"-provider", key+"-started")
+		if activeErr != nil {
+			t.Fatal(activeErr)
+		}
+		return active
+	}
+	complete := func(key string, active domain.RunDetail, assessment, summary, handoff string) domain.RunDetail {
+		t.Helper()
+		artifact, artifactErr := storage.PublishRunArtifact(ctx, PublishRunArtifactCommand{
+			RunID: active.Run.ID, Name: key + " evidence", MediaType: "text/plain", Content: summary, IdempotencyKey: key + "-artifact",
+		})
+		if artifactErr != nil {
+			t.Fatal(artifactErr)
+		}
+		payload := map[string]any{"checks": []string{key + " check"}}
+		if assessment != "" {
+			payload["assessment"] = assessment
+		}
+		report, reportErr := storage.SubmitRunReport(ctx, CreateRunReportCommand{
+			RunID: active.Run.ID, Kind: domain.ObservationCompletion, Message: summary, Handoff: handoff, Assessment: assessment,
+			Evidence: []string{artifact.ID}, Payload: payload, IdempotencyKey: key + "-report",
+		})
+		if reportErr != nil {
+			t.Fatal(reportErr)
+		}
+		result, applyErr := storage.ApplyQueuedRunReport(ctx, active.Run.ID, report.ID, true, nil, prepareTestRunLogArchive(t, storage, active.Run.ID), "", key+"-apply")
+		if applyErr != nil {
+			t.Fatal(applyErr)
+		}
+		return result
+	}
+
+	review := startScheduled("review-route-review", "Review the candidate")
+	reviewed := complete("review-route-review", review, "changes_requested", "two concrete product defects remain", "fix the named defects and preserve this review evidence")
+	if reviewed.Run.Status != domain.RunCompleted || reviewed.Task.Status != domain.TaskCompleted || reviewed.Task.AssignmentID != "" || reviewed.Assessment != "changes_requested" {
+		t.Fatalf("changes-requested review = %#v", reviewed)
+	}
+	var completedEvents, changesRequestedEvents int
+	if err := storage.db.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE entity_id=? AND type='task.completed'`, reviewed.Task.ID).Scan(&completedEvents); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.db.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE entity_id=? AND type='task.changes_requested'`, reviewed.Task.ID).Scan(&changesRequestedEvents); err != nil {
+		t.Fatal(err)
+	}
+	if completedEvents != 1 || changesRequestedEvents != 0 {
+		t.Fatalf("review terminal events completed=%d changes_requested=%d", completedEvents, changesRequestedEvents)
+	}
+	remediation := startScheduled("review-route-remediation", "Remediate the review findings")
+	packet, err := storage.ContextPacket(ctx, workspace.ID, remediation.Run.ContextPacketID)
+	if err != nil || len(packet.Dependencies) != 1 || packet.Dependencies[0].Output == nil || packet.Dependencies[0].Output.Handoff != "fix the named defects and preserve this review evidence" || len(packet.Dependencies[0].Output.EvidenceIDs) != 1 {
+		t.Fatalf("remediation packet = %#v, %v", packet.Dependencies, err)
+	}
+	remediated := complete("review-route-remediation", remediation, "", "fixed both review findings", "independently verify the corrected candidate")
+	if remediated.Run.Status != domain.RunCompleted || remediated.Task.Status != domain.TaskCompleted {
+		t.Fatalf("remediation completion = %#v", remediated)
+	}
+	verification := startScheduled("review-route-verification", "Verify the remediated candidate")
+	verified := complete("review-route-verification", verification, "pass", "the remediated candidate passes", "ready for exact owner acceptance")
+	if verified.Run.Status != domain.RunCompleted || verified.Task.Status != domain.TaskCompleted || verified.Assessment != "pass" {
+		t.Fatalf("final verification = %#v", verified)
+	}
+	delivery, err := storage.WorkstreamDelivery(ctx, workspace.ID, objectiveIDFromEffects(accepted.Effects))
+	if err != nil || delivery.State != domain.WorkstreamDeliveryVerifiedAwaitingAcceptance || delivery.TaskCount != 3 || delivery.CompletedTasks != 3 || delivery.PassingVerifications != 1 || len(delivery.Blockers) != 0 {
+		t.Fatalf("delivery after routed remediation = %#v, %v", delivery, err)
+	}
+}

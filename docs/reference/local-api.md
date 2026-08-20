@@ -461,10 +461,14 @@ The fake provider emits normalized `progress`, `blocked`, or `completion`
 observations from a bounded scenario. Progress advances the persisted cursor.
 Blocked observations require a question and pause the job. Completion records a
 proposal and evaluates required evidence. Accepted completion releases the task
-assignment and creates one durable handoff; rejected completion retains the
-assignment and leaves the run in `review` with the task in `changes_requested`.
-A runtime start failure leaves the task assigned so the owner can retry or
-reassign it.
+assignment and creates one durable handoff. When that accepted completion is a
+structured review assessment, `block` and `changes_requested` still complete the
+reviewer's process; their findings gate a declared remediation successor and do
+not reopen the reviewer. Without such a successor, delivery remains blocked.
+Rejected completion evidence is the distinct retry case: it retains the
+assignment and leaves the run in `review` with the task in
+`changes_requested`. A runtime start failure leaves the task assigned so the
+owner can retry or reassign it.
 
 With `runtime=direct` and `provider=fixture`, the scenario runs in a real local
 subprocess supervised outside the daemon lifecycle. The working directory is the

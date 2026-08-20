@@ -70,7 +70,7 @@ worker. The same operation is covered by strict local-API and CLI tests.
 | Manager loop | Worker reports/messages trigger one coalesced restart-safe exchange with the same executive at an exact event cut; routine progress, dependencies, completion, acknowledgement, and unresolved blockers do not manufacture owner decisions |
 | Planning | The executive may submit only the existing closed manager-proposal grammar; Decisions shows every exact operation, request-changes preserves immutable history, and acceptance revalidates current scope, grant, revisions, and budget |
 | Crew authority | Owner add/disable replaces the exact executive grant/profile binding; adding starts no work, retained work blocks removal, and the final implementation worker remains required |
-| Execution | Objective, task, assignment, and run effects use existing Store mutations and retain exact method/request/response/event receipts; rejected completion exposes an exact-revision retry that preserves the prior review and atomically queues a fresh context-bound run |
+| Execution | Objective, task, assignment, and run effects use existing Store mutations and retain exact method/request/response/event receipts; rejected completion evidence exposes an exact-revision retry, while an accepted blocking review completes the reviewer and names the remediation owner that receives its handoff and evidence |
 | Inspection | Work graph, crew, inbox, decisions, evidence, activity, briefings, health, Git observation, and logs come from current daemon/Store truth |
 | Terminal | A 30-second single-use WebSocket grant is bound to one browser session, workspace, current-node run, and PTY; the default view renders readable live events while exact PTY bytes and direct input remain an advanced disclosure; no handle or capability is exposed |
 | UI | React/Vite assets are pinned and embedded; Lucide supplies named SVG icons; responsive navigation, labels, reduced motion, and stale-state fences are explicit |
@@ -115,10 +115,13 @@ rework.
   not persisted as source or diff text in conversation history.
 - Role and purpose remain descriptive. Browser prose cannot grant authority,
   raise paid-cost authority, bypass capacity, or invent a new operation type.
-- A `review` run paired with an exact `changes_requested` task may be retried only
-  from the displayed run and task revisions. The retained assignment is reopened
-  in the same transaction as the fresh run request; stale or superseded review
-  controls produce no task, event, context, capability, or runtime effect.
+- A `review` run paired with an exact `changes_requested` task means completion
+  evidence was rejected. It may be retried only from the displayed run and task
+  revisions. The retained assignment is reopened in the same transaction as the
+  fresh run request; stale or superseded controls produce no effect. An accepted
+  review assessment of `block` or `changes_requested` is instead terminal for
+  that reviewer: the UI identifies the downstream remediation task and owner,
+  and never offers the rejected-evidence retry control.
 
 ## Known limitations and deferrals
 
