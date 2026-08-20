@@ -462,6 +462,87 @@ func TestDurableAgentManagedServiceToolsControlOneGenericProcessEndToEnd(t *test
 	})
 }
 
+func TestDurableAgentProposesAndOwnerAcceptsOneGenericProcessEndToEnd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires a real local process")
+	}
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	if err := os.Chmod(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	storage, err := store.Open(ctx, dataDir, store.Options{RuntimeNodeID: strings.Repeat("7", 32), RuntimeNodeFingerprint: strings.Repeat("8", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	workspace, project, checkout := createManagedServiceWorkerFixture(t, storage)
+	agent, err := storage.CreateAgent(ctx, store.CreateAgentCommand{
+		WorkspaceIdentifier: workspace.ID, Name: "process-proposer", Role: "durable coordinator", Provider: "codex-subscription", Runtime: "herdr", MaxConcurrency: 1,
+		IdempotencyKey: "service-proposal-agent", CorrelationID: "service-proposal-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.AttachDomainAgent(ctx, store.AttachDomainAgentCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		OperatingCharter: daemonTestDomainCharter, DelegationPolicy: domain.DomainAgentHandsOn,
+		IdempotencyKey: "service-proposal-membership", CorrelationID: "service-proposal-membership",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const threadID = "service-proposal-thread"
+	if _, err := storage.BindDomainAgentSession(ctx, store.BindDomainAgentSessionCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, AgentIdentifier: agent.Value.ID,
+		Provider: "codex", ThreadID: threadID, CWD: checkout.Path,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fixtureExecutable := filepath.Join(checkout.Path, "proposed-service-fixture")
+	if err := os.WriteFile(fixtureExecutable, []byte("#!/bin/sh\nprintf 'agent-proposed service\\n'\nexec /bin/sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	instance := &server{config: Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}, store: storage, serviceHost: servicehost.New(dataDir)}
+	requireSuccessfulDomainServiceTool(t, instance, threadID, "propose-agent-service", domainToolProposeService, domainSessionProposeServiceArguments{
+		Name: "agent-proposed-service", Description: "Exact process inspected by the durable coordinator", Checkout: checkout.Path,
+		Executable: fixtureExecutable, Arguments: []string{}, WorkingDirectory: ".", NetworkMode: domain.ManagedServiceNetworkNone,
+		Health:        domainSessionProposeServiceHealthArguments{Type: domain.ManagedServiceHealthProcess},
+		RestartPolicy: domain.ManagedServiceRestartNever, Summary: "Run the exact inspected process so the owner can test it.",
+	})
+	definitions, err := storage.ManagedServiceDefinitions(ctx, store.ListManagedServiceDefinitionsQuery{WorkspaceIdentifier: workspace.ID})
+	if err != nil || len(definitions) != 1 || definitions[0].CreatedBy != agent.Value.ID {
+		t.Fatalf("agent-authored definitions = %#v, %v", definitions, err)
+	}
+	requests, err := storage.ManagedServiceRequests(ctx, store.ListManagedServiceRequestsQuery{WorkspaceIdentifier: workspace.ID, Status: domain.ManagedServiceRequestPending})
+	if err != nil || len(requests) != 1 || requests[0].DefinitionID != definitions[0].ID {
+		t.Fatalf("pending owner review = %#v, %v", requests, err)
+	}
+	if values, listErr := storage.ManagedServiceInstances(ctx, store.ListManagedServiceInstancesQuery{WorkspaceIdentifier: workspace.ID}); listErr != nil || len(values) != 0 {
+		t.Fatalf("inert proposal instances = %#v, %v", values, listErr)
+	}
+	accepted, err := storage.DecideManagedServiceRequest(ctx, store.DecideManagedServiceRequestCommand{
+		WorkspaceIdentifier: workspace.ID, RequestID: requests[0].ID, ExpectedRevision: requests[0].Revision, Accept: true,
+		Reason: "Owner reviewed the exact process and wants it running.", IdempotencyKey: "accept-agent-service-proposal", CorrelationID: "accept-agent-service-proposal",
+	})
+	if err != nil || accepted.Value.Grant == nil || accepted.Value.Instance == nil {
+		t.Fatalf("accepted agent process proposal = %#v, %v", accepted, err)
+	}
+	if accepted.Value.Grant.ManagerAgentID != agent.Value.ID || accepted.Value.Instance.Source.RequestID != requests[0].ID {
+		t.Fatalf("accepted proposal authority/source = %#v / %#v", accepted.Value.Grant, accepted.Value.Instance)
+	}
+	running := processManagedServiceUntil(t, instance, workspace.ID, accepted.Value.Instance.ID, func(value domain.ManagedServiceInstance) bool { return value.Status == domain.ManagedServiceHealthy })
+	requireSuccessfulDomainServiceTool(t, instance, threadID, "inspect-agent-proposal", domainToolInspectService, domainSessionInspectServiceArguments{
+		Action: domain.ManagedServiceActionInspect, GrantID: accepted.Value.Grant.ID, ExpectedGrantRevision: accepted.Value.Grant.Revision, InstanceID: running.ID, ExpectedInstanceRevision: running.Revision,
+	})
+	requireSuccessfulDomainServiceTool(t, instance, threadID, "stop-agent-proposal", domainToolControlService, domainSessionControlServiceArguments{
+		Action: domain.ManagedServiceActionStop, GrantID: accepted.Value.Grant.ID, ExpectedGrantRevision: accepted.Value.Grant.Revision, InstanceID: running.ID, ExpectedInstanceRevision: running.Revision,
+	})
+	stopped := processManagedServiceUntil(t, instance, workspace.ID, running.ID, func(value domain.ManagedServiceInstance) bool { return value.Status == domain.ManagedServiceStopped })
+	requireSuccessfulDomainServiceTool(t, instance, threadID, "logs-agent-proposal", domainToolInspectService, domainSessionInspectServiceArguments{
+		Action: domain.ManagedServiceActionLogs, GrantID: accepted.Value.Grant.ID, ExpectedGrantRevision: accepted.Value.Grant.Revision, InstanceID: stopped.ID, ExpectedInstanceRevision: stopped.Revision,
+	})
+}
+
 func requireSuccessfulDomainServiceTool(t *testing.T, instance *server, threadID, callID, tool string, arguments any) {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{"arguments": arguments, "callId": callID, "threadId": threadID, "tool": tool, "turnId": "turn-" + callID})

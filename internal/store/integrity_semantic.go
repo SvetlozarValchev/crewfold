@@ -574,8 +574,13 @@ SELECT 'service_definition:'||definition.id AS sample FROM managed_service_defin
 JOIN projects project ON project.id=definition.project_id
 JOIN checkouts checkout ON checkout.id=definition.checkout_id
 LEFT JOIN objectives workstream ON workstream.id=definition.workstream_id
+LEFT JOIN domain_agent_memberships definition_author
+  ON definition_author.project_id=definition.project_id AND definition_author.agent_id=definition.created_by
 WHERE project.workspace_id<>definition.workspace_id OR checkout.project_id<>definition.project_id
    OR (definition.workstream_id IS NOT NULL AND (workstream.workspace_id<>definition.workspace_id OR workstream.project_id<>definition.project_id))
+   OR (definition.created_by<>'local-owner' AND definition_author.agent_id IS NULL)
+   OR (definition.status='active' AND definition.updated_by<>definition.created_by)
+   OR (definition.status='retired' AND definition.updated_by<>'local-owner')
    OR definition.content_sha256<>lower(hex(sha256(CAST(definition.content_json AS BLOB))))
    OR json_array_length(definition.arguments_json)<>(SELECT count(*) FROM managed_service_arguments argument WHERE argument.definition_id=definition.id)
    OR json_array_length(definition.environment_json)<>(SELECT count(*) FROM managed_service_environment environment WHERE environment.definition_id=definition.id)
@@ -605,7 +610,7 @@ SELECT 'service_request:'||request.id FROM managed_service_requests request
 LEFT JOIN managed_service_definitions definition ON definition.id=request.definition_id
 LEFT JOIN domain_agent_memberships membership ON membership.project_id=request.project_id AND membership.agent_id=request.agent_id
 LEFT JOIN domain_agent_session_bindings binding ON binding.project_id=request.project_id AND binding.agent_id=request.agent_id AND binding.thread_id=request.thread_id
-WHERE definition.id IS NULL OR definition.workspace_id<>request.workspace_id OR definition.project_id<>request.project_id OR definition.revision<>request.definition_revision
+WHERE definition.id IS NULL OR definition.workspace_id<>request.workspace_id OR definition.project_id<>request.project_id OR definition.revision<request.definition_revision
    OR membership.agent_id IS NULL OR membership.revision<request.agent_membership_revision OR binding.thread_id IS NULL
    OR (request.status='pending')<>(request.decided_at IS NULL AND request.decision_reason IS NULL)
    OR (request.status IN ('accepted','rejected'))<>(request.decided_at IS NOT NULL AND request.decision_reason IS NOT NULL)`},

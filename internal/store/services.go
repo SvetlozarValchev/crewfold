@@ -57,6 +57,18 @@ type managedServiceDefinitionContent struct {
 }
 
 func (s *Store) CreateManagedServiceDefinition(ctx context.Context, command CreateManagedServiceDefinitionCommand) (MutationResult[domain.ManagedServiceDefinition], error) {
+	return s.createManagedServiceDefinition(ctx, "", command)
+}
+
+// CreateManagedServiceDefinitionAsAgent records an inert, exact process
+// definition authored by one current durable agent. It does not grant process
+// authority or start anything; the corresponding owner-review request remains
+// the authority boundary for the first effect.
+func (s *Store) CreateManagedServiceDefinitionAsAgent(ctx context.Context, threadID string, command CreateManagedServiceDefinitionCommand) (MutationResult[domain.ManagedServiceDefinition], error) {
+	return s.createManagedServiceDefinition(ctx, strings.TrimSpace(threadID), command)
+}
+
+func (s *Store) createManagedServiceDefinition(ctx context.Context, threadID string, command CreateManagedServiceDefinitionCommand) (MutationResult[domain.ManagedServiceDefinition], error) {
 	command.WorkspaceIdentifier = strings.TrimSpace(command.WorkspaceIdentifier)
 	command.ProjectIdentifier = strings.TrimSpace(command.ProjectIdentifier)
 	command.WorkstreamID = strings.TrimSpace(command.WorkstreamID)
@@ -92,7 +104,11 @@ func (s *Store) CreateManagedServiceDefinition(ctx context.Context, command Crea
 	if err := validateMutationMetadata(command.IdempotencyKey, command.CorrelationID, CodeInvalidManagedService); err != nil {
 		return MutationResult[domain.ManagedServiceDefinition]{}, err
 	}
-	requestHash, err := checkSemanticHash("service.definition.create", command)
+	operation := "service.definition.create"
+	if threadID != "" {
+		operation = "service.definition.propose"
+	}
+	requestHash, err := checkSemanticHash(operation, command)
 	if err != nil {
 		return MutationResult[domain.ManagedServiceDefinition]{}, storageFailure("hash managed-service definition", err)
 	}
@@ -101,9 +117,26 @@ func (s *Store) CreateManagedServiceDefinition(ctx context.Context, command Crea
 		return MutationResult[domain.ManagedServiceDefinition]{}, storageFailure("begin managed-service definition", err)
 	}
 	defer tx.Rollback()
+	actor := localOwnerActorID
+	if threadID != "" {
+		scope, scopeErr := s.domainAgentSessionScopeInTransaction(ctx, tx, threadID)
+		if scopeErr != nil {
+			return MutationResult[domain.ManagedServiceDefinition]{}, scopeErr
+		}
+		if scope.Workspace.ID != command.WorkspaceIdentifier && scope.Workspace.Name != command.WorkspaceIdentifier {
+			return MutationResult[domain.ManagedServiceDefinition]{}, managedServiceError(CodeManagedServiceDenied, "managed-service proposal workspace is outside the durable agent scope")
+		}
+		if scope.Project.ID != command.ProjectIdentifier && scope.Project.Name != command.ProjectIdentifier {
+			return MutationResult[domain.ManagedServiceDefinition]{}, managedServiceError(CodeManagedServiceDenied, "managed-service proposal project is outside the durable agent scope")
+		}
+		actor = scope.Agent.ID
+	}
 	var replay MutationResult[domain.ManagedServiceDefinition]
 	key := managedServiceOwnerIdempotencyKey(command.IdempotencyKey)
-	if found, err := lookupIdempotency(ctx, tx, key, "service.definition.create", requestHash, &replay); err != nil {
+	if threadID != "" {
+		key = managedServiceAgentIdempotencyKey(actor, command.IdempotencyKey)
+	}
+	if found, err := lookupIdempotency(ctx, tx, key, operation, requestHash, &replay); err != nil {
 		return MutationResult[domain.ManagedServiceDefinition]{}, err
 	} else if found {
 		return replay, nil
@@ -171,10 +204,10 @@ INSERT INTO managed_service_definitions(
  profile,profile_revision,network_mode,health_type,health_host,health_port,health_path,health_interval_millis,health_timeout_millis,
  restart_policy,maximum_restarts,restart_cooldown_millis,stop_signal,stop_grace_millis,output_byte_limit,capacity_class,content_json,content_revision,content_sha256,status,revision,
  created_at,updated_at,created_by,updated_by
-) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,0),NULLIF(?,''),?,?,?,?,?,?,?,?,?,?,1,?,'active',1,?,?,'local-owner','local-owner')`,
+) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,0),NULLIF(?,''),?,?,?,?,?,?,?,?,?,?,1,?,'active',1,?,?,?,?)`,
 		id, workspace.ID, project.ID, nullText(command.WorkstreamID), checkout.ID, command.Name, command.Description, command.Executable, string(argumentsJSON), command.WorkingDirectory, string(environmentJSON),
 		command.Profile, command.ProfileRevision, command.NetworkMode, command.Health.Type, command.Health.Host, command.Health.Port, command.Health.Path, command.Health.IntervalMillis, command.Health.TimeoutMillis,
-		command.RestartPolicy, command.MaximumRestarts, command.RestartCooldownMillis, command.StopSignal, command.StopGraceMillis, command.OutputByteLimit, command.CapacityClass, string(contentJSON), contentSHA, now, now)
+		command.RestartPolicy, command.MaximumRestarts, command.RestartCooldownMillis, command.StopSignal, command.StopGraceMillis, command.OutputByteLimit, command.CapacityClass, string(contentJSON), contentSHA, now, now, actor, actor)
 	if err != nil {
 		return MutationResult[domain.ManagedServiceDefinition]{}, managedServiceConstraint("insert managed-service definition", err)
 	}
@@ -185,16 +218,22 @@ INSERT INTO managed_service_definitions(
 		Health: command.Health, RestartPolicy: command.RestartPolicy, MaximumRestarts: command.MaximumRestarts,
 		RestartCooldownMillis: command.RestartCooldownMillis, StopSignal: command.StopSignal, StopGraceMillis: command.StopGraceMillis,
 		OutputByteLimit: command.OutputByteLimit, CapacityClass: command.CapacityClass, ContentRevision: 1, ContentSHA256: contentSHA,
-		Status: domain.ManagedServiceDefinitionActive, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID,
+		Status: domain.ManagedServiceDefinitionActive, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: actor, UpdatedBy: actor,
 	}
-	sequence, err := appendEvent(ctx, tx, workspace.ID, "managed_service_definition", id, 1, managedServiceDefinitionCreatedEvent, command.CorrelationID, now, map[string]any{
+	eventData := map[string]any{
 		"project_id": project.ID, "workstream_id": command.WorkstreamID, "checkout_id": checkout.ID, "content_sha256": contentSHA,
-	})
+	}
+	var sequence int64
+	if threadID == "" {
+		sequence, err = appendEvent(ctx, tx, workspace.ID, "managed_service_definition", id, 1, managedServiceDefinitionCreatedEvent, command.CorrelationID, now, eventData)
+	} else {
+		sequence, err = appendEventForActor(ctx, tx, workspace.ID, "managed_service_definition", id, 1, managedServiceDefinitionCreatedEvent, command.CorrelationID, now, actor, domain.EventActorIntegration, eventData)
+	}
 	if err != nil {
 		return MutationResult[domain.ManagedServiceDefinition]{}, err
 	}
 	result := MutationResult[domain.ManagedServiceDefinition]{Value: definition, EventSequence: sequence}
-	if err := recordIdempotency(ctx, tx, key, "service.definition.create", requestHash, result, now); err != nil {
+	if err := recordIdempotency(ctx, tx, key, operation, requestHash, result, now); err != nil {
 		return MutationResult[domain.ManagedServiceDefinition]{}, err
 	}
 	if err := tx.Commit(); err != nil {

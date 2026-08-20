@@ -51,6 +51,46 @@ func TestM23WorkProposalToolStagesACompleteInertTeam(t *testing.T) {
 	}
 }
 
+func TestManagedServiceProposalToolLetsTheAgentDraftTheExactProcess(t *testing.T) {
+	t.Parallel()
+	var proposal map[string]any
+	for _, namespace := range domainAgentDynamicToolSpecs() {
+		for _, tool := range namespace.Tools {
+			if tool.Name == domainToolProposeService {
+				proposal = tool.InputSchema
+			}
+		}
+	}
+	if proposal == nil {
+		t.Fatal("crewfold_propose_managed_service tool is missing")
+	}
+	description := strings.ToLower(proposalDescription(domainToolProposeService))
+	for _, required := range []string{"inspect the checkout", "inert", "owner acceptance", "grants this durable agent", "starts exactly"} {
+		if !strings.Contains(description, required) {
+			t.Fatalf("proposal description %q does not explain %q", description, required)
+		}
+	}
+	value, err := decodeDomainProposeServiceArguments(json.RawMessage(`{
+		"name":"signal-garden-dev","description":"Run the reviewed local app for owner testing","checkout":"/work/signal",
+		"executable":"npm","arguments":["run","dev","--","--host","127.0.0.1","--port","4173"],
+		"working_directory":".","network_mode":"loopback",
+		"health":{"type":"http","host":"127.0.0.1","port":4173,"path":"/"},
+		"restart_policy":"on_failure","summary":"Start the exact local preview and let me manage its bounded lifecycle."
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Executable != "npm" || value.Health.Port != 4173 || value.Arguments[1] != "dev" {
+		t.Fatalf("decoded process proposal = %#v", value)
+	}
+	if _, err := decodeDomainProposeServiceArguments(json.RawMessage(`{"name":"x","description":"x","executable":"npm","arguments":[],"network_mode":"loopback","health":{"type":"http","host":"127.0.0.1","port":4173,"path":"/"},"restart_policy":"never","summary":"x","grant_id":"invented"}`)); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("internal authority guess error = %v", err)
+	}
+	if !strings.Contains(durableDomainCodexBaseInstructions, "crewfold_propose_managed_service") || !strings.Contains(durableDomainCodexBaseInstructions, "Do not tell the owner to transcribe") {
+		t.Fatal("durable agent instructions still bounce process setup back to the owner")
+	}
+}
+
 func TestM23WorkProposalToolAcceptsIntentAndRejectsInternalGuesswork(t *testing.T) {
 	t.Parallel()
 	concise := `{

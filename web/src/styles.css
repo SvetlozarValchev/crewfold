@@ -1191,8 +1191,13 @@ body { font-size: 15px; }
 .m24-process-requests > h3 { margin: 0; padding: 9px 11px; color: var(--m22-amber); background: #27251f; font: 10px/1.3 ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase; }
 .m24-process-requests article { padding: 12px; display: flex; align-items: center; gap: 18px; background: #20201d; }
 .m24-process-requests article > div:first-child { min-width: 0; flex: 1; display: grid; gap: 4px; }
-.m24-process-requests strong { color: var(--m22-text); font-size: 12px; }
-.m24-process-requests p, .m24-process-requests small { margin: 0; color: var(--m22-muted); font-size: 11px; line-height: 1.45; }
+.m24-process-requests strong { color: var(--m22-text); font-size: 14px; }
+.m24-process-requests p, .m24-process-requests small { margin: 0; color: var(--m22-muted); font-size: 12px; line-height: 1.55; }
+.m24-process-requests code { margin: 5px 0; padding: 9px 10px; overflow-wrap: anywhere; border-left: 2px solid var(--m22-cyan); color: var(--m22-text); background: #191b1b; font: 13px/1.5 ui-monospace, monospace; }
+.m24-process-requests dl { margin: 3px 0 7px; display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: 8px 18px; }
+.m24-process-requests dl div { min-width: 0; display: grid; gap: 2px; }
+.m24-process-requests dt { color: var(--m22-faint); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+.m24-process-requests dd { margin: 0; overflow-wrap: anywhere; color: var(--m22-text); font-size: 12px; }
 .m24-process-requests article > div:last-child { display: flex; gap: 7px; }
 .m24-process-requests button, .m24-process-grant-form button { min-height: 29px; padding: 5px 9px; border: 1px solid #4b4b4b; color: var(--m22-text); background: #292929; font: 10px/1.2 ui-monospace, monospace; white-space: nowrap; }
 .m24-process-requests button.primary, .m24-process-grant-form button.primary { color: #151515; border-color: var(--m22-lime); background: var(--m22-lime); }
@@ -1297,6 +1302,8 @@ body { font-size: 15px; }
   .m24-process-list article > footer { flex-wrap: wrap; }
   .m24-process-list article > footer > span { display: none; }
   .m24-process-requests article { align-items: stretch; flex-direction: column; }
+  .m24-process-requests dl { grid-template-columns: 1fr; }
+  .m24-process-requests article > div:last-child { justify-content: flex-end; flex-wrap: wrap; }
   .work-overview { grid-template-columns: 1fr 1fr; }
   .work-item { grid-template-columns: 30px minmax(0, 1fr); }
   .work-item > svg { display: none; }

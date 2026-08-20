@@ -118,9 +118,19 @@ port silently creates a managed service.
 The local owner may perform those operations directly. An agent needs a current
 service grant freezing domain/workstream, eligible definition or executable
 profile, allowed actions, maximum instances, network policy, budget/capacity,
-expiry, and delegation envelope. A conversation without that grant may submit an
-inert service proposal for exact owner review. A parent may delegate only a
-narrower service grant from authority it already holds.
+expiry, and delegation envelope. When the owner asks a durable agent to run,
+preview, serve, watch, or otherwise retain a repository process and no reviewed
+definition exists, the agent inspects the real checkout and submits one exact,
+inert definition plus start request. The owner is never required to transcribe
+the executable, arguments, health check, or restart policy into a form.
+
+The one review shows the exact command, checkout/workstream, contained working
+directory, loopback boundary, health check, and restart policy. Acceptance
+atomically grants that same durable agent `inspect|logs|start|stop|restart`
+authority for only the reviewed definition revision and starts one instance.
+Rejection retires the agent-authored draft and starts nothing. An agent may use a
+plain inert start request for an already owner-reviewed definition, and a parent
+may delegate only a narrower service grant from authority it already holds.
 
 The service launcher resolves the executable through the frozen profile, uses
 the exact contained working directory, and supplies only the reviewed

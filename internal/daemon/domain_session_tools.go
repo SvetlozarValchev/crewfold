@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -27,6 +29,7 @@ const (
 	domainToolProposeKnowledge = "crewfold_propose_knowledge"
 	domainToolControlService   = "crewfold_control_managed_service"
 	domainToolInspectService   = "crewfold_inspect_managed_service"
+	domainToolProposeService   = "crewfold_propose_managed_service"
 	domainToolRequestService   = "crewfold_request_managed_service"
 	domainToolDelegateService  = "crewfold_delegate_managed_service_grant"
 	runToolSendMessage         = "crewfold_run_send_message"
@@ -150,6 +153,32 @@ type domainSessionRequestServiceArguments struct {
 	DefinitionID     string `json:"definition_id"`
 	ExpectedRevision int64  `json:"expected_revision"`
 	Summary          string `json:"summary"`
+}
+
+type domainSessionProposeServiceArguments struct {
+	Name             string                                     `json:"name"`
+	Description      string                                     `json:"description"`
+	Checkout         string                                     `json:"checkout,omitempty"`
+	WorkstreamID     string                                     `json:"workstream_id,omitempty"`
+	Executable       string                                     `json:"executable"`
+	Arguments        []string                                   `json:"arguments"`
+	WorkingDirectory string                                     `json:"working_directory,omitempty"`
+	Environment      []domain.ManagedServiceEnvironmentVariable `json:"environment,omitempty"`
+	NetworkMode      string                                     `json:"network_mode"`
+	Health           domainSessionProposeServiceHealthArguments `json:"health"`
+	RestartPolicy    string                                     `json:"restart_policy"`
+	Summary          string                                     `json:"summary"`
+}
+
+// domainSessionProposeServiceHealthArguments is intent-shaped. The durable
+// agent selects the observable readiness boundary; Crewfold owns the bounded
+// polling interval and timeout so harmless model-chosen timing values cannot
+// make an otherwise exact process proposal invalid.
+type domainSessionProposeServiceHealthArguments struct {
+	Type string `json:"type"`
+	Host string `json:"host,omitempty"`
+	Port int    `json:"port,omitempty"`
+	Path string `json:"path,omitempty"`
 }
 
 type domainSessionDelegateServiceArguments struct {
@@ -349,6 +378,32 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 			},
 		},
 		{
+			Type: "function", Name: domainToolProposeService,
+			Description: "Draft one exact generic local process from the attached checkout and raise it for owner review. Use this when the owner asks to run, preview, serve, watch, or otherwise keep a repository command alive and no definition exists. Inspect the checkout first; provide the real executable and argv, relative working directory, loopback/network boundary, readiness check, and restart policy. The definition is inert. One owner acceptance grants this durable agent bounded inspect/log/start/stop/restart authority and starts exactly this revision.",
+			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
+				"required": []string{"name", "description", "executable", "arguments", "network_mode", "health", "restart_policy", "summary"},
+				"properties": map[string]any{
+					"name":              map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+					"description":       map[string]any{"type": "string", "minLength": 1, "maxLength": 1024},
+					"checkout":          map[string]any{"type": "string", "minLength": 1, "maxLength": 4096},
+					"workstream_id":     map[string]any{"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
+					"executable":        map[string]any{"type": "string", "minLength": 1, "maxLength": 4096},
+					"arguments":         map[string]any{"type": "array", "maxItems": 64, "items": map[string]any{"type": "string", "maxLength": 4096}},
+					"working_directory": map[string]any{"type": "string", "maxLength": 4096},
+					"environment": map[string]any{"type": "array", "maxItems": 64, "items": map[string]any{
+						"type": "object", "additionalProperties": false, "required": []string{"name", "value"},
+						"properties": map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "value": map[string]any{"type": "string", "maxLength": 4096}},
+					}},
+					"network_mode": map[string]any{"type": "string", "enum": []string{domain.ManagedServiceNetworkNone, domain.ManagedServiceNetworkLoopback}},
+					"health": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"type"}, "properties": map[string]any{
+						"type": map[string]any{"type": "string", "enum": []string{domain.ManagedServiceHealthProcess, domain.ManagedServiceHealthTCP, domain.ManagedServiceHealthHTTP}}, "host": map[string]any{"type": "string", "enum": []string{"127.0.0.1", "localhost", "::1"}}, "port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535}, "path": map[string]any{"type": "string", "maxLength": 2048},
+					}},
+					"restart_policy": map[string]any{"type": "string", "enum": []string{domain.ManagedServiceRestartNever, domain.ManagedServiceRestartOnFailure, domain.ManagedServiceRestartOnDaemon}},
+					"summary":        map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
+				},
+			},
+		},
+		{
 			Type: "function", Name: domainToolRequestService,
 			Description: "Raise one inert owner-review request to start an exact owner-reviewed local process definition when this agent has no direct start grant. This never starts a process. State why the process is needed and what the owner will be enabling.",
 			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
@@ -418,7 +473,7 @@ func (s *server) handleDomainSessionToolRequest(ctx context.Context, request exe
 	var result map[string]any
 	if call.Namespace != nil && *call.Namespace != "" && *call.Namespace != "crewfold" {
 		result = domainToolFailure("tool namespace is not Crewfold")
-	} else if call.Tool != domainToolContext && call.Tool != domainToolSendMessage && call.Tool != domainToolCreateChild && call.Tool != domainToolDelegateStaffing && call.Tool != domainToolProposeWork && call.Tool != domainToolProposeKnowledge && call.Tool != domainToolControlService && call.Tool != domainToolInspectService && call.Tool != domainToolRequestService && call.Tool != domainToolDelegateService {
+	} else if call.Tool != domainToolContext && call.Tool != domainToolSendMessage && call.Tool != domainToolCreateChild && call.Tool != domainToolDelegateStaffing && call.Tool != domainToolProposeWork && call.Tool != domainToolProposeKnowledge && call.Tool != domainToolControlService && call.Tool != domainToolInspectService && call.Tool != domainToolProposeService && call.Tool != domainToolRequestService && call.Tool != domainToolDelegateService {
 		result = domainToolFailure("Crewfold did not advertise this durable-agent tool")
 	} else if call.Tool == domainToolContext {
 		if err := decodeEmptyDomainToolArguments(call.Arguments); err != nil {
@@ -463,6 +518,12 @@ func (s *server) handleDomainSessionToolRequest(ctx context.Context, request exe
 		} else {
 			result = s.domainInspectServiceToolResult(ctx, call, arguments)
 		}
+	} else if call.Tool == domainToolProposeService {
+		if arguments, err := decodeDomainProposeServiceArguments(call.Arguments); err != nil {
+			result = domainToolFailure("managed-service proposal arguments are invalid: " + safeDomainSessionDiagnostic(err))
+		} else {
+			result = s.domainProposeServiceToolResult(ctx, call, arguments)
+		}
 	} else if call.Tool == domainToolRequestService {
 		if arguments, err := decodeDomainRequestServiceArguments(call.Arguments); err != nil {
 			result = domainToolFailure("managed-service request arguments are invalid: " + safeDomainSessionDiagnostic(err))
@@ -493,7 +554,7 @@ func isRunDynamicTool(name string) bool {
 	}
 	if name == domainToolSendMessage || name == domainToolProposeKnowledge || name == domainToolContext ||
 		name == domainToolCreateChild || name == domainToolDelegateStaffing || name == domainToolProposeWork ||
-		name == domainToolControlService || name == domainToolInspectService || name == domainToolRequestService ||
+		name == domainToolControlService || name == domainToolInspectService || name == domainToolProposeService || name == domainToolRequestService ||
 		name == domainToolDelegateService {
 		return false
 	}
@@ -656,6 +717,70 @@ func (s *server) domainRequestServiceToolResult(ctx context.Context, call domain
 	})
 	if err != nil {
 		return domainToolFailure("encode managed-service request result: " + safeDomainSessionDiagnostic(err))
+	}
+	return domainToolSuccess(string(encoded))
+}
+
+func (s *server) domainProposeServiceToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionProposeServiceArguments) map[string]any {
+	scope, err := s.store.DomainAgentSessionScopeByThread(ctx, call.ThreadID)
+	if err != nil {
+		return domainToolFailure("resolve managed-service proposal scope: " + safeDomainSessionDiagnostic(err))
+	}
+	inspection, err := s.store.InspectProject(ctx, scope.Workspace.ID, scope.Project.ID)
+	if err != nil {
+		return domainToolFailure("inspect managed-service proposal checkout: " + safeDomainSessionDiagnostic(err))
+	}
+	checkout, err := resolveDomainWorkCheckout(inspection.Checkouts, arguments.Checkout, true)
+	if err != nil {
+		return domainToolFailure("resolve managed-service proposal checkout: " + safeDomainSessionDiagnostic(err))
+	}
+	executable := arguments.Executable
+	if !filepath.IsAbs(executable) {
+		executable, err = exec.LookPath(executable)
+		if err != nil {
+			return domainToolFailure("resolve managed-service executable: " + safeDomainSessionDiagnostic(err))
+		}
+	}
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		return domainToolFailure("resolve managed-service executable path: " + safeDomainSessionDiagnostic(err))
+	}
+	digest := sha256.Sum256([]byte(call.CallID))
+	key := fmt.Sprintf("domain-tool-%x", digest[:])
+	maximumRestarts := 3
+	if arguments.RestartPolicy == domain.ManagedServiceRestartNever {
+		maximumRestarts = 0
+	}
+	health := domain.ManagedServiceHealthCheck{
+		Type: arguments.Health.Type, Host: arguments.Health.Host, Port: arguments.Health.Port, Path: arguments.Health.Path,
+		IntervalMillis: 1000, TimeoutMillis: 500,
+	}
+	definition, err := s.store.CreateManagedServiceDefinitionAsAgent(ctx, call.ThreadID, store.CreateManagedServiceDefinitionCommand{
+		WorkspaceIdentifier: scope.Workspace.ID, ProjectIdentifier: scope.Project.ID, WorkstreamID: arguments.WorkstreamID,
+		CheckoutID: checkout.ID, Name: arguments.Name, Description: arguments.Description, Executable: filepath.Clean(executable),
+		Arguments: arguments.Arguments, WorkingDirectory: arguments.WorkingDirectory, Environment: arguments.Environment,
+		Profile: "local-process", ProfileRevision: 1, NetworkMode: arguments.NetworkMode, Health: health,
+		RestartPolicy: arguments.RestartPolicy, MaximumRestarts: maximumRestarts, RestartCooldownMillis: 500,
+		StopSignal: domain.ManagedServiceStopSignalTerm, StopGraceMillis: 5000, OutputByteLimit: 262144,
+		CapacityClass: domain.ManagedServiceCapacityLocalDevelop, IdempotencyKey: key + "-definition", CorrelationID: key,
+	})
+	if err != nil {
+		return domainToolFailure("record inert managed-service definition: " + safeDomainSessionDiagnostic(err))
+	}
+	request, err := s.store.SubmitManagedServiceRequest(ctx, store.SubmitManagedServiceRequestCommand{
+		ThreadID: call.ThreadID, DefinitionID: definition.Value.ID, ExpectedRevision: definition.Value.Revision,
+		Summary: arguments.Summary, IdempotencyKey: key + "-request", CorrelationID: key,
+	})
+	if err != nil {
+		return domainToolFailure("submit managed-service owner request: " + safeDomainSessionDiagnostic(err))
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"schema": "urn:crewfold:schema:domain:managed-service-proposal-result:v1", "definition": definition.Value,
+		"request": request.Value, "event_sequence": request.EventSequence,
+		"effect": "none_until_owner_acceptance", "acceptance_effect": "grant_requesting_agent_and_start_exact_definition",
+	})
+	if err != nil {
+		return domainToolFailure("encode managed-service proposal result: " + safeDomainSessionDiagnostic(err))
 	}
 	return domainToolSuccess(string(encoded))
 }
@@ -1308,6 +1433,69 @@ func decodeDomainRequestServiceArguments(data json.RawMessage) (domainSessionReq
 		return value, errors.New("an exact definition revision and bounded owner-facing summary are required")
 	}
 	return value, nil
+}
+
+func decodeDomainProposeServiceArguments(data json.RawMessage) (domainSessionProposeServiceArguments, error) {
+	var value domainSessionProposeServiceArguments
+	if err := decodeStrictDomainToolArguments(data, &value); err != nil {
+		return value, err
+	}
+	value.Name = strings.TrimSpace(value.Name)
+	value.Description = strings.TrimSpace(value.Description)
+	value.Checkout = strings.TrimSpace(value.Checkout)
+	value.WorkstreamID = strings.TrimSpace(value.WorkstreamID)
+	value.Executable = strings.TrimSpace(value.Executable)
+	value.WorkingDirectory = strings.TrimSpace(value.WorkingDirectory)
+	value.NetworkMode = strings.TrimSpace(value.NetworkMode)
+	value.Health.Type = strings.TrimSpace(value.Health.Type)
+	value.Health.Host = strings.TrimSpace(value.Health.Host)
+	value.Health.Path = strings.TrimSpace(value.Health.Path)
+	value.RestartPolicy = strings.TrimSpace(value.RestartPolicy)
+	value.Summary = strings.TrimSpace(value.Summary)
+	if !validDomainToolText(value.Name, 128) || !validDomainToolText(value.Description, 1024) ||
+		(value.Checkout != "" && !validDomainToolText(value.Checkout, 4096)) ||
+		(value.WorkstreamID != "" && !validDomainToolIdentifier(value.WorkstreamID, "obj_")) ||
+		!validDomainToolText(value.Executable, 4096) || len(value.Arguments) > 64 || len(value.Environment) > 64 ||
+		!validDomainToolText(value.Summary, 2048) {
+		return value, errors.New("proposal requires a bounded name, checkout command, and owner-facing summary")
+	}
+	if value.NetworkMode != domain.ManagedServiceNetworkNone && value.NetworkMode != domain.ManagedServiceNetworkLoopback {
+		return value, errors.New("network_mode must be none or loopback")
+	}
+	if value.RestartPolicy != domain.ManagedServiceRestartNever && value.RestartPolicy != domain.ManagedServiceRestartOnFailure && value.RestartPolicy != domain.ManagedServiceRestartOnDaemon {
+		return value, errors.New("restart_policy is not a supported managed-process policy")
+	}
+	if !validDomainManagedServiceHealth(value.NetworkMode, value.Health) {
+		return value, errors.New("health must be process-only without an endpoint, or an exact loopback TCP/HTTP endpoint")
+	}
+	for _, argument := range value.Arguments {
+		if !utf8.ValidString(argument) || strings.ContainsRune(argument, '\x00') || len([]byte(argument)) > 4096 {
+			return value, errors.New("process arguments must be bounded NUL-free UTF-8")
+		}
+	}
+	return value, nil
+}
+
+func validDomainManagedServiceHealth(network string, health domainSessionProposeServiceHealthArguments) bool {
+	switch health.Type {
+	case domain.ManagedServiceHealthProcess:
+		return network == domain.ManagedServiceNetworkNone && health.Host == "" && health.Port == 0 && health.Path == ""
+	case domain.ManagedServiceHealthTCP:
+		return network == domain.ManagedServiceNetworkLoopback && domainManagedServiceLoopbackHost(health.Host) && health.Port >= 1 && health.Port <= 65535 && health.Path == ""
+	case domain.ManagedServiceHealthHTTP:
+		return network == domain.ManagedServiceNetworkLoopback && domainManagedServiceLoopbackHost(health.Host) && health.Port >= 1 && health.Port <= 65535 && strings.HasPrefix(health.Path, "/") && validDomainToolText(health.Path, 2048)
+	default:
+		return false
+	}
+}
+
+func domainManagedServiceLoopbackHost(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeDomainDelegateServiceArguments(data json.RawMessage) (domainSessionDelegateServiceArguments, error) {

@@ -180,6 +180,7 @@ type ManagedServiceRequest struct {
 type ManagedServiceRequestDecision struct {
 	Request  ManagedServiceRequest   `json:"request"`
 	Instance *ManagedServiceInstance `json:"instance,omitempty"`
+	Grant    *ManagedServiceGrant    `json:"grant,omitempty"`
 }
 
 // ManagedServiceInstance is canonical lifecycle state. PID/process-group and

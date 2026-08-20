@@ -1769,8 +1769,8 @@ CREATE TABLE managed_service_definitions (
     revision INTEGER NOT NULL CHECK (revision>0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    created_by TEXT NOT NULL CHECK (created_by='local-owner'),
-    updated_by TEXT NOT NULL CHECK (updated_by='local-owner'),
+    created_by TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
     CHECK (
       (health_type='process' AND health_host IS NULL AND health_port IS NULL AND health_path IS NULL) OR
       (health_type='tcp' AND health_host IS NOT NULL AND health_port BETWEEN 1 AND 65535 AND health_path IS NULL) OR
@@ -5131,6 +5131,9 @@ BEFORE INSERT ON managed_service_definitions BEGIN
       json_extract(NEW.environment_json,'$['||environment.ordinal||'].value') IS NOT environment.value))
     OR NOT EXISTS(SELECT 1 FROM projects project JOIN checkouts checkout ON checkout.id=NEW.checkout_id
       WHERE project.id=NEW.project_id AND project.workspace_id=NEW.workspace_id AND checkout.project_id=NEW.project_id AND checkout.availability='available')
+    OR NEW.updated_by IS NOT NEW.created_by
+    OR (NEW.created_by<>'local-owner' AND NOT EXISTS(SELECT 1 FROM domain_agent_memberships membership
+      WHERE membership.project_id=NEW.project_id AND membership.agent_id=NEW.created_by AND membership.status='active'))
     OR (NEW.workstream_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM objectives objective WHERE objective.id=NEW.workstream_id AND objective.workspace_id=NEW.workspace_id AND objective.project_id=NEW.project_id))
     THEN RAISE(ABORT,'invalid immutable managed-service definition') END;
 END;

@@ -1653,9 +1653,14 @@ in the real Signal Garden workflow.
 3. Implement one noninteractive local service supervisor with process-group
    cleanup, parent-death behavior, loopback allocation, bounded health probes,
    log capture/redaction, restart backoff, and exact current-node reconciliation.
-4. Add owner and agent service grants plus inert service proposals. A granted
-   coordinator may operate only exact eligible definitions/actions/capacity and
-   may delegate only a narrower envelope.
+4. Add owner and agent service grants plus inert service proposals. A durable
+   agent may inspect its attached checkout and author the exact process
+   definition instead of sending the owner to a configuration form. One owner
+   acceptance freezes that definition, grants the proposing agent only
+   `inspect|logs|start|stop|restart` for its exact revision, and starts one
+   instance; rejection retires the draft. A granted coordinator may operate only
+   exact eligible definitions/actions/capacity and may delegate only a narrower
+   envelope.
 5. Add strict local API, CLI automation, and closed agent tools for definition,
    list/show, start, stop, restart, health, and logs. Retain `crewfold service`
    solely for Crewfold's own user service; use a distinct project-process CLI

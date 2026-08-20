@@ -908,7 +908,7 @@ them to canonical work. The storage family is:
 
 | Table | Exact responsibility |
 | --- | --- |
-| `managed_service_definitions` | immutable structural executable/argv, checkout/workstream scope, bounded environment, network/health/restart/stop/log contract, active/retired revision |
+| `managed_service_definitions` | owner- or durable-agent-authored immutable structural executable/argv, checkout/workstream scope, bounded environment, network/health/restart/stop/log contract, active/retired revision; an agent-authored definition has no effect until its exact request is accepted |
 | `managed_service_arguments` | ordered exact argv children |
 | `managed_service_environment` | ordered bounded nonsecret environment overrides |
 | `managed_service_grants` | current exact agent authority, optionally narrowed from one parent grant |
@@ -924,6 +924,13 @@ structural arguments. Opaque `sh -c`/`bash -c`, remote bind/health hosts, secret
 shaped environment names, unsafe checkout/cwd traversal, stale profile revisions,
 and cross-scope authority fail before an OS process exists. No worker infers or
 runs an install, clean, clone, dependency bootstrap, or framework command.
+
+An agent-authored definition records the current durable agent as `created_by`
+and must be accompanied by its inert owner-review request. Acceptance creates a
+revision-bound five-action grant for that agent and one request-sourced instance
+in the same transaction. Rejection is the only path that retires an unaccepted
+agent draft. Manual owner definition remains an advanced explicit setup path,
+not the normal response to an owner asking an agent to run the application.
 
 The process host creates one process group, records `/proc` start ticks, captures
 private bounded stdout/stderr, and probes process/TCP/HTTP readiness. Graceful

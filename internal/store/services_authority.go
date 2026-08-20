@@ -506,13 +506,44 @@ func (s *Store) DecideManagedServiceRequest(ctx context.Context, command DecideM
 		return MutationResult[domain.ManagedServiceRequestDecision]{}, err
 	}
 	decision := domain.ManagedServiceRequestDecision{Request: request}
+	definition, queryErr := queryManagedServiceDefinition(ctx, tx, workspace.ID, request.DefinitionID)
+	if queryErr != nil {
+		return MutationResult[domain.ManagedServiceRequestDecision]{}, queryErr
+	}
+	if definition.Revision != request.DefinitionRevision {
+		return MutationResult[domain.ManagedServiceRequestDecision]{}, managedServiceError(CodeManagedServiceConflict, "managed-service request definition is no longer current")
+	}
 	if command.Accept {
-		definition, queryErr := queryManagedServiceDefinition(ctx, tx, workspace.ID, request.DefinitionID)
-		if queryErr != nil {
-			return MutationResult[domain.ManagedServiceRequestDecision]{}, queryErr
-		}
-		if definition.Status != domain.ManagedServiceDefinitionActive || definition.Revision != request.DefinitionRevision {
+		if definition.Status != domain.ManagedServiceDefinitionActive {
 			return MutationResult[domain.ManagedServiceRequestDecision]{}, managedServiceError(CodeManagedServiceConflict, "managed-service request definition is no longer current")
+		}
+		if definition.CreatedBy == request.AgentID {
+			membership, membershipErr := queryDomainAgentMembership(ctx, tx, definition.ProjectID, request.AgentID)
+			if membershipErr != nil {
+				return MutationResult[domain.ManagedServiceRequestDecision]{}, membershipErr
+			}
+			if membership.Status != domain.DomainAgentActive || membership.Revision != request.AgentMembershipRevision {
+				return MutationResult[domain.ManagedServiceRequestDecision]{}, managedServiceError(CodeManagedServiceDenied, "managed-service proposal agent membership is no longer current")
+			}
+			actions, normalizeErr := normalizeManagedServiceActions([]string{
+				domain.ManagedServiceActionInspect,
+				domain.ManagedServiceActionLogs,
+				domain.ManagedServiceActionStart,
+				domain.ManagedServiceActionStop,
+				domain.ManagedServiceActionRestart,
+			})
+			if normalizeErr != nil {
+				return MutationResult[domain.ManagedServiceRequestDecision]{}, normalizeErr
+			}
+			grant, grantErr := insertManagedServiceGrant(ctx, tx, definition, membership, "", actions, 1, "", localOwnerActorID, now)
+			if grantErr != nil {
+				return MutationResult[domain.ManagedServiceRequestDecision]{}, grantErr
+			}
+			sequence, grantErr = appendEvent(ctx, tx, workspace.ID, "managed_service_grant", grant.ID, grant.Revision, managedServiceGrantCreatedEvent, command.CorrelationID, now, managedServiceGrantEventData(grant))
+			if grantErr != nil {
+				return MutationResult[domain.ManagedServiceRequestDecision]{}, grantErr
+			}
+			decision.Grant = &grant
 		}
 		source := domain.ManagedServiceSource{Type: domain.ManagedServiceSourceRequest, ActorID: request.AgentID, AgentID: request.AgentID, AgentRevision: request.AgentMembershipRevision, ThreadID: request.ThreadID, RequestID: request.ID}
 		started, startErr := s.startManagedServiceInTx(ctx, tx, workspace.ID, definition, source, command.CorrelationID, now)
@@ -521,6 +552,18 @@ func (s *Store) DecideManagedServiceRequest(ctx context.Context, command DecideM
 		}
 		decision.Instance = &started.Value
 		sequence = started.EventSequence
+	} else if definition.CreatedBy == request.AgentID && definition.Status == domain.ManagedServiceDefinitionActive {
+		definition.Status = domain.ManagedServiceDefinitionRetired
+		definition.Revision++
+		definition.UpdatedAt = now
+		definition.UpdatedBy = localOwnerActorID
+		if _, updateErr := tx.ExecContext(ctx, `UPDATE managed_service_definitions SET status='retired',revision=?,updated_at=?,updated_by='local-owner' WHERE id=? AND status='active'`, definition.Revision, now, definition.ID); updateErr != nil {
+			return MutationResult[domain.ManagedServiceRequestDecision]{}, managedServiceConstraint("retire rejected agent-authored managed-service definition", updateErr)
+		}
+		sequence, err = appendEvent(ctx, tx, workspace.ID, "managed_service_definition", definition.ID, definition.Revision, managedServiceDefinitionRetiredEvent, command.CorrelationID, now, map[string]any{"reason": "owner rejected agent-authored process proposal", "request_id": request.ID})
+		if err != nil {
+			return MutationResult[domain.ManagedServiceRequestDecision]{}, err
+		}
 	}
 	result := MutationResult[domain.ManagedServiceRequestDecision]{Value: decision, EventSequence: sequence}
 	if err := recordIdempotency(ctx, tx, key, "service.request.decide", requestHash, result, now); err != nil {
