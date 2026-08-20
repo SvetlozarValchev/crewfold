@@ -65,7 +65,7 @@ func (s *server) handleDomainAgentSpecDraft(request localapi.Request) localapi.R
 }
 
 func (host *domainSessionHost) draftAgentSpec(ctx context.Context, cwd, projectName, ownerIntent string) (localapi.DomainAgentSpecDraft, error) {
-	transport, err := host.factory()
+	transport, err := host.newTransport(ctx, "agent-spec-drafter")
 	if err != nil {
 		return localapi.DomainAgentSpecDraft{}, err
 	}

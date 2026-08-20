@@ -108,28 +108,30 @@ func newDomainSessionHost(config Config, toolHandler func(context.Context, execu
 	}
 }
 
-// newClient starts one private Codex app-server inside a Herdr workspace for
-// one durable-agent epoch. Agents never share a process. The host remains
-// observable across ordinary turns and is replaced only by explicit lifecycle
-// work (compaction/rotation), daemon restart, or provider failure.
-func (host *domainSessionHost) newClient(ctx context.Context, label string) (*execution.CodexAppServerClient, error) {
+func (host *domainSessionHost) newTransport(ctx context.Context, label string) (execution.CodexAppServerTransport, error) {
 	host.mu.Lock()
 	if host.closed {
 		host.mu.Unlock()
 		return nil, errors.New("domain session host is closed")
 	}
 	host.mu.Unlock()
-	var transport execution.CodexAppServerTransport
-	var err error
 	if host.factory != nil {
-		transport, err = host.factory()
-	} else if host.herdrHost != nil {
+		return host.factory()
+	}
+	if host.herdrHost != nil {
 		options := *host.herdrHost
 		options.Label = label
-		transport, err = execution.StartCodexAppServerInHerdr(ctx, options)
-	} else {
-		err = errors.New("durable Codex host is not configured")
+		return execution.StartCodexAppServerInHerdr(ctx, options)
 	}
+	return nil, errors.New("durable Codex host is not configured")
+}
+
+// newClient starts one private Codex app-server inside a Herdr workspace for
+// one durable-agent epoch. Agents never share a process. The host remains
+// observable across ordinary turns and is replaced only by explicit lifecycle
+// work (compaction/rotation), daemon restart, or provider failure.
+func (host *domainSessionHost) newClient(ctx context.Context, label string) (*execution.CodexAppServerClient, error) {
+	transport, err := host.newTransport(ctx, label)
 	if err != nil {
 		return nil, err
 	}

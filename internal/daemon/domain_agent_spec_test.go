@@ -77,6 +77,14 @@ func TestM22AgentSpecDraftParserRequiresOneExactClosedObject(t *testing.T) {
 	}
 }
 
+func TestM22AgentSpecDraftWithoutConfiguredHostReturnsAnErrorInsteadOfPanicking(t *testing.T) {
+	host := &domainSessionHost{}
+	_, err := host.draftAgentSpec(context.Background(), t.TempDir(), "world-engine", "Coordinate the domain.")
+	if err == nil || !strings.Contains(err.Error(), "durable Codex host is not configured") {
+		t.Fatalf("draft error = %v", err)
+	}
+}
+
 func specDraftTurn(text string) execution.CodexTurn {
 	item, _ := json.Marshal(map[string]any{"id": "draft-message", "type": "agentMessage", "text": text})
 	return execution.CodexTurn{ID: "draft-turn", Status: "completed", Items: []json.RawMessage{item}}
