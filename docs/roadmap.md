@@ -17,7 +17,11 @@ Live use of M22 then exposed incomplete composition between workstream placement
 persistent local checkout reuse, dependency handoffs, and attached execution
 continuity. M23 closes those gaps under
 [ADR-0022](decisions/0022-workstream-execution-and-context-continuity.md). The
-public OSS release candidate moves to M24. The M22 correction remains frozen in
+Signal Garden workflow then exposed the remaining operability gap between
+attached runs, readable evidence, verified delivery, and continuing local
+development processes. M24 closes that gap under
+[ADR-0023](decisions/0023-operable-workstreams-and-managed-local-services.md).
+The public OSS release candidate moves to M25. The M22 correction remains frozen in
 [ADR-0021](decisions/0021-domain-oriented-durable-agent-console.md). Historical
 M21 evidence is
 recorded in the [M0 review](reviews/buildable-repository.md), [M1
@@ -287,7 +291,18 @@ timeline, and blockers expose their real missing input and repair. The exact
 contract is
 [ADR-0022](decisions/0022-workstream-execution-and-context-continuity.md).
 
-### Public release candidate — M24
+### Operable workstreams and managed local services — M24
+
+One owner follows implementation, independent review, remediation, and final
+verification through one truthful agent/workstream timeline, reads the exact
+evidence, and accepts the verified delivery explicitly. The same workstream may
+own an owner-reviewed generic local development service such as a Vite preview,
+API, watcher, asset cooker, or test fixture. Crewfold owns its process group,
+health, local URL, logs, restart, stop, authority, and recovery without turning
+into an arbitrary daemon manager. The exact contract is
+[ADR-0023](decisions/0023-operable-workstreams-and-managed-local-services.md).
+
+### Public release candidate — M25
 
 An unrelated developer can install, demo, test, and extend Crewfold without model
 credentials. Live provider tests remain explicit opt-in canaries.
@@ -340,13 +355,14 @@ but they do not carry their implementation cost now.
 
 ## Immediate next milestone
 
-M24 is next: public open-source release readiness. M23 now binds each
-implementation workstream to one primary persistent checkout, atomically places
-its proposed team, carries required predecessor handoffs/evidence into successor
-context, and presents conversation epochs plus attached execution as one
-durable-coworker surface. Packaging, extension conformance, tutorials, licensing,
-security contacts, and publication build on that passed real-provider browser
-workflow.
+M24 is next: operable workstreams and managed local services. It must finish the
+unified durable-coworker timeline, expose exact authorized evidence, distinguish
+review/verification assessment from process completion, present verified
+delivery awaiting explicit owner acceptance, and manage an owner-reviewed local
+workstream process such as a Vite preview through health/log/restart/stop and
+recovery. Packaging, extension conformance, tutorials, licensing, security
+contacts, and publication move to M25 and build only on that passed real-provider
+browser workflow.
 
 M21's service/browser foundation is recorded at commit
 `6116b5d0b21bfba48007da464ff3bae0c8543416`; its

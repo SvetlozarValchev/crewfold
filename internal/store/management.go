@@ -1378,7 +1378,7 @@ func (s *Store) applyManagerProposalInTransaction(ctx context.Context, tx *sql.T
 			return domain.Task{}, storageFailure("generate accepted task id", err)
 		}
 		task := domain.Task{ID: id, WorkspaceID: proposal.WorkspaceID, ProjectID: proposal.ProjectID, ObjectiveID: proposal.ObjectiveID,
-			Title: strings.TrimSpace(value.Title), Description: strings.TrimSpace(value.Description), Status: domain.TaskReady,
+			Title: strings.TrimSpace(value.Title), Description: strings.TrimSpace(value.Description), TaskClass: "implementation", Status: domain.TaskReady,
 			Priority: value.Priority, Budget: value.Budget, Revision: 1, CreatedAt: now, UpdatedAt: now,
 			CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,workspace_id,project_id,objective_id,title,description,status,priority,budget_tokens,budget_cost_cents,budget_time_seconds,revision,created_at,updated_at,created_by,updated_by) VALUES (?,?,?,?,?,NULLIF(?,''),'ready',?,?,?,?,1,?,?,?,?)`,

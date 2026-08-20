@@ -568,6 +568,98 @@ WHERE recipient.message_id IS NULL
    OR (wake.status='succeeded' AND recipient.status='queued')
    OR (wake.status='failed_unknown' AND (event.type<>'message.wake_failed_unknown' OR event.actor_id<>'message-wake-worker' OR event.actor_type<>'subsystem'))`},
 	},
+	"services": {
+		{name: "definition_scope_and_content", query: `
+SELECT 'service_definition:'||definition.id AS sample FROM managed_service_definitions definition
+JOIN projects project ON project.id=definition.project_id
+JOIN checkouts checkout ON checkout.id=definition.checkout_id
+LEFT JOIN objectives workstream ON workstream.id=definition.workstream_id
+WHERE project.workspace_id<>definition.workspace_id OR checkout.project_id<>definition.project_id
+   OR (definition.workstream_id IS NOT NULL AND (workstream.workspace_id<>definition.workspace_id OR workstream.project_id<>definition.project_id))
+   OR definition.content_sha256<>lower(hex(sha256(CAST(definition.content_json AS BLOB))))
+   OR json_array_length(definition.arguments_json)<>(SELECT count(*) FROM managed_service_arguments argument WHERE argument.definition_id=definition.id)
+   OR json_array_length(definition.environment_json)<>(SELECT count(*) FROM managed_service_environment environment WHERE environment.definition_id=definition.id)
+UNION ALL
+SELECT 'service_argument:'||argument.definition_id||':'||argument.ordinal FROM managed_service_arguments argument
+WHERE argument.ordinal<>(SELECT count(*) FROM managed_service_arguments prior WHERE prior.definition_id=argument.definition_id AND prior.ordinal<argument.ordinal)
+UNION ALL
+SELECT 'service_environment:'||environment.definition_id||':'||environment.ordinal FROM managed_service_environment environment
+WHERE environment.ordinal<>(SELECT count(*) FROM managed_service_environment prior WHERE prior.definition_id=environment.definition_id AND prior.ordinal<environment.ordinal)`},
+		{name: "grant_and_request_authority", query: `
+SELECT 'service_grant:'||grant_row.id AS sample FROM managed_service_grants grant_row
+LEFT JOIN managed_service_definitions definition ON definition.id=grant_row.definition_id
+LEFT JOIN domain_agent_memberships membership ON membership.project_id=grant_row.project_id AND membership.agent_id=grant_row.manager_agent_id
+WHERE definition.id IS NULL OR definition.workspace_id<>grant_row.workspace_id OR definition.project_id<>grant_row.project_id OR definition.revision<>grant_row.definition_revision
+   OR membership.agent_id IS NULL OR membership.revision<grant_row.manager_membership_revision
+   OR json_array_length(grant_row.actions_json)<>(SELECT count(DISTINCT value) FROM json_each(grant_row.actions_json))
+   OR EXISTS(SELECT 1 FROM json_each(grant_row.actions_json) action WHERE action.type<>'text' OR action.value NOT IN ('inspect','logs','start','stop','restart','delegate'))
+   OR (grant_row.parent_grant_id IS NOT NULL AND NOT EXISTS(
+      SELECT 1 FROM managed_service_grants parent WHERE parent.id=grant_row.parent_grant_id
+        AND parent.workspace_id=grant_row.workspace_id AND parent.project_id=grant_row.project_id
+        AND parent.definition_id=grant_row.definition_id AND parent.definition_revision=grant_row.definition_revision
+        AND grant_row.maximum_instances<=parent.maximum_instances
+        AND NOT EXISTS(SELECT 1 FROM json_each(grant_row.actions_json) child_action WHERE child_action.value NOT IN (SELECT value FROM json_each(parent.actions_json)))
+        AND (parent.expires_at IS NULL OR (grant_row.expires_at IS NOT NULL AND crewfold_timestamp_key(grant_row.expires_at)<=crewfold_timestamp_key(parent.expires_at)))))
+UNION ALL
+SELECT 'service_request:'||request.id FROM managed_service_requests request
+LEFT JOIN managed_service_definitions definition ON definition.id=request.definition_id
+LEFT JOIN domain_agent_memberships membership ON membership.project_id=request.project_id AND membership.agent_id=request.agent_id
+LEFT JOIN domain_agent_session_bindings binding ON binding.project_id=request.project_id AND binding.agent_id=request.agent_id AND binding.thread_id=request.thread_id
+WHERE definition.id IS NULL OR definition.workspace_id<>request.workspace_id OR definition.project_id<>request.project_id OR definition.revision<>request.definition_revision
+   OR membership.agent_id IS NULL OR membership.revision<request.agent_membership_revision OR binding.thread_id IS NULL
+   OR (request.status='pending')<>(request.decided_at IS NULL AND request.decision_reason IS NULL)
+   OR (request.status IN ('accepted','rejected'))<>(request.decided_at IS NOT NULL AND request.decision_reason IS NOT NULL)`},
+		{name: "instance_lifecycle_and_binding", query: `
+SELECT 'service_instance:'||instance.id AS sample FROM managed_service_instances instance
+JOIN managed_service_definitions definition ON definition.id=instance.definition_id
+WHERE instance.workspace_id<>definition.workspace_id OR instance.project_id<>definition.project_id
+   OR instance.workstream_id IS NOT definition.workstream_id OR instance.checkout_id<>definition.checkout_id
+   OR instance.definition_revision>definition.revision OR instance.definition_content_sha256<>definition.content_sha256
+   OR crewfold_timestamp_canonical(instance.created_at)<>1 OR crewfold_timestamp_canonical(instance.updated_at)<>1
+   OR (instance.status IN ('requested','starting','healthy','degraded','stopping','unknown') AND instance.finished_at IS NOT NULL)
+   OR (instance.status IN ('stopped','failed') AND instance.finished_at IS NULL)
+   OR (instance.source_type='agent' AND NOT EXISTS(SELECT 1 FROM managed_service_grants grant_row WHERE grant_row.id=instance.source_grant_id AND grant_row.workspace_id=instance.workspace_id AND grant_row.project_id=instance.project_id AND grant_row.definition_id=instance.definition_id AND grant_row.definition_revision=instance.definition_revision AND grant_row.manager_agent_id=instance.source_agent_id AND grant_row.manager_membership_revision=instance.source_agent_revision AND grant_row.revision>=instance.source_grant_revision))
+   OR (instance.source_type='agent_request' AND NOT EXISTS(SELECT 1 FROM managed_service_requests request WHERE request.id=instance.source_request_id AND request.status='accepted' AND request.workspace_id=instance.workspace_id AND request.project_id=instance.project_id AND request.definition_id=instance.definition_id AND request.definition_revision=instance.definition_revision AND request.agent_id=instance.source_agent_id AND request.agent_membership_revision=instance.source_agent_revision AND request.thread_id=instance.source_thread_id))
+UNION ALL
+SELECT 'service_runtime_binding:'||instance.id FROM managed_service_instances instance
+LEFT JOIN managed_service_runtime_bindings binding ON binding.instance_id=instance.id
+WHERE (instance.status IN ('healthy','degraded','stopping') AND binding.instance_id IS NULL)
+   OR (binding.instance_id IS NOT NULL AND (binding.operation_id<>instance.id||':'||binding.revision OR binding.revision<>instance.restart_count+1 OR instance.status NOT IN ('starting','healthy','degraded','stopping','unknown')))
+   OR (binding.instance_id IS NOT NULL AND (crewfold_timestamp_canonical(binding.created_at)<>1 OR crewfold_timestamp_canonical(binding.updated_at)<>1))
+UNION ALL
+SELECT 'service_job:'||job.id FROM managed_service_jobs job
+JOIN managed_service_instances instance ON instance.id=job.instance_id
+WHERE (job.status='leased')<>(job.lease_expires_at IS NOT NULL)
+   OR (job.action='start' AND job.created_at=instance.created_at AND instance.status='requested' AND job.status NOT IN ('pending','leased'))
+UNION ALL
+SELECT 'service_log:'||log.id FROM managed_service_log_artifacts log
+LEFT JOIN immutable_artifacts artifact ON artifact.content_sha256=log.content_sha256
+JOIN managed_service_instances instance ON instance.id=log.instance_id
+WHERE artifact.content_sha256 IS NULL OR artifact.byte_size<>log.captured_bytes OR instance.status NOT IN ('stopped','failed')`},
+		{name: "canonical_metadata", query: `
+SELECT 'service_definition:'||id AS sample FROM managed_service_definitions
+WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR updated_at<created_at
+UNION ALL
+SELECT 'service_instance:'||id FROM managed_service_instances
+WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR updated_at<created_at
+   OR (started_at IS NOT NULL AND crewfold_timestamp_canonical(started_at)<>1)
+   OR (healthy_at IS NOT NULL AND crewfold_timestamp_canonical(healthy_at)<>1)
+   OR (finished_at IS NOT NULL AND crewfold_timestamp_canonical(finished_at)<>1)
+UNION ALL
+SELECT 'service_grant:'||id FROM managed_service_grants
+WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR updated_at<created_at
+   OR (expires_at IS NOT NULL AND crewfold_timestamp_canonical(expires_at)<>1)
+UNION ALL
+SELECT 'service_request:'||id FROM managed_service_requests
+WHERE crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1 OR updated_at<created_at
+   OR (decided_at IS NOT NULL AND crewfold_timestamp_canonical(decided_at)<>1)
+UNION ALL
+SELECT 'service_job:'||id FROM managed_service_jobs
+WHERE crewfold_timestamp_canonical(available_at)<>1 OR crewfold_timestamp_canonical(created_at)<>1 OR crewfold_timestamp_canonical(updated_at)<>1
+   OR (lease_expires_at IS NOT NULL AND crewfold_timestamp_canonical(lease_expires_at)<>1)
+UNION ALL
+SELECT 'service_log:'||id FROM managed_service_log_artifacts WHERE crewfold_timestamp_canonical(created_at)<>1`},
+	},
 	"checks": {
 		{name: "lifecycle_job_result_receipts", query: `
 SELECT 'missing_job:'||run.id AS sample FROM check_runs run LEFT JOIN check_jobs job ON job.check_run_id=run.id WHERE job.id IS NULL

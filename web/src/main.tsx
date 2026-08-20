@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import {
   Activity, AlertCircle, Archive, Bot, Boxes, ChevronDown, ChevronRight, CircleDot, ClipboardCheck,
-  Clock3, Command, FileCheck2, GitBranch, Inbox, LoaderCircle, MessageSquareText, Network, Play,
+  Clock3, Command, FileCheck2, FileText, GitBranch, Inbox, LoaderCircle, MessageSquareText, Network, Play,
   Plus, RefreshCw, RotateCcw, Send, ShieldCheck, Sparkles, Square, TerminalSquare, Users, X,
 } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
@@ -62,15 +62,25 @@ type ThreadSummary = { thread: MessageThread; message_count: number; agent_ids: 
 type ThreadMessage = { id: string; thread_id: string; sender_type: string; sender_agent_name?: string; kind: string; body: string; created_at: string };
 type ThreadDetail = { thread: MessageThread; messages: ThreadMessage[]; recipients: Array<{ message_id: string; recipient_name: string; status: string; wake_status: string }> };
 type Objective = { id: string; project_id: string; primary_checkout_id?: string; title: string; status: "active" | "completed" | "cancelled"; revision: number; updated_at: string };
-type Task = { id: string; project_id: string; objective_id?: string; title: string; description?: string; status: string; blocked_reason?: string; priority: number; revision: number; assigned_agent_id?: string; updated_at: string };
+type Task = { id: string; project_id: string; objective_id?: string; title: string; description?: string; task_class: string; status: string; blocked_reason?: string; priority: number; revision: number; assigned_agent_id?: string; updated_at: string };
 type TaskDetail = { task: Task; dependencies: Array<{ depends_on_task_id: string; delivery_requirement?: "completion" | "handoff" | "handoff_with_evidence" }>; assignment?: { agent_id: string }; readiness: { ready: boolean; reason: string } };
-type Run = { id: string; project_id: string; task_id: string; agent_id: string; checkout_id?: string; runtime: string; provider: string; status: string; can_attach: boolean; revision: number; updated_at: string; result_summary?: string; blocked_question?: string; failure_code?: string; failure_message?: string };
-type RunDetailView = { run: Run & { context_packet_id?: string; created_at: string; started_at?: string; finished_at?: string; placement?: { checkout_path?: string; write_mode?: string; reasons?: string[] } }; task: Task; agent: Agent; checkout: Checkout; timeline: Array<{ sequence: number; kind: string; message?: string; evidence: string[]; recorded_at: string }>; blocker?: { reason: string; needs: string[]; severity: string; related_ids: string[] }; handoff?: { summary: string; evidence: string[]; created_at: string } };
+type Run = { id: string; project_id: string; task_id: string; agent_id: string; checkout_id?: string; runtime: string; provider: string; status: string; assessment?: "pass" | "block" | "changes_requested"; can_attach: boolean; revision: number; updated_at: string; result_summary?: string; blocked_question?: string; failure_code?: string; failure_message?: string };
+type RunDetailView = { run: Run & { context_packet_id?: string; created_at: string; started_at?: string; finished_at?: string; placement?: { checkout_path?: string; write_mode?: string; reasons?: string[] } }; task: Task; agent: Agent; checkout: Checkout; timeline: Array<{ sequence: number; kind: string; message?: string; evidence: string[]; recorded_at: string }>; blocker?: { reason: string; needs: string[]; severity: string; related_ids: string[] }; handoff?: { summary: string; evidence: string[]; created_at: string }; assessment?: "pass" | "block" | "changes_requested" };
+type RunArtifactContent = { artifact: { id: string; run_id: string; name: string; media_type: string; content_hash: string; byte_size: number; created_at: string }; workspace_id: string; project_id: string; task_id: string; agent_id: string; content: string };
 type ContextExplanation = { packet_id: string; content_hash: string; byte_size: number; included: Array<{ section: string; entity_type: string; entity_id: string; revision: number; reason: string }>; excluded: Array<{ section: string; reason: string; reason_code?: string }>; budget: { total: { limit_bytes: number; used_bytes: number; remaining_bytes: number } } };
 type EventRecord = { event_id: string; sequence: number; type: string; recorded_at: string; actor: { actor_type: string }; entity: { type: string; id: string; revision: number } };
 type InboxItem = { message: { id: string; sender_type: string; sender_agent_name?: string; kind: string; body: string; task_id?: string; created_at: string }; delivery: { recipient_agent_id: string; recipient_name: string; status: string; wake_status: string } };
 type CheckRunItem = { run: { id: string; task_id: string; status: string; revision: number; created_at: string; updated_at: string }; outcome?: string; requirement_state: string; current_freshness?: { status?: string } };
 type Budget = { token_limit: number; cost_cents: number; time_seconds: number };
+type ManagedProcessHealth = { type: "process" | "tcp" | "http"; host?: string; port?: number; path?: string; interval_millis: number; timeout_millis: number };
+type ManagedProcessDefinition = { id: string; workspace_id: string; project_id: string; workstream_id?: string; checkout_id: string; name: string; description: string; executable: string; arguments: string[]; working_directory: string; environment: Array<{ name: string; value: string }>; profile: string; profile_revision: number; network_mode: "none" | "loopback" | "local"; health: ManagedProcessHealth; restart_policy: "never" | "on_failure" | "on_daemon_restart"; maximum_restarts: number; restart_cooldown_millis: number; stop_signal: "term"; stop_grace_millis: number; output_byte_limit: number; capacity_class: "local_development"; status: "active" | "retired"; revision: number; updated_at: string };
+type ManagedProcessInstance = { id: string; workspace_id: string; project_id: string; workstream_id?: string; checkout_id: string; definition_id: string; definition_revision: number; source: { type: "owner" | "agent" | "agent_request"; actor_id: string; agent_id?: string; agent_revision?: number; thread_id?: string; request_id?: string; grant_id?: string; grant_revision?: number }; status: "requested" | "starting" | "healthy" | "degraded" | "stopping" | "stopped" | "failed" | "unknown"; desired_state: "running" | "stopped"; health_status: "pending" | "healthy" | "unhealthy" | "unknown"; restart_count: number; exit_code?: number; diagnostic_code?: string; diagnostic?: string; revision: number; created_at: string; updated_at: string; started_at?: string; healthy_at?: string; finished_at?: string };
+type ManagedProcessLogs = { instance_id: string; state: "live" | "terminal"; stdout: { text: string; captured_bytes: number; omitted_bytes: number; truncated: boolean }; stderr: { text: string; captured_bytes: number; omitted_bytes: number; truncated: boolean } };
+type ManagedProcessGrant = { id: string; workspace_id: string; project_id: string; definition_id: string; definition_revision: number; manager_agent_id: string; manager_membership_revision: number; parent_grant_id?: string; actions: Array<"inspect" | "logs" | "start" | "stop" | "restart" | "delegate">; maximum_instances: number; expires_at?: string; status: "active" | "revoked"; revision: number; created_at: string; updated_at: string };
+type ManagedProcessRequest = { id: string; workspace_id: string; project_id: string; definition_id: string; definition_revision: number; agent_id: string; agent_membership_revision: number; thread_id: string; summary: string; status: "pending" | "accepted" | "rejected"; revision: number; created_at: string; updated_at: string; decided_at?: string; decision_reason?: string };
+type ManagedProcessJob = { id: string; instance_id: string; action: "start" | "stop" | "restart" | "probe"; status: "pending" | "leased" | "complete" | "failed_unknown"; available_at: string; lease_expires_at?: string; attempts: number; diagnostic?: string; created_at: string; updated_at: string };
+type ManagedProcessDetail = { definition: ManagedProcessDefinition; instance: ManagedProcessInstance; jobs: ManagedProcessJob[]; logs: Array<{ id: string; instance_id: string; kind: "stdout" | "stderr"; content_sha256: string; captured_bytes: number; omitted_bytes: number; truncated: boolean; created_at: string }> };
+type WorkstreamDelivery = { objective_id: string; objective_revision: number; state: "in_progress" | "blocked" | "verified_awaiting_owner_acceptance" | "accepted" | "rejected"; sha256: string; task_count: number; completed_tasks: number; verification_tasks: number; passing_verifications: number; evidence: string[]; blockers: string[]; decision_reason?: string; decision_at?: string; decision_event_sequence?: number };
 type WorkbenchData = {
   workspaces: Workspace[];
   workspace: Workspace | null;
@@ -87,6 +97,10 @@ type WorkbenchData = {
   threads: ThreadSummary[];
   launchProfiles: LaunchProfile[];
   workProposals: DomainWorkProposal[];
+  processDefinitions: ManagedProcessDefinition[];
+  processInstances: ManagedProcessInstance[];
+  processGrants: ManagedProcessGrant[];
+  processRequests: ManagedProcessRequest[];
   highWater: number;
 };
 
@@ -113,7 +127,7 @@ type SessionResponse = {
 
 const expectedStatusSchema = "urn:crewfold:schema:web:workbench-status:v1";
 const expectedSessionSchema = "urn:crewfold:schema:web:workbench-session:v1";
-const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], domainAgents: [], objectives: [], tasks: [], runs: [], checks: [], knowledge: [], threads: [], launchProfiles: [], workProposals: [], highWater: 0 };
+const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], domainAgents: [], objectives: [], tasks: [], runs: [], checks: [], knowledge: [], threads: [], launchProfiles: [], workProposals: [], processDefinitions: [], processInstances: [], processGrants: [], processRequests: [], highWater: 0 };
 
 class RPCFailure extends Error {
   readonly apiError: APIError;
@@ -130,11 +144,18 @@ function latestRunForAgent(runs: Run[], agentID: string) {
   return runs.filter((run) => run.agent_id === agentID).sort((left, right) => right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id))[0] ?? null;
 }
 function statusTone(status: string) {
-  if (["completed", "granted", "consumed", "available", "ready"].includes(status)) return "good";
-  if (["failed", "start_failed", "lost", "denied"].includes(status)) return "bad";
+  if (["completed", "granted", "consumed", "available", "ready", "healthy", "stopped", "pass", "accepted"].includes(status)) return "good";
+  if (["failed", "start_failed", "lost", "denied", "unknown", "rejected"].includes(status)) return "bad";
   if (["active", "starting", "requested", "stopping", "pending"].includes(status)) return "live";
-  if (["blocked", "review", "changes_requested"].includes(status)) return "warn";
+  if (["blocked", "review", "changes_requested", "degraded", "unhealthy", "verified_awaiting_owner_acceptance"].includes(status)) return "warn";
   return "quiet";
+}
+
+function runOutcome(run: Run, task?: Task) {
+  if (run.assessment === "pass") return { label: task?.task_class === "verification" ? "verification passed" : "review passed", tone: "pass" };
+  if (run.assessment === "block") return { label: "review blocked delivery", tone: "block" };
+  if (run.assessment === "changes_requested") return { label: "changes requested", tone: "changes_requested" };
+  return { label: run.status.replaceAll("_", " "), tone: run.status };
 }
 
 type RuntimeActivity = { key: string; kind: string; text: string; tone: "quiet" | "live" | "good" | "bad" };
@@ -233,11 +254,12 @@ function readableRuntimeActivity(raw: string): RuntimeActivity[] {
     if (prior?.kind === entry.kind && prior.text === entry.text && prior.tone === entry.tone) continue;
     unique.push({ ...entry, key: `${unique.length}-${entry.kind}` });
   }
-  return unique.slice(-40);
+  return unique;
 }
 
-function RuntimeActivityFeed({ logs, empty }: { logs: string; empty: string }) {
-  const activity = useMemo(() => readableRuntimeActivity(logs), [logs]);
+function RuntimeActivityFeed({ logs, empty, limit = 40 }: { logs: string; empty: string; limit?: number }) {
+  const allActivity = useMemo(() => readableRuntimeActivity(logs), [logs]);
+  const activity = limit > 0 ? allActivity.slice(-limit) : allActivity;
   if (activity.length === 0) return <div className="activity-empty"><Activity size={16} /><span>{empty}</span></div>;
   return <div className="runtime-activity">{activity.map((entry) => <article className={entry.tone} key={entry.key}><span>{entry.kind}</span><p>{entry.text}</p></article>)}</div>;
 }
@@ -322,7 +344,7 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
     rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: eventAfter, limit: 200 }),
   ]);
   const project = projectPage.projects.find((item) => item.id === preferredProject) ?? projectPage.projects[0] ?? null;
-  const [checkouts, checks, domainAgents, knowledge, threads, launchProfiles, workProposals] = project ? await Promise.all([
+  const [checkouts, checks, domainAgents, knowledge, threads, launchProfiles, workProposals, processDefinitions, processInstances, processGrants, processRequests] = project ? await Promise.all([
     rpc<{ checkouts: Checkout[] }>(apiBase, csrf, "checkout.list", { workspace: workspace.id, project: project.id }).then((value) => value.checkouts),
     rpc<{ runs: CheckRunItem[] } & Page>(apiBase, csrf, "check.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.runs),
     rpc<{ project_id: string; agents: DomainAgent[] }>(apiBase, csrf, "domain.agent.tree", { workspace: workspace.id, project: project.id }).then((value) => value.agents),
@@ -330,7 +352,11 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
     rpc<{ threads: ThreadSummary[] }>(apiBase, csrf, "thread.list", { workspace: workspace.id, project: project.id, limit: 50 }).then((value) => value.threads),
     rpc<{ profiles: LaunchProfile[] }>(apiBase, csrf, "launch_profile.list", { workspace: workspace.id, project: project.id, limit: 100 }).then((value) => value.profiles),
     rpc<{ proposals: DomainWorkProposal[] }>(apiBase, csrf, "domain.work_proposal.list", { workspace: workspace.id, project: project.id }).then((value) => value.proposals),
-  ]) : [[], [], [], [], [], [], []];
+    rpc<{ definitions: ManagedProcessDefinition[] }>(apiBase, csrf, "managed_service.definition.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.definitions),
+    rpc<{ instances: ManagedProcessInstance[] }>(apiBase, csrf, "managed_service.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.instances),
+    rpc<{ grants: ManagedProcessGrant[] }>(apiBase, csrf, "managed_service.grant.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.grants),
+    rpc<{ requests: ManagedProcessRequest[] }>(apiBase, csrf, "managed_service.request.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.requests),
+  ]) : [[], [], [], [], [], [], [], [], [], [], []];
   const after = await rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: before.high_water, limit: 1 });
   if (after.high_water !== before.high_water) {
     if (attempt >= 2) throw new Error("Canonical state kept changing during refresh; retry when the current event cut settles.");
@@ -339,7 +365,7 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
   return {
     workspaces: workspacePage.workspaces, workspace, projects: projectPage.projects, project, checkouts,
     agents: agentPage.agents, domainAgents, objectives: objectivePage.objectives, tasks: taskPage.tasks,
-    runs: runPage.runs, checks, knowledge, threads, launchProfiles, workProposals,
+    runs: runPage.runs, checks, knowledge, threads, launchProfiles, workProposals, processDefinitions, processInstances, processGrants, processRequests,
     highWater: eventPage.high_water,
   };
 }
@@ -348,8 +374,8 @@ function IconButton({ label, children, onClick, disabled = false }: { label: str
   return <button className="icon-button" aria-label={label} title={label} onClick={onClick} disabled={disabled}>{children}</button>;
 }
 
-function StatusPill({ value }: { value: string }) {
-  return <span className={`status-pill ${statusTone(value)}`}><CircleDot size={12} aria-hidden="true" />{value.replaceAll("_", " ")}</span>;
+function StatusPill({ value, tone = value }: { value: string; tone?: string }) {
+  return <span className={`status-pill ${statusTone(tone)}`}><CircleDot size={12} aria-hidden="true" />{value.replaceAll("_", " ")}</span>;
 }
 
 function readableTaskReadiness(detail: TaskDetail, tasks: TaskDetail[]) {
@@ -723,6 +749,143 @@ function KnowledgeProposalReview({ data, revision, apiBase, csrf, mutable, reloa
   </article>;
 }
 
+function managedProcessCommand(definition: ManagedProcessDefinition) {
+  return [definition.executable, ...definition.arguments].map((value) => /\s|["']/.test(value) ? JSON.stringify(value) : value).join(" ");
+}
+
+function managedProcessURL(definition: ManagedProcessDefinition) {
+  if (definition.health.type !== "http" || !definition.health.host || !definition.health.port) return "";
+  const host = definition.health.host === "0.0.0.0" || definition.health.host === "::" ? "127.0.0.1" : definition.health.host;
+  if (!["127.0.0.1", "localhost", "::1"].includes(host)) return "";
+  const displayHost = host.includes(":") ? `[${host}]` : host;
+  return `http://${displayHost}:${definition.health.port}${definition.health.path || "/"}`;
+}
+
+function ManagedProcesses({ data, apiBase, csrf, mutable, reload }: { data: WorkbenchData; apiBase: string; csrf: string; mutable: boolean; reload: () => Promise<void> }) {
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [checkout, setCheckout] = useState(data.checkouts.find((item) => item.availability === "available")?.id ?? "");
+  const [workstream, setWorkstream] = useState("");
+  const [executable, setExecutable] = useState("");
+  const [argumentsText, setArgumentsText] = useState("");
+  const [environmentText, setEnvironmentText] = useState("");
+  const [workingDirectory, setWorkingDirectory] = useState(".");
+  const [networkMode, setNetworkMode] = useState<ManagedProcessDefinition["network_mode"]>("none");
+  const [healthType, setHealthType] = useState<ManagedProcessHealth["type"]>("process");
+  const [healthHost, setHealthHost] = useState("127.0.0.1");
+  const [healthPort, setHealthPort] = useState("");
+  const [healthPath, setHealthPath] = useState("/");
+  const [restartPolicy, setRestartPolicy] = useState<ManagedProcessDefinition["restart_policy"]>("never");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [logs, setLogs] = useState<ManagedProcessLogs | null>(null);
+  const [granting, setGranting] = useState("");
+  const [grantAgent, setGrantAgent] = useState("");
+  const [grantActions, setGrantActions] = useState<ManagedProcessGrant["actions"]>(["inspect", "logs", "start", "stop", "restart"]);
+  const [resolvingUnknown, setResolvingUnknown] = useState("");
+  const [unknownReason, setUnknownReason] = useState("");
+  const [runtimeRetired, setRuntimeRetired] = useState(false);
+
+  const latest = (definitionID: string) => data.processInstances.filter((instance) => instance.definition_id === definitionID).sort((left, right) => right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id))[0] ?? null;
+  const mutate = async (key: string, method: string, params: Record<string, unknown>) => {
+    setBusy(key); setError("");
+    try { await rpc(apiBase, csrf, method, params); await reload(); return true; }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Managed process operation failed."); return false; }
+    finally { setBusy(""); }
+  };
+  const create = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!data.workspace || !data.project) return;
+    const environment: Array<{ name: string; value: string }> = [];
+    for (const line of environmentText.split("\n").map((value) => value.trim()).filter(Boolean)) {
+      const separator = line.indexOf("=");
+      if (separator < 1) { setError("Each environment override must be one NAME=VALUE line."); return; }
+      environment.push({ name: line.slice(0, separator), value: line.slice(separator + 1) });
+    }
+    const port = Number.parseInt(healthPort, 10);
+    const health: ManagedProcessHealth = healthType === "process"
+      ? { type: "process", interval_millis: 1000, timeout_millis: 500 }
+      : { type: healthType, host: healthHost, port: Number.isFinite(port) ? port : 0, ...(healthType === "http" ? { path: healthPath } : {}), interval_millis: 1000, timeout_millis: 500 };
+    setBusy("create"); setError("");
+    try {
+      await rpc(apiBase, csrf, "managed_service.definition.create", {
+        workspace: data.workspace.id, project: data.project.id, ...(workstream ? { workstream } : {}), checkout,
+        name: name.trim(), description: description.trim() || name.trim(), executable: executable.trim(),
+        arguments: argumentsText.split("\n").map((value) => value.trim()).filter(Boolean), working_directory: workingDirectory.trim(), environment,
+        profile: "local-process", profile_revision: 1, network_mode: networkMode, health,
+        restart_policy: restartPolicy, maximum_restarts: restartPolicy === "never" ? 0 : 3, restart_cooldown_millis: 500,
+        stop_signal: "term", stop_grace_millis: 5000, output_byte_limit: 262144, capacity_class: "local_development",
+        idempotency_key: newKey("process-define"),
+      });
+      setCreating(false); setName(""); setDescription(""); setExecutable(""); setArgumentsText(""); setEnvironmentText(""); await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not define the managed process."); }
+    finally { setBusy(""); }
+  };
+  const readLogs = async (instance: ManagedProcessInstance) => {
+    setBusy(`logs-${instance.id}`); setError("");
+    try { const result = await rpc<{ logs: ManagedProcessLogs }>(apiBase, csrf, "managed_service.logs", { workspace: data.workspace?.id, instance: instance.id }); setLogs(result.logs); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not read managed process logs."); }
+    finally { setBusy(""); }
+  };
+  const decideRequest = async (request: ManagedProcessRequest, accept: boolean) => {
+    await mutate(`request-${request.id}`, accept ? "managed_service.request.accept" : "managed_service.request.reject", {
+      workspace: data.workspace?.id, request: request.id, expected_revision: request.revision,
+      reason: accept ? "Owner approved this exact managed process start request." : "Owner declined this managed process start request.",
+      idempotency_key: newKey(accept ? "process-request-accept" : "process-request-reject"),
+    });
+  };
+  const createGrant = async (definition: ManagedProcessDefinition) => {
+    const selected = data.domainAgents.find((candidate) => candidate.definition.id === grantAgent && candidate.membership.status === "active");
+    if (!selected) { setError("Select one current durable agent."); return; }
+    if (!grantActions.length) { setError("Select at least one exact process action."); return; }
+    await mutate(`grant-${definition.id}`, "managed_service.grant.create", {
+      workspace: data.workspace?.id, definition: definition.id, expected_definition_revision: definition.revision,
+      manager_agent: selected.definition.id, expected_membership_revision: selected.membership.revision,
+      actions: grantActions, maximum_instances: 1, idempotency_key: newKey("process-grant"),
+    });
+    setGranting(""); setGrantAgent("");
+  };
+  const toggleGrantAction = (action: ManagedProcessGrant["actions"][number]) => setGrantActions((current) => current.includes(action) ? current.filter((candidate) => candidate !== action) : [...current, action]);
+
+  const pendingRequests = data.processRequests.filter((request) => request.status === "pending");
+
+  return <section className="m22-block m24-processes">
+    <div className="m22-block-heading"><div><h2>managed local processes</h2><p>Durable non-interactive commands attached to exact checkouts: development servers, watchers, local APIs, cookers, mocks, and similar tools.</p></div><button className="m22-command" disabled={!mutable} onClick={() => setCreating((value) => !value)}>{creating ? <X size={13} /> : <Plus size={13} />}{creating ? "close" : "define process"}</button></div>
+    {error && <p className="m22-session-error" role="alert">{error}</p>}
+    {pendingRequests.length > 0 && <div className="m24-process-requests"><h3>agent requests · no effect yet</h3>{pendingRequests.map((request) => {
+      const definition = data.processDefinitions.find((candidate) => candidate.id === request.definition_id);
+      const agent = data.agents.find((candidate) => candidate.id === request.agent_id);
+      return <article key={request.id}><div><strong>{agent?.name ?? request.agent_id} requests start of {definition?.name ?? request.definition_id}</strong><p>{request.summary}</p><small>Accepting creates one exact instance from definition revision {request.definition_revision}; rejecting starts nothing.</small></div><div><button disabled={!mutable || !!busy} onClick={() => void decideRequest(request, false)}>reject</button><button className="primary" disabled={!mutable || !!busy} onClick={() => void decideRequest(request, true)}>{busy === `request-${request.id}` ? "applying…" : "accept and start"}</button></div></article>;
+    })}</div>}
+    {creating && <form className="m24-process-form" onSubmit={create}>
+      <div className="m22-form-grid"><label><span>name</span><input required maxLength={128} value={name} onChange={(event) => setName(event.target.value)} placeholder="signal-garden-dev" /></label><label><span>description</span><input maxLength={1024} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Local development server" /></label></div>
+      <div className="m22-form-grid"><label><span>checkout</span><select required value={checkout} onChange={(event) => setCheckout(event.target.value)}><option value="">select exact checkout</option>{data.checkouts.filter((item) => item.availability === "available").map((item) => <option value={item.id} key={item.id}>{item.path}</option>)}</select></label><label><span>workstream</span><select value={workstream} onChange={(event) => setWorkstream(event.target.value)}><option value="">domain-wide process</option>{data.objectives.filter((item) => item.status === "active").map((item) => <option value={item.id} key={item.id}>{item.title}</option>)}</select></label></div>
+      <div className="m22-form-grid"><label><span>executable</span><input required value={executable} onChange={(event) => setExecutable(event.target.value)} placeholder="npm" /></label><label><span>working directory inside checkout</span><input required value={workingDirectory} onChange={(event) => setWorkingDirectory(event.target.value)} placeholder="." /></label></div>
+      <div className="m22-form-grid"><label><span>arguments · one exact argument per line</span><textarea value={argumentsText} onChange={(event) => setArgumentsText(event.target.value)} placeholder={"run\ndev\n--\n--host\n127.0.0.1"} /></label><label><span>environment · one NAME=VALUE per line</span><textarea value={environmentText} onChange={(event) => setEnvironmentText(event.target.value)} placeholder="PORT=4312" /></label></div>
+      <div className="m22-form-grid three"><label><span>network exposure</span><select value={networkMode} onChange={(event) => setNetworkMode(event.target.value as ManagedProcessDefinition["network_mode"])}><option value="none">no endpoint</option><option value="loopback">loopback only</option></select></label><label><span>health check</span><select value={healthType} onChange={(event) => setHealthType(event.target.value as ManagedProcessHealth["type"])}><option value="process">process remains alive</option><option value="tcp">TCP endpoint</option><option value="http">HTTP endpoint</option></select></label><label><span>restart policy</span><select value={restartPolicy} onChange={(event) => setRestartPolicy(event.target.value as ManagedProcessDefinition["restart_policy"])}><option value="never">never</option><option value="on_failure">on failure · max 3</option><option value="on_daemon_restart">after daemon restart · max 3</option></select></label></div>
+      {healthType !== "process" && <div className="m22-form-grid three"><label><span>health host</span><input required value={healthHost} onChange={(event) => setHealthHost(event.target.value)} /></label><label><span>health port</span><input required type="number" min="1" max="65535" value={healthPort} onChange={(event) => setHealthPort(event.target.value)} /></label>{healthType === "http" && <label><span>HTTP path</span><input required value={healthPath} onChange={(event) => setHealthPath(event.target.value)} /></label>}</div>}
+      <div className="m22-exact-effect"><ShieldCheck size={15} /><span><strong>Exact effect</strong> Record one reusable process definition. This does not start it. The daemon will later launch the exact executable and argv in this checkout; no shell interpolation is added.</span></div>
+      <div className="m22-form-actions"><button type="button" onClick={() => setCreating(false)}>cancel</button><button className="m22-send" disabled={!mutable || busy === "create" || !checkout || !name.trim() || !executable.trim()}>{busy === "create" ? <LoaderCircle className="spin" size={14} /> : <Plus size={14} />}{busy === "create" ? "defining…" : "define process"}</button></div>
+    </form>}
+    {data.processDefinitions.filter((definition) => definition.status === "active").length ? <div className="m24-process-list">{data.processDefinitions.filter((definition) => definition.status === "active").map((definition) => {
+      const instance = latest(definition.id); const live = instance && ["requested", "starting", "healthy", "degraded", "stopping", "unknown"].includes(instance.status); const url = managedProcessURL(definition); const objective = data.objectives.find((item) => item.id === definition.workstream_id); const exactCheckout = data.checkouts.find((item) => item.id === definition.checkout_id);
+      const grants = data.processGrants.filter((grant) => grant.definition_id === definition.id && grant.status === "active");
+      return <article key={definition.id}>
+        <header><div><strong>{definition.name}</strong><small>{definition.description}</small></div><StatusPill value={instance?.status ?? "not started"} /></header>
+        <code>{managedProcessCommand(definition)}</code>
+        <dl><div><dt>scope</dt><dd>{objective?.title ?? "domain-wide"}</dd></div><div><dt>checkout</dt><dd>{exactCheckout?.path ?? definition.checkout_id}</dd></div><div><dt>health</dt><dd>{instance ? live ? instance.health_status : "not running" : definition.health.type}</dd></div><div><dt>restart</dt><dd>{definition.restart_policy.replaceAll("_", " ")}</dd></div></dl>
+        {grants.length > 0 && <div className="m24-process-grant-summary"><strong>agent authority</strong>{grants.map((grant) => <span key={grant.id}>{data.agents.find((agent) => agent.id === grant.manager_agent_id)?.name ?? grant.manager_agent_id} · {grant.actions.join(", ")} · max {grant.maximum_instances}</span>)}</div>}
+        {instance?.diagnostic && <p className="m24-process-diagnostic">{instance.diagnostic}</p>}
+        {instance?.status === "unknown" && <div className="m24-process-unknown"><strong>Runtime ownership is unknown</strong><p>Crewfold will not restart, stop, or signal this process. First verify outside Crewfold that the old process has ended, then retire only this stale binding.</p>{resolvingUnknown === instance.id ? <><label><span>owner resolution reason</span><input maxLength={2048} value={unknownReason} onChange={(event) => setUnknownReason(event.target.value)} placeholder="How was the old process confirmed ended?" /></label><label className="m22-confirm"><input type="checkbox" checked={runtimeRetired} onChange={(event) => setRuntimeRetired(event.target.checked)} /><span>I confirm the unknown external process has ended. Crewfold did not stop it.</span></label><div><button onClick={() => { setResolvingUnknown(""); setUnknownReason(""); setRuntimeRetired(false); }}>cancel</button><button className="danger" disabled={!mutable || !!busy || !runtimeRetired || !unknownReason.trim()} onClick={() => void mutate(`resolve-${instance.id}`, "managed_service.resolve_unknown", { workspace: data.workspace?.id, instance: instance.id, expected_revision: instance.revision, runtime_retired_confirmed: true, reason: unknownReason.trim(), idempotency_key: newKey("process-resolve-unknown") }).then((resolved) => { if (resolved) { setResolvingUnknown(""); setUnknownReason(""); setRuntimeRetired(false); } })}>{busy === `resolve-${instance.id}` ? "recording…" : "retire stale runtime binding"}</button></div></> : <button disabled={!mutable || !!busy} onClick={() => setResolvingUnknown(instance.id)}>resolve unknown runtime…</button>}</div>}
+        {granting === definition.id && <div className="m24-process-grant-form"><label><span>durable agent</span><select value={grantAgent} onChange={(event) => setGrantAgent(event.target.value)}><option value="">select agent</option>{data.domainAgents.filter((agent) => agent.membership.status === "active").map((agent) => <option value={agent.definition.id} key={agent.definition.id}>{agent.definition.name}</option>)}</select></label><fieldset><legend>exact allowed actions</legend>{(["inspect", "logs", "start", "stop", "restart", "delegate"] as ManagedProcessGrant["actions"]).map((action) => <label key={action}><input type="checkbox" checked={grantActions.includes(action)} onChange={() => toggleGrantAction(action)} />{action}</label>)}</fieldset><p>This authority is definition-specific, revision-bound, limited to one concurrent instance, and may be narrowed when delegated. It does not authorize a shell or a different command.</p><div><button onClick={() => setGranting("")}>cancel</button><button className="primary" disabled={!mutable || !!busy || !grantAgent || !grantActions.length} onClick={() => void createGrant(definition)}>{busy === `grant-${definition.id}` ? "granting…" : "grant exact authority"}</button></div></div>}
+        <footer>{url && instance?.health_status === "healthy" && <a href={url} target="_blank" rel="noreferrer">open {url}</a>}<button disabled={!mutable || !!busy} onClick={() => { setGranting((current) => current === definition.id ? "" : definition.id); setGrantAgent(""); }}>agent authority</button><span />{instance && <button disabled={!!busy} onClick={() => void readLogs(instance)}>{busy === `logs-${instance.id}` ? "reading…" : "logs"}</button>}{live && instance && ["healthy", "degraded"].includes(instance.status) && <><button disabled={!!busy || !mutable} onClick={() => void mutate(`restart-${instance.id}`, "managed_service.restart", { workspace: data.workspace?.id, instance: instance.id, expected_revision: instance.revision, idempotency_key: newKey("process-restart") })}>{busy === `restart-${instance.id}` ? "restarting…" : "restart"}</button><button className="danger" disabled={!!busy || !mutable} onClick={() => void mutate(`stop-${instance.id}`, "managed_service.stop", { workspace: data.workspace?.id, instance: instance.id, expected_revision: instance.revision, idempotency_key: newKey("process-stop") })}>{busy === `stop-${instance.id}` ? "stopping…" : "stop"}</button></>}{!live && <button className="primary" disabled={!!busy || !mutable} onClick={() => void mutate(`start-${definition.id}`, "managed_service.start", { workspace: data.workspace?.id, definition: definition.id, expected_revision: definition.revision, idempotency_key: newKey("process-start") })}>{busy === `start-${definition.id}` ? "starting…" : instance ? "start new instance" : "start"}</button>}</footer>
+      </article>;
+    })}</div> : !creating && <p className="m22-empty">No managed process is defined. Define the exact command once, then start, inspect, stop, or restart it here.</p>}
+    {logs && <div className="m24-process-logs"><header><strong>{logs.state} logs</strong><button onClick={() => setLogs(null)} aria-label="Close managed process logs"><X size={13} /></button></header><section><h3>stdout {logs.stdout.truncated ? `· ${logs.stdout.omitted_bytes} bytes omitted` : ""}</h3><pre>{logs.stdout.text || "(empty)"}</pre></section><section><h3>stderr {logs.stderr.truncated ? `· ${logs.stderr.omitted_bytes} bytes omitted` : ""}</h3><pre>{logs.stderr.text || "(empty)"}</pre></section></div>}
+  </section>;
+}
+
 function DomainHome({ data, chooseAgent, reviewWorkstream, inspectTask, inspectRun, notice = "", apiBase, csrf, mutable, reload }: { data: WorkbenchData; chooseAgent: (agent: DomainAgent) => void; reviewWorkstream: (objective: Objective) => void; inspectTask: (task: TaskDetail) => void; inspectRun: (run: Run) => void; notice?: string; apiBase: string; csrf: string; mutable: boolean; reload: () => Promise<void> }) {
   const projectObjectives = data.objectives.filter((objective) => objective.project_id === data.project?.id);
   const activeObjectives = projectObjectives.filter((objective) => objective.status === "active");
@@ -770,6 +933,7 @@ function DomainHome({ data, chooseAgent, reviewWorkstream, inspectTask, inspectR
       <section className="m22-block"><h2>durable agents</h2>{activeAgents.length ? activeAgents.map((agent) => <button className="m22-line" key={agent.definition.id} onClick={() => chooseAgent(agent)}><span><strong>{agent.definition.name}</strong><small>{agent.definition.role} · {agent.definition.provider} through {agent.definition.runtime}</small></span><StatusPill value={latestRunForAgent(projectRuns, agent.definition.id)?.status ?? "idle"} /></button>) : <p className="m22-empty">No active durable agents.</p>}</section>
       <section className="m22-block"><h2>current runs</h2>{activeRuns.length ? activeRuns.map((run) => <button className="m22-line" key={run.id} onClick={() => inspectRun(run)}><span><strong>{projectTasks.find((detail) => detail.task.id === run.task_id)?.task.title ?? run.id}</strong><small>{data.agents.find((agent) => agent.id === run.agent_id)?.name ?? run.agent_id}</small></span><StatusPill value={run.status} /></button>) : <p className="m22-empty">No live or unresolved run.</p>}</section>
     </div>
+    <ManagedProcesses data={data} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />
     <section className="m22-block"><h2>shared domain knowledge</h2>
       {proposedKnowledge.length > 0 && <div className="m22-knowledge-proposals"><p><strong>{proposedKnowledge.length} sourced proposal{proposedKnowledge.length === 1 ? "" : "s"} need owner review.</strong> Agent conversation and coordination threads do not become knowledge by themselves.</p>{proposedKnowledge.map((revision) => <KnowledgeProposalReview key={revision.id} data={data} revision={revision} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />)}</div>}
       {currentKnowledge.length ? currentKnowledge.map((revision) => <details className="m22-knowledge" key={revision.id}><summary><span><strong>{revision.title}</strong><small>{revision.type} · {revision.verification_status} · revision {revision.revision_number} · accepted {displayTime(revision.accepted_at)}</small></span><StatusPill value="current" /></summary><p>{revision.body}</p><footer>proposed by {revision.proposed_by_type} {revision.proposed_by} · {revision.sources.length} exact source{revision.sources.length === 1 ? "" : "s"}</footer></details>) : <p className="m22-empty">No accepted current knowledge is recorded for this domain.</p>}
@@ -902,6 +1066,8 @@ function DomainWorkstreamLifecyclePanel({ data, objective, inspectTask, inspectR
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [delivery, setDelivery] = useState<WorkstreamDelivery | null>(null);
+  const [deliveryReason, setDeliveryReason] = useState("");
   const agents = data.domainAgents.filter((agent) => agent.membership.status === "active" && agent.membership.workstream_id === objective.id);
   const allTasks = dependencyOrderedTasks(data.tasks.filter((detail) => detail.task.objective_id === objective.id));
   const tasks = allTasks.filter((detail) => !["completed", "failed", "cancelled"].includes(detail.task.status));
@@ -913,6 +1079,26 @@ function DomainWorkstreamLifecyclePanel({ data, objective, inspectTask, inspectR
     ...(tasks.length ? [`${tasks.length} nonterminal task${tasks.length === 1 ? " remains" : "s remain"}`] : []),
     ...(runs.length ? [`${runs.length} live or unresolved run${runs.length === 1 ? " remains" : "s remain"}`] : []),
   ];
+  useEffect(() => {
+    setDelivery(null);
+    if (!data.workspace) return;
+    void rpc<{ delivery: WorkstreamDelivery }>(apiBase, csrf, "workstream.delivery.show", { workspace: data.workspace.id, objective: objective.id })
+      .then((result) => { setDelivery(result.delivery); setError(""); })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not derive the exact delivery state."));
+  }, [apiBase, csrf, data.highWater, data.workspace?.id, objective.id]);
+  const decideDelivery = async (accept: boolean) => {
+    if (!data.workspace || !delivery || busy || !mutable) return;
+    setBusy(true); setError("");
+    try {
+      const result = await rpc<{ delivery: WorkstreamDelivery }>(apiBase, csrf, accept ? "workstream.delivery.accept" : "workstream.delivery.reject", {
+        workspace: data.workspace.id, objective: objective.id,
+        expected_objective_revision: delivery.objective_revision, expected_sha256: delivery.sha256,
+        ...(accept ? {} : { reason: deliveryReason.trim() }), idempotency_key: newKey(accept ? "delivery-accept" : "delivery-reject"),
+      });
+      setDelivery(result.delivery); setDeliveryReason(""); await reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not record the exact delivery decision."); }
+    finally { setBusy(false); }
+  };
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!data.workspace || blockers.length || !confirmed || objective.status !== "active") return;
@@ -926,7 +1112,7 @@ function DomainWorkstreamLifecyclePanel({ data, objective, inspectTask, inspectR
   return <section className="m22-agent-create m22-lifecycle-review">
     <header><div><p className="m22-kicker">workstream</p><h1>{objective.title}</h1><p>One outcome, one persistent primary checkout, its durable team, and the exact dependency/output gates that control progress.</p></div><button onClick={close} aria-label="Close workstream lifecycle"><X size={15} /></button></header>
     <form onSubmit={submit}>
-      <dl className="m22-review-facts"><div><dt>status</dt><dd>{objective.status}</dd></div><div><dt>primary checkout</dt><dd>{checkout?.path ?? "not bound"}</dd></div><div><dt>durable team</dt><dd>{agents.length ? agents.map((agent) => agent.definition.name).join(", ") : "no agents placed"}</dd></div><div><dt>open tasks</dt><dd>{tasks.length}</dd></div></dl>
+      <dl className="m22-review-facts"><div><dt>workstream</dt><dd>{objective.status}</dd></div><div><dt>delivery</dt><dd>{delivery?.state.replaceAll("_", " ") ?? "deriving exact state…"}</dd></div><div><dt>primary checkout</dt><dd>{checkout?.path ?? "not bound"}</dd></div><div><dt>durable team</dt><dd>{agents.length ? agents.map((agent) => agent.definition.name).join(", ") : "no agents placed"}</dd></div><div><dt>open tasks</dt><dd>{tasks.length}</dd></div></dl>
       {sharing.length > 1 && <div className="m22-lifecycle-blockers"><strong>Shared checkout</strong><p>{sharing.map((candidate) => candidate.title).join(" and ")} use this same persistent checkout. This is allowed, but concurrent work must use non-overlapping claims or explicit coordination.</p></div>}
       <section className="m22-workstream-graph"><h2>execution chain</h2>{allTasks.length ? allTasks.map((detail) => {
         const assignment = data.agents.find((candidate) => candidate.id === detail.task.assigned_agent_id)?.name;
@@ -935,8 +1121,10 @@ function DomainWorkstreamLifecyclePanel({ data, objective, inspectTask, inspectR
           const source = allTasks.find((candidate) => candidate.task.id === dependency.depends_on_task_id)?.task.title ?? dependency.depends_on_task_id;
           return `${source} → ${(dependency.delivery_requirement ?? "completion").replaceAll("_", " ")}`;
         }).join(", ")}` : "entry task";
-        return <button type="button" className="m22-line" key={detail.task.id} onClick={() => run ? inspectRun(run) : inspectTask(detail)}><span><strong>{detail.task.title}</strong><small>{dependencyText}</small><small>{assignment ? `${detail.readiness.ready ? "ready" : readableTaskReadiness(detail, allTasks)} · assigned to ${assignment}` : detail.readiness.ready ? "ready for assignment" : readableTaskReadiness(detail, allTasks)}</small></span><StatusPill value={run?.status ?? detail.task.status} /></button>;
+        const outcome = run ? runOutcome(run, detail.task) : null;
+        return <button type="button" className="m22-line" key={detail.task.id} onClick={() => run ? inspectRun(run) : inspectTask(detail)}><span><strong>{detail.task.title}</strong><small>{detail.task.task_class} · {dependencyText}</small><small>{assignment ? `${detail.readiness.ready ? "ready" : readableTaskReadiness(detail, allTasks)} · assigned to ${assignment}` : detail.readiness.ready ? "ready for assignment" : readableTaskReadiness(detail, allTasks)}</small></span><StatusPill value={outcome?.label ?? detail.task.status} tone={outcome?.tone ?? detail.task.status} /></button>;
       }) : <p className="m22-empty">No task graph has been accepted for this workstream.</p>}</section>
+      {delivery && <section className={`m24-delivery ${statusTone(delivery.state)}`} aria-label="Exact workstream delivery"><header><div><p className="m22-kicker">exact delivery revision</p><h2>{delivery.state === "verified_awaiting_owner_acceptance" ? "Verified — awaiting your acceptance" : delivery.state.replaceAll("_", " ")}</h2></div><StatusPill value={`${delivery.completed_tasks}/${delivery.task_count} tasks`} tone={delivery.state} /></header><p>{delivery.verification_tasks ? `${delivery.passing_verifications} of ${delivery.verification_tasks} structured verification tasks passed.` : "No structured verification task is present."} This state is derived from canonical task, assessment, handoff, and evidence records—not provider prose.</p>{delivery.blockers.length > 0 && <ul>{delivery.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>}{delivery.evidence.length > 0 && <p><strong>Evidence:</strong> {delivery.evidence.length} exact reference{delivery.evidence.length === 1 ? "" : "s"}</p>}<small>delivery {delivery.sha256.slice(0, 16)}… · objective revision {delivery.objective_revision}</small>{(delivery.state === "verified_awaiting_owner_acceptance" || delivery.state === "rejected") && <div className="m24-delivery-actions"><label><span>Reason if rejecting this exact delivery</span><input value={deliveryReason} maxLength={2048} onChange={(event) => setDeliveryReason(event.target.value)} placeholder="What must change before acceptance?" /></label><button type="button" disabled={busy || !mutable || !deliveryReason.trim()} onClick={() => void decideDelivery(false)}>reject delivery</button><button type="button" className="m22-command" disabled={busy || !mutable} onClick={() => void decideDelivery(true)}><ClipboardCheck size={14} /> accept exact delivery</button></div>}{delivery.state === "accepted" && <p className="m22-exact-effect"><ClipboardCheck size={14} /><span><strong>Accepted by the local owner.</strong> This closed the workstream only; it did not commit, push, publish, deploy, or start a process.</span></p>}</section>}
       {blockers.length ? <div className="m22-lifecycle-blockers" role="alert"><strong>Cancellation is blocked</strong><ul>{blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul><p>Move or retire scoped agents and resolve every task/run first. Crewfold will not detach or cancel them implicitly.</p></div> : <div className="m22-exact-effect"><Archive size={15} /><span><strong>Exact effect</strong> Change this objective from active to cancelled. It moves to closed history; all contained canonical records remain available.</span></div>}
       {!blockers.length && objective.status === "active" && <label className="m22-confirm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span>I understand this closes the workstream without erasing its history.</span></label>}
       {error && <p className="m22-session-error" role="alert">{error}</p>}
@@ -1030,6 +1218,7 @@ function SessionExplorationGroup({ items }: { items: DomainAgentSessionItem[] })
 
 function SessionThreadItem({ item, agentName }: { item: DomainAgentSessionItem; agentName: string }) {
   const command = sessionItemCommand(item);
+  if (item.type === "reasoning" && !item.text?.trim() && !command) return null;
   if (item.type === "commandExecution") {
     const active = isActiveSessionItem(item);
     const failed = item.status === "failed" || item.exit_code !== undefined && item.exit_code !== 0;
@@ -1085,19 +1274,80 @@ function ActiveTurnProgress({ turn }: { turn: DomainAgentSessionTurn }) {
   return <div className="m22-turn-progress"><LoaderCircle className="spin" size={14} /><strong>{label}</strong><span>{elapsed}</span>{detail && <code>{detail}</code>}</div>;
 }
 
-function AgentExecutionLane({ data, runs, inspectRun }: { data: WorkbenchData; runs: Run[]; inspectRun: (run: Run) => void }) {
-	if (!runs.length) return <section className="m22-execution-lane quiet"><header><span>task work by this agent</span><StatusPill value="none" /></header><p>This durable coworker has no recorded task execution yet. Its conversation can coordinate and propose work; repository edits begin only from an accepted, assigned Crewfold task.</p></section>;
-  const unresolvedStatuses = ["requested", "starting", "active", "blocked", "stopping", "lost"];
-  const unresolved = runs.filter((run) => unresolvedStatuses.includes(run.status));
-  const visible = (unresolved.length ? unresolved : runs.slice(0, 1)).slice(0, 4);
-  return <section className={`m22-execution-lane ${unresolved.some((run) => ["blocked", "lost"].includes(run.status)) ? "warn" : unresolved.length ? "good" : statusTone(visible[0].status)}`}>
-	<header><span>task work by this durable agent</span><span>{unresolved.length ? `${unresolved.length} unresolved` : "latest completed attempt"}</span></header>
-	<p>{unresolved.length ? "This is the same durable coworker doing assigned work. Crewfold gives each task attempt a bounded execution process and frozen context so authority and recovery stay inspectable." : "This is the latest immutable task attempt by the same durable coworker."}</p>
-    <div className="m22-execution-list">{visible.map((run) => {
-      const task = data.tasks.find((detail) => detail.task.id === run.task_id)?.task;
-      const diagnosis = run.blocked_question || run.failure_message || run.result_summary;
-      return <button key={run.id} onClick={() => inspectRun(run)}><span><strong>{task?.title ?? "Bounded assigned work"}</strong><small>{diagnosis || `${run.provider} through ${run.runtime}`}</small></span><StatusPill value={run.status} /></button>;
-    })}</div>
+type AgentCanonicalActivityItem = {
+  id: string;
+  occurredAt: string;
+  kind: "task" | "process" | "message";
+  title: string;
+  detail: string;
+  state: string;
+  run?: Run;
+  providerLogs?: string;
+};
+
+type AgentAttachedActivity = {
+  runs: Record<string, { detail?: RunDetailView; logs?: string; error?: string }>;
+  services: Record<string, ManagedProcessDetail>;
+  threads: Record<string, ThreadDetail>;
+};
+
+const emptyAgentAttachedActivity: AgentAttachedActivity = { runs: {}, services: {}, threads: {} };
+
+function runTimelineState(kind: string, detail: RunDetailView) {
+  if (kind === "task.changes_requested") return detail.assessment === "block" ? "review blocked delivery" : "changes requested";
+  if (kind === "task.handoff_recorded") return "handoff recorded";
+  if (kind === "run.completion_proposed") return "awaiting review";
+  if (kind === "run.progress_reported") return "progress";
+  if (kind === "run.start_failed") return "start failed";
+  if (kind === "run.stop_requested") return "stopping";
+  return kind.split(".").at(-1)?.replaceAll("_", " ") || detail.run.status.replaceAll("_", " ");
+}
+
+function AgentCanonicalActivity({ data, agent, runs, attached, inspectRun }: { data: WorkbenchData; agent: DomainAgent; runs: Run[]; attached: AgentAttachedActivity; inspectRun: (run: Run) => void }) {
+  const items: AgentCanonicalActivityItem[] = [];
+  for (const run of runs) {
+    const task = data.tasks.find((detail) => detail.task.id === run.task_id)?.task;
+    const activity = attached.runs[run.id];
+    const timeline = activity?.detail?.timeline ?? [];
+    if (timeline.length) {
+      timeline.forEach((entry, index) => items.push({
+        id: `run-${run.id}-${entry.sequence}`,
+        occurredAt: entry.recorded_at,
+        kind: "task",
+        title: task?.title ?? activity?.detail?.task.title ?? "Bounded assigned work",
+        detail: [entry.kind.replaceAll("_", " "), entry.message, entry.evidence.length ? `${entry.evidence.length} evidence reference${entry.evidence.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "),
+        state: runTimelineState(entry.kind, activity.detail!),
+        run,
+        ...(index === timeline.length - 1 && activity.logs ? { providerLogs: activity.logs } : {}),
+      }));
+      continue;
+    }
+    const outcome = runOutcome(run, task);
+    items.push({ id: `run-${run.id}`, occurredAt: run.updated_at, kind: "task", title: task?.title ?? "Bounded assigned work", detail: [task?.task_class, run.blocked_question || run.failure_message || run.result_summary || activity?.error || `${run.provider} through ${run.runtime}`].filter(Boolean).join(" · "), state: outcome.label, run, providerLogs: activity?.logs });
+  }
+  for (const instance of data.processInstances.filter((candidate) => candidate.source?.agent_id === agent.definition.id)) {
+    const definition = data.processDefinitions.find((candidate) => candidate.id === instance.definition_id);
+    const detail = attached.services[instance.id];
+    for (const job of detail?.jobs ?? []) items.push({ id: `process-${instance.id}-${job.id}`, occurredAt: job.updated_at, kind: "process", title: definition?.name ?? detail.definition.name, detail: [job.action, job.diagnostic, `attempt ${job.attempts}`].filter(Boolean).join(" · "), state: job.status });
+    items.push({ id: `process-${instance.id}`, occurredAt: instance.updated_at, kind: "process", title: definition?.name ?? "Managed local process", detail: instance.diagnostic || `${definition ? managedProcessCommand(definition) : "Exact process definition"} · health ${instance.health_status}`, state: instance.status });
+  }
+  for (const thread of data.threads.filter((candidate) => candidate.agent_ids.includes(agent.definition.id))) {
+    const detail = attached.threads[thread.thread.id];
+    if (detail?.messages.length) {
+      for (const message of detail.messages) items.push({ id: `thread-${thread.thread.id}-${message.id}`, occurredAt: message.created_at, kind: "message", title: thread.thread.subject, detail: `${message.sender_agent_name || message.sender_type}: ${message.body}`, state: message.kind.replaceAll("_", " ") });
+    } else items.push({ id: `thread-${thread.thread.id}`, occurredAt: thread.thread.updated_at, kind: "message", title: thread.thread.subject, detail: `${thread.message_count} durable message${thread.message_count === 1 ? "" : "s"} · ${thread.thread.status}`, state: thread.thread.status });
+  }
+  items.sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id));
+  return <section className="m24-agent-records" aria-label="Exact Crewfold records for this durable agent">
+    <header><div><strong>Crewfold activity</strong><small>same durable coworker · exact canonical order</small></div><span>{items.length || "none yet"}</span></header>
+    <p>Every retained task transition, bounded provider trace, managed-process operation, and durable message attached to this agent is shown here. These are authority records of the same coworker, not additional agents.</p>
+    {items.length ? <ol>{items.map((item) => <li className={statusTone(item.state)} key={item.id}>
+      <time dateTime={item.occurredAt}>{displayTime(item.occurredAt)}</time>
+      <span className="m24-agent-record-kind">{item.kind}</span>
+      {item.run ? <button type="button" onClick={() => inspectRun(item.run!)}><strong>{item.title}</strong><small>{item.detail}</small></button> : <span className="m24-agent-record-copy"><strong>{item.title}</strong><small>{item.detail}</small></span>}
+      <StatusPill value={item.state} tone={item.state} />
+      {item.providerLogs && <details className="m24-attached-provider-activity"><summary>captured provider activity for this attempt</summary><RuntimeActivityFeed logs={item.providerLogs} empty="No readable provider event was retained for this attempt." limit={0} /></details>}
+    </li>)}</ol> : <p className="m22-empty">No task attempt, managed process, or durable coordination record exists yet. Conversation can inspect and propose; repository effects begin only from accepted Crewfold authority.</p>}
   </section>;
 }
 
@@ -1107,6 +1357,7 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
 	const [result, setResult] = useState<DomainAgentSessionResult | null>(null);
 	const [selectedEpoch, setSelectedEpoch] = useState(0);
 	const [checkout, setCheckout] = useState(defaultCheckout);
+  const [attachedActivity, setAttachedActivity] = useState<AgentAttachedActivity>(emptyAgentAttachedActivity);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState<"loading" | "opening" | "sending" | "interrupting" | "compacting" | "rotating" | "">("loading");
   const [error, setError] = useState("");
@@ -1114,6 +1365,7 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
   const threadRef = useRef<HTMLDivElement>(null);
   const followThreadRef = useRef(true);
   const scope = { workspace: data.workspace?.id ?? "", project: data.project?.id ?? "", agent: agent.definition.id };
+  const attachedSignature = `${runs.map((run) => `${run.id}:${run.revision}`).join(",")}|${data.processInstances.filter((instance) => instance.source?.agent_id === agent.definition.id).map((instance) => `${instance.id}:${instance.revision}`).join(",")}|${data.threads.filter((thread) => thread.agent_ids.includes(agent.definition.id)).map((thread) => `${thread.thread.id}:${thread.thread.revision}:${thread.message_count}`).join(",")}`;
   const load = useCallback(async (quiet = false, epoch = selectedEpoch) => {
     if (!scope.workspace || !scope.project) return;
     if (!quiet) setBusy("loading");
@@ -1128,7 +1380,44 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
   const providerTurns = result?.view.turns ?? [];
   const turns = result ? [...providerTurns, ...(accepted && !providerTurns.some((turn) => turn.id === accepted.id) ? [accepted] : [])].map((turn) => ({ ...turn, items: turn.items ?? [] })) : [];
   const activeTurn = [...turns].reverse().find((turn) => ["inProgress", "in_progress"].includes(turn.status));
-  const activityKey = turns.map((turn) => `${turn.id}:${turn.status}:${turn.items.map((item) => `${item.id}:${item.status ?? ""}:${item.text?.length ?? 0}:${item.duration_ms ?? 0}:${item.changes?.reduce((size, change) => size + (change.diff?.length ?? 0), 0) ?? 0}`).join(",")}`).join("|");
+  const activityKey = `${turns.map((turn) => `${turn.id}:${turn.status}:${turn.items.map((item) => `${item.id}:${item.status ?? ""}:${item.text?.length ?? 0}:${item.duration_ms ?? 0}:${item.changes?.reduce((size, change) => size + (change.diff?.length ?? 0), 0) ?? 0}`).join(",")}`).join("|")}|${runs.map((run) => `${run.id}:${run.revision}`).join(",")}|${data.processInstances.filter((instance) => instance.source?.agent_id === agent.definition.id).map((instance) => `${instance.id}:${instance.revision}`).join(",")}`;
+  useEffect(() => {
+    if (!scope.workspace) return;
+    let current = true;
+    let loading = false;
+    const refresh = async () => {
+      if (loading) return;
+      loading = true;
+      const next: AgentAttachedActivity = { runs: {}, services: {}, threads: {} };
+      await Promise.all(runs.map(async (run) => {
+        try {
+          const shown = await rpc<{ detail: RunDetailView }>(apiBase, csrf, "run.show", { workspace: scope.workspace, run: run.id });
+          next.runs[run.id] = { detail: shown.detail };
+        } catch (reason) {
+          next.runs[run.id] = { error: reason instanceof Error ? reason.message : "Run detail is unavailable." };
+        }
+        try {
+          const result = await rpc<{ logs: { stdout: { text: string; truncated: boolean; omitted_bytes: number }; stderr: { text: string; truncated: boolean; omitted_bytes: number } } }>(apiBase, csrf, "run.logs", { workspace: scope.workspace, run: run.id, tail: 10000 });
+          next.runs[run.id] = { ...next.runs[run.id], logs: [result.logs.stdout.text, result.logs.stderr.text, result.logs.stdout.truncated || result.logs.stderr.truncated ? "[bounded log output; earlier bytes omitted]" : ""].filter(Boolean).join("\n") };
+        } catch {
+          // Lost or not-yet-bound runs can have exact canonical state without trustworthy logs.
+        }
+      }));
+      await Promise.all(data.processInstances.filter((instance) => instance.source?.agent_id === agent.definition.id).map(async (instance) => {
+        try { next.services[instance.id] = (await rpc<{ detail: ManagedProcessDetail }>(apiBase, csrf, "managed_service.show", { workspace: scope.workspace, instance: instance.id })).detail; } catch { /* summary remains visible */ }
+      }));
+      await Promise.all(data.threads.filter((thread) => thread.agent_ids.includes(agent.definition.id)).map(async (thread) => {
+        try { next.threads[thread.thread.id] = (await rpc<{ detail: ThreadDetail }>(apiBase, csrf, "thread.show", { workspace: scope.workspace, thread: thread.thread.id })).detail; } catch { /* summary remains visible */ }
+      }));
+      if (current) setAttachedActivity(next);
+      loading = false;
+    };
+    setAttachedActivity(emptyAgentAttachedActivity);
+    void refresh();
+    const live = runs.some((run) => ["requested", "starting", "active", "blocked", "stopping"].includes(run.status)) || data.processInstances.some((instance) => instance.source?.agent_id === agent.definition.id && ["requested", "starting", "healthy", "degraded", "stopping"].includes(instance.status));
+    const timer = live ? window.setInterval(() => void refresh(), 1500) : undefined;
+    return () => { current = false; if (timer !== undefined) window.clearInterval(timer); };
+  }, [apiBase, csrf, scope.workspace, scope.agent, attachedSignature]);
   useEffect(() => {
     setResult(null); setSelectedEpoch(0); setInput(""); setError("");
 		setCheckout(defaultCheckout);
@@ -1200,9 +1489,9 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
   const state = result?.view.session.state ?? (busy === "loading" ? "loading" : "unavailable");
   if (state === "unbound") return <div className="m22-session m22-session-empty">
     <div className="m22-session-state"><span>Codex conversation</span><StatusPill value="not started" /></div>
-		<AgentExecutionLane data={data} runs={runs} inspectRun={inspectRun} />
+		<div className="m22-thread m24-agent-timeline"><AgentCanonicalActivity data={data} agent={agent} runs={runs} attached={attachedActivity} inspectRun={inspectRun} /><div className="m24-provider-boundary"><strong>Codex conversation</strong><span>provider order · not started</span></div><p className="m22-empty">No provider turn exists yet.</p></div>
 		<h2>Start this durable agent’s provider thread</h2>
-		<p>This starts the real, resumable Codex conversation for <strong>{agent.definition.name}</strong>. Task attempts shown above are this same durable agent working with bounded authority—not extra coworkers.</p>
+		<p>This starts the real, resumable Codex conversation for <strong>{agent.definition.name}</strong>. Crewfold activity above already belongs to this same durable coworker; a provider thread is its conversational memory, not a second identity.</p>
 		{workstream ? <p className="m22-session-bound-checkout"><strong>Workstream checkout:</strong> {data.checkouts.find((item) => item.id === workstream.primary_checkout_id)?.path ?? workstream.primary_checkout_id}</p> : data.checkouts.length > 1 && <label className="m22-session-checkout"><span>domain checkout for this conversation</span><select value={checkout} onChange={(event) => setCheckout(event.target.value)}><option value="">select exact checkout</option>{data.checkouts.filter((item) => item.availability === "available").map((item) => <option key={item.id} value={item.id}>{item.path}</option>)}</select></label>}
     <button className="m22-command" disabled={busy !== "" || !checkout} onClick={() => void open()}>{busy === "opening" ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />} start Codex session</button>
     {error && <p className="m22-session-error">{error}</p>}
@@ -1212,11 +1501,12 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
   return <div className="m22-session">
     <div className="m22-session-state"><span>Codex conversation · epoch {result?.view.session.epoch || 1} · {result?.view.session.provider || agent.definition.provider}</span><StatusPill value={result?.view.thread_status ?? state} /></div>
     {busy === "loading" && !result ? <p className="m22-session-loading"><LoaderCircle className="spin" size={14} /> reading persisted provider thread…</p> : state === "detached" ? <p className="m22-session-error">This session belongs to another Crewfold node. It is visible as detached and cannot be controlled here.</p> : <>
-      {!archived && <AgentExecutionLane data={data} runs={runs} inspectRun={inspectRun} />}
-      <div className="m22-thread" aria-live="polite" ref={threadRef} onScroll={(event) => {
+      <div className="m22-thread m24-agent-timeline" aria-live="polite" ref={threadRef} onScroll={(event) => {
         const thread = event.currentTarget;
         followThreadRef.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48;
       }}>
+        {!archived && <AgentCanonicalActivity data={data} agent={agent} runs={runs} attached={attachedActivity} inspectRun={inspectRun} />}
+        <div className="m24-provider-boundary"><strong>Codex conversation · epoch {result?.view.session.epoch || 1}</strong><span>provider order · items do not carry canonical timestamps</span></div>
         {turns.length === 0 ? <p className="m22-empty">The provider thread is ready. Send the first owner message below.</p> : turns.map((turn) => <section className="m22-turn" key={turn.id}>
           <SessionTurnItems items={turn.items} agentName={agent.definition.name} />
           {["inProgress", "in_progress"].includes(turn.status) && <ActiveTurnProgress turn={turn} />}
@@ -1250,10 +1540,12 @@ function DomainAgentCenter({ data, agent, view, setView, inspectRun, apiBase, cs
   const runs = data.runs.filter((run) => run.agent_id === definition.id).sort((left, right) => right.updated_at.localeCompare(left.updated_at));
   const workstream = data.objectives.find((objective) => objective.id === agent.membership.workstream_id);
   const consequentialRun = runs.find((run) => ["lost", "blocked", "stopping", "active", "starting", "requested"].includes(run.status)) ?? runs[0];
+  const consequentialTask = consequentialRun ? data.tasks.find((detail) => detail.task.id === consequentialRun.task_id)?.task : undefined;
+  const consequentialOutcome = consequentialRun ? runOutcome(consequentialRun, consequentialTask) : null;
   const checkout = workstream ? data.checkouts.find((candidate) => candidate.id === workstream.primary_checkout_id) : undefined;
   const tabs: Array<[DomainConsoleView, string]> = [["session", "session"], ["assignment", "assignment"], ["changes", "changes"], ["briefing", "briefing"], ["verification", "verification"], ["staffing", "staffing"]];
   return <section className="m22-agent-center">
-    <header><p className="m22-kicker">durable agent</p><div className="m22-agent-title"><h1>{definition.name}</h1><StatusPill value={consequentialRun?.status ?? "idle"} /></div><p>{definition.role || "No descriptive role"} · {definition.provider} through {definition.runtime}{workstream ? ` · ${workstream.title}` : ""}</p>{workstream && <small className="m22-agent-checkout">task work uses {checkout?.path ?? "an unavailable primary checkout"}</small>}</header>
+    <header><p className="m22-kicker">durable agent</p><div className="m22-agent-title"><h1>{definition.name}</h1><StatusPill value={consequentialOutcome?.label ?? "idle"} tone={consequentialOutcome?.tone ?? "idle"} /></div><p>{definition.role || "No descriptive role"} · {definition.provider} through {definition.runtime}{workstream ? ` · ${workstream.title}` : ""}</p>{workstream && <small className="m22-agent-checkout">task work uses {checkout?.path ?? "an unavailable primary checkout"}</small>}</header>
     <nav className="m22-tabs" aria-label="Selected agent views">{tabs.map(([id, label]) => <button className={view === id ? "active" : ""} key={id} onClick={() => setView(id)}>{label}</button>)}</nav>
     {view === "session" && <><DurableAgentSession data={data} agent={agent} runs={runs} inspectRun={inspectRun} apiBase={apiBase} csrf={csrf} /><CoordinationThreads data={data} apiBase={apiBase} csrf={csrf} threads={data.threads.filter((thread) => thread.agent_ids.includes(definition.id))} heading={`${definition.name} coordination`} /></>}
     {view === "assignment" && <div className="m22-block"><h2>assigned work</h2>{assigned.length ? assigned.map((detail) => <div className="m22-line static" key={detail.task.id}><span><strong>{detail.task.title}</strong><small>{detail.task.description || "No additional description"}</small></span><StatusPill value={detail.task.status} /></div>) : <><p className="m22-empty">No canonical task is assigned to this agent.</p><p className="m22-caveat">Conversation and coordination messages are not assignments. This view fills only after a task is created and explicitly assigned.</p></>}</div>}
@@ -1430,9 +1722,12 @@ function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspe
   const [prompt, setPrompt] = useState("");
   const [notice, setNotice] = useState("");
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [artifact, setArtifact] = useState<RunArtifactContent | null>(null);
+  const [artifactError, setArtifactError] = useState("");
   const [busy, setBusy] = useState(false);
   const currentRun = run ? data.runs.find((candidate) => candidate.id === run.id) ?? run : null;
   const currentTask = currentRun ? data.tasks.find((item) => item.task.id === currentRun.task_id)?.task ?? null : null;
+  const currentOutcome = currentRun ? runOutcome(currentRun, currentTask ?? undefined) : null;
   const canRetryReview = currentRun?.status === "review" && currentTask?.status === "changes_requested";
   const canStartFresh = currentRun?.status === "stopped" && currentTask?.status === "assigned";
   useEffect(() => {
@@ -1470,11 +1765,13 @@ function Inspector({ data, task, run, agent, apiBase, csrf, close, reload, inspe
   const resume = async () => { if (!mutable || !currentRun || !data.workspace) return; setBusy(true); setNotice(""); try { await rpc(apiBase, csrf, "run.resume", { workspace: data.workspace.id, run: currentRun.id, expected_revision: currentRun.revision, idempotency_key: newKey("resume") }); setNotice("Run resumed from its exact current revision."); await reload(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Resume failed."); } finally { setBusy(false); } };
   const interrupt = async () => { if (!mutable || !currentRun || !data.workspace) return; setBusy(true); setNotice(""); try { await rpc(apiBase, csrf, "run.interrupt", { workspace: data.workspace.id, run: currentRun.id }); setNotice("Interrupt delivered to the current-node runtime binding."); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Interrupt failed."); } finally { setBusy(false); } };
   const sendPrompt = async () => { if (!mutable || !currentRun || !data.workspace || !prompt.trim()) return; setBusy(true); setNotice(""); try { await rpc(apiBase, csrf, "run.prompt", { workspace: data.workspace.id, run: currentRun.id, text: prompt.trim() }); setPrompt(""); setNotice("Prompt delivered to the current live runtime."); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Prompt failed."); } finally { setBusy(false); } };
+  const openArtifact = async (artifactID: string) => { if (!data.workspace) return; setArtifact(null); setArtifactError(""); try { const result = await rpc<{ artifact: RunArtifactContent }>(apiBase, csrf, "run.artifact.show", { workspace: data.workspace.id, artifact: artifactID }); setArtifact(result.artifact); } catch (reason) { setArtifactError(reason instanceof Error ? reason.message : "Evidence is unavailable."); } };
   const retry = async () => { if (!mutable || !currentRun || !currentTask || !data.workspace || currentRun.status !== "start_failed" && !canRetryReview && !canStartFresh) return; setBusy(true); setNotice(""); try { const freshRun = await retryWorkbenchRun(apiBase, csrf, data.workspace.id, currentRun, currentTask); setNotice(canRetryReview ? "Requested changes were reopened on the retained assignment and a fresh run was queued." : canStartFresh ? "A fresh run was queued under the current service, provider, runtime, and network policy." : "A fresh run was requested after the runtime and provider preflight passed."); await reload(); inspectRun(freshRun); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Retry failed."); } finally { setBusy(false); } };
   const refreshGit = async () => { if (!data.workspace || !data.project) return; setBusy(true); setNotice(""); try { const response = await fetch(`${apiBase}/git?workspace=${encodeURIComponent(data.workspace.id)}&project=${encodeURIComponent(data.project.id)}`, { credentials: "same-origin" }); const result = (await response.json()) as { observations?: Array<Omit<Checkout, "id" | "project_id" | "path" | "write_mode"> & { checkout_id: string }>; error?: { message: string } }; if (!response.ok || !result.observations) throw new Error(result.error?.message ?? "Git observation failed"); const observation = result.observations[0]; const canonical = data.checkouts.find((checkout) => checkout.id === observation?.checkout_id); setGit(observation && canonical ? { ...canonical, ...observation, id: observation.checkout_id } : null); setNotice("Repository status refreshed without persisting source or diff content."); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Git observation failed."); } finally { setBusy(false); } };
   const agentRun = agent ? latestRunForAgent(data.runs, agent.id) : null;
   return <div className="drawer-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><aside className={`inspector${terminalOpen ? " live-inspector" : ""}`} aria-label="Canonical inspector"><header><div><div className="eyebrow">Exact inspector</div><h2>{run ? data.agents.find((candidate) => candidate.id === run.agent_id)?.name ?? "Agent run" : agent?.name ?? task?.task.title}</h2></div><IconButton label="Close inspector" onClick={close}><X size={18} /></IconButton></header>
-    {currentRun ? <><div className="inspector-status"><StatusPill value={currentRun.status} /><span>{currentRun.provider} through {currentRun.runtime}</span></div><section><h3>Assigned work</h3><p>{currentTask?.title ?? "Task unavailable in this bounded page"}</p></section>{["start_failed", "failed", "lost"].includes(currentRun.status) && <section className="launch-failure" role="alert"><div className="section-title"><h3>{currentRun.status === "start_failed" ? "Launch failed" : currentRun.status === "lost" ? "Runtime outcome is unknown" : "Run failed"}</h3><AlertCircle size={16} /></div><p>{currentRun.failure_message ?? currentRun.failure_code ?? "Inspect the bounded runtime output for the exact provider diagnosis."}</p>{currentRun.status === "start_failed" && <button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry after preflight</button>}</section>}{currentRun.status === "blocked" && <section className="launch-failure review-retry" role="alert"><div className="section-title"><h3>Why this run stopped</h3><AlertCircle size={16} /></div><p>{runDetail?.blocker?.reason ?? currentRun.blocked_question ?? currentTask?.blocked_reason ?? "The agent reported an unresolved blocker."}</p>{runDetail?.blocker?.needs?.length ? <><h4>What must be supplied or repaired</h4><ul>{runDetail.blocker.needs.map((need) => <li key={need}>{need}</li>)}</ul></> : <p>No structured needs were included in the blocked report. Inspect the activity and ask the owning agent for the exact missing input before resuming.</p>}<h4>Choose the correct recovery</h4><p><strong>Resume same runtime</strong> only after those needs were delivered into this run or its existing checkout. If the checkout, service, provider, runtime, or network policy must change, stop this run first and then launch the retained assignment in a fresh environment.</p>{runDetail?.blocker?.related_ids?.length ? <small>Related canonical records: {runDetail.blocker.related_ids.join(", ")}</small> : null}</section>}{canStartFresh && <section className="launch-failure review-retry"><div className="section-title"><h3>Launch a fresh environment</h3><RotateCcw size={16} /></div><p>The prior runtime is durably stopped and no longer holds authority. The task's exact assignment is retained.</p><p>This creates one fresh run using the current service, provider, runtime, and network policy.</p><button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Start fresh run</button></section>}{canRetryReview && <section className="launch-failure review-retry" role="alert"><div className="section-title"><h3>Changes requested</h3><ClipboardCheck size={16} /></div><p>{currentTask?.blocked_reason ?? "The completion did not satisfy the task acceptance evidence."}</p><p>The prior review remains immutable. Retrying reopens this exact assignment and creates a fresh context-bound run.</p><button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry requested changes</button></section>}<section><div className="section-title"><h3>Readable agent activity</h3><Activity size={15} /></div><RuntimeOutput logs={logs} status={currentRun.status} /></section>{terminalOpen && <LiveTerminal key={currentRun.id} apiBase={apiBase} csrf={csrf} workspace={data.workspace?.id ?? ""} run={currentRun} initialLogs={logs} close={() => setTerminalOpen(false)} mutable={mutable} />}{["active", "blocked"].includes(currentRun.status) && <section className="runtime-control"><label htmlFor="runtime-prompt">Send a visible runtime prompt</label><div><input id="runtime-prompt" value={prompt} maxLength={4095} onChange={(event) => setPrompt(event.target.value)} placeholder="Clarify the next observable step…" /><button className="secondary-button" disabled={busy || !prompt.trim()} onClick={() => void sendPrompt()}><Send size={14} />Send</button></div><div className="runtime-buttons">{currentRun.can_attach && !terminalOpen && <button className="secondary-button" disabled={busy} onClick={() => setTerminalOpen(true)}><TerminalSquare size={14} />Open live activity</button>}{currentRun.status === "blocked" && <button className="secondary-button" disabled={busy} onClick={() => void resume()}><RotateCcw size={14} />Resume after repair</button>}<button className="secondary-button" disabled={busy} onClick={() => void interrupt()}><AlertCircle size={14} />Interrupt</button><button className="danger-button" onClick={() => void stop()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <Square size={15} />}Stop · 5000 ms grace</button></div></section>}{notice && <div className="notice" role="status">{notice}</div>}<footer><span>Revision {currentRun.revision}</span><span>{currentRun.can_attach ? "Live activity and interactive controls available" : currentRun.status === "start_failed" ? "Retry available after diagnosis" : canRetryReview ? "Reviewed retry available" : canStartFresh ? "Fresh launch available on retained assignment" : "Bounded logs only"}</span></footer></> : agent ? <><div className="inspector-status"><StatusPill value={agentRun?.status ?? (agent.enabled ? "ready" : "disabled")} /><span>{agent.provider} through {agent.runtime}</span></div><section><h3>Authority-neutral role</h3><p>{agent.role}. Scheduling authority comes from policy, assignment, and receipts—not this label.</p></section><section><div className="section-title"><h3>Repository observation</h3><IconButton label="Refresh Git observation" onClick={() => void refreshGit()} disabled={busy}><RefreshCw className={busy ? "spin" : ""} size={14} /></IconButton></div>{git ? <><dl className="fact-list"><div><dt>Availability</dt><dd>{git.availability}</dd></div><div><dt>Branch</dt><dd>{git.branch || "detached"}</dd></div><div><dt>Working tree</dt><dd>{git.dirty ? `${git.dirty_paths?.length ?? 0}${git.omitted_paths ? `+${git.omitted_paths}` : ""} changed paths` : "clean"}</dd></div><div><dt>Write mode</dt><dd>{git.write_mode}</dd></div></dl>{git.dirty_paths && git.dirty_paths.length > 0 && <div className="changed-paths">{git.dirty_paths.slice(0, 16).map((path) => <code key={path}>{path}</code>)}{git.dirty_paths.length > 16 && <small>+{git.dirty_paths.length - 16 + (git.omitted_paths ?? 0)} paths omitted from this view</small>}</div>}</> : <p>No checkout is loaded in this bounded scope.</p>}</section>{notice && <div className="notice" role="status">{notice}</div>}{agentRun ? <button className="secondary-button" onClick={() => inspectRun(agentRun)}><TerminalSquare size={15} />Open run details</button> : <div className="quiet-line"><Clock3 size={14} />No current run</div>}<footer><span>Definition revision {agent.revision}</span><span>{agent.enabled ? "Enabled" : "Disabled"}</span></footer></> : task && <><div className="inspector-status"><StatusPill value={task.task.status} /><span>Priority {task.task.priority}</span></div><section><h3>Description</h3><p>{task.task.description || "No additional description."}</p></section><section><h3>Readiness</h3><p>{task.task.status === "completed" ? "Task completed. It is no longer awaiting scheduling." : task.readiness.ready ? "Ready for Crewfold to schedule." : readableTaskReadiness(task, data.tasks)}</p></section><section><h3>Assignment</h3><p>{data.agents.find((candidate) => candidate.id === task.task.assigned_agent_id)?.name ?? (["completed", "failed", "cancelled"].includes(task.task.status) ? "Released after the task finished." : "Unassigned")}</p></section><footer><span>Revision {task.task.revision}</span><span>Updated {displayTime(task.task.updated_at)}</span></footer></>}
+    {currentRun ? <><div className="inspector-status"><StatusPill value={currentOutcome?.label ?? currentRun.status} tone={currentOutcome?.tone ?? currentRun.status} /><span>{currentRun.provider} through {currentRun.runtime}</span></div><section><h3>Assigned work</h3><p>{currentTask?.title ?? "Task unavailable in this bounded page"}</p><small>{currentTask?.task_class ? `${currentTask.task_class} task` : "task class unavailable"}</small></section>{runDetail?.assessment && <section className={`m24-assessment ${statusTone(runDetail.assessment)}`}><div className="section-title"><h3>Structured assessment</h3><ClipboardCheck size={16} /></div><p><strong>{runDetail.assessment === "pass" ? "PASS" : runDetail.assessment === "block" ? "BLOCK" : "CHANGES REQUESTED"}</strong></p><p>{currentRun.result_summary || runDetail.handoff?.summary || "The assessment was recorded without an additional summary."}</p><small>This is the reviewer or verifier's canonical assessment. Process completion alone does not mean delivery acceptance.</small></section>}{["start_failed", "failed", "lost"].includes(currentRun.status) && <section className="launch-failure" role="alert"><div className="section-title"><h3>{currentRun.status === "start_failed" ? "Launch failed" : currentRun.status === "lost" ? "Runtime outcome is unknown" : "Run failed"}</h3><AlertCircle size={16} /></div><p>{currentRun.failure_message ?? currentRun.failure_code ?? "Inspect the bounded runtime output for the exact provider diagnosis."}</p>{currentRun.status === "start_failed" && <button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry after preflight</button>}</section>}{currentRun.status === "blocked" && <section className="launch-failure review-retry" role="alert"><div className="section-title"><h3>Why this run stopped</h3><AlertCircle size={16} /></div><p>{runDetail?.blocker?.reason ?? currentRun.blocked_question ?? currentTask?.blocked_reason ?? "The agent reported an unresolved blocker."}</p>{runDetail?.blocker?.needs?.length ? <><h4>What must be supplied or repaired</h4><ul>{runDetail.blocker.needs.map((need) => <li key={need}>{need}</li>)}</ul></> : <p>No structured needs were included in the blocked report. Inspect the activity and ask the owning agent for the exact missing input before resuming.</p>}<h4>Choose the correct recovery</h4><p><strong>Resume same runtime</strong> only after those needs were delivered into this run or its existing checkout. If the checkout, service, provider, runtime, or network policy must change, stop this run first and then launch the retained assignment in a fresh environment.</p>{runDetail?.blocker?.related_ids?.length ? <small>Related canonical records: {runDetail.blocker.related_ids.join(", ")}</small> : null}</section>}{canStartFresh && <section className="launch-failure review-retry"><div className="section-title"><h3>Launch a fresh environment</h3><RotateCcw size={16} /></div><p>The prior runtime is durably stopped and no longer holds authority. The task's exact assignment is retained.</p><p>This creates one fresh run using the current service, provider, runtime, and network policy.</p><button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Start fresh run</button></section>}{canRetryReview && <section className="launch-failure review-retry" role="alert"><div className="section-title"><h3>Changes requested</h3><ClipboardCheck size={16} /></div><p>{currentTask?.blocked_reason ?? "The completion did not satisfy the task acceptance evidence."}</p><p>The prior review remains immutable. Retrying reopens this exact assignment and creates a fresh context-bound run.</p><button className="primary-button compact" disabled={!mutable || busy} onClick={() => void retry()}>{busy ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}Retry requested changes</button></section>}<section><div className="section-title"><h3>Readable agent activity</h3><Activity size={15} /></div><RuntimeOutput logs={logs} status={currentRun.status} /></section>{terminalOpen && <LiveTerminal key={currentRun.id} apiBase={apiBase} csrf={csrf} workspace={data.workspace?.id ?? ""} run={currentRun} initialLogs={logs} close={() => setTerminalOpen(false)} mutable={mutable} />}{["active", "blocked"].includes(currentRun.status) && <section className="runtime-control"><label htmlFor="runtime-prompt">Send a visible runtime prompt</label><div><input id="runtime-prompt" value={prompt} maxLength={4095} onChange={(event) => setPrompt(event.target.value)} placeholder="Clarify the next observable step…" /><button className="secondary-button" disabled={busy || !prompt.trim()} onClick={() => void sendPrompt()}><Send size={14} />Send</button></div><div className="runtime-buttons">{currentRun.can_attach && !terminalOpen && <button className="secondary-button" disabled={busy} onClick={() => setTerminalOpen(true)}><TerminalSquare size={14} />Open live activity</button>}{currentRun.status === "blocked" && <button className="secondary-button" disabled={busy} onClick={() => void resume()}><RotateCcw size={14} />Resume after repair</button>}<button className="secondary-button" disabled={busy} onClick={() => void interrupt()}><AlertCircle size={14} />Interrupt</button><button className="danger-button" onClick={() => void stop()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <Square size={15} />}Stop · 5000 ms grace</button></div></section>}{notice && <div className="notice" role="status">{notice}</div>}<footer><span>Revision {currentRun.revision}</span><span>{currentRun.can_attach ? "Live activity and interactive controls available" : currentRun.status === "start_failed" ? "Retry available after diagnosis" : canRetryReview ? "Reviewed retry available" : canStartFresh ? "Fresh launch available on retained assignment" : "Bounded logs only"}</span></footer></> : agent ? <><div className="inspector-status"><StatusPill value={agentRun?.status ?? (agent.enabled ? "ready" : "disabled")} /><span>{agent.provider} through {agent.runtime}</span></div><section><h3>Authority-neutral role</h3><p>{agent.role}. Scheduling authority comes from policy, assignment, and receipts—not this label.</p></section><section><div className="section-title"><h3>Repository observation</h3><IconButton label="Refresh Git observation" onClick={() => void refreshGit()} disabled={busy}><RefreshCw className={busy ? "spin" : ""} size={14} /></IconButton></div>{git ? <><dl className="fact-list"><div><dt>Availability</dt><dd>{git.availability}</dd></div><div><dt>Branch</dt><dd>{git.branch || "detached"}</dd></div><div><dt>Working tree</dt><dd>{git.dirty ? `${git.dirty_paths?.length ?? 0}${git.omitted_paths ? `+${git.omitted_paths}` : ""} changed paths` : "clean"}</dd></div><div><dt>Write mode</dt><dd>{git.write_mode}</dd></div></dl>{git.dirty_paths && git.dirty_paths.length > 0 && <div className="changed-paths">{git.dirty_paths.slice(0, 16).map((path) => <code key={path}>{path}</code>)}{git.dirty_paths.length > 16 && <small>+{git.dirty_paths.length - 16 + (git.omitted_paths ?? 0)} paths omitted from this view</small>}</div>}</> : <p>No checkout is loaded in this bounded scope.</p>}</section>{notice && <div className="notice" role="status">{notice}</div>}{agentRun ? <button className="secondary-button" onClick={() => inspectRun(agentRun)}><TerminalSquare size={15} />Open run details</button> : <div className="quiet-line"><Clock3 size={14} />No current run</div>}<footer><span>Definition revision {agent.revision}</span><span>{agent.enabled ? "Enabled" : "Disabled"}</span></footer></> : task && <><div className="inspector-status"><StatusPill value={task.task.status} /><span>Priority {task.task.priority}</span></div><section><h3>Description</h3><p>{task.task.description || "No additional description."}</p></section><section><h3>Readiness</h3><p>{task.task.status === "completed" ? "Task completed. It is no longer awaiting scheduling." : task.readiness.ready ? "Ready for Crewfold to schedule." : readableTaskReadiness(task, data.tasks)}</p></section><section><h3>Assignment</h3><p>{data.agents.find((candidate) => candidate.id === task.task.assigned_agent_id)?.name ?? (["completed", "failed", "cancelled"].includes(task.task.status) ? "Released after the task finished." : "Unassigned")}</p></section><footer><span>Revision {task.task.revision}</span><span>Updated {displayTime(task.task.updated_at)}</span></footer></>}
+    {currentRun && runDetail && <section className="m24-evidence"><div className="section-title"><h3>Evidence and handoff</h3><FileText size={15} /></div>{runDetail.handoff?.summary && <p>{runDetail.handoff.summary}</p>}<div className="m24-evidence-links">{Array.from(new Set([...(runDetail.handoff?.evidence ?? []), ...runDetail.timeline.flatMap((entry) => entry.evidence ?? [])])).filter((id) => id.startsWith("artifact_")).map((id) => <button type="button" className="secondary-button compact" key={id} onClick={() => void openArtifact(id)}><FileText size={13} />Read {id.slice(0, 17)}…</button>)}</div>{artifact && <article className="m24-evidence-content"><header><strong>{artifact.artifact.name}</strong><small>{artifact.artifact.media_type} · {artifact.artifact.byte_size} bytes</small></header><pre>{artifact.content}</pre><footer><code>{artifact.artifact.content_hash}</code></footer></article>}{artifactError && <p className="error-text" role="alert">{artifactError}</p>}</section>}
   </aside></div>;
 }
 

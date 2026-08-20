@@ -24,6 +24,7 @@ import (
 	"crewfold/internal/gitstate"
 	"crewfold/internal/localapi"
 	"crewfold/internal/mcp"
+	"crewfold/internal/servicehost"
 	"crewfold/internal/store"
 )
 
@@ -60,6 +61,7 @@ type Config struct {
 	ClaudeMaxBudgetUSD             string
 	ClaudeExternallySandboxed      bool
 	DisableRunWorker               bool
+	DisableManagedServiceWorker    bool
 	DisableCheckWorker             bool
 	DisableCheckWatcher            bool
 	CheckWatchScanInterval         time.Duration
@@ -111,6 +113,7 @@ type server struct {
 	ownerExecutiveSignal      chan struct{}
 	web                       *workbenchServer
 	domainSessions            *domainSessionHost
+	serviceHost               *servicehost.Host
 }
 
 // Run owns the daemon lifecycle until the context is cancelled or system.stop is
@@ -172,6 +175,9 @@ func Run(ctx context.Context, config Config) error {
 	}
 	if err := storage.RecoverOwnerExecutiveExchangeLeases(ctx); err != nil {
 		return &StartupError{Code: CodeDatabaseUnavailable, Message: "recover durable owner executive exchanges", Cause: err}
+	}
+	if err := storage.RecoverManagedServiceJobLeases(ctx); err != nil {
+		return &StartupError{Code: CodeDatabaseUnavailable, Message: "recover durable managed-service jobs", Cause: err}
 	}
 	capabilities, err := newRunCapabilityManager(resolved.DataDir, resolved.SocketPath)
 	if err != nil {
@@ -258,6 +264,7 @@ func Run(ctx context.Context, config Config) error {
 		messageWakeSignal:        make(chan struct{}, 1),
 		ownerManagerReviewSignal: make(chan struct{}, 1),
 		ownerExecutiveSignal:     make(chan struct{}, 1),
+		serviceHost:              servicehost.New(resolved.DataDir),
 	}
 	instance.domainSessions = newDomainSessionHost(resolved, instance.handleDomainSessionToolRequest)
 	defer leaseReconcileCancel()
@@ -273,6 +280,7 @@ func Run(ctx context.Context, config Config) error {
 		go workbench.serve()
 	}
 	instance.startRunWorker()
+	instance.startManagedServiceWorker()
 	instance.startCheckWorker()
 	instance.startCheckWatcher()
 	instance.startMessageWakeWorker()
@@ -827,6 +835,8 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleRunStart(request), false
 	case localapi.MethodRunShow:
 		return s.handleRunShow(request), false
+	case localapi.MethodRunArtifactShow:
+		return s.handleRunArtifactShow(request), false
 	case localapi.MethodRunList:
 		return s.handleRunList(request), false
 	case localapi.MethodRunResume:
@@ -843,6 +853,46 @@ func (s *server) handleRequest(request localapi.Request) (localapi.Response, boo
 		return s.handleRunInterrupt(request), false
 	case localapi.MethodRunAttach:
 		return s.handleRunAttach(request), false
+	case localapi.MethodManagedServiceDefinitionCreate:
+		return s.handleManagedServiceDefinitionCreate(request), false
+	case localapi.MethodManagedServiceDefinitionRetire:
+		return s.handleManagedServiceDefinitionRetire(request), false
+	case localapi.MethodManagedServiceDefinitionShow:
+		return s.handleManagedServiceDefinitionShow(request), false
+	case localapi.MethodManagedServiceDefinitionList:
+		return s.handleManagedServiceDefinitionList(request), false
+	case localapi.MethodManagedServiceStart:
+		return s.handleManagedServiceStart(request), false
+	case localapi.MethodManagedServiceShow:
+		return s.handleManagedServiceShow(request), false
+	case localapi.MethodManagedServiceList:
+		return s.handleManagedServiceList(request), false
+	case localapi.MethodManagedServiceStop:
+		return s.handleManagedServiceAction(request, domain.ManagedServiceJobStop), false
+	case localapi.MethodManagedServiceRestart:
+		return s.handleManagedServiceAction(request, domain.ManagedServiceJobRestart), false
+	case localapi.MethodManagedServiceResolveUnknown:
+		return s.handleManagedServiceResolveUnknown(request), false
+	case localapi.MethodManagedServiceLogs:
+		return s.handleManagedServiceLogs(request), false
+	case localapi.MethodManagedServiceGrantCreate:
+		return s.handleManagedServiceGrantCreate(request), false
+	case localapi.MethodManagedServiceGrantRevoke:
+		return s.handleManagedServiceGrantRevoke(request), false
+	case localapi.MethodManagedServiceGrantList:
+		return s.handleManagedServiceGrantList(request), false
+	case localapi.MethodManagedServiceRequestList:
+		return s.handleManagedServiceRequestList(request), false
+	case localapi.MethodManagedServiceRequestAccept:
+		return s.handleManagedServiceRequestDecision(request, true), false
+	case localapi.MethodManagedServiceRequestReject:
+		return s.handleManagedServiceRequestDecision(request, false), false
+	case localapi.MethodWorkstreamDeliveryShow:
+		return s.handleWorkstreamDeliveryShow(request), false
+	case localapi.MethodWorkstreamDeliveryAccept:
+		return s.handleWorkstreamDeliveryDecision(request, true), false
+	case localapi.MethodWorkstreamDeliveryReject:
+		return s.handleWorkstreamDeliveryDecision(request, false), false
 	case localapi.MethodCoordinationStatus:
 		return s.handleCoordinationStatus(request), false
 	case localapi.MethodClaimAdd:
@@ -1281,7 +1331,7 @@ func storeErrorResponse(request localapi.Request, err error) localapi.Response {
 	return localapi.ErrorResponse(request.ID, request.Protocol, &localapi.APIError{
 		Code:      code,
 		Message:   err.Error(),
-		Retryable: code == store.CodeStorageFailed || code == store.CodeDatabaseBusy || code == store.CodeRetrievalDegraded || code == store.CodeExecutionCapacityExhausted,
+		Retryable: code == store.CodeStorageFailed || code == store.CodeDatabaseBusy || code == store.CodeRetrievalDegraded || code == store.CodeExecutionCapacityExhausted || code == store.CodeManagedServiceCapacity,
 		Details:   details,
 	})
 }

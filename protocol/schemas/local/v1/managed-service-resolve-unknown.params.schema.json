@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:managed-service-resolve-unknown-params:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace", "instance", "expected_revision", "runtime_retired_confirmed", "reason", "idempotency_key"],
+  "properties": {
+    "workspace": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "instance": { "type": "string", "pattern": "^svcinst_[0-9a-f]{32}$" },
+    "expected_revision": { "type": "integer", "minimum": 1 },
+    "runtime_retired_confirmed": { "const": true },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 128 }
+  }
+}

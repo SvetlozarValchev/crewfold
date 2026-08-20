@@ -1165,27 +1165,31 @@ func (q *Queries) ListOperatorProjects(ctx context.Context, arg ListOperatorProj
 }
 
 const listOperatorRuns = `-- name: ListOperatorRuns :many
-SELECT id, workspace_id, project_id, task_id, agent_id, runtime, provider,
-       status, COALESCE(blocked_question, '') AS blocked_question,
-       COALESCE(result_summary, '') AS result_summary,
-       COALESCE(failure_code, '') AS failure_code, revision, created_at,
-       updated_at, COALESCE(started_at, '') AS started_at,
-       COALESCE(finished_at, '') AS finished_at,
+SELECT runs.id, runs.workspace_id, runs.project_id, runs.task_id, runs.agent_id, runs.runtime, runs.provider,
+       runs.status, COALESCE(runs.blocked_question, '') AS blocked_question,
+       COALESCE(runs.result_summary, '') AS result_summary,
+	   COALESCE(runs.failure_code, '') AS failure_code,
+	   CAST(COALESCE((SELECT report.assessment FROM run_reports report
+	     WHERE report.run_id=runs.id AND report.kind='completion' AND report.status='applied'
+	     ORDER BY report.sequence DESC LIMIT 1), '') AS TEXT) AS assessment,
+	   runs.revision, runs.created_at,
+       runs.updated_at, COALESCE(runs.started_at, '') AS started_at,
+       COALESCE(runs.finished_at, '') AS finished_at,
        CAST(EXISTS(SELECT 1 FROM run_runtime_bindings binding
          WHERE binding.run_id=runs.id AND binding.node_id=?1
            AND binding.node_fingerprint=?2
            AND binding.operation_id=runs.id) AS INTEGER) AS runtime_binding_current
 FROM runs
-WHERE workspace_id = ?3
-  AND (CAST(?4 AS TEXT) = '' OR project_id = ?4)
-  AND (CAST(?5 AS TEXT) = '' OR task_id = ?5)
-  AND (CAST(?6 AS TEXT) = '' OR status = ?6)
+WHERE runs.workspace_id = ?3
+  AND (CAST(?4 AS TEXT) = '' OR runs.project_id = ?4)
+  AND (CAST(?5 AS TEXT) = '' OR runs.task_id = ?5)
+  AND (CAST(?6 AS TEXT) = '' OR runs.status = ?6)
   AND (
     CAST(?7 AS TEXT) = ''
-    OR created_at < ?7
-    OR (created_at = ?7 AND id < ?8)
+	OR runs.created_at < ?7
+	OR (runs.created_at = ?7 AND runs.id < ?8)
   )
-ORDER BY created_at DESC, id DESC
+ORDER BY runs.created_at DESC, runs.id DESC
 LIMIT ?9
 `
 
@@ -1213,6 +1217,7 @@ type ListOperatorRunsRow struct {
 	BlockedQuestion       string `json:"blocked_question"`
 	ResultSummary         string `json:"result_summary"`
 	FailureCode           string `json:"failure_code"`
+	Assessment            string `json:"assessment"`
 	Revision              int64  `json:"revision"`
 	CreatedAt             string `json:"created_at"`
 	UpdatedAt             string `json:"updated_at"`
@@ -1252,6 +1257,7 @@ func (q *Queries) ListOperatorRuns(ctx context.Context, arg ListOperatorRunsPara
 			&i.BlockedQuestion,
 			&i.ResultSummary,
 			&i.FailureCode,
+			&i.Assessment,
 			&i.Revision,
 			&i.CreatedAt,
 			&i.UpdatedAt,

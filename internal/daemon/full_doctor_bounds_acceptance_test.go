@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"crewfold/internal/domain"
 	"crewfold/internal/localapi"
 	"crewfold/internal/recovery"
 	"crewfold/internal/store"
@@ -68,7 +69,7 @@ func TestM20FullDoctorIsReadOnlyAndEveryDiagnosticCapsAtTwentySamples(t *testing
 			UnsafeCount:  int64(len(artifactIssues)),
 			Issues:       artifactIssues,
 		}
-		checks := buildFullDoctorChecks(integrity, artifacts, databaseFileProbe{ByteSize: 1}, 0, 1, 0, 1, nil)
+		checks := buildFullDoctorChecks(integrity, artifacts, databaseFileProbe{ByteSize: 1}, 0, domain.ManagedServiceExecutionHealth{}, 1, 0, 1, nil)
 		gotCodes := make([]string, 0, len(checks))
 		var artifactCheck, queueCheck *localapi.FullDoctorCheck
 		for index := range checks {

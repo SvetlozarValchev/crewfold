@@ -188,16 +188,26 @@ await waitFor("[...document.querySelectorAll('.m22-domain-home .m22-block h2')].
 const proposalAccepted = true;
 await waitFor("[...document.querySelectorAll('.m22-domain-home .m22-line')].some((item) => item.textContent.includes('Deliver the M23 checkout chain') && item.textContent.includes('0 open tasks')) && ![...document.querySelectorAll('.m22-domain-home .m22-block h2')].some((heading) => heading.textContent.trim() === 'needs attention')", "checkout-bound implement-review-remediate-verify completion", 900000);
 await evaluate(`(() => { const section = [...document.querySelectorAll('.m22-domain-home .m22-block')].find((candidate) => candidate.querySelector('h2')?.textContent.trim() === 'active workstreams'); const row = [...(section?.querySelectorAll('.m22-line') ?? [])].find((candidate) => candidate.textContent.includes('Deliver the M23 checkout chain')); row?.click(); return Boolean(row); })()`);
-await waitFor("document.querySelector('.m22-workstream-graph') && JSON.stringify([...document.querySelectorAll('.m22-workstream-graph .m22-line strong')].map((item) => item.textContent.trim())) === JSON.stringify(['Create the M23 fixture delivery', 'Independently review the M23 delivery', 'Apply the M23 review handoff', 'Verify the M23 checkout chain']) && [...document.querySelectorAll('.m22-workstream-graph .status-pill')].every((item) => item.textContent.trim().toLowerCase() === 'completed') && document.body.innerText.includes(" + JSON.stringify(repositoryPath) + ") && [...document.querySelectorAll('.m22-workstream-group')].some((group) => group.textContent.includes('Deliver the M23 checkout chain') && ['m23-implementer', 'm23-reviewer', 'm23-remediator', 'm23-verifier'].every((name) => group.textContent.includes(name)))", "completed exact workstream chain");
-const workerCompleted = await evaluate("JSON.stringify([...document.querySelectorAll('.m22-workstream-graph .m22-line strong')].map((item) => item.textContent.trim())) === JSON.stringify(['Create the M23 fixture delivery', 'Independently review the M23 delivery', 'Apply the M23 review handoff', 'Verify the M23 checkout chain']) && [...document.querySelectorAll('.m22-workstream-graph .status-pill')].every((item) => item.textContent.trim().toLowerCase() === 'completed') && [...document.querySelectorAll('.m22-workstream-group')].some((group) => group.textContent.includes('Deliver the M23 checkout chain') && ['m23-implementer', 'm23-reviewer', 'm23-remediator', 'm23-verifier'].every((name) => group.textContent.includes(name)))");
-await capture("03-completed-durable-work");
+const expectedTaskOutcomes = ['completed', 'review passed', 'completed', 'verification passed'];
+await waitFor("document.querySelector('.m22-workstream-graph') && JSON.stringify([...document.querySelectorAll('.m22-workstream-graph .m22-line strong')].map((item) => item.textContent.trim())) === JSON.stringify(['Create the M23 fixture delivery', 'Independently review the M23 delivery', 'Apply the M23 review handoff', 'Verify the M23 checkout chain']) && JSON.stringify([...document.querySelectorAll('.m22-workstream-graph .m22-line .status-pill')].map((item) => item.textContent.trim().toLowerCase())) === " + JSON.stringify(JSON.stringify(expectedTaskOutcomes)) + " && document.body.innerText.includes(" + JSON.stringify(repositoryPath) + ") && [...document.querySelectorAll('.m22-workstream-group')].some((group) => group.textContent.includes('Deliver the M23 checkout chain') && ['m23-implementer', 'm23-reviewer', 'm23-remediator', 'm23-verifier'].every((name) => group.textContent.includes(name)))", "completed exact workstream chain with semantic review and verification outcomes");
+const workerCompleted = await evaluate("JSON.stringify([...document.querySelectorAll('.m22-workstream-graph .m22-line strong')].map((item) => item.textContent.trim())) === JSON.stringify(['Create the M23 fixture delivery', 'Independently review the M23 delivery', 'Apply the M23 review handoff', 'Verify the M23 checkout chain']) && JSON.stringify([...document.querySelectorAll('.m22-workstream-graph .m22-line .status-pill')].map((item) => item.textContent.trim().toLowerCase())) === " + JSON.stringify(JSON.stringify(expectedTaskOutcomes)) + " && [...document.querySelectorAll('.m22-workstream-group')].some((group) => group.textContent.includes('Deliver the M23 checkout chain') && ['m23-implementer', 'm23-reviewer', 'm23-remediator', 'm23-verifier'].every((name) => group.textContent.includes(name)))");
+await waitFor("document.querySelector('.m24-delivery')?.textContent.includes('Verified — awaiting your acceptance') && [...document.querySelectorAll('.m24-delivery button')].some((button) => button.textContent.includes('accept exact delivery') && !button.disabled)", "verified delivery awaiting exact owner acceptance");
+await capture("03-verified-awaiting-owner-acceptance");
+await clickText(".m24-delivery button", "accept exact delivery");
+await waitFor("document.querySelector('.m24-delivery')?.textContent.includes('Accepted by the local owner')", "accepted exact workstream delivery");
+const deliveryAccepted = true;
+await capture("04-accepted-durable-work");
 
 await evaluate("document.querySelector('.m22-lifecycle-review button[aria-label=\"Close workstream lifecycle\"]').click(); true");
 await clickText(".m22-agent-row", "m23-reviewer");
-await waitFor("document.querySelector('.m22-execution-lane')?.textContent.includes('latest completed attempt') && document.querySelector('.m22-execution-lane')?.textContent.includes('Independently review the M23 delivery')", "reviewer task work in durable coworker surface");
-await clickText(".m22-execution-list button", "Independently review the M23 delivery");
+await waitFor("document.querySelector('.m24-agent-records')?.textContent.includes('same durable coworker') && document.querySelector('.m24-agent-records')?.textContent.includes('Independently review the M23 delivery') && document.querySelector('.m24-agent-records')?.textContent.includes('run.completed')", "reviewer task work in unified durable coworker timeline");
+await evaluate(`(() => {
+  const button = [...document.querySelectorAll('.m24-agent-records button')].find((candidate) => candidate.textContent.includes('Independently review the M23 delivery') && candidate.textContent.includes('run.completed'));
+  button?.click();
+  return Boolean(button);
+})()`);
 await waitFor("document.querySelector('.inspector')?.textContent.includes('Independently review the M23 delivery') && document.querySelector('.inspector')?.textContent.includes('Readable agent activity')", "reviewer execution activity inspector");
-await capture("04-reviewer-unified-activity");
+await capture("05-reviewer-unified-activity");
 await evaluate("document.querySelector('.inspector button[aria-label=\"Close inspector\"]')?.click(); true");
 
 await clickText(".m22-agent-row", "fern");
@@ -215,13 +225,13 @@ await waitFor("!document.querySelector('.m22-composer button').disabled", "enabl
 await clickText(".m22-composer button", "send");
 await waitFor("[...document.querySelectorAll('.m22-thread-item.agentMessage p')].some((item) => item.textContent.trim() === 'LIVE_FERN_ACK')", "fern inbox acknowledgement");
 const fernReplySeen = await evaluate("[...document.querySelectorAll('.m22-thread-item.agentMessage p')].some((item) => item.textContent.trim() === 'LIVE_FERN_ACK')");
-await capture("05-fern-real-session");
+await capture("06-fern-real-session");
 
 await command("Page.reload", { ignoreCache: true });
 await waitFor("document.querySelector('.m22-console') && document.querySelectorAll('.m22-agent-row').length >= 6", "canonical tree after browser reload");
 await clickText(".m22-agent-row", "orchid");
 await waitFor("document.body.innerText.includes('LIVE_M23_OK')", "orchid conversation after reload");
-await capture("06-reloaded-session");
+await capture("07-reloaded-session");
 
 await evaluate("document.querySelector('.m22-session-lifecycle summary').click(); true");
 await waitFor("[...document.querySelectorAll('.m22-session-lifecycle-actions button')].some((button) => button.textContent.includes('compact and recycle host') && !button.disabled)", "idle native compaction control");
@@ -232,7 +242,7 @@ await waitFor("document.body.innerText.toLowerCase().includes('codex conversatio
 await clickText(".m22-session-epochs button", "epoch 1");
 await waitFor("document.body.innerText.includes('This epoch is immutable history') && document.body.innerText.includes('LIVE_M23_OK')", "readable inert archived epoch");
 const epochLineage = true;
-await capture("06-archived-epoch");
+await capture("08-archived-epoch");
 
 const result = await evaluate(`(() => ({
   orchidReply: ${JSON.stringify(orchidReplySeen)},
@@ -240,6 +250,7 @@ const result = await evaluate(`(() => ({
   fernReply: ${JSON.stringify(fernReplySeen)},
   childVisible: ['m23-implementer', 'm23-reviewer', 'm23-remediator', 'm23-verifier'].every((name) => [...document.querySelectorAll('.m22-agent-row')].some((candidate) => candidate.textContent.includes(name))),
   proposalAccepted: ${JSON.stringify(proposalAccepted)},
+  deliveryAccepted: ${JSON.stringify(deliveryAccepted)},
   workerCompleted: ${JSON.stringify(workerCompleted)},
   legacyExecutive: document.body.innerText.includes('project-executive'),
   leakedPrivateBinding: ['thread_id', 'node_fingerprint', 'runtime_handle', 'provider_handle'].some((value) => document.documentElement.innerHTML.includes(value)),
@@ -248,7 +259,7 @@ const result = await evaluate(`(() => ({
   epochLineage: ${JSON.stringify(epochLineage)},
 }))()`);
 result.browserExceptions = browserExceptions;
-if (!result.orchidReply || !result.fernReply || !result.inertTeamBeforeAcceptance || !result.childVisible || !result.proposalAccepted || !result.workerCompleted || !result.epochLineage || result.legacyExecutive || result.leakedPrivateBinding || result.providerLocalHelper || result.proposalToolFailed || browserExceptions.length) {
+if (!result.orchidReply || !result.fernReply || !result.inertTeamBeforeAcceptance || !result.childVisible || !result.proposalAccepted || !result.deliveryAccepted || !result.workerCompleted || !result.epochLineage || result.legacyExecutive || result.leakedPrivateBinding || result.providerLocalHelper || result.proposalToolFailed || browserExceptions.length) {
   throw new Error(`live M23 invariant failed: ${JSON.stringify(result)}`);
 }
 fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));

@@ -127,7 +127,7 @@ func TestCurrentContextPacketFreezesOptionalExactGrantWithoutRoleAuthority(t *te
 	wantBase := []string{
 		"crewfold_acknowledge_context_delta", "crewfold_acknowledge_message", "crewfold_get_briefing",
 		"crewfold_get_context_delta", "crewfold_get_status", "crewfold_list_inbox", "crewfold_propose_knowledge",
-		"crewfold_propose_completion", "crewfold_publish_artifact", "crewfold_read_message", "crewfold_report_blocked",
+		"crewfold_propose_completion", "crewfold_publish_artifact", "crewfold_read_artifact", "crewfold_read_message", "crewfold_report_blocked",
 		"crewfold_report_contradiction", "crewfold_report_progress", "crewfold_send_message",
 	}
 	if !reflect.DeepEqual(prefix, wantBase) {
@@ -183,7 +183,7 @@ func TestCurrentContextFreezesLiveToolsAndBounds(t *testing.T) {
 	wantAllowed := []string{
 		"crewfold_acknowledge_context_delta", "crewfold_acknowledge_message", "crewfold_get_briefing",
 		"crewfold_get_context_delta", "crewfold_get_status", "crewfold_list_inbox", "crewfold_propose_knowledge",
-		"crewfold_propose_completion", "crewfold_publish_artifact", "crewfold_read_message", "crewfold_report_blocked",
+		"crewfold_propose_completion", "crewfold_publish_artifact", "crewfold_read_artifact", "crewfold_read_message", "crewfold_report_blocked",
 		"crewfold_report_contradiction", "crewfold_report_progress", "crewfold_send_message",
 	}
 	if !reflect.DeepEqual(allowed, wantAllowed) {

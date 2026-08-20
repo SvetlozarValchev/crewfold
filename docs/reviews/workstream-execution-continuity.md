@@ -130,4 +130,9 @@ candidate.
 - Unresolved HIGH findings: `0`
 - Unresolved MEDIUM findings: `0`
 - Next milestone entry criteria met: `yes`
-- Next milestone: `M24 — Public open-source release readiness`
+- Historical next milestone at review time: `M24 — Public open-source release
+  readiness`
+- Superseded after the Signal Garden live workflow by
+  [ADR-0023](../decisions/0023-operable-workstreams-and-managed-local-services.md):
+  M24 now closes operability and managed local services; public release moves to
+  M25.

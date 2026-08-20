@@ -1108,6 +1108,71 @@ stale.
 No check command completes a task, records policy acceptance, commits, pushes,
 merges, deploys, or chooses integration order.
 
+## Managed local processes and final workstream delivery
+
+`crewfold process` operates arbitrary non-interactive development processes. It
+does not contain a Vite, Node, language, package-manager, or role special case.
+A process definition freezes one executable plus an ordered argv, exact
+workstream checkout, relative working directory, bounded environment, network
+mode, process/TCP/HTTP health probe, restart policy, stop grace, and log limit.
+It never accepts an opaque shell command and never installs dependencies or
+bootstraps a checkout on failure.
+
+```sh
+# A Vite preview is one ordinary process definition.
+crewfold process define signal-garden-preview \
+  --workspace personal --project PROJECT --workstream WORKSTREAM --checkout CHECKOUT \
+  --executable /usr/bin/npm --arg run --arg dev --arg=-- --arg=--host --arg 127.0.0.1 \
+  --network loopback --health http --health-host 127.0.0.1 \
+  --health-port 5173 --health-path / --restart on_failure --max-restarts 3 \
+  --socket "$SOCKET"
+
+# The same surface runs a Python server, asset cooker, watcher, local API, or
+# any other structurally defined process.
+crewfold process define fixture-http \
+  --workspace personal --project PROJECT --checkout CHECKOUT \
+  --executable /usr/bin/python3 --arg=-m --arg http.server --arg 4312 \
+  --arg=--bind --arg 127.0.0.1 --network loopback --health http \
+  --health-host 127.0.0.1 --health-port 4312 --health-path / --socket "$SOCKET"
+
+crewfold process definitions --workspace personal --project PROJECT --socket "$SOCKET"
+crewfold process start DEFINITION --workspace personal --expected-revision 1 --socket "$SOCKET"
+crewfold process show INSTANCE --workspace personal --socket "$SOCKET"
+crewfold process logs INSTANCE --workspace personal --socket "$SOCKET"
+crewfold process restart INSTANCE --workspace personal --expected-revision REVISION --socket "$SOCKET"
+crewfold process stop INSTANCE --workspace personal --expected-revision REVISION --socket "$SOCKET"
+```
+
+Use `--arg=<value>` whenever a child argument begins with `-`; the explicit
+equals form keeps exact process argv distinct from Crewfold's own options.
+
+The local owner may grant one exact current agent a subset of
+`inspect,logs,start,stop,restart,delegate` for one exact definition. A delegated
+grant can only narrow the parent's actions, instance ceiling, and expiry. An
+agent without direct authority can only create an inert request for owner review:
+
+```sh
+crewfold process grant DEFINITION --workspace personal --agent AGENT \
+  --expected-definition-revision 1 --expected-membership-revision MEMBERSHIP_REVISION \
+  --actions inspect,logs,start,stop,restart --max-instances 1 --socket "$SOCKET"
+crewfold process requests --workspace personal --project PROJECT --status pending --socket "$SOCKET"
+crewfold process accept-request REQUEST --workspace personal \
+  --expected-revision 1 --reason 'Run the reviewed local surface' --socket "$SOCKET"
+```
+
+`unknown` is external-process uncertainty, not a stopped process. After the
+owner has independently confirmed the old process group ended, the only safe
+repair is `process resolve-unknown ... --confirm-runtime-retired true`; Crewfold
+never trusts a stale PID. `doctor --full`, the process detail, workstream view,
+and selected-agent timeline all retain current failed/degraded/unknown diagnoses
+and their safe next action.
+
+The browser exposes the final delivery review, while the same exact local API
+supports `workstream.delivery.show|accept|reject`. Acceptance is possible only
+when every required task is terminal, required evidence is exact, and the final
+structured verification assessment is `pass`. It records one immutable outcome
+and closes the workstream; conversation text alone cannot accept it.
+
 ## Outcomes and management briefings
 
 ```sh

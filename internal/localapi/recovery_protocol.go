@@ -18,6 +18,7 @@ var fullDoctorCheckCodes = [...]string{
 	"artifact_integrity",
 	"derived_knowledge_index",
 	"runtime_bindings",
+	"managed_services",
 	"durable_queues",
 	"filesystem_permissions",
 	"resource_budget",

@@ -44,8 +44,8 @@
     },
     "checks": {
       "type": "array",
-      "minItems": 13,
-      "maxItems": 13,
+      "minItems": 14,
+      "maxItems": 14,
       "items": {"$ref": "#/$defs/check"}
     }
   },
@@ -79,7 +79,7 @@
       "additionalProperties": false,
       "required": ["code", "status", "checked_count", "issue_count", "summary", "samples", "remediation"],
       "properties": {
-        "code": {"enum": ["current_baseline", "sqlite_integrity_check", "foreign_keys", "canonical_integrity", "event_contract", "projection_receipt_parity", "artifact_integrity", "derived_knowledge_index", "runtime_bindings", "durable_queues", "filesystem_permissions", "resource_budget", "restore_activation"]},
+        "code": {"enum": ["current_baseline", "sqlite_integrity_check", "foreign_keys", "canonical_integrity", "event_contract", "projection_receipt_parity", "artifact_integrity", "derived_knowledge_index", "runtime_bindings", "managed_services", "durable_queues", "filesystem_permissions", "resource_budget", "restore_activation"]},
         "status": {"enum": ["ok", "warning", "failed"]},
         "checked_count": {"type": "integer", "minimum": 0},
         "issue_count": {"type": "integer", "minimum": 0},

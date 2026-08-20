@@ -79,6 +79,27 @@ write policy:
 The term does not imply `git worktree`: a standalone clone, a copied repository,
 and a linked worktree are all checkouts when they occupy distinct concrete paths.
 
+### Managed local service
+
+One owner-reviewed continuing development process attached to a domain and,
+normally, one workstream and checkout. Its durable definition records structural
+argv, contained working directory, execution profile, bounded environment,
+network exposure, health, restart, stop, capacity, and ownership policy. The
+definition is not a running process and grants no authority by its name.
+
+Each concrete service instance is node-bound operational state with one
+generation, lifecycle, process-group binding, health history, bounded logs, and
+receipts. It is distinct from a task Run: a finite agent attempt may request or
+inspect a service, but its completion does not silently stop that separately
+authorized process. Backup includes only terminal service history and restores
+definitions stopped; PID, socket, process handle, node binding, and live
+capability never cross installations.
+
+The initial service contract is a bounded local process supervisor for preview
+servers, APIs, watchers, asset cookers, mocks, and test fixtures. It is not a
+remote deployment, container, credential, GUI-session, or arbitrary system
+daemon contract.
+
 ### Team
 
 A named grouping of agent definitions with an optional manager and shared project

@@ -1278,6 +1278,63 @@ bootstrap, navigation, inspection, and refresh do not reconcile leases or append
 events. Time-driven lease reconciliation is performed independently by the
 daemon, so a read cannot acquire hidden mutation authority.
 
+### M24 managed-process, evidence, and delivery methods
+
+The current protocol adds these strict methods:
+
+```text
+managed_service.definition.create
+managed_service.definition.retire
+managed_service.definition.show
+managed_service.definition.list
+managed_service.start
+managed_service.show
+managed_service.list
+managed_service.stop
+managed_service.restart
+managed_service.resolve_unknown
+managed_service.logs
+managed_service.grant.create
+managed_service.grant.revoke
+managed_service.grant.list
+managed_service.request.list
+managed_service.request.accept
+managed_service.request.reject
+run.artifact.show
+workstream.delivery.show
+workstream.delivery.accept
+workstream.delivery.reject
+```
+
+All use the exact schemas under `protocol/schemas/local/v1/`; unknown fields are
+rejected recursively. A definition binds one project, optional workstream, exact
+registered checkout, structural executable/argv, bounded nonsecret environment,
+`none|loopback` network mode, process/TCP/HTTP health, bounded restart policy,
+and private log retention. `managed_service.start|stop|restart` return accepted
+durable intent; `show`, `list`, and `logs` distinguish that intent from the
+worker's observed OS effect. There is no shell string, dependency installer,
+framework inference, backgrounding flag, or ambient owner environment.
+
+Owner calls are authoritative within the recorded definition. Agent control
+requires a current exact grant for the definition and action. Delegation proves
+an active parent grant and can only narrow its actions, maximum instances, and
+expiry. Without direct authority an agent may submit only an inert request;
+owner acceptance revalidates its exact definition and agent membership before
+creating one instance. Source receipts identify `owner|agent|agent_request` and
+the exact grant/request where applicable.
+
+`run.artifact.show` reads one bounded immutable run artifact only when the caller
+is the local owner, the same run, or an explicitly authorized successor through
+an exact handoff requirement. It verifies the content hash and returns inert
+UTF-8 text plus metadata; it never serves HTML as active content.
+
+`workstream.delivery.show` derives current readiness from terminal required
+tasks, exact run artifacts, structured verification assessments, and current
+blockers. `accept` and `reject` require the exact delivery revision and an
+idempotency key. Accept races the complete prerequisite set in one transaction,
+records the immutable accepted outcome, and closes the objective. A stale
+revision or newly committed blocker changes no state.
+
 ### `coordination.status`
 
 Takes `workspace` and returns counts for registered/enabled agents plus
@@ -1376,7 +1433,7 @@ Takes exactly `{}` and is read-only. Its result schema is
 Checks are emitted in this fixed order: `current_baseline`,
 `sqlite_integrity_check`, `foreign_keys`, `canonical_integrity`, `event_contract`,
 `projection_receipt_parity`, `artifact_integrity`,
-`derived_knowledge_index`, `runtime_bindings`, `durable_queues`,
+`derived_knowledge_index`, `runtime_bindings`, `managed_services`, `durable_queues`,
 `filesystem_permissions`, `resource_budget`, and `restore_activation`. Every
 registered row is checked; only output samples are capped, at 20 per check. The
 complete result is capped at 1 MiB and appends no event.

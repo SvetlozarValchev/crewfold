@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"crewfold/internal/domain"
@@ -216,9 +217,16 @@ func TestM23CoordinatorProposalKeepsTheTeamInertUntilExactAcceptance(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	implementationArtifact, err := storage.PublishRunArtifact(ctx, PublishRunArtifactCommand{
+		RunID: active.Run.ID, Name: "implementation evidence", MediaType: "text/plain", Content: "the bounded slice is implemented",
+		IdempotencyKey: "m24-first-run-artifact",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	completion, err := storage.SubmitRunReport(ctx, CreateRunReportCommand{
 		RunID: active.Run.ID, Kind: domain.ObservationCompletion, Message: "built the bounded slice",
-		Handoff: "verify the changed slice independently", Evidence: []string{"artifact:implementation"},
+		Handoff: "verify the changed slice independently", Evidence: []string{implementationArtifact.ID, "artifact:unpublished-claim"},
 		Payload:        map[string]any{"changed_paths": []string{"src/slice.ts"}, "checks": []string{"unit"}},
 		IdempotencyKey: "m23-first-run-completion",
 	})
@@ -247,6 +255,102 @@ func TestM23CoordinatorProposalKeepsTheTeamInertUntilExactAcceptance(t *testing.
 		packet.Dependencies[0].DeliveryRequirement != domain.DependencyDeliveryHandoffWithEvidence || packet.Dependencies[0].Output.RunID != firstRun.Run.ID ||
 		packet.Dependencies[0].Output.Handoff != "verify the changed slice independently" {
 		t.Fatalf("second scheduled run/context = run %#v packet %#v", secondRun, packet.Dependencies)
+	}
+	if secondRun.Task.TaskClass != "verification" || packet.Task.TaskClass != "verification" {
+		t.Fatalf("verification task class was not preserved: task=%q packet=%q", secondRun.Task.TaskClass, packet.Task.TaskClass)
+	}
+	verificationStarting, err := storage.MarkRunStarting(ctx, secondRun.Run.ID, "m24-verification-starting")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verificationActive, err := storage.MarkRunStarted(ctx, verificationStarting.ID, "m24-runtime", "m24-provider", "m24-verification-started")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verificationArtifact, err := storage.PublishRunArtifact(ctx, PublishRunArtifactCommand{
+		RunID: verificationActive.Run.ID, Name: "verification evidence", MediaType: "text/plain", Content: "independent verification passed",
+		IdempotencyKey: "m24-verification-artifact",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.SubmitRunReport(ctx, CreateRunReportCommand{
+		RunID: verificationActive.Run.ID, Kind: domain.ObservationCompletion, Message: "verification passed",
+		Handoff: "the slice is ready for owner acceptance", Evidence: []string{verificationArtifact.ID},
+		Payload: map[string]any{"checks": []string{"review"}}, IdempotencyKey: "m24-missing-assessment",
+	}); ErrorCode(err) != CodeInvalidReport {
+		t.Fatalf("verification completion without assessment error = %v (%q)", err, ErrorCode(err))
+	}
+	passingAssessment, err := storage.SubmitRunReport(ctx, CreateRunReportCommand{
+		RunID: verificationActive.Run.ID, Kind: domain.ObservationCompletion, Message: "verification passed",
+		Handoff: "the slice is ready for owner acceptance", Assessment: "pass", Evidence: []string{verificationArtifact.ID},
+		Payload: map[string]any{"assessment": "pass", "checks": []string{"review"}}, IdempotencyKey: "m24-pass-assessment",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessed, err := storage.ApplyQueuedRunReport(ctx, verificationActive.Run.ID, passingAssessment.ID, true, nil,
+		prepareTestRunLogArchive(t, storage, verificationActive.Run.ID), "", "m24-apply-pass-assessment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assessed.Assessment != "pass" || assessed.Run.Status != domain.RunCompleted || assessed.Task.Status != domain.TaskCompleted {
+		t.Fatalf("passing assessment did not complete verification: %#v", assessed)
+	}
+	objectiveID := objectiveIDFromEffects(accepted.Effects)
+	delivery, err := storage.WorkstreamDelivery(ctx, workspace.ID, objectiveID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedEvidence := []string{implementationArtifact.ID, verificationArtifact.ID}
+	sort.Strings(expectedEvidence)
+	if delivery.State != domain.WorkstreamDeliveryVerifiedAwaitingAcceptance || delivery.TaskCount != 2 || delivery.CompletedTasks != 2 || delivery.VerificationTasks != 1 || delivery.PassingVerifications != 1 ||
+		len(delivery.Evidence) != 2 || delivery.Evidence[0] != expectedEvidence[0] || delivery.Evidence[1] != expectedEvidence[1] {
+		t.Fatalf("verified delivery = %#v", delivery)
+	}
+	rejectedDelivery, err := storage.RejectWorkstreamDelivery(ctx, DecideWorkstreamDeliveryCommand{
+		WorkspaceIdentifier: workspace.ID, ObjectiveID: objectiveID, ExpectedObjectiveRevision: delivery.ObjectiveRevision,
+		ExpectedSHA256: delivery.SHA256, Reason: "Owner requested one more product review.",
+		IdempotencyKey: "m24-reject-delivery", CorrelationID: "m24-reject-delivery-a",
+	})
+	if err != nil || rejectedDelivery.Delivery.State != domain.WorkstreamDeliveryRejected {
+		t.Fatalf("RejectWorkstreamDelivery() = %#v, %v", rejectedDelivery, err)
+	}
+	rejectedReplay, err := storage.RejectWorkstreamDelivery(ctx, DecideWorkstreamDeliveryCommand{
+		WorkspaceIdentifier: workspace.ID, ObjectiveID: objectiveID, ExpectedObjectiveRevision: delivery.ObjectiveRevision,
+		ExpectedSHA256: delivery.SHA256, Reason: "Owner requested one more product review.",
+		IdempotencyKey: "m24-reject-delivery", CorrelationID: "m24-reject-delivery-b",
+	})
+	if err != nil || rejectedReplay.EventSequence != rejectedDelivery.EventSequence {
+		t.Fatalf("delivery rejection replay = %#v, %v", rejectedReplay, err)
+	}
+	eventsBeforeStale := testWorkspaceEvents(t, storage, workspace.ID, 0, 1000)
+	if _, err := storage.AcceptWorkstreamDelivery(ctx, DecideWorkstreamDeliveryCommand{
+		WorkspaceIdentifier: workspace.ID, ObjectiveID: objectiveID, ExpectedObjectiveRevision: delivery.ObjectiveRevision,
+		ExpectedSHA256: delivery.SHA256, IdempotencyKey: "m24-stale-accept", CorrelationID: "m24-stale-accept",
+	}); ErrorCode(err) != CodeWorkstreamDeliveryStale {
+		t.Fatalf("stale delivery acceptance error = %v (%q)", err, ErrorCode(err))
+	}
+	if eventsAfter := testWorkspaceEvents(t, storage, workspace.ID, 0, 1000); len(eventsAfter) != len(eventsBeforeStale) {
+		t.Fatalf("stale delivery acceptance appended an event: before=%d after=%d", len(eventsBeforeStale), len(eventsAfter))
+	}
+	acceptedDelivery, err := storage.AcceptWorkstreamDelivery(ctx, DecideWorkstreamDeliveryCommand{
+		WorkspaceIdentifier: workspace.ID, ObjectiveID: objectiveID, ExpectedObjectiveRevision: rejectedDelivery.Delivery.ObjectiveRevision,
+		ExpectedSHA256: delivery.SHA256, IdempotencyKey: "m24-accept-delivery", CorrelationID: "m24-accept-delivery-a",
+	})
+	if err != nil || acceptedDelivery.Delivery.State != domain.WorkstreamDeliveryAccepted {
+		t.Fatalf("AcceptWorkstreamDelivery() = %#v, %v", acceptedDelivery, err)
+	}
+	acceptedDeliveryReplay, err := storage.AcceptWorkstreamDelivery(ctx, DecideWorkstreamDeliveryCommand{
+		WorkspaceIdentifier: workspace.ID, ObjectiveID: objectiveID, ExpectedObjectiveRevision: rejectedDelivery.Delivery.ObjectiveRevision,
+		ExpectedSHA256: delivery.SHA256, IdempotencyKey: "m24-accept-delivery", CorrelationID: "m24-accept-delivery-b",
+	})
+	if err != nil || acceptedDeliveryReplay.EventSequence != acceptedDelivery.EventSequence {
+		t.Fatalf("delivery acceptance replay = %#v, %v", acceptedDeliveryReplay, err)
+	}
+	objective, err := storage.Objective(ctx, workspace.ID, objectiveID)
+	if err != nil || objective.Status != domain.ObjectiveCompleted {
+		t.Fatalf("accepted delivery objective = %#v, %v", objective, err)
 	}
 }
 

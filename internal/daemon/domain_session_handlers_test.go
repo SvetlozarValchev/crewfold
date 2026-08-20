@@ -1127,10 +1127,10 @@ func (fixture *codexDomainSessionFixture) sawArbitraryAgentInstructions() bool {
 	}
 	namespace, _ := dynamicTools[0].(map[string]any)
 	tools, _ := namespace["tools"].([]any)
-	if namespace["name"] != "crewfold" || namespace["type"] != "namespace" || len(tools) != 6 {
+	if namespace["name"] != "crewfold" || namespace["type"] != "namespace" || len(tools) != 10 {
 		return false
 	}
-	expectedTools := []string{domainToolContext, domainToolSendMessage, domainToolCreateChild, domainToolDelegateStaffing, domainToolProposeWork, domainToolProposeKnowledge}
+	expectedTools := []string{domainToolContext, domainToolSendMessage, domainToolCreateChild, domainToolDelegateStaffing, domainToolProposeWork, domainToolProposeKnowledge, domainToolControlService, domainToolInspectService, domainToolRequestService, domainToolDelegateService}
 	for index, expected := range expectedTools {
 		tool, _ := tools[index].(map[string]any)
 		if tool["name"] != expected || tool["type"] != "function" {

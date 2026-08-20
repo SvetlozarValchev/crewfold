@@ -47,6 +47,7 @@ var runScopedTools = []string{
 	"crewfold_propose_knowledge",
 	"crewfold_propose_completion",
 	"crewfold_publish_artifact",
+	"crewfold_read_artifact",
 	"crewfold_read_message",
 	"crewfold_report_blocked",
 	"crewfold_report_contradiction",
@@ -285,7 +286,7 @@ func (s *Store) buildContextPacketWithAuthorityInTransaction(ctx context.Context
 		Schema: domain.ContextPacketSchema, ID: packetID, WorkspaceID: workspaceID,
 		ProjectID: task.ProjectID, TaskID: task.ID, AgentID: agent.ID, CheckoutID: checkout.ID,
 		Role: domain.ContextRole{AgentID: agent.ID, Name: agent.Name, Role: agent.Role, Provider: agent.Provider, Runtime: agent.Runtime, Revision: agent.Revision},
-		Task: domain.ContextTask{TaskID: task.ID, AssignmentID: task.AssignmentID, ObjectiveID: task.ObjectiveID, Title: task.Title, Description: task.Description, Priority: task.Priority, Budget: task.Budget, Revision: task.Revision},
+		Task: domain.ContextTask{TaskID: task.ID, AssignmentID: task.AssignmentID, ObjectiveID: task.ObjectiveID, Title: task.Title, Description: task.Description, TaskClass: task.TaskClass, Priority: task.Priority, Budget: task.Budget, Revision: task.Revision},
 		Checkout: domain.ContextCheckout{
 			CheckoutID: checkout.ID, ProjectID: project.ID, ProjectName: project.Name,
 			RepositoryID: checkout.RepositoryID, RepositoryFingerprint: repositoryFingerprint,
@@ -1340,7 +1341,7 @@ func (s *Store) validateLiveContextPacketAgainstCanonical(ctx context.Context, t
 	}
 	expectedRole := domain.ContextRole{AgentID: agent.ID, Name: agent.Name, Role: agent.Role, Provider: agent.Provider, Runtime: agent.Runtime, Revision: agent.Revision}
 	expectedTask := domain.ContextTask{TaskID: task.ID, AssignmentID: task.AssignmentID, ObjectiveID: task.ObjectiveID, Title: task.Title,
-		Description: task.Description, Priority: task.Priority, Budget: task.Budget, Revision: task.Revision}
+		Description: task.Description, TaskClass: task.TaskClass, Priority: task.Priority, Budget: task.Budget, Revision: task.Revision}
 	expectedCheckout := domain.ContextCheckout{CheckoutID: checkout.ID, ProjectID: project.ID, ProjectName: project.Name,
 		RepositoryID: checkout.RepositoryID, RepositoryFingerprint: fingerprint, Path: checkout.Path, WriteMode: checkout.WriteMode,
 		CheckoutKind: checkout.CheckoutKind, Branch: checkout.Branch, HeadCommit: checkout.HeadCommit, Dirty: checkout.Dirty, Revision: checkout.Revision}
@@ -1631,6 +1632,7 @@ func (s *Store) authorizeRunCheckWatchGrant(ctx context.Context, database dbgen.
 func (s *Store) SubmitRunReport(ctx context.Context, command CreateRunReportCommand) (domain.RunReport, error) {
 	runID, kind := strings.TrimSpace(command.RunID), strings.TrimSpace(command.Kind)
 	message, handoff, key := strings.TrimSpace(command.Message), strings.TrimSpace(command.Handoff), strings.TrimSpace(command.IdempotencyKey)
+	assessment := strings.TrimSpace(command.Assessment)
 	if runID == "" || key == "" || len(key) > 128 || !validRunReportText(message, 1024) {
 		return domain.RunReport{}, &Error{Code: CodeInvalidReport, Message: "run report requires run, bounded message, and idempotency key"}
 	}
@@ -1639,6 +1641,12 @@ func (s *Store) SubmitRunReport(ctx context.Context, command CreateRunReportComm
 	}
 	if kind == domain.ObservationCompletion && !validRunReportText(handoff, 4096) {
 		return domain.RunReport{}, &Error{Code: CodeInvalidReport, Message: "completion report requires a bounded handoff"}
+	}
+	if assessment != "" && assessment != "pass" && assessment != "block" && assessment != "changes_requested" {
+		return domain.RunReport{}, &Error{Code: CodeInvalidReport, Message: "completion assessment must be pass, block, or changes_requested"}
+	}
+	if kind != domain.ObservationCompletion && assessment != "" {
+		return domain.RunReport{}, &Error{Code: CodeInvalidReport, Message: "only a completion report may carry an assessment"}
 	}
 	if len(command.Evidence) > 32 {
 		return domain.RunReport{}, &Error{Code: CodeInvalidReport, Message: "run report contains too many evidence identifiers"}
@@ -1652,7 +1660,7 @@ func (s *Store) SubmitRunReport(ctx context.Context, command CreateRunReportComm
 	if err != nil || len(payloadJSON) > 16*1024 {
 		return domain.RunReport{}, &Error{Code: CodeInvalidReport, Message: "run report payload exceeds its bounded encoding"}
 	}
-	requestHash, err := hashCommand("run.report", map[string]any{"kind": kind, "message": message, "evidence": command.Evidence, "handoff": handoff, "payload": json.RawMessage(payloadJSON)})
+	requestHash, err := hashCommand("run.report", map[string]any{"kind": kind, "message": message, "evidence": command.Evidence, "handoff": handoff, "assessment": assessment, "payload": json.RawMessage(payloadJSON)})
 	if err != nil {
 		return domain.RunReport{}, storageFailure("hash run report", err)
 	}
@@ -1686,6 +1694,15 @@ func (s *Store) SubmitRunReport(ctx context.Context, command CreateRunReportComm
 	if run.Status != domain.RunStarting && run.Status != domain.RunActive {
 		return domain.RunReport{}, &Error{Code: CodeRunConflict, Message: "run reports require a starting or active run"}
 	}
+	if kind == domain.ObservationCompletion {
+		task, taskErr := queryTask(ctx, tx, run.WorkspaceID, run.TaskID)
+		if taskErr != nil {
+			return domain.RunReport{}, taskErr
+		}
+		if (task.TaskClass == "review" || task.TaskClass == "verification") && assessment == "" {
+			return domain.RunReport{}, &Error{Code: CodeInvalidReport, Message: task.TaskClass + " completion requires an explicit structured assessment"}
+		}
+	}
 	reportID, err := randomID("report_")
 	if err != nil {
 		return domain.RunReport{}, storageFailure("generate run report id", err)
@@ -1693,9 +1710,9 @@ func (s *Store) SubmitRunReport(ctx context.Context, command CreateRunReportComm
 	now := s.nowText()
 	evidenceJSON, _ := json.Marshal(command.Evidence)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO run_reports(
-id, run_id, kind, message, evidence_json, handoff, payload_json, idempotency_key,
-request_hash, status, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, 'pending', ?)`,
-		reportID, run.ID, kind, message, string(evidenceJSON), handoff, string(payloadJSON), key, requestHash, now); err != nil {
+id, run_id, kind, message, evidence_json, handoff, assessment, payload_json, idempotency_key,
+request_hash, status, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, 'pending', ?)`,
+		reportID, run.ID, kind, message, string(evidenceJSON), handoff, assessment, string(payloadJSON), key, requestHash, now); err != nil {
 		return domain.RunReport{}, storageFailure("insert run report", err)
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE run_jobs SET status = 'pending', available_at = ?, lease_expires_at = NULL, updated_at = ? WHERE run_id = ? AND status = 'complete'", now, now, run.ID); err != nil {
@@ -1707,7 +1724,7 @@ request_hash, status, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?,
 	if err := tx.Commit(); err != nil {
 		return domain.RunReport{}, storageFailure("commit run report", err)
 	}
-	return domain.RunReport{ID: reportID, RunID: run.ID, Kind: kind, Message: message, Evidence: append([]string(nil), command.Evidence...), Handoff: handoff, IdempotencyKey: key, Status: "pending", CreatedAt: now}, nil
+	return domain.RunReport{ID: reportID, RunID: run.ID, Kind: kind, Message: message, Evidence: append([]string(nil), command.Evidence...), Handoff: handoff, Assessment: assessment, IdempotencyKey: key, Status: "pending", CreatedAt: now}, nil
 }
 
 func (s *Store) NextPendingRunReport(ctx context.Context, runID string) (domain.RunReport, bool, error) {
@@ -1727,10 +1744,10 @@ func queryRunReportByID(ctx context.Context, database queryRower, reportID strin
 	var report domain.RunReport
 	var evidenceJSON string
 	err := database.QueryRowContext(ctx, `SELECT id, run_id, kind, message, evidence_json,
-COALESCE(handoff, ''), idempotency_key, status, created_at, COALESCE(applied_at, '')
+COALESCE(handoff, ''), assessment, idempotency_key, status, created_at, COALESCE(applied_at, '')
 FROM run_reports WHERE id = ?`, reportID).Scan(
 		&report.ID, &report.RunID, &report.Kind, &report.Message, &evidenceJSON,
-		&report.Handoff, &report.IdempotencyKey, &report.Status, &report.CreatedAt, &report.AppliedAt)
+		&report.Handoff, &report.Assessment, &report.IdempotencyKey, &report.Status, &report.CreatedAt, &report.AppliedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.RunReport{}, &Error{Code: CodeInvalidReport, Message: "run report was not found"}
 	}
@@ -1747,10 +1764,10 @@ func queryRunReport(ctx context.Context, database queryRower, runID, key string)
 	var report domain.RunReport
 	var evidenceJSON string
 	err := database.QueryRowContext(ctx, `SELECT id, run_id, kind, message, evidence_json,
-COALESCE(handoff, ''), idempotency_key, status, created_at, COALESCE(applied_at, '')
+COALESCE(handoff, ''), assessment, idempotency_key, status, created_at, COALESCE(applied_at, '')
 FROM run_reports WHERE run_id = ? AND idempotency_key = ?`, runID, key).Scan(
 		&report.ID, &report.RunID, &report.Kind, &report.Message, &evidenceJSON,
-		&report.Handoff, &report.IdempotencyKey, &report.Status, &report.CreatedAt, &report.AppliedAt)
+		&report.Handoff, &report.Assessment, &report.IdempotencyKey, &report.Status, &report.CreatedAt, &report.AppliedAt)
 	if err != nil {
 		return domain.RunReport{}, storageFailure("query run report", err)
 	}
@@ -1825,6 +1842,98 @@ byte_size, idempotency_key, created_at FROM run_artifacts WHERE run_id = ? AND i
 		return domain.RunArtifact{}, storageFailure("query run artifact", err)
 	}
 	return artifact, nil
+}
+
+// RunArtifactContent returns one exact artifact to the owner. Content is
+// bounded at publication and re-sealed here so SQLite corruption cannot be
+// mistaken for evidence.
+func (s *Store) RunArtifactContent(ctx context.Context, workspaceIdentifier, artifactID string) (domain.RunArtifactContent, error) {
+	workspace, err := s.Workspace(ctx, workspaceIdentifier)
+	if err != nil {
+		return domain.RunArtifactContent{}, err
+	}
+	return queryRunArtifactContent(ctx, s.db, workspace.ID, strings.TrimSpace(artifactID))
+}
+
+// ReadRunArtifactAsRun authorizes a successor against its live capability and
+// the immutable dependency delivery. A guessed artifact ID, a sibling task,
+// an unapplied report, or a completion-only dependency reveals no bytes.
+func (s *Store) ReadRunArtifactAsRun(ctx context.Context, currentRunID, artifactID string) (domain.RunArtifactContent, error) {
+	tx, err := s.beginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return domain.RunArtifactContent{}, storageFailure("begin run artifact read", err)
+	}
+	defer tx.Rollback()
+	briefing, err := s.authorizeRunCapability(ctx, tx, strings.TrimSpace(currentRunID))
+	if err != nil {
+		return domain.RunArtifactContent{}, err
+	}
+	artifact, err := queryRunArtifactContent(ctx, tx, briefing.Run.WorkspaceID, strings.TrimSpace(artifactID))
+	if err != nil {
+		return domain.RunArtifactContent{}, err
+	}
+	if artifact.ProjectID != briefing.Run.ProjectID {
+		return domain.RunArtifactContent{}, &Error{Code: CodeRunArtifactDenied, Message: "artifact is outside the current run project"}
+	}
+	if artifact.Artifact.RunID == briefing.Run.ID {
+		return artifact, nil
+	}
+	var authorized int
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+SELECT 1
+FROM task_dependencies dependency
+JOIN runs source_run ON source_run.task_id = dependency.depends_on_task_id
+JOIN run_reports report ON report.run_id = source_run.id
+JOIN json_each(report.evidence_json) evidence ON evidence.value = ?
+WHERE dependency.task_id = ?
+  AND dependency.delivery_requirement = ?
+  AND source_run.id = ?
+  AND source_run.status = ?
+  AND report.kind = 'completion'
+  AND report.status = 'applied'
+  AND report.handoff IS NOT NULL
+  AND report.handoff <> ''
+)`, artifact.Artifact.ID, briefing.Run.TaskID, domain.DependencyDeliveryHandoffWithEvidence,
+		artifact.Artifact.RunID, domain.RunCompleted).Scan(&authorized)
+	if err != nil {
+		return domain.RunArtifactContent{}, storageFailure("authorize dependency artifact read", err)
+	}
+	if authorized != 1 {
+		return domain.RunArtifactContent{}, &Error{Code: CodeRunArtifactDenied, Message: "artifact is not an accepted evidence-bearing dependency delivery"}
+	}
+	return artifact, nil
+}
+
+func queryRunArtifactContent(ctx context.Context, database queryRower, workspaceID, artifactID string) (domain.RunArtifactContent, error) {
+	if artifactID == "" || !strings.HasPrefix(artifactID, "artifact_") {
+		return domain.RunArtifactContent{}, &Error{Code: CodeRunArtifactNotFound, Message: "run artifact was not found"}
+	}
+	var result domain.RunArtifactContent
+	err := database.QueryRowContext(ctx, `SELECT artifact.id, artifact.run_id, artifact.name,
+artifact.media_type, artifact.content_hash, artifact.byte_size, artifact.idempotency_key,
+artifact.created_at, run.workspace_id, run.project_id, run.task_id, run.agent_id,
+artifact.content
+FROM run_artifacts artifact
+JOIN runs run ON run.id = artifact.run_id
+WHERE artifact.id = ? AND run.workspace_id = ?`, artifactID, workspaceID).Scan(
+		&result.Artifact.ID, &result.Artifact.RunID, &result.Artifact.Name,
+		&result.Artifact.MediaType, &result.Artifact.ContentHash, &result.Artifact.ByteSize,
+		&result.Artifact.IdempotencyKey, &result.Artifact.CreatedAt, &result.WorkspaceID,
+		&result.ProjectID, &result.TaskID, &result.AgentID, &result.Content)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.RunArtifactContent{}, &Error{Code: CodeRunArtifactNotFound, Message: "run artifact was not found"}
+	}
+	if err != nil {
+		return domain.RunArtifactContent{}, storageFailure("read run artifact content", err)
+	}
+	if !utf8.ValidString(result.Content) || len(result.Content) > maximumArtifactBytes || result.Artifact.ByteSize != len(result.Content) {
+		return domain.RunArtifactContent{}, &Error{Code: CodeInvalidReport, Message: "run artifact content seal is invalid"}
+	}
+	digest := sha256.Sum256([]byte(result.Content))
+	if result.Artifact.ContentHash != "sha256:"+hex.EncodeToString(digest[:]) {
+		return domain.RunArtifactContent{}, &Error{Code: CodeInvalidReport, Message: "run artifact content hash is invalid"}
+	}
+	return result, nil
 }
 
 func (s *Store) RecordRunToolCall(ctx context.Context, runID, requestID, method, targetID, outcome, errorCode string) (domain.RunToolCall, error) {

@@ -61,6 +61,34 @@ type Objective struct {
 	UpdatedBy         string `json:"updated_by"`
 }
 
+const (
+	WorkstreamDeliveryInProgress                 = "in_progress"
+	WorkstreamDeliveryBlocked                    = "blocked"
+	WorkstreamDeliveryVerifiedAwaitingAcceptance = "verified_awaiting_owner_acceptance"
+	WorkstreamDeliveryAccepted                   = "accepted"
+	WorkstreamDeliveryRejected                   = "rejected"
+)
+
+// WorkstreamDelivery is a bounded, deterministic projection over the exact
+// workstream task graph. It is not provider prose and does not itself authorize
+// an effect. SHA256 plus ObjectiveRevision form the optimistic-concurrency
+// boundary for the local owner's explicit accept/reject decision.
+type WorkstreamDelivery struct {
+	ObjectiveID           string   `json:"objective_id"`
+	ObjectiveRevision     int64    `json:"objective_revision"`
+	State                 string   `json:"state"`
+	SHA256                string   `json:"sha256"`
+	TaskCount             int      `json:"task_count"`
+	CompletedTasks        int      `json:"completed_tasks"`
+	VerificationTasks     int      `json:"verification_tasks"`
+	PassingVerifications  int      `json:"passing_verifications"`
+	Evidence              []string `json:"evidence"`
+	Blockers              []string `json:"blockers"`
+	DecisionReason        string   `json:"decision_reason,omitempty"`
+	DecisionAt            string   `json:"decision_at,omitempty"`
+	DecisionEventSequence int64    `json:"decision_event_sequence,omitempty"`
+}
+
 type Task struct {
 	ID                       string `json:"id"`
 	WorkspaceID              string `json:"workspace_id"`
@@ -68,6 +96,7 @@ type Task struct {
 	ObjectiveID              string `json:"objective_id,omitempty"`
 	Title                    string `json:"title"`
 	Description              string `json:"description,omitempty"`
+	TaskClass                string `json:"task_class"`
 	Status                   string `json:"status"`
 	BlockedReason            string `json:"blocked_reason,omitempty"`
 	Priority                 int    `json:"priority"`

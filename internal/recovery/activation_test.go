@@ -538,7 +538,8 @@ func injectRestoredNonterminalCheck(t *testing.T, target, workspaceID string, ta
 	}
 	if cut.Quiescent || cut.Counts.UnfinishedCheckRuns != 1 || cut.Counts.UnsettledCheckJobs != 1 ||
 		cut.Counts.NonterminalRuns != 0 || cut.Counts.UnsettledRunJobs != 0 || cut.Counts.RuntimeBindings != 0 ||
-		cut.Counts.OpenWakeJobs != 0 || cut.Counts.OpenSchedulingIntents != 0 || cut.Counts.OpenSupervisorActions != 0 || cut.Counts.OpenApprovals != 0 || cut.Counts.OpenOwnerManagerReviews != 0 {
+		cut.Counts.OpenWakeJobs != 0 || cut.Counts.OpenSchedulingIntents != 0 || cut.Counts.OpenSupervisorActions != 0 || cut.Counts.OpenApprovals != 0 || cut.Counts.OpenOwnerManagerReviews != 0 ||
+		cut.Counts.OpenOwnerExecutiveExchanges != 0 || cut.Counts.NonterminalManagedServices != 0 || cut.Counts.ManagedServiceBindings != 0 || cut.Counts.UnsettledManagedServiceJobs != 0 {
 		t.Fatalf("nonterminal check cut = %#v, want exact one check run and one check job", cut)
 	}
 	return requested.Value.ID

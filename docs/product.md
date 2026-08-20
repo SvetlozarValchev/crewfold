@@ -240,6 +240,24 @@ fallbacks. Every summary drills into the exact canonical records that produced i
 - Present the durable conversation and all attached task attempts as one ordered
   agent timeline and derive status from the most consequential current activity.
 
+### Managed local services
+
+- Attach an owner-reviewed generic local process definition to a domain and,
+  normally, one workstream and primary checkout.
+- Represent executable and arguments structurally; do not treat ordinary agent
+  prose or an opaque shell command as durable process authority.
+- Let the owner or an exactly granted agent start, stop, restart, inspect, and
+  read bounded logs for a service.
+- Support process, TCP, HTTP, and bounded exact-command health checks plus safe
+  loopback URL allocation.
+- Keep service lifecycle independent from finite task-run lifecycle while
+  retaining exact requesting/owning agent attribution.
+- Restore definitions stopped and never copy PID, socket, handle, capability, or
+  live process authority across installations.
+- Keep remote exposure, deployment, container orchestration, credential-bearing
+  infrastructure, and general system-service management outside the initial
+  local-service contract.
+
 ### Tasks and scheduling
 
 - Express parent/child tasks and dependency edges.

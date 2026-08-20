@@ -495,8 +495,10 @@ var workbenchMethods = map[string]struct{}{
 	localapi.MethodObjectiveCreate:    {}, localapi.MethodObjectiveUpdate: {}, localapi.MethodObjectiveShow: {}, localapi.MethodObjectiveList: {},
 	localapi.MethodTaskCreate: {}, localapi.MethodTaskUpdate: {}, localapi.MethodTaskShow: {}, localapi.MethodTaskList: {},
 	localapi.MethodTaskDepend: {}, localapi.MethodTaskAssign: {}, localapi.MethodTaskTransition: {}, localapi.MethodTaskTimeline: {},
+	localapi.MethodWorkstreamDeliveryShow: {}, localapi.MethodWorkstreamDeliveryAccept: {}, localapi.MethodWorkstreamDeliveryReject: {},
 	localapi.MethodRunStart: {}, localapi.MethodRunShow: {}, localapi.MethodRunList: {}, localapi.MethodRunResume: {},
-	localapi.MethodRunStop: {}, localapi.MethodRunLostResolve: {}, localapi.MethodRunLogs: {}, localapi.MethodRunPrompt: {}, localapi.MethodRunInterrupt: {},
+	localapi.MethodRunArtifactShow: {},
+	localapi.MethodRunStop:         {}, localapi.MethodRunLostResolve: {}, localapi.MethodRunLogs: {}, localapi.MethodRunPrompt: {}, localapi.MethodRunInterrupt: {},
 	localapi.MethodMessageSend: {}, localapi.MethodInboxList: {}, localapi.MethodThreadList: {}, localapi.MethodThreadShow: {},
 	localapi.MethodCoordinationStatus: {}, localapi.MethodClaimList: {}, localapi.MethodOverlapList: {}, localapi.MethodDriftList: {},
 	localapi.MethodEventsList: {}, localapi.MethodEventsTimeline: {},
@@ -508,6 +510,10 @@ var workbenchMethods = map[string]struct{}{
 	localapi.MethodKnowledgeList: {}, localapi.MethodKnowledgeShow: {}, localapi.MethodKnowledgeAccept: {}, localapi.MethodKnowledgeReject: {},
 	localapi.MethodBriefingShow: {}, localapi.MethodBriefingExplain: {},
 	localapi.MethodCheckList: {}, localapi.MethodCheckInspect: {}, localapi.MethodCheckLogs: {},
+	localapi.MethodManagedServiceDefinitionCreate: {}, localapi.MethodManagedServiceDefinitionRetire: {}, localapi.MethodManagedServiceDefinitionShow: {}, localapi.MethodManagedServiceDefinitionList: {},
+	localapi.MethodManagedServiceStart: {}, localapi.MethodManagedServiceShow: {}, localapi.MethodManagedServiceList: {}, localapi.MethodManagedServiceStop: {}, localapi.MethodManagedServiceRestart: {}, localapi.MethodManagedServiceResolveUnknown: {}, localapi.MethodManagedServiceLogs: {},
+	localapi.MethodManagedServiceGrantCreate: {}, localapi.MethodManagedServiceGrantRevoke: {}, localapi.MethodManagedServiceGrantList: {},
+	localapi.MethodManagedServiceRequestList: {}, localapi.MethodManagedServiceRequestAccept: {}, localapi.MethodManagedServiceRequestReject: {},
 	localapi.MethodSystemDoctorFull: {},
 }
 

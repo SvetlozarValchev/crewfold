@@ -916,6 +916,7 @@ func (s *Store) ApplyRunObservation(ctx context.Context, runID string, observati
 	if err != nil {
 		return domain.RunDetail{}, err
 	}
+	detail.Assessment = strings.TrimSpace(observation.Assessment)
 	if err := tx.Commit(); err != nil {
 		return domain.RunDetail{}, storageFailure("commit run observation", err)
 	}
@@ -944,7 +945,7 @@ func (s *Store) ApplyQueuedRunReport(ctx context.Context, runID, reportID string
 	if err != nil {
 		return domain.RunDetail{}, err
 	}
-	observation := domain.RunObservation{Kind: report.Kind, Message: report.Message, Evidence: append([]string(nil), report.Evidence...), Handoff: report.Handoff, LogArchive: archive, LogUnavailableReason: strings.TrimSpace(logsUnavailableReason)}
+	observation := domain.RunObservation{Kind: report.Kind, Message: report.Message, Evidence: append([]string(nil), report.Evidence...), Handoff: report.Handoff, Assessment: report.Assessment, LogArchive: archive, LogUnavailableReason: strings.TrimSpace(logsUnavailableReason)}
 	if observation.Kind == domain.ObservationCompletion || observation.Kind == domain.ObservationExecutiveResponse {
 		if err := s.validateTerminalLogOutcome(report.RunID, observation.LogArchive, observation.LogUnavailableReason); err != nil {
 			return domain.RunDetail{}, err
@@ -964,6 +965,11 @@ func (s *Store) ApplyQueuedRunReport(ctx context.Context, runID, reportID string
 	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
 		return domain.RunDetail{}, storageFailure("verify run report application", errors.New("report application lost its pending state"))
 	}
+	// applyRunObservationInTransaction materializes the detail before this exact
+	// report is marked applied. Preserve the already-validated structured
+	// assessment in the returned read model; subsequent run.show calls recover
+	// the same value from the applied report row.
+	detail.Assessment = observation.Assessment
 	if err := tx.Commit(); err != nil {
 		return domain.RunDetail{}, storageFailure("commit queued run report", err)
 	}
@@ -1141,22 +1147,36 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 		if _, err := tx.ExecContext(ctx, "INSERT INTO run_handoffs(id, run_id, task_id, summary, evidence_json, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)", handoffID, run.ID, task.ID, handoffSummary, string(evidenceJSON), now, run.ID); err != nil {
 			return storageFailure("insert run handoff", err)
 		}
-		run.Status, run.FinishedAt = domain.RunCompleted, now
+		blockingAssessment := observation.Assessment == "block" || observation.Assessment == "changes_requested"
+		if blockingAssessment {
+			run.Status, run.FinishedAt = domain.RunReview, now
+			task.Status, task.BlockedReason, task.Revision = domain.TaskChangesRequested, "structured "+observation.Assessment+" assessment: "+summary, task.Revision+1
+		} else {
+			run.Status, run.FinishedAt = domain.RunCompleted, now
+			task.Status, task.Revision = domain.TaskCompleted, task.Revision+1
+		}
 		run.Revision++
-		task.Status, task.Revision = domain.TaskCompleted, task.Revision+1
 		if err := appendRunTimeline(ctx, tx, run.ID, taskHandoffRecorded, handoffSummary, observation.Evidence, now); err != nil {
 			return err
 		}
-		if err := appendRunTimeline(ctx, tx, run.ID, runCompletedEvent, summary, observation.Evidence, now); err != nil {
+		completionKind := runCompletedEvent
+		if blockingAssessment {
+			completionKind = taskChangesRequestedEvent
+		}
+		if err := appendRunTimeline(ctx, tx, run.ID, completionKind, structuredAssessmentSummary(observation.Assessment, summary), observation.Evidence, now); err != nil {
 			return err
 		}
 		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskHandoffRecorded, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"run_id": run.ID, "handoff_id": handoffID, "summary": handoffSummary}); err != nil {
 			return err
 		}
-		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskCompletedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"run_id": run.ID, "status": task.Status}); err != nil {
+		taskEvent := taskCompletedEvent
+		if blockingAssessment {
+			taskEvent = taskChangesRequestedEvent
+		}
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "task", task.ID, task.Revision, taskEvent, correlationID, now, run.ID, domain.EventActorAgentRun, map[string]any{"run_id": run.ID, "status": task.Status, "assessment": observation.Assessment}); err != nil {
 			return err
 		}
-		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, runCompletedEvent, correlationID, now, run.ID, domain.EventActorAgentRun, mergeEventData(map[string]any{"task_id": task.ID, "handoff_id": handoffID}, terminalLogEventData(observation.LogArchive, observation.LogUnavailableReason))); err != nil {
+		if _, err := appendEventForActor(ctx, tx, run.WorkspaceID, "run", run.ID, run.Revision, completionKind, correlationID, now, run.ID, domain.EventActorAgentRun, mergeEventData(map[string]any{"task_id": task.ID, "handoff_id": handoffID, "assessment": observation.Assessment}, terminalLogEventData(observation.LogArchive, observation.LogUnavailableReason))); err != nil {
 			return err
 		}
 	} else {
@@ -1174,6 +1194,13 @@ func applyCompletionObservation(ctx context.Context, tx *sql.Tx, run *domain.Run
 		}
 	}
 	return updateTaskStateForActor(ctx, tx, task, now, run.ID)
+}
+
+func structuredAssessmentSummary(assessment, summary string) string {
+	if assessment == "" {
+		return summary
+	}
+	return strings.ToUpper(assessment) + ": " + summary
 }
 
 func (s *Store) ResumeRun(ctx context.Context, command ResumeRunCommand) (RunMutationResult, error) {
@@ -1930,7 +1957,12 @@ func runDetail(ctx context.Context, database runQueryContext, run domain.Run) (d
 	if err != nil {
 		return domain.RunDetail{}, err
 	}
-	return domain.RunDetail{Run: run, Task: task, Agent: agent, Checkout: checkout, Timeline: timeline, Blocker: blocker, Handoff: handoff}, nil
+	var assessment string
+	err = database.QueryRowContext(ctx, `SELECT assessment FROM run_reports WHERE run_id=? AND kind='completion' AND status='applied' ORDER BY sequence DESC LIMIT 1`, run.ID).Scan(&assessment)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return domain.RunDetail{}, storageFailure("query run assessment", err)
+	}
+	return domain.RunDetail{Run: run, Task: task, Agent: agent, Checkout: checkout, Timeline: timeline, Blocker: blocker, Handoff: handoff, Assessment: assessment}, nil
 }
 
 func queryRunBlocker(ctx context.Context, database queryRower, run domain.Run) (*domain.RunBlocker, error) {

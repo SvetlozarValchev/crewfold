@@ -414,6 +414,10 @@ CREATE TABLE tasks (
     objective_id TEXT REFERENCES objectives(id),
     title TEXT NOT NULL,
     description TEXT,
+	task_class TEXT NOT NULL DEFAULT 'implementation' CHECK (
+		length(CAST(task_class AS BLOB)) BETWEEN 1 AND 63
+		AND task_class NOT GLOB '*[^a-z0-9-]*'
+	),
     status TEXT NOT NULL CHECK (status IN ('ready', 'assigned', 'active', 'blocked', 'review', 'changes_requested', 'completed', 'failed', 'cancelled')),
     blocked_reason TEXT,
     priority INTEGER NOT NULL CHECK (priority BETWEEN 0 AND 1000),
@@ -512,7 +516,7 @@ CREATE TABLE immutable_artifacts (
     byte_size INTEGER NOT NULL CHECK (byte_size BETWEEN 0 AND 1048576),
     created_at TEXT NOT NULL,
     created_by TEXT NOT NULL CHECK (
-        created_by IN ('crewfold-check-worker', 'subsystem:run-worker')
+        created_by IN ('crewfold-check-worker', 'subsystem:run-worker', 'subsystem:service-worker')
     )
 ) STRICT;
 
@@ -613,6 +617,7 @@ CREATE TABLE run_reports (
     message TEXT NOT NULL,
     evidence_json TEXT NOT NULL CHECK (json_valid(evidence_json)),
     handoff TEXT,
+	assessment TEXT NOT NULL DEFAULT '' CHECK (assessment IN ('','pass','block','changes_requested')),
     payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
     idempotency_key TEXT NOT NULL,
     request_hash TEXT NOT NULL,
@@ -1729,6 +1734,193 @@ CREATE TABLE "message_wake_jobs" (
     CHECK ((target_run_id IS NOT NULL) <> (target_domain_thread_id IS NOT NULL))
 ) STRICT;
 
+CREATE TABLE managed_service_definitions (
+    id TEXT PRIMARY KEY CHECK (length(id)=39 AND substr(id,1,7)='svcdef_' AND substr(id,8) NOT GLOB '*[^0-9a-f]*'),
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    workstream_id TEXT REFERENCES objectives(id),
+    checkout_id TEXT NOT NULL REFERENCES checkouts(id),
+    name TEXT NOT NULL CHECK (length(CAST(name AS BLOB)) BETWEEN 1 AND 128 AND instr(name,char(0))=0),
+    description TEXT NOT NULL CHECK (length(CAST(description AS BLOB)) BETWEEN 1 AND 1024 AND instr(description,char(0))=0),
+    executable TEXT NOT NULL CHECK (length(CAST(executable AS BLOB)) BETWEEN 2 AND 4096 AND substr(executable,1,1)='/' AND instr(executable,char(0))=0),
+    arguments_json TEXT NOT NULL CHECK (json_valid(arguments_json) AND json_type(arguments_json)='array' AND json_array_length(arguments_json) BETWEEN 0 AND 64),
+    working_directory TEXT NOT NULL CHECK (length(CAST(working_directory AS BLOB)) BETWEEN 1 AND 1024 AND substr(working_directory,1,1)<>'/' AND instr(working_directory,char(0))=0),
+    environment_json TEXT NOT NULL CHECK (json_valid(environment_json) AND json_type(environment_json)='array' AND json_array_length(environment_json) BETWEEN 0 AND 64),
+    profile TEXT NOT NULL CHECK (profile='local-process'),
+    profile_revision INTEGER NOT NULL CHECK (profile_revision=1),
+    network_mode TEXT NOT NULL CHECK (network_mode IN ('none','loopback')),
+    health_type TEXT NOT NULL CHECK (health_type IN ('process','tcp','http')),
+    health_host TEXT,
+    health_port INTEGER,
+    health_path TEXT,
+    health_interval_millis INTEGER NOT NULL CHECK (health_interval_millis BETWEEN 100 AND 60000),
+    health_timeout_millis INTEGER NOT NULL CHECK (health_timeout_millis BETWEEN 50 AND 30000 AND health_timeout_millis<=health_interval_millis),
+    restart_policy TEXT NOT NULL CHECK (restart_policy IN ('never','on_failure','on_daemon_restart')),
+    maximum_restarts INTEGER NOT NULL CHECK (maximum_restarts BETWEEN 0 AND 20),
+    restart_cooldown_millis INTEGER NOT NULL CHECK (restart_cooldown_millis BETWEEN 0 AND 60000),
+    stop_signal TEXT NOT NULL CHECK (stop_signal='term'),
+    stop_grace_millis INTEGER NOT NULL CHECK (stop_grace_millis BETWEEN 100 AND 60000),
+    output_byte_limit INTEGER NOT NULL CHECK (output_byte_limit BETWEEN 4096 AND 1048576),
+    capacity_class TEXT NOT NULL CHECK (capacity_class='local_development'),
+    content_json TEXT NOT NULL CHECK (json_valid(content_json) AND json_type(content_json)='object'),
+    content_revision INTEGER NOT NULL CHECK (content_revision=1),
+    content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+    status TEXT NOT NULL CHECK (status IN ('active','retired')),
+    revision INTEGER NOT NULL CHECK (revision>0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL CHECK (created_by='local-owner'),
+    updated_by TEXT NOT NULL CHECK (updated_by='local-owner'),
+    CHECK (
+      (health_type='process' AND health_host IS NULL AND health_port IS NULL AND health_path IS NULL) OR
+      (health_type='tcp' AND health_host IS NOT NULL AND health_port BETWEEN 1 AND 65535 AND health_path IS NULL) OR
+      (health_type='http' AND health_host IS NOT NULL AND health_port BETWEEN 1 AND 65535 AND health_path IS NOT NULL)
+    )
+) STRICT;
+
+CREATE TABLE managed_service_arguments (
+    definition_id TEXT NOT NULL REFERENCES managed_service_definitions(id) DEFERRABLE INITIALLY DEFERRED,
+    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 63),
+    argument TEXT NOT NULL CHECK (length(CAST(argument AS BLOB)) BETWEEN 0 AND 4096 AND instr(argument,char(0))=0),
+    PRIMARY KEY(definition_id,ordinal)
+) STRICT;
+
+CREATE TABLE managed_service_environment (
+    definition_id TEXT NOT NULL REFERENCES managed_service_definitions(id) DEFERRABLE INITIALLY DEFERRED,
+    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 63),
+    name TEXT NOT NULL CHECK (length(CAST(name AS BLOB)) BETWEEN 1 AND 128 AND instr(name,char(0))=0),
+    value TEXT NOT NULL CHECK (length(CAST(value AS BLOB)) BETWEEN 0 AND 4096 AND instr(value,char(0))=0),
+    PRIMARY KEY(definition_id,ordinal),
+    UNIQUE(definition_id,name)
+) STRICT;
+
+CREATE TABLE managed_service_grants (
+    id TEXT PRIMARY KEY CHECK (length(id)=41 AND substr(id,1,9)='svcgrant_' AND substr(id,10) NOT GLOB '*[^0-9a-f]*'),
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    definition_id TEXT NOT NULL REFERENCES managed_service_definitions(id),
+    definition_revision INTEGER NOT NULL CHECK(definition_revision>0),
+    manager_agent_id TEXT NOT NULL REFERENCES agents(id),
+    manager_membership_revision INTEGER NOT NULL CHECK(manager_membership_revision>0),
+    parent_grant_id TEXT REFERENCES managed_service_grants(id),
+    actions_json TEXT NOT NULL CHECK(json_valid(actions_json) AND json_type(actions_json)='array' AND json_array_length(actions_json) BETWEEN 1 AND 6),
+    maximum_instances INTEGER NOT NULL CHECK(maximum_instances BETWEEN 1 AND 8),
+    expires_at TEXT,
+    status TEXT NOT NULL CHECK(status IN ('active','revoked')),
+    revision INTEGER NOT NULL CHECK(revision>0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    UNIQUE(id,project_id,manager_agent_id),
+    FOREIGN KEY(project_id,manager_agent_id)
+      REFERENCES domain_agent_memberships(project_id,agent_id) DEFERRABLE INITIALLY DEFERRED,
+    CHECK(parent_grant_id IS NULL OR parent_grant_id<>id)
+) STRICT;
+
+CREATE TABLE managed_service_requests (
+    id TEXT PRIMARY KEY CHECK (length(id)=43 AND substr(id,1,11)='svcrequest_' AND substr(id,12) NOT GLOB '*[^0-9a-f]*'),
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    definition_id TEXT NOT NULL REFERENCES managed_service_definitions(id),
+    definition_revision INTEGER NOT NULL CHECK(definition_revision>0),
+    agent_id TEXT NOT NULL REFERENCES agents(id),
+    agent_membership_revision INTEGER NOT NULL CHECK(agent_membership_revision>0),
+    thread_id TEXT NOT NULL REFERENCES domain_agent_session_bindings(thread_id),
+    summary TEXT NOT NULL CHECK(length(CAST(summary AS BLOB)) BETWEEN 1 AND 2048 AND instr(summary,char(0))=0),
+    status TEXT NOT NULL CHECK(status IN ('pending','accepted','rejected')),
+    revision INTEGER NOT NULL CHECK(revision>0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    decided_at TEXT,
+    decision_reason TEXT CHECK(decision_reason IS NULL OR (length(CAST(decision_reason AS BLOB)) BETWEEN 1 AND 2048 AND instr(decision_reason,char(0))=0)),
+    FOREIGN KEY(project_id,agent_id,thread_id)
+      REFERENCES domain_agent_session_bindings(project_id,agent_id,thread_id),
+    CHECK((status='pending' AND decided_at IS NULL AND decision_reason IS NULL)
+       OR (status IN ('accepted','rejected') AND decided_at IS NOT NULL AND decision_reason IS NOT NULL))
+) STRICT;
+
+CREATE TABLE managed_service_instances (
+    id TEXT PRIMARY KEY CHECK (length(id)=40 AND substr(id,1,8)='svcinst_' AND substr(id,9) NOT GLOB '*[^0-9a-f]*'),
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    workstream_id TEXT REFERENCES objectives(id),
+    checkout_id TEXT NOT NULL REFERENCES checkouts(id),
+    definition_id TEXT NOT NULL REFERENCES managed_service_definitions(id),
+    definition_revision INTEGER NOT NULL CHECK (definition_revision>0),
+    definition_content_sha256 TEXT NOT NULL CHECK (length(definition_content_sha256)=64 AND definition_content_sha256 NOT GLOB '*[^0-9a-f]*'),
+    source_type TEXT NOT NULL CHECK (source_type IN ('owner','agent','agent_request')),
+    source_actor_id TEXT NOT NULL,
+    source_agent_id TEXT REFERENCES agents(id),
+    source_agent_revision INTEGER CHECK (source_agent_revision IS NULL OR source_agent_revision>0),
+    source_thread_id TEXT REFERENCES domain_agent_session_bindings(thread_id),
+    source_request_id TEXT REFERENCES managed_service_requests(id),
+    source_grant_id TEXT REFERENCES managed_service_grants(id),
+    source_grant_revision INTEGER CHECK (source_grant_revision IS NULL OR source_grant_revision>0),
+    status TEXT NOT NULL CHECK (status IN ('requested','starting','healthy','degraded','stopping','stopped','failed','unknown')),
+    desired_state TEXT NOT NULL CHECK (desired_state IN ('running','stopped')),
+    health_status TEXT NOT NULL CHECK (health_status IN ('pending','healthy','unhealthy','unknown')),
+    restart_count INTEGER NOT NULL CHECK (restart_count BETWEEN 0 AND 20),
+    exit_code INTEGER,
+    diagnostic_code TEXT,
+    diagnostic TEXT CHECK (diagnostic IS NULL OR length(CAST(diagnostic AS BLOB)) BETWEEN 1 AND 4096),
+    revision INTEGER NOT NULL CHECK (revision>0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    started_at TEXT,
+    healthy_at TEXT,
+    finished_at TEXT,
+    created_by TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    CHECK (
+      (source_type='owner' AND source_actor_id='local-owner' AND source_agent_id IS NULL AND source_agent_revision IS NULL AND source_thread_id IS NULL AND source_request_id IS NULL AND source_grant_id IS NULL AND source_grant_revision IS NULL) OR
+      (source_type='agent' AND source_actor_id=source_agent_id AND source_agent_id IS NOT NULL AND source_agent_revision IS NOT NULL AND source_thread_id IS NOT NULL AND source_request_id IS NULL AND source_grant_id IS NOT NULL AND source_grant_revision IS NOT NULL) OR
+      (source_type='agent_request' AND source_actor_id=source_agent_id AND source_agent_id IS NOT NULL AND source_agent_revision IS NOT NULL AND source_thread_id IS NOT NULL AND source_request_id IS NOT NULL AND source_grant_id IS NULL AND source_grant_revision IS NULL)
+    )
+) STRICT;
+
+CREATE TABLE managed_service_runtime_bindings (
+    instance_id TEXT PRIMARY KEY REFERENCES managed_service_instances(id),
+    node_id TEXT NOT NULL CHECK (length(node_id)=32 AND node_id NOT GLOB '*[^0-9a-f]*'),
+    node_fingerprint TEXT NOT NULL CHECK (length(node_fingerprint)=64 AND node_fingerprint NOT GLOB '*[^0-9a-f]*'),
+    operation_id TEXT NOT NULL UNIQUE CHECK (operation_id=instance_id||':'||revision),
+    pid INTEGER NOT NULL CHECK (pid>1),
+    process_group_id INTEGER NOT NULL CHECK (process_group_id>1),
+    process_start_ticks INTEGER NOT NULL CHECK (process_start_ticks>0),
+    stdout_path TEXT NOT NULL CHECK (length(CAST(stdout_path AS BLOB)) BETWEEN 1 AND 4096 AND substr(stdout_path,1,1)<>'/' AND instr(stdout_path,char(0))=0),
+    stderr_path TEXT NOT NULL CHECK (length(CAST(stderr_path AS BLOB)) BETWEEN 1 AND 4096 AND substr(stderr_path,1,1)<>'/' AND instr(stderr_path,char(0))=0),
+    revision INTEGER NOT NULL CHECK (revision>0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE managed_service_jobs (
+    id TEXT PRIMARY KEY CHECK (length(id)=39 AND substr(id,1,7)='svcjob_' AND substr(id,8) NOT GLOB '*[^0-9a-f]*'),
+    instance_id TEXT NOT NULL REFERENCES managed_service_instances(id),
+    action TEXT NOT NULL CHECK (action IN ('start','stop','restart','probe')),
+    status TEXT NOT NULL CHECK (status IN ('pending','leased','complete','failed_unknown')),
+    available_at TEXT NOT NULL,
+    lease_expires_at TEXT,
+    attempts INTEGER NOT NULL CHECK (attempts>=0),
+    diagnostic TEXT CHECK (diagnostic IS NULL OR length(CAST(diagnostic AS BLOB)) BETWEEN 1 AND 4096),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK ((status='leased')=(lease_expires_at IS NOT NULL))
+) STRICT;
+
+CREATE TABLE managed_service_log_artifacts (
+    id TEXT PRIMARY KEY CHECK (length(id)=39 AND substr(id,1,7)='svclog_' AND substr(id,8) NOT GLOB '*[^0-9a-f]*'),
+    instance_id TEXT NOT NULL REFERENCES managed_service_instances(id),
+    kind TEXT NOT NULL CHECK (kind IN ('stdout','stderr')),
+    content_sha256 TEXT NOT NULL REFERENCES immutable_artifacts(content_sha256),
+    captured_bytes INTEGER NOT NULL CHECK (captured_bytes BETWEEN 0 AND 1048576),
+    omitted_bytes INTEGER NOT NULL CHECK (omitted_bytes>=0),
+    truncated INTEGER NOT NULL CHECK (truncated IN (0,1) AND truncated=(omitted_bytes>0)),
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL CHECK (created_by='subsystem:service-worker'),
+    UNIQUE(instance_id,kind)
+) STRICT;
+
 CREATE TABLE check_definitions (
     id TEXT PRIMARY KEY CHECK (length(id)=41 AND substr(id,1,9)='checkdef_' AND substr(id,10) NOT GLOB '*[^0-9a-f]*'),
     workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -2381,6 +2573,33 @@ CREATE INDEX messages_thread_idx ON messages(thread_id,created_at,id);
 CREATE INDEX message_recipients_inbox_idx ON message_recipients(recipient_agent_id,status,queued_at,message_id);
 
 CREATE INDEX message_wake_jobs_queue_idx ON message_wake_jobs(status,available_at,sequence);
+
+CREATE INDEX managed_service_definitions_scope_idx
+    ON managed_service_definitions(workspace_id,project_id,workstream_id,checkout_id,status,name,id);
+
+CREATE UNIQUE INDEX managed_service_definitions_active_name_idx
+    ON managed_service_definitions(project_id,COALESCE(workstream_id,''),name) WHERE status='active';
+
+CREATE INDEX managed_service_grants_manager_idx
+    ON managed_service_grants(project_id,manager_agent_id,status,definition_id,id);
+
+CREATE INDEX managed_service_grants_parent_idx
+    ON managed_service_grants(parent_grant_id,status,id);
+
+CREATE INDEX managed_service_requests_review_idx
+    ON managed_service_requests(project_id,status,created_at,id);
+
+CREATE INDEX managed_service_instances_scope_idx
+    ON managed_service_instances(workspace_id,project_id,workstream_id,checkout_id,status,created_at,id);
+
+CREATE UNIQUE INDEX managed_service_instances_one_live_definition_idx
+    ON managed_service_instances(definition_id) WHERE status IN ('requested','starting','healthy','degraded','stopping','unknown');
+
+CREATE UNIQUE INDEX managed_service_jobs_one_open_instance_idx
+    ON managed_service_jobs(instance_id) WHERE status IN ('pending','leased');
+
+CREATE INDEX managed_service_jobs_ready_idx
+    ON managed_service_jobs(status,available_at,created_at,id);
 
 CREATE INDEX check_definitions_scope_idx ON check_definitions(workspace_id,project_id,status,name,id);
 
@@ -4847,6 +5066,240 @@ CREATE TRIGGER run_loss_resolution_reject_delete
 BEFORE DELETE ON run_loss_resolutions
 BEGIN SELECT RAISE(ABORT, 'run-loss resolutions cannot be deleted'); END;
 
+CREATE TRIGGER managed_service_argument_validate_insert
+BEFORE INSERT ON managed_service_arguments BEGIN
+  SELECT CASE WHEN EXISTS(SELECT 1 FROM managed_service_definitions WHERE id=NEW.definition_id)
+    OR crewfold_utf8_valid(NEW.argument) IS NOT 1
+    OR NEW.ordinal IS NOT (SELECT COUNT(*) FROM managed_service_arguments WHERE definition_id=NEW.definition_id)
+    THEN RAISE(ABORT,'managed-service arguments are not contiguous immutable children') END;
+END;
+
+CREATE TRIGGER managed_service_argument_reject_update BEFORE UPDATE ON managed_service_arguments BEGIN SELECT RAISE(ABORT,'managed-service arguments are immutable'); END;
+CREATE TRIGGER managed_service_argument_reject_delete BEFORE DELETE ON managed_service_arguments BEGIN SELECT RAISE(ABORT,'managed-service arguments are immutable'); END;
+
+CREATE TRIGGER managed_service_environment_validate_insert
+BEFORE INSERT ON managed_service_environment BEGIN
+  SELECT CASE WHEN EXISTS(SELECT 1 FROM managed_service_definitions WHERE id=NEW.definition_id)
+    OR crewfold_utf8_valid(NEW.name) IS NOT 1 OR crewfold_utf8_valid(NEW.value) IS NOT 1
+    OR NEW.ordinal IS NOT (SELECT COUNT(*) FROM managed_service_environment WHERE definition_id=NEW.definition_id)
+    THEN RAISE(ABORT,'managed-service environment is not a contiguous immutable child set') END;
+END;
+
+CREATE TRIGGER managed_service_environment_reject_update BEFORE UPDATE ON managed_service_environment BEGIN SELECT RAISE(ABORT,'managed-service environment is immutable'); END;
+CREATE TRIGGER managed_service_environment_reject_delete BEFORE DELETE ON managed_service_environment BEGIN SELECT RAISE(ABORT,'managed-service environment is immutable'); END;
+
+CREATE TRIGGER managed_service_definition_validate_insert
+BEFORE INSERT ON managed_service_definitions BEGIN
+  SELECT CASE WHEN NEW.status<>'active' OR NEW.revision<>1 OR NEW.content_revision<>1
+    OR crewfold_utf8_valid(NEW.name) IS NOT 1 OR crewfold_utf8_valid(NEW.description) IS NOT 1 OR crewfold_utf8_valid(NEW.executable) IS NOT 1
+    OR crewfold_utf8_valid(NEW.working_directory) IS NOT 1 OR crewfold_utf8_valid(NEW.profile) IS NOT 1
+    OR (NEW.health_host IS NOT NULL AND crewfold_utf8_valid(NEW.health_host) IS NOT 1)
+    OR (NEW.health_path IS NOT NULL AND crewfold_utf8_valid(NEW.health_path) IS NOT 1)
+    OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1 OR NEW.created_at IS NOT NEW.updated_at
+    OR lower(hex(sha256(CAST(NEW.content_json AS BLOB)))) IS NOT NEW.content_sha256
+    OR json_extract(NEW.content_json,'$.workspace_id') IS NOT NEW.workspace_id
+    OR json_extract(NEW.content_json,'$.project_id') IS NOT NEW.project_id
+    OR json_extract(NEW.content_json,'$.workstream_id') IS NOT COALESCE(NEW.workstream_id,'')
+    OR json_extract(NEW.content_json,'$.checkout_id') IS NOT NEW.checkout_id
+    OR json_extract(NEW.content_json,'$.name') IS NOT NEW.name
+    OR json_extract(NEW.content_json,'$.description') IS NOT NEW.description
+    OR json_extract(NEW.content_json,'$.executable') IS NOT NEW.executable
+    OR json(NEW.arguments_json)<>json(json_extract(NEW.content_json,'$.arguments'))
+    OR json_extract(NEW.content_json,'$.working_directory') IS NOT NEW.working_directory
+    OR json(NEW.environment_json)<>json(json_extract(NEW.content_json,'$.environment'))
+    OR json_extract(NEW.content_json,'$.profile') IS NOT NEW.profile
+    OR json_extract(NEW.content_json,'$.profile_revision') IS NOT NEW.profile_revision
+    OR json_extract(NEW.content_json,'$.network_mode') IS NOT NEW.network_mode
+    OR json_extract(NEW.content_json,'$.health.type') IS NOT NEW.health_type
+    OR json_extract(NEW.content_json,'$.health.host') IS NOT COALESCE(NEW.health_host,'')
+    OR json_extract(NEW.content_json,'$.health.port') IS NOT COALESCE(NEW.health_port,0)
+    OR json_extract(NEW.content_json,'$.health.path') IS NOT COALESCE(NEW.health_path,'')
+    OR json_extract(NEW.content_json,'$.health.interval_millis') IS NOT NEW.health_interval_millis
+    OR json_extract(NEW.content_json,'$.health.timeout_millis') IS NOT NEW.health_timeout_millis
+    OR json_extract(NEW.content_json,'$.restart_policy') IS NOT NEW.restart_policy
+    OR json_extract(NEW.content_json,'$.maximum_restarts') IS NOT NEW.maximum_restarts
+    OR json_extract(NEW.content_json,'$.restart_cooldown_millis') IS NOT NEW.restart_cooldown_millis
+    OR json_extract(NEW.content_json,'$.stop_signal') IS NOT NEW.stop_signal
+    OR json_extract(NEW.content_json,'$.stop_grace_millis') IS NOT NEW.stop_grace_millis
+    OR json_extract(NEW.content_json,'$.output_byte_limit') IS NOT NEW.output_byte_limit
+    OR json_extract(NEW.content_json,'$.capacity_class') IS NOT NEW.capacity_class
+    OR json_array_length(NEW.arguments_json) IS NOT (SELECT COUNT(*) FROM managed_service_arguments WHERE definition_id=NEW.id)
+    OR EXISTS(SELECT 1 FROM managed_service_arguments argument WHERE argument.definition_id=NEW.id AND json_extract(NEW.arguments_json,'$['||argument.ordinal||']') IS NOT argument.argument)
+    OR json_array_length(NEW.environment_json) IS NOT (SELECT COUNT(*) FROM managed_service_environment WHERE definition_id=NEW.id)
+    OR EXISTS(SELECT 1 FROM managed_service_environment environment WHERE environment.definition_id=NEW.id AND (
+      json_extract(NEW.environment_json,'$['||environment.ordinal||'].name') IS NOT environment.name OR
+      json_extract(NEW.environment_json,'$['||environment.ordinal||'].value') IS NOT environment.value))
+    OR NOT EXISTS(SELECT 1 FROM projects project JOIN checkouts checkout ON checkout.id=NEW.checkout_id
+      WHERE project.id=NEW.project_id AND project.workspace_id=NEW.workspace_id AND checkout.project_id=NEW.project_id AND checkout.availability='available')
+    OR (NEW.workstream_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM objectives objective WHERE objective.id=NEW.workstream_id AND objective.workspace_id=NEW.workspace_id AND objective.project_id=NEW.project_id))
+    THEN RAISE(ABORT,'invalid immutable managed-service definition') END;
+END;
+
+CREATE TRIGGER managed_service_definition_validate_update
+BEFORE UPDATE ON managed_service_definitions BEGIN
+  SELECT CASE WHEN NEW.id IS NOT OLD.id OR NEW.workspace_id IS NOT OLD.workspace_id OR NEW.project_id IS NOT OLD.project_id
+    OR NEW.workstream_id IS NOT OLD.workstream_id OR NEW.checkout_id IS NOT OLD.checkout_id OR NEW.name IS NOT OLD.name OR NEW.description IS NOT OLD.description
+    OR NEW.executable IS NOT OLD.executable OR NEW.arguments_json IS NOT OLD.arguments_json OR NEW.working_directory IS NOT OLD.working_directory
+    OR NEW.environment_json IS NOT OLD.environment_json OR NEW.profile IS NOT OLD.profile OR NEW.profile_revision IS NOT OLD.profile_revision OR NEW.network_mode IS NOT OLD.network_mode
+    OR NEW.health_type IS NOT OLD.health_type OR NEW.health_host IS NOT OLD.health_host OR NEW.health_port IS NOT OLD.health_port
+    OR NEW.health_path IS NOT OLD.health_path OR NEW.health_interval_millis IS NOT OLD.health_interval_millis
+    OR NEW.health_timeout_millis IS NOT OLD.health_timeout_millis OR NEW.restart_policy IS NOT OLD.restart_policy
+    OR NEW.maximum_restarts IS NOT OLD.maximum_restarts OR NEW.restart_cooldown_millis IS NOT OLD.restart_cooldown_millis OR NEW.stop_signal IS NOT OLD.stop_signal OR NEW.stop_grace_millis IS NOT OLD.stop_grace_millis
+    OR NEW.output_byte_limit IS NOT OLD.output_byte_limit OR NEW.capacity_class IS NOT OLD.capacity_class OR NEW.content_json IS NOT OLD.content_json
+    OR NEW.content_revision IS NOT OLD.content_revision OR NEW.content_sha256 IS NOT OLD.content_sha256
+    OR NEW.created_at IS NOT OLD.created_at OR NEW.created_by IS NOT OLD.created_by
+    OR OLD.status<>'active' OR NEW.status<>'retired' OR NEW.revision<>OLD.revision+1
+    OR crewfold_timestamp_canonical(NEW.updated_at) IS NOT 1 OR crewfold_timestamp_key(NEW.updated_at)<=crewfold_timestamp_key(OLD.updated_at)
+    OR NEW.updated_by<>'local-owner' THEN RAISE(ABORT,'managed-service definitions are immutable except retirement') END;
+END;
+
+CREATE TRIGGER managed_service_definition_reject_delete BEFORE DELETE ON managed_service_definitions BEGIN SELECT RAISE(ABORT,'managed-service definitions are durable'); END;
+
+CREATE TRIGGER managed_service_grant_validate_insert
+BEFORE INSERT ON managed_service_grants BEGIN
+  SELECT CASE WHEN NEW.status<>'active' OR NEW.revision<>1
+    OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1 OR NEW.created_at IS NOT NEW.updated_at
+    OR (NEW.expires_at IS NOT NULL AND crewfold_timestamp_canonical(NEW.expires_at) IS NOT 1)
+    OR NOT EXISTS(SELECT 1 FROM managed_service_definitions definition WHERE definition.id=NEW.definition_id AND definition.workspace_id=NEW.workspace_id AND definition.project_id=NEW.project_id AND definition.revision=NEW.definition_revision AND definition.status='active')
+    OR NOT EXISTS(SELECT 1 FROM domain_agent_memberships membership WHERE membership.project_id=NEW.project_id AND membership.agent_id=NEW.manager_agent_id AND membership.revision=NEW.manager_membership_revision AND membership.status='active')
+    OR EXISTS(SELECT 1 FROM json_each(NEW.actions_json) action WHERE action.type<>'text' OR action.value NOT IN ('inspect','logs','start','stop','restart','delegate'))
+    OR (SELECT count(*) FROM json_each(NEW.actions_json))<>(SELECT count(DISTINCT value) FROM json_each(NEW.actions_json))
+    OR (NEW.parent_grant_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM managed_service_grants parent WHERE parent.id=NEW.parent_grant_id AND parent.workspace_id=NEW.workspace_id AND parent.project_id=NEW.project_id AND parent.definition_id=NEW.definition_id AND parent.definition_revision=NEW.definition_revision AND parent.status='active'))
+    THEN RAISE(ABORT,'invalid managed-service grant') END;
+END;
+
+CREATE TRIGGER managed_service_grant_validate_update
+BEFORE UPDATE ON managed_service_grants BEGIN
+  SELECT CASE WHEN NEW.id IS NOT OLD.id OR NEW.workspace_id IS NOT OLD.workspace_id OR NEW.project_id IS NOT OLD.project_id OR NEW.definition_id IS NOT OLD.definition_id OR NEW.definition_revision IS NOT OLD.definition_revision
+    OR NEW.manager_agent_id IS NOT OLD.manager_agent_id OR NEW.manager_membership_revision IS NOT OLD.manager_membership_revision OR NEW.parent_grant_id IS NOT OLD.parent_grant_id OR NEW.actions_json IS NOT OLD.actions_json
+    OR NEW.maximum_instances IS NOT OLD.maximum_instances OR NEW.expires_at IS NOT OLD.expires_at OR NEW.created_at IS NOT OLD.created_at OR NEW.created_by IS NOT OLD.created_by
+    OR OLD.status<>'active' OR NEW.status<>'revoked' OR NEW.revision<>OLD.revision+1 OR crewfold_timestamp_canonical(NEW.updated_at) IS NOT 1
+    THEN RAISE(ABORT,'managed-service grant update is invalid') END;
+END;
+
+CREATE TRIGGER managed_service_grant_reject_delete BEFORE DELETE ON managed_service_grants BEGIN SELECT RAISE(ABORT,'managed-service grants are durable'); END;
+
+CREATE TRIGGER managed_service_request_validate_insert
+BEFORE INSERT ON managed_service_requests BEGIN
+  SELECT CASE WHEN NEW.status<>'pending' OR NEW.revision<>1 OR crewfold_utf8_valid(NEW.summary) IS NOT 1
+    OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1 OR NEW.created_at IS NOT NEW.updated_at
+    OR NOT EXISTS(SELECT 1 FROM managed_service_definitions definition WHERE definition.id=NEW.definition_id AND definition.workspace_id=NEW.workspace_id AND definition.project_id=NEW.project_id AND definition.revision=NEW.definition_revision AND definition.status='active')
+    OR NOT EXISTS(SELECT 1 FROM domain_agent_memberships membership JOIN domain_agent_session_bindings binding ON binding.project_id=membership.project_id AND binding.agent_id=membership.agent_id
+      WHERE membership.project_id=NEW.project_id AND membership.agent_id=NEW.agent_id AND membership.revision=NEW.agent_membership_revision AND membership.status='active' AND binding.thread_id=NEW.thread_id AND binding.status='current')
+    THEN RAISE(ABORT,'invalid managed-service request') END;
+END;
+
+CREATE TRIGGER managed_service_request_validate_update
+BEFORE UPDATE ON managed_service_requests BEGIN
+  SELECT CASE WHEN NEW.id IS NOT OLD.id OR NEW.workspace_id IS NOT OLD.workspace_id OR NEW.project_id IS NOT OLD.project_id OR NEW.definition_id IS NOT OLD.definition_id OR NEW.definition_revision IS NOT OLD.definition_revision
+    OR NEW.agent_id IS NOT OLD.agent_id OR NEW.agent_membership_revision IS NOT OLD.agent_membership_revision OR NEW.thread_id IS NOT OLD.thread_id OR NEW.summary IS NOT OLD.summary OR NEW.created_at IS NOT OLD.created_at
+    OR OLD.status<>'pending' OR NEW.status NOT IN ('accepted','rejected') OR NEW.revision<>OLD.revision+1 OR crewfold_timestamp_canonical(NEW.updated_at) IS NOT 1 OR NEW.updated_at IS NOT NEW.decided_at OR crewfold_utf8_valid(NEW.decision_reason) IS NOT 1
+    THEN RAISE(ABORT,'managed-service request decision is invalid') END;
+END;
+
+CREATE TRIGGER managed_service_request_reject_delete BEFORE DELETE ON managed_service_requests BEGIN SELECT RAISE(ABORT,'managed-service requests are durable'); END;
+
+CREATE TRIGGER managed_service_instance_validate_insert
+BEFORE INSERT ON managed_service_instances BEGIN
+  SELECT CASE WHEN NEW.status<>'requested' OR NEW.desired_state<>'running' OR NEW.health_status<>'pending'
+    OR NEW.restart_count<>0 OR NEW.exit_code IS NOT NULL OR NEW.diagnostic_code IS NOT NULL OR NEW.diagnostic IS NOT NULL
+    OR NEW.revision<>1 OR NEW.created_at IS NOT NEW.updated_at OR NEW.started_at IS NOT NULL OR NEW.healthy_at IS NOT NULL OR NEW.finished_at IS NOT NULL
+    OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1
+    OR NOT EXISTS(SELECT 1 FROM managed_service_definitions definition
+      WHERE definition.id=NEW.definition_id AND definition.workspace_id=NEW.workspace_id AND definition.project_id=NEW.project_id
+        AND definition.workstream_id IS NEW.workstream_id AND definition.checkout_id=NEW.checkout_id
+        AND definition.revision=NEW.definition_revision AND definition.content_sha256=NEW.definition_content_sha256 AND definition.status='active')
+    OR (NEW.source_type='agent' AND NOT EXISTS(SELECT 1 FROM managed_service_grants grant_row
+      JOIN domain_agent_memberships membership ON membership.project_id=grant_row.project_id AND membership.agent_id=grant_row.manager_agent_id
+      JOIN domain_agent_session_bindings binding ON binding.project_id=membership.project_id AND binding.agent_id=membership.agent_id
+      WHERE grant_row.id=NEW.source_grant_id AND grant_row.revision=NEW.source_grant_revision AND grant_row.status='active'
+        AND grant_row.workspace_id=NEW.workspace_id AND grant_row.project_id=NEW.project_id AND grant_row.definition_id=NEW.definition_id AND grant_row.definition_revision=NEW.definition_revision
+        AND membership.agent_id=NEW.source_agent_id AND membership.revision=NEW.source_agent_revision AND membership.status='active'
+        AND binding.thread_id=NEW.source_thread_id AND binding.status='current'))
+    OR (NEW.source_type='agent_request' AND NOT EXISTS(SELECT 1 FROM managed_service_requests request
+      WHERE request.id=NEW.source_request_id AND request.status='accepted' AND request.workspace_id=NEW.workspace_id AND request.project_id=NEW.project_id
+        AND request.definition_id=NEW.definition_id AND request.definition_revision=NEW.definition_revision AND request.agent_id=NEW.source_agent_id
+        AND request.agent_membership_revision=NEW.source_agent_revision AND request.thread_id=NEW.source_thread_id))
+    THEN RAISE(ABORT,'invalid managed-service instance request') END;
+END;
+
+CREATE TRIGGER managed_service_instance_validate_update
+BEFORE UPDATE ON managed_service_instances BEGIN
+  SELECT CASE WHEN NEW.id IS NOT OLD.id OR NEW.workspace_id IS NOT OLD.workspace_id OR NEW.project_id IS NOT OLD.project_id
+    OR NEW.workstream_id IS NOT OLD.workstream_id OR NEW.checkout_id IS NOT OLD.checkout_id OR NEW.definition_id IS NOT OLD.definition_id
+    OR NEW.definition_revision IS NOT OLD.definition_revision OR NEW.definition_content_sha256 IS NOT OLD.definition_content_sha256
+    OR NEW.source_type IS NOT OLD.source_type OR NEW.source_actor_id IS NOT OLD.source_actor_id OR NEW.source_agent_id IS NOT OLD.source_agent_id
+    OR NEW.source_agent_revision IS NOT OLD.source_agent_revision OR NEW.source_thread_id IS NOT OLD.source_thread_id OR NEW.source_request_id IS NOT OLD.source_request_id
+    OR NEW.source_grant_id IS NOT OLD.source_grant_id OR NEW.source_grant_revision IS NOT OLD.source_grant_revision
+    OR NEW.created_at IS NOT OLD.created_at OR NEW.created_by IS NOT OLD.created_by OR NEW.revision<>OLD.revision+1
+    OR crewfold_timestamp_canonical(NEW.updated_at) IS NOT 1 OR crewfold_timestamp_key(NEW.updated_at)<=crewfold_timestamp_key(OLD.updated_at)
+    OR NOT (
+      (OLD.status='requested' AND NEW.status IN ('starting','failed')) OR
+      (OLD.status='starting' AND (
+        NEW.status IN ('healthy','degraded','failed','unknown') OR
+        (NEW.status='starting' AND NEW.restart_count=OLD.restart_count+1 AND NEW.health_status='pending' AND NEW.diagnostic_code='service_restart_pending')
+      )) OR
+      (OLD.status='healthy' AND NEW.status IN ('degraded','starting','stopping','failed','unknown')) OR
+      (OLD.status='degraded' AND NEW.status IN ('healthy','starting','stopping','failed','unknown')) OR
+      (OLD.status='unknown' AND NEW.status IN ('healthy','degraded','starting','stopping','failed')) OR
+      (OLD.status='stopping' AND NEW.status IN ('starting','stopped','failed','unknown'))
+    )
+    THEN RAISE(ABORT,'invalid managed-service lifecycle transition') END;
+END;
+
+CREATE TRIGGER managed_service_instance_reject_delete BEFORE DELETE ON managed_service_instances BEGIN SELECT RAISE(ABORT,'managed-service instances are durable'); END;
+
+CREATE TRIGGER managed_service_runtime_binding_validate_insert
+BEFORE INSERT ON managed_service_runtime_bindings BEGIN
+  SELECT CASE WHEN NEW.operation_id<>NEW.instance_id||':'||NEW.revision OR NEW.created_at<>NEW.updated_at
+    OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1
+    OR crewfold_utf8_valid(NEW.stdout_path) IS NOT 1 OR crewfold_utf8_valid(NEW.stderr_path) IS NOT 1
+    OR NOT EXISTS(SELECT 1 FROM managed_service_instances instance WHERE instance.id=NEW.instance_id AND instance.status='starting' AND NEW.revision=instance.restart_count+1)
+    THEN RAISE(ABORT,'invalid managed-service runtime binding') END;
+END;
+
+CREATE TRIGGER managed_service_runtime_binding_reject_update BEFORE UPDATE ON managed_service_runtime_bindings BEGIN SELECT RAISE(ABORT,'managed-service runtime bindings are immutable'); END;
+CREATE TRIGGER managed_service_runtime_binding_validate_delete
+BEFORE DELETE ON managed_service_runtime_bindings BEGIN
+  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM managed_service_instances instance WHERE instance.id=OLD.instance_id AND instance.status IN ('starting','stopped','failed'))
+    THEN RAISE(ABORT,'managed-service runtime binding remains live') END;
+END;
+
+CREATE TRIGGER managed_service_job_validate_insert
+BEFORE INSERT ON managed_service_jobs BEGIN
+  SELECT CASE WHEN NEW.status<>'pending' OR NEW.attempts<>0 OR NEW.lease_expires_at IS NOT NULL OR NEW.diagnostic IS NOT NULL
+    OR crewfold_timestamp_canonical(NEW.created_at) IS NOT 1 OR NEW.created_at IS NOT NEW.updated_at
+    OR NOT EXISTS(SELECT 1 FROM managed_service_instances instance WHERE instance.id=NEW.instance_id)
+    THEN RAISE(ABORT,'invalid managed-service job') END;
+END;
+
+CREATE TRIGGER managed_service_job_validate_update
+BEFORE UPDATE ON managed_service_jobs BEGIN
+  SELECT CASE WHEN NEW.id IS NOT OLD.id OR NEW.instance_id IS NOT OLD.instance_id OR NEW.action IS NOT OLD.action
+    OR NEW.created_at IS NOT OLD.created_at OR NEW.attempts<OLD.attempts OR crewfold_timestamp_canonical(NEW.updated_at) IS NOT 1
+    OR NOT (
+      (OLD.status='pending' AND NEW.status='leased' AND NEW.attempts=OLD.attempts+1 AND NEW.lease_expires_at IS NOT NULL AND NEW.diagnostic IS NULL) OR
+      (OLD.status='pending' AND NEW.status='complete' AND NEW.attempts=OLD.attempts AND NEW.lease_expires_at IS NULL) OR
+      (OLD.status='leased' AND NEW.status='pending' AND NEW.attempts=OLD.attempts AND NEW.lease_expires_at IS NULL AND NEW.diagnostic IS NULL) OR
+      (OLD.status='leased' AND NEW.status='complete' AND NEW.attempts=OLD.attempts AND NEW.lease_expires_at IS NULL) OR
+      (OLD.status='leased' AND NEW.status='failed_unknown' AND NEW.attempts=OLD.attempts AND NEW.lease_expires_at IS NULL AND NEW.diagnostic IS NOT NULL)
+    ) THEN RAISE(ABORT,'invalid managed-service job transition') END;
+END;
+
+CREATE TRIGGER managed_service_job_reject_delete BEFORE DELETE ON managed_service_jobs BEGIN SELECT RAISE(ABORT,'managed-service jobs are durable'); END;
+
+CREATE TRIGGER managed_service_log_artifact_validate_insert
+BEFORE INSERT ON managed_service_log_artifacts BEGIN
+  SELECT CASE WHEN crewfold_timestamp_canonical(NEW.created_at) IS NOT 1 OR NOT EXISTS(
+    SELECT 1 FROM immutable_artifacts artifact JOIN managed_service_instances instance ON instance.id=NEW.instance_id
+    WHERE artifact.content_sha256=NEW.content_sha256 AND artifact.byte_size=NEW.captured_bytes
+      AND instance.status IN ('stopped','failed')
+  ) THEN RAISE(ABORT,'invalid managed-service log artifact') END;
+END;
+
+CREATE TRIGGER managed_service_log_artifact_reject_update BEFORE UPDATE ON managed_service_log_artifacts BEGIN SELECT RAISE(ABORT,'managed-service log artifacts are immutable'); END;
+CREATE TRIGGER managed_service_log_artifact_reject_delete BEFORE DELETE ON managed_service_log_artifacts BEGIN SELECT RAISE(ABORT,'managed-service log artifacts are immutable'); END;
+
 CREATE TRIGGER check_definition_argument_validate_insert
 BEFORE INSERT ON check_definition_arguments BEGIN
   SELECT CASE WHEN EXISTS(SELECT 1 FROM check_definitions WHERE id=NEW.definition_id)
@@ -5830,7 +6283,7 @@ BEGIN
         json_extract(NEW.packet_json, '$.policy.allowed_tools') IS NOT json_array(
           'crewfold_acknowledge_context_delta','crewfold_acknowledge_message','crewfold_get_briefing',
           'crewfold_get_context_delta','crewfold_get_status','crewfold_list_inbox','crewfold_propose_knowledge',
-          'crewfold_propose_completion','crewfold_publish_artifact','crewfold_read_message',
+          'crewfold_propose_completion','crewfold_publish_artifact','crewfold_read_artifact','crewfold_read_message',
           'crewfold_report_blocked','crewfold_report_contradiction','crewfold_report_progress','crewfold_send_message')
     ) THEN RAISE(ABORT, 'invalid ordinary context tool policy') END;
     SELECT CASE WHEN json_type(NEW.packet_json, '$.management_grant') IS NOT NULL AND (
@@ -5904,14 +6357,14 @@ BEGIN
             SELECT 3,'crewfold_get_context_delta' UNION ALL SELECT 4,'crewfold_get_status' UNION ALL
             SELECT 5,'crewfold_list_inbox' UNION ALL SELECT 6,'crewfold_propose_knowledge' UNION ALL
             SELECT 7,'crewfold_propose_completion' UNION ALL SELECT 8,'crewfold_publish_artifact' UNION ALL
-            SELECT 9,'crewfold_read_message' UNION ALL SELECT 10,'crewfold_report_blocked' UNION ALL
-            SELECT 11,'crewfold_report_contradiction' UNION ALL SELECT 12,'crewfold_report_progress' UNION ALL
-            SELECT 13,'crewfold_send_message' UNION ALL
-            SELECT 14,'crewfold_get_executive_context'
+            SELECT 9,'crewfold_read_artifact' UNION ALL SELECT 10,'crewfold_read_message' UNION ALL SELECT 11,'crewfold_report_blocked' UNION ALL
+            SELECT 12,'crewfold_report_contradiction' UNION ALL SELECT 13,'crewfold_report_progress' UNION ALL
+            SELECT 14,'crewfold_send_message' UNION ALL
+            SELECT 15,'crewfold_get_executive_context'
               WHERE json_extract(NEW.packet_json, '$.management_grant.owner_executive')=1 UNION ALL
-            SELECT 15,'crewfold_respond_to_owner'
+            SELECT 16,'crewfold_respond_to_owner'
               WHERE json_extract(NEW.packet_json, '$.management_grant.owner_executive')=1 UNION ALL
-            SELECT 16+kind.ordinal,CASE kind.kind WHEN 'assignment' THEN 'crewfold_propose_assignment'
+            SELECT 17+kind.ordinal,CASE kind.kind WHEN 'assignment' THEN 'crewfold_propose_assignment'
               WHEN 'escalation' THEN 'crewfold_propose_escalation' WHEN 'review' THEN 'crewfold_propose_review'
               ELSE 'crewfold_propose_tasks' END
             FROM manager_grant_proposal_kinds kind
@@ -5960,22 +6413,22 @@ BEGIN
             SELECT 3,'crewfold_get_context_delta' UNION ALL SELECT 4,'crewfold_get_status' UNION ALL
             SELECT 5,'crewfold_list_inbox' UNION ALL SELECT 6,'crewfold_propose_knowledge' UNION ALL
             SELECT 7,'crewfold_propose_completion' UNION ALL SELECT 8,'crewfold_publish_artifact' UNION ALL
-            SELECT 9,'crewfold_read_message' UNION ALL SELECT 10,'crewfold_report_blocked' UNION ALL
-            SELECT 11,'crewfold_report_contradiction' UNION ALL SELECT 12,'crewfold_report_progress' UNION ALL
-            SELECT 13,'crewfold_send_message' UNION ALL
-            SELECT 14,'crewfold_run_check'
+            SELECT 9,'crewfold_read_artifact' UNION ALL SELECT 10,'crewfold_read_message' UNION ALL SELECT 11,'crewfold_report_blocked' UNION ALL
+            SELECT 12,'crewfold_report_contradiction' UNION ALL SELECT 13,'crewfold_report_progress' UNION ALL
+            SELECT 14,'crewfold_send_message' UNION ALL
+            SELECT 15,'crewfold_run_check'
               WHERE EXISTS (SELECT 1 FROM check_watch_grant_operations operation
                 WHERE operation.grant_id=json_extract(NEW.packet_json, '$.check_watch_grant.grant_id')
                   AND operation.operation='run') UNION ALL
-            SELECT 15,'crewfold_list_check_results'
+            SELECT 16,'crewfold_list_check_results'
               WHERE EXISTS (SELECT 1 FROM check_watch_grant_operations operation
                 WHERE operation.grant_id=json_extract(NEW.packet_json, '$.check_watch_grant.grant_id')
                   AND operation.operation='inspect') UNION ALL
-            SELECT 16,'crewfold_inspect_check_result'
+            SELECT 17,'crewfold_inspect_check_result'
               WHERE EXISTS (SELECT 1 FROM check_watch_grant_operations operation
                 WHERE operation.grant_id=json_extract(NEW.packet_json, '$.check_watch_grant.grant_id')
                   AND operation.operation='inspect') UNION ALL
-            SELECT 17,'crewfold_propose_check_repair'
+            SELECT 18,'crewfold_propose_check_repair'
               WHERE EXISTS (SELECT 1 FROM check_watch_grant_operations operation
                 WHERE operation.grant_id=json_extract(NEW.packet_json, '$.check_watch_grant.grant_id')
                   AND operation.operation='propose_repair')
@@ -6145,14 +6598,14 @@ BEGIN
               SELECT 3,'crewfold_get_context_delta' UNION ALL SELECT 4,'crewfold_get_status' UNION ALL
               SELECT 5,'crewfold_list_inbox' UNION ALL SELECT 6,'crewfold_propose_knowledge' UNION ALL
               SELECT 7,'crewfold_propose_completion' UNION ALL SELECT 8,'crewfold_publish_artifact' UNION ALL
-              SELECT 9,'crewfold_read_message' UNION ALL SELECT 10,'crewfold_report_blocked' UNION ALL
-              SELECT 11,'crewfold_report_contradiction' UNION ALL SELECT 12,'crewfold_report_progress' UNION ALL
-              SELECT 13,'crewfold_send_message' UNION ALL
-              SELECT 14,'crewfold_get_executive_context'
+              SELECT 9,'crewfold_read_artifact' UNION ALL SELECT 10,'crewfold_read_message' UNION ALL SELECT 11,'crewfold_report_blocked' UNION ALL
+              SELECT 12,'crewfold_report_contradiction' UNION ALL SELECT 13,'crewfold_report_progress' UNION ALL
+              SELECT 14,'crewfold_send_message' UNION ALL
+              SELECT 15,'crewfold_get_executive_context'
                 WHERE json_extract(packet.packet_json, '$.management_grant.owner_executive')=1 UNION ALL
-              SELECT 15,'crewfold_respond_to_owner'
+              SELECT 16,'crewfold_respond_to_owner'
                 WHERE json_extract(packet.packet_json, '$.management_grant.owner_executive')=1 UNION ALL
-              SELECT 16+kind.ordinal,CASE kind.kind WHEN 'assignment' THEN 'crewfold_propose_assignment'
+              SELECT 17+kind.ordinal,CASE kind.kind WHEN 'assignment' THEN 'crewfold_propose_assignment'
                 WHEN 'escalation' THEN 'crewfold_propose_escalation' WHEN 'review' THEN 'crewfold_propose_review'
                 ELSE 'crewfold_propose_tasks' END
               FROM manager_grant_proposal_kinds kind WHERE kind.grant_id=grant_row.id

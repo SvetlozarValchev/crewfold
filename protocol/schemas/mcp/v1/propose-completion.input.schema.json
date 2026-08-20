@@ -8,6 +8,7 @@
   "properties": {
     "summary": {"type": "string", "minLength": 1, "maxLength": 1024},
     "handoff": {"type": "string", "minLength": 1, "maxLength": 4096},
+	"assessment": {"enum": ["pass", "block", "changes_requested"]},
     "evidence_ids": {"$ref": "#/$defs/items"},
     "changed_paths": {"$ref": "#/$defs/items"},
     "checks": {"$ref": "#/$defs/items"},

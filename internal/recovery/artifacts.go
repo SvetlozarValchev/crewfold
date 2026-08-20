@@ -82,7 +82,7 @@ func VerifyLiveArtifacts(ctx context.Context, sourceDataDir string, references [
 	}
 
 	complete := true
-	for _, namespace := range []string{"check-artifacts", "run-artifacts"} {
+	for _, namespace := range []string{"check-artifacts", "run-artifacts", "service-artifacts"} {
 		if err := inspectArtifactNamespace(ctx, root, namespace, expected, &report); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return report, ctxErr

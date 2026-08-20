@@ -423,7 +423,7 @@ func (s *Store) ListRuns(ctx context.Context, query ListRunsQuery) (RunPage, err
 		values[index] = domain.RunSummary{
 			ID: row.ID, WorkspaceID: row.WorkspaceID, ProjectID: row.ProjectID, TaskID: row.TaskID,
 			AgentID: row.AgentID, Runtime: row.Runtime, Provider: row.Provider, Status: row.Status,
-			BlockedQuestion: row.BlockedQuestion, ResultSummary: row.ResultSummary, FailureCode: row.FailureCode,
+			Assessment: row.Assessment, BlockedQuestion: row.BlockedQuestion, ResultSummary: row.ResultSummary, FailureCode: row.FailureCode,
 			Revision: row.Revision, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 			StartedAt: row.StartedAt, FinishedAt: row.FinishedAt,
 		}

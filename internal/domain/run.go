@@ -227,6 +227,7 @@ type RunSummary struct {
 	Runtime         string `json:"runtime"`
 	Provider        string `json:"provider"`
 	Status          string `json:"status"`
+	Assessment      string `json:"assessment,omitempty"`
 	CanAttach       bool   `json:"can_attach"`
 	BlockedQuestion string `json:"blocked_question,omitempty"`
 	ResultSummary   string `json:"result_summary,omitempty"`
@@ -258,13 +259,14 @@ type Handoff struct {
 }
 
 type RunDetail struct {
-	Run      Run                `json:"run"`
-	Task     Task               `json:"task"`
-	Agent    AgentDefinition    `json:"agent"`
-	Checkout Checkout           `json:"checkout"`
-	Timeline []RunTimelineEntry `json:"timeline"`
-	Blocker  *RunBlocker        `json:"blocker,omitempty"`
-	Handoff  *Handoff           `json:"handoff,omitempty"`
+	Run        Run                `json:"run"`
+	Task       Task               `json:"task"`
+	Agent      AgentDefinition    `json:"agent"`
+	Checkout   Checkout           `json:"checkout"`
+	Timeline   []RunTimelineEntry `json:"timeline"`
+	Blocker    *RunBlocker        `json:"blocker,omitempty"`
+	Handoff    *Handoff           `json:"handoff,omitempty"`
+	Assessment string             `json:"assessment,omitempty"`
 }
 
 // RunBlocker is the structured reason and requested resolution carried by the
@@ -298,6 +300,7 @@ type RunObservation struct {
 	Message              string
 	Evidence             []string
 	Handoff              string
+	Assessment           string
 	Pause                bool
 	LogArchive           *RunLogArchive
 	LogUnavailableReason string

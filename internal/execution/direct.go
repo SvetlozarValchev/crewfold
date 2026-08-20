@@ -1194,7 +1194,96 @@ func tailText(value string, lines int) string {
 }
 
 func redactDirectOutput(value string) string {
-	return secretAssignment.ReplaceAllString(value, "${1}[REDACTED]")
+	return RedactTerminalOutput(value)
+}
+
+// RedactTerminalOutput removes the fixed credential-shaped values shared by
+// execution, check, and managed-service owner log surfaces.
+func RedactTerminalOutput(value string) string {
+	return secretAssignment.ReplaceAllString(sanitizeTerminalControl(value), "${1}[REDACTED]")
+}
+
+// sanitizeTerminalControl preserves readable lines while removing control
+// sequences that could act on a terminal or change the visual ordering of
+// browser text. Invalid UTF-8 remains visible as the replacement rune.
+func sanitizeTerminalControl(value string) string {
+	value = strings.ToValidUTF8(value, "\uFFFD")
+	const (
+		terminalText = iota
+		terminalEscape
+		terminalCSI
+		terminalOSC
+		terminalOSCEscape
+	)
+	state := terminalText
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for _, current := range value {
+		switch state {
+		case terminalEscape:
+			switch current {
+			case '[':
+				state = terminalCSI
+			case ']':
+				state = terminalOSC
+			default:
+				state = terminalText
+			}
+			continue
+		case terminalCSI:
+			if current >= 0x40 && current <= 0x7e {
+				state = terminalText
+			}
+			continue
+		case terminalOSC:
+			switch current {
+			case 0x07, 0x9c:
+				state = terminalText
+			case 0x1b:
+				state = terminalOSCEscape
+			}
+			continue
+		case terminalOSCEscape:
+			if current == '\\' {
+				state = terminalText
+			} else {
+				state = terminalOSC
+			}
+			continue
+		}
+		switch current {
+		case 0x1b:
+			state = terminalEscape
+			continue
+		case 0x9b:
+			state = terminalCSI
+			continue
+		case 0x9d:
+			state = terminalOSC
+			continue
+		case '\n', '\t':
+			builder.WriteRune(current)
+			continue
+		case '\r':
+			builder.WriteByte('\n')
+			continue
+		}
+		if current <= 0x1f || current == 0x7f || current >= 0x80 && current <= 0x9f || terminalBidiControl(current) {
+			continue
+		}
+		builder.WriteRune(current)
+	}
+	return builder.String()
+}
+
+func terminalBidiControl(current rune) bool {
+	switch current {
+	case 0x061c, 0x200e, 0x200f, 0x2028, 0x2029, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e,
+		0x2066, 0x2067, 0x2068, 0x2069, 0x206a, 0x206b, 0x206c, 0x206d, 0x206e, 0x206f:
+		return true
+	default:
+		return false
+	}
 }
 
 // RunDirectSupervisor is the hidden process entry point used by DirectRuntime.

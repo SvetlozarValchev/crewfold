@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:run-artifact-content:v1",
+  "title": "Crewfold run artifact content v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact", "workspace_id", "project_id", "task_id", "agent_id", "content"],
+  "properties": {
+    "artifact": {"$ref": "run-artifact.schema.json"},
+    "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
+    "project_id": {"type": "string", "pattern": "^prj_[0-9a-f]{32}$"},
+    "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "agent_id": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
+    "content": {"type": "string", "maxLength": 32768}
+  }
+}

@@ -896,6 +896,51 @@ scope/provenance mismatches, updates to immutable records, and deletes. The
 projector uses a sealed Store-only write path for derived projection state. The
 seal does not extend caller or agent authority.
 
+## Managed local-process authority and delivery acceptance
+
+M24 keeps development servers, asset watchers, cookers, local APIs, and other
+non-interactive long-lived processes outside agent-run lifetime while binding
+them to canonical work. The storage family is:
+
+| Table | Exact responsibility |
+| --- | --- |
+| `managed_service_definitions` | immutable structural executable/argv, checkout/workstream scope, bounded environment, network/health/restart/stop/log contract, active/retired revision |
+| `managed_service_arguments` | ordered exact argv children |
+| `managed_service_environment` | ordered bounded nonsecret environment overrides |
+| `managed_service_grants` | current exact agent authority, optionally narrowed from one parent grant |
+| `managed_service_requests` | inert agent request and owner decision |
+| `managed_service_instances` | requested through terminal canonical lifecycle and source receipt |
+| `managed_service_runtime_bindings` | current-node PID/process-group/start-ticks and private log paths; never public or backed up |
+| `managed_service_jobs` | durable start/stop/restart/probe effect queue |
+| `managed_service_log_artifacts` | typed terminal stdout/stderr references into the immutable catalog |
+
+The only current profile is `local-process` revision 1. It is not a Vite or Node
+profile: the same validator and worker accept any absolute executable with
+structural arguments. Opaque `sh -c`/`bash -c`, remote bind/health hosts, secret-
+shaped environment names, unsafe checkout/cwd traversal, stale profile revisions,
+and cross-scope authority fail before an OS process exists. No worker infers or
+runs an install, clean, clone, dependency bootstrap, or framework command.
+
+The process host creates one process group, records `/proc` start ticks, captures
+private bounded stdout/stderr, and probes process/TCP/HTTP readiness. Graceful
+stop escalates to the entire process group. A stale or foreign node binding is
+`unknown`; PID reuse is never treated as identity. Latest failed, degraded, or
+unknown state for each active definition is retained in full doctor with an exact
+instance sample and safe next action.
+
+Terminal service logs use
+`service-artifacts/<first-two-hex>/<sha256>`. They share the immutable content
+catalog but have a distinct typed namespace from run and check evidence. Control
+bytes/ANSI/OSC/bidi are removed, invalid UTF-8 is replaced, secret-shaped values
+are redacted, and byte truncation is explicit. Service output does not become
+knowledge, task evidence, or an accepted outcome automatically.
+
+`workstream_delivery_decisions` binds the exact derived delivery revision to one
+owner acceptance or rejection. Readiness requires the closed required task set,
+real run-owned artifact references, and final structured verification `pass`;
+free-form report prose cannot counterfeit any of them. Acceptance revalidates
+the complete set and closes the objective in one transaction.
+
 ## Atomic command path
 
 `workspace.init` executes one immediate transaction:
@@ -955,16 +1000,17 @@ manifest.sha256
 crewfold.db
 check-artifacts/<first-two-hex>/<sha256>
 run-artifacts/<first-two-hex>/<sha256>
+service-artifacts/<first-two-hex>/<sha256>
 ```
 
 `crewfold.db` is the standalone online-backup result, never a copy of the live
 main file. Artifact enumeration comes from the snapshot; only exactly referenced
-immutable check and terminal-run-log content is copied. Artifact hash or absence
+immutable check, terminal-run-log, and terminal-service-log content is copied. Artifact hash or absence
 fails creation.
 
 The bundle excludes `crewfold.db-wal`, `crewfold.db-shm`, lock/socket/PID files,
 maintenance receipts and staging, `node.key`, capability tokens, active
-`runtime/` and `check-runtime/` state, Herdr sessions/transcripts, provider homes
+`runtime/`, `check-runtime/`, and `service-runtime/` state, Herdr sessions/transcripts, provider homes
 and credentials, source repositories/checkouts, daemon logs, and unreferenced or
 orphan artifacts. The database itself remains sensitive because canonical rows
 include messages, evidence, and registered checkout paths; backup is not a
@@ -979,7 +1025,7 @@ Canonical `manifest.json` has schema
 - captured event high-water and quiescence proof counts;
 - a top-level `database` object with relative path, size, and SHA-256;
 - a bytewise relative-path-sorted entry list whose records contain path, closed
-  kind (`check_artifact|run_log_artifact`), integer mode, size, and SHA-256; and
+  kind (`check_artifact|run_log_artifact|service_log_artifact`), integer mode, size, and SHA-256; and
 - total entry count and bytes, counting the database plus artifacts. The manifest
   envelope files are not entries.
 

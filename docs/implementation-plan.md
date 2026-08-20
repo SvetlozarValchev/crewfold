@@ -1612,7 +1612,127 @@ handing off. No clone-per-run, status-only handoff, unplaced accepted team, hidd
 execution, or non-actionable blocker remains. All prior scenarios pass under the
 one current contract.
 
-### M24 — Public open-source release readiness
+### M24 — Operable workstreams and managed local services
+
+**Question answered:** Can the owner follow one evidence-backed delivery from
+agent conversation through execution and acceptance, then operate the local
+process the crew built without opening an unrelated shell?
+
+**Visible result**
+
+```sh
+crewfold open
+```
+
+The workstream shows its checkout, placed team, dependency/output graph, exact
+review and verification assessments, readable evidence, delivery state, and
+managed local processes. Selecting an agent shows conversation epochs and every
+attached task/service operation as one ordered timeline. A Vite preview or other
+owner-reviewed local service remains healthy after the finite task that requested
+it completes and exposes one safe local URL plus logs/restart/stop controls.
+
+**Contract**
+
+The accepted boundary is
+[ADR-0023](decisions/0023-operable-workstreams-and-managed-local-services.md).
+M23 remains the authority and context foundation; M24 closes the operability,
+evidence-read, assessment, delivery-acceptance, and continuing-process gaps found
+in the real Signal Garden workflow.
+
+**Delivery slices**
+
+1. Add revisioned generic managed-service definitions attached to one domain and
+   optional workstream, exact checkout, contained working directory, structural
+   argv, environment additions, execution profile, network/health/restart/stop
+   policy, capacity, and owner attribution.
+2. Add node-bound service instances and immutable request/start/health/restart/
+   stop/terminal receipts. Keep PIDs and process handles operational, never
+   canonical authority.
+3. Implement one noninteractive local service supervisor with process-group
+   cleanup, parent-death behavior, loopback allocation, bounded health probes,
+   log capture/redaction, restart backoff, and exact current-node reconciliation.
+4. Add owner and agent service grants plus inert service proposals. A granted
+   coordinator may operate only exact eligible definitions/actions/capacity and
+   may delegate only a narrower envelope.
+5. Add strict local API, CLI automation, and closed agent tools for definition,
+   list/show, start, stop, restart, health, and logs. Retain `crewfold service`
+   solely for Crewfold's own user service; use a distinct project-process CLI
+   noun.
+6. Add bounded authorized run-artifact reads. A
+   `handoff_with_evidence` successor reads the exact referenced bytes and the
+   browser opens the same artifact with attribution/hash/media bounds.
+7. Aggregate durable conversation epochs, assignments, execution lifecycle,
+   commands, changes, messages, blockers, checks, evidence, handoffs, and service
+   operations into one selected-agent timeline and consequential status.
+8. Represent structured review/verification assessment separately from process
+   completion. A blocking review must not render as generic green `Completed`.
+9. Derive `verified — awaiting owner acceptance` from exact current delivery
+   records. Exact owner acceptance records an outcome and closes the workstream
+   without implying commit/push/publish/deploy/service start.
+10. Add domain/workstream service summaries and one contextual service inspector
+    with safe URL open, health, logs, ownership, receipts, restart, and stop. Do
+    not add another peer administrative page.
+11. Extend canonical integrity, full doctor, quiescent backup, restore, resource
+    accounting, and endurance cleanup for definitions, instances, receipts, and
+    referenced immutable service logs.
+
+**Automated acceptance**
+
+- A real Signal Garden browser scenario accepts one implementation → independent
+  blocking review → remediation → final verification graph in one pre-existing
+  warm checkout. The agent timeline attributes every command/change/handoff and
+  never presents the reviewer as merely idle or successfully passed.
+- The review publishes one bounded artifact; remediation reads its authorized
+  content byte-for-byte and cannot read an unrelated artifact. The owner opens
+  the same content from the browser.
+- Final verification produces `verified — awaiting owner acceptance`; accepting
+  the exact revision closes the workstream, while stale or unresolved delivery
+  refuses without effect.
+- The owner and an exactly granted coordinator each start the generic Signal
+  Garden `npm run dev` definition. It binds loopback, becomes HTTP healthy,
+  exposes a safe URL, serves the real app, and remains running after the
+  requesting task finishes.
+- Stop/restart, service crash, daemon restart, browser restart, Herdr restart,
+  checkout disappearance, occupied port, missing executable/dependencies, and
+  health failure retain one truthful lifecycle and bounded logs.
+- Another fixture runs a non-Vite executable through the same contract, proving
+  the implementation is generic rather than package-script-specific.
+- Unauthorized, expired, over-capacity, cross-domain, stale-definition,
+  shell-interpreter, remote-bind, unsafe-cwd/env, and replay attempts fail before
+  process launch.
+- Active/starting services make backup return exact bounded quiescence blockers.
+  After stop, backup/verify/restore succeeds; the restored definition remains
+  stopped with no live handle or automatic process start.
+- Twenty fault/restart cycles leave no child, process group, socket, temporary
+  file, FD, goroutine, or log artifact leak beyond frozen bounds.
+- Desktop and narrow real-browser passes prove readable timelines, evidence,
+  service health/actions, keyboard/focus order, reconnect, terminal-safe logs,
+  and stable canonical fencing.
+
+**Failure injection**
+
+- Kill before/after process creation, binding persistence, health transition,
+  restart decision, log publication, stop signal, process-group reap, terminal
+  receipt, artifact read, delivery acceptance, and every daemon/browser response
+  boundary.
+- Emit hostile ANSI/control/bidi/oversized/binary logs; fork children; ignore
+  graceful stop; reuse a PID; replace or symlink the checkout/cwd/executable;
+  race two starts; crash-loop; and tamper with referenced evidence.
+
+Every boundary is absent or replayably attributable, no unrelated process is
+contacted, and no browser text, role, hierarchy, transcript, port, PID, or command
+line expands authority.
+
+**Exit gate**
+
+From one browser workflow, the owner understands who implemented, reviewed,
+remediated, and verified a workstream; reads the exact evidence; operates the
+resulting local preview; and accepts the verified delivery explicitly. Task runs
+may end while a separately authorized service remains manageable. No hidden
+execution, ID-only evidence, misleading completed-review badge, ambiguously
+active verified objective, orphan child, or unmanaged background process remains.
+
+### M25 — Public open-source release readiness
 
 **Question answered:** Can an unrelated developer install, understand, test, and
 extend Crewfold safely?
@@ -1668,7 +1788,8 @@ an explicit owner decision.
 | Usable personal workbench | M21 | One local browser surface for intent, execution, inspection, and understanding |
 | Domain agent console | M22 | Domains, durable agent trees, resumable conversations, and cross-workstream knowledge |
 | Workflow consolidation | M23 | Workstream-owned persistent checkouts, complete handoffs, placed teams, and unified agent activity |
-| Public release candidate | M24 | Installable, documented, extensible OSS package |
+| Operable workstreams | M24 | Truthful unified delivery, readable evidence, explicit acceptance, and managed local services |
+| Public release candidate | M25 | Installable, documented, extensible OSS package |
 
 These are capability labels, not promises of semantic-version numbers or dates.
 

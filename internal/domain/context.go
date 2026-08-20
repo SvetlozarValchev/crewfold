@@ -57,6 +57,7 @@ type ContextTask struct {
 	ObjectiveID  string `json:"objective_id,omitempty"`
 	Title        string `json:"title"`
 	Description  string `json:"description,omitempty"`
+	TaskClass    string `json:"task_class"`
 	Priority     int    `json:"priority"`
 	Budget       Budget `json:"budget"`
 	Revision     int64  `json:"revision"`
@@ -446,6 +447,7 @@ type RunReport struct {
 	Message        string   `json:"message"`
 	Evidence       []string `json:"evidence"`
 	Handoff        string   `json:"handoff,omitempty"`
+	Assessment     string   `json:"assessment,omitempty"`
 	IdempotencyKey string   `json:"idempotency_key"`
 	Status         string   `json:"status"`
 	CreatedAt      string   `json:"created_at"`
@@ -461,6 +463,18 @@ type RunArtifact struct {
 	ByteSize       int    `json:"byte_size"`
 	IdempotencyKey string `json:"idempotency_key"`
 	CreatedAt      string `json:"created_at"`
+}
+
+// RunArtifactContent is one bounded, immutable artifact plus the exact
+// authority that produced it. The content remains separate from RunArtifact
+// summaries so ordinary context and list operations never copy evidence bytes.
+type RunArtifactContent struct {
+	Artifact    RunArtifact `json:"artifact"`
+	WorkspaceID string      `json:"workspace_id"`
+	ProjectID   string      `json:"project_id"`
+	TaskID      string      `json:"task_id"`
+	AgentID     string      `json:"agent_id"`
+	Content     string      `json:"content"`
 }
 
 type RunToolCall struct {

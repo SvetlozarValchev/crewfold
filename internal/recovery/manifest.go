@@ -76,6 +76,8 @@ func ArtifactEntries(references []store.ImmutableArtifactReference) []ArtifactEn
 		root := "check-artifacts"
 		if reference.Kind == "run_log_artifact" {
 			root = "run-artifacts"
+		} else if reference.Kind == "service_log_artifact" {
+			root = "service-artifacts"
 		}
 		entries[index] = ArtifactEntry{
 			Path:   root + "/" + shard + "/" + reference.ContentSHA256,
@@ -282,12 +284,14 @@ func validateManifest(manifest Manifest) error {
 }
 
 func validArtifactEntry(entry ArtifactEntry) bool {
-	if entry.Kind != "check_artifact" && entry.Kind != "run_log_artifact" || entry.Mode != bundleFileMode || entry.Size < 0 || entry.Size > maximumArtifactSize || !sha256Pattern.MatchString(entry.SHA256) {
+	if entry.Kind != "check_artifact" && entry.Kind != "run_log_artifact" && entry.Kind != "service_log_artifact" || entry.Mode != bundleFileMode || entry.Size < 0 || entry.Size > maximumArtifactSize || !sha256Pattern.MatchString(entry.SHA256) {
 		return false
 	}
 	root := "check-artifacts"
 	if entry.Kind == "run_log_artifact" {
 		root = "run-artifacts"
+	} else if entry.Kind == "service_log_artifact" {
+		root = "service-artifacts"
 	}
 	want := root + "/" + entry.SHA256[:2] + "/" + entry.SHA256
 	return entry.Path == want && validRelativePath(entry.Path)
@@ -393,7 +397,9 @@ func quiescenceCountsZero(counts store.QuiescenceCounts) bool {
 	return counts.NonterminalRuns == 0 && counts.UnsettledRunJobs == 0 && counts.RuntimeBindings == 0 &&
 		counts.UnfinishedCheckRuns == 0 && counts.UnsettledCheckJobs == 0 && counts.OpenWakeJobs == 0 &&
 		counts.OpenSchedulingIntents == 0 && counts.OpenSupervisorActions == 0 && counts.OpenApprovals == 0 &&
-		counts.OpenOwnerManagerReviews == 0 && counts.OpenOwnerExecutiveExchanges == 0
+		counts.OpenOwnerManagerReviews == 0 && counts.OpenOwnerExecutiveExchanges == 0 &&
+		counts.NonterminalManagedServices == 0 && counts.ManagedServiceBindings == 0 &&
+		counts.UnsettledManagedServiceJobs == 0
 }
 
 func equalArtifactEntries(left, right []ArtifactEntry) bool {

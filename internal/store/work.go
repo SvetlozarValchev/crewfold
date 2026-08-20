@@ -395,7 +395,7 @@ func (s *Store) CreateTask(ctx context.Context, command CreateTaskCommand) (Task
 	if err != nil {
 		return TaskMutationResult{}, storageFailure("generate task id", err)
 	}
-	task := domain.Task{ID: id, WorkspaceID: workspace.ID, ProjectID: project.ID, ObjectiveID: objectiveID, Title: title, Description: description, Status: domain.TaskReady, Priority: command.Priority, Budget: command.Budget, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID}
+	task := domain.Task{ID: id, WorkspaceID: workspace.ID, ProjectID: project.ID, ObjectiveID: objectiveID, Title: title, Description: description, TaskClass: "implementation", Status: domain.TaskReady, Priority: command.Priority, Budget: command.Budget, Revision: 1, CreatedAt: now, UpdatedAt: now, CreatedBy: localOwnerActorID, UpdatedBy: localOwnerActorID}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO tasks(id, workspace_id, project_id, objective_id, title, description, status, blocked_reason, priority, budget_tokens, budget_cost_cents, budget_time_seconds, revision, created_at, updated_at, created_by, updated_by)
 VALUES (?, ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, task.ID, task.WorkspaceID, task.ProjectID, task.ObjectiveID, task.Title, task.Description, task.Status, task.Priority, task.Budget.TokenLimit, task.Budget.CostCents, task.Budget.TimeSeconds, task.Revision, task.CreatedAt, task.UpdatedAt, task.CreatedBy, task.UpdatedBy); err != nil {
@@ -960,14 +960,14 @@ func queryTask(ctx context.Context, database queryRower, workspaceID, taskID str
 
 const taskSelect = `
 SELECT t.id, t.workspace_id, t.project_id, COALESCE(t.objective_id, ''), t.title,
-       COALESCE(t.description, ''), t.status, COALESCE(t.blocked_reason, ''),
+       COALESCE(t.description, ''), t.task_class, t.status, COALESCE(t.blocked_reason, ''),
        t.priority, t.budget_tokens, t.budget_cost_cents, t.budget_time_seconds,
        COALESCE(a.id, ''), COALESCE(a.agent_id, ''), COALESCE(a.lease_expires_at, ''),
        t.revision, t.created_at, t.updated_at, t.created_by, t.updated_by
 FROM tasks t LEFT JOIN task_assignments a ON a.task_id = t.id AND a.status = 'active'`
 
 func scanTask(row rowScanner, task *domain.Task) error {
-	return row.Scan(&task.ID, &task.WorkspaceID, &task.ProjectID, &task.ObjectiveID, &task.Title, &task.Description, &task.Status, &task.BlockedReason, &task.Priority, &task.Budget.TokenLimit, &task.Budget.CostCents, &task.Budget.TimeSeconds, &task.AssignmentID, &task.AssignedAgentID, &task.AssignmentLeaseExpiresAt, &task.Revision, &task.CreatedAt, &task.UpdatedAt, &task.CreatedBy, &task.UpdatedBy)
+	return row.Scan(&task.ID, &task.WorkspaceID, &task.ProjectID, &task.ObjectiveID, &task.Title, &task.Description, &task.TaskClass, &task.Status, &task.BlockedReason, &task.Priority, &task.Budget.TokenLimit, &task.Budget.CostCents, &task.Budget.TimeSeconds, &task.AssignmentID, &task.AssignedAgentID, &task.AssignmentLeaseExpiresAt, &task.Revision, &task.CreatedAt, &task.UpdatedAt, &task.CreatedBy, &task.UpdatedBy)
 }
 
 func taskDetail(ctx context.Context, database *sql.DB, task domain.Task) (domain.TaskDetail, error) {

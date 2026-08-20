@@ -33,6 +33,7 @@ func TestM20FullScanDetectsOneRawCorruptionInEverySemanticFamily(t *testing.T) {
 		"context":      {check: "delta_chain_and_seal", setup: m20ContextCorruptionFixture},
 		"management":   {check: "sealed_content_and_child_counts", setup: m20ManagementCorruptionFixture},
 		"messaging":    {check: "delivery_and_wake_state", setup: m20MessagingCorruptionFixture},
+		"services":     {check: "canonical_metadata", setup: m20ServiceCorruptionFixture},
 		"checks":       {check: "content_hashes_and_children", setup: m20CheckCorruptionFixture},
 		"outcomes":     {check: "receipts_governance_and_child_counts", setup: m20OutcomeCorruptionFixture},
 	}
@@ -179,6 +180,30 @@ func m20MessagingCorruptionFixture(t *testing.T) m20SemanticCorruptionFixture {
 	return m20SemanticCorruptionFixture{storage: storage, table: "message_recipients",
 		statement: "UPDATE message_recipients SET status='delivered' WHERE message_id=? AND recipient_agent_id=?",
 		arguments: []any{message.Value.Message.ID, agent.ID}, sample: "recipient:" + message.Value.Message.ID + ":" + agent.ID}
+}
+
+func m20ServiceCorruptionFixture(t *testing.T) m20SemanticCorruptionFixture {
+	storage := openTestStore(t, t.TempDir(), Options{})
+	workspace, project := initializeWorkTestProject(t, storage)
+	inspection, err := storage.InspectProject(context.Background(), workspace.ID, project.ID)
+	if err != nil || len(inspection.Checkouts) != 1 {
+		t.Fatalf("InspectProject() = %#v, %v", inspection, err)
+	}
+	definition, err := storage.CreateManagedServiceDefinition(context.Background(), CreateManagedServiceDefinitionCommand{
+		WorkspaceIdentifier: workspace.ID, ProjectIdentifier: project.ID, CheckoutID: inspection.Checkouts[0].ID,
+		Name: "m20-semantic-service", Description: "one exact local service", Executable: "/bin/true", Arguments: []string{}, WorkingDirectory: ".",
+		Profile: "local-process", ProfileRevision: 1, NetworkMode: domain.ManagedServiceNetworkNone,
+		Health:        domain.ManagedServiceHealthCheck{Type: domain.ManagedServiceHealthProcess, IntervalMillis: 100, TimeoutMillis: 50},
+		RestartPolicy: domain.ManagedServiceRestartNever, StopSignal: domain.ManagedServiceStopSignalTerm, StopGraceMillis: 100,
+		OutputByteLimit: 4096, CapacityClass: domain.ManagedServiceCapacityLocalDevelop,
+		IdempotencyKey: "m20-semantic-service", CorrelationID: "m20-semantic-service",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m20SemanticCorruptionFixture{storage: storage, table: "managed_service_definitions",
+		statement: "UPDATE managed_service_definitions SET updated_at='not-a-canonical-timestamp' WHERE id=?", arguments: []any{definition.Value.ID},
+		sample: "service_definition:" + definition.Value.ID}
 }
 
 func m20CheckCorruptionFixture(t *testing.T) m20SemanticCorruptionFixture {

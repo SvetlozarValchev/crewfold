@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"crewfold/internal/domain"
 	"crewfold/internal/localapi"
 	"crewfold/internal/recovery"
 	"crewfold/internal/store"
@@ -54,7 +55,7 @@ func (s *server) handleSystemDoctorFull(request localapi.Request) localapi.Respo
 	}
 	rssBytes, openFDs, resourceErr := daemonProcessResources()
 
-	checks := buildFullDoctorChecks(integrity, artifacts, databaseProbe, execution.Node.Unresolved, databaseBytes, artifactBytes, rssBytes, resourceErr)
+	checks := buildFullDoctorChecks(integrity, artifacts, databaseProbe, execution.Node.Unresolved, execution.Services, databaseBytes, artifactBytes, rssBytes, resourceErr)
 	status := "ok"
 	for _, check := range checks {
 		if check.Status == "failed" {
@@ -107,7 +108,9 @@ func buildFullDoctorChecks(
 	integrity store.CanonicalIntegrityReport,
 	artifacts recovery.ArtifactFilesystemReport,
 	databaseProbe databaseFileProbe,
-	unresolved, databaseBytes, artifactBytes, rssBytes int64,
+	unresolved int64,
+	services domain.ManagedServiceExecutionHealth,
+	databaseBytes, artifactBytes, rssBytes int64,
 	resourceErr error,
 ) []localapi.FullDoctorCheck {
 	checks := make([]localapi.FullDoctorCheck, 0, len(localapi.FullDoctorCheckOrder()))
@@ -253,6 +256,27 @@ func buildFullDoctorChecks(
 	runtimeCheck := doctorCheck("runtime_bindings", maxDoctorCount(1, integrity.Quiescence.Counts.RuntimeBindings), runtimeIssues, "runtime bindings belong to the current node and exact nonterminal operation", "resolve_lost_runtime")
 	runtimeCheck.Samples = runtimeSamples
 	checks = append(checks, runtimeCheck)
+	serviceSummary := "latest managed process state for every active definition is operable or cleanly stopped"
+	serviceCheck := doctorCheck("managed_services", maxDoctorCount(1, services.DefinitionCount+services.InstanceCount), services.IssueCount, serviceSummary, "retry")
+	for _, issue := range services.Issues {
+		detail := "inspect the exact process logs and repair its structural definition or local environment before restarting"
+		if issue.Status == domain.ManagedServiceUnknown {
+			detail = "the prior process owner is unknown; confirm that its process group ended, then resolve the unknown instance before restarting"
+		} else if issue.Status == domain.ManagedServiceDegraded {
+			detail = "the process is running but its exact health probe is failing; inspect logs and repair the service or probe before restart"
+		}
+		if issue.Diagnostic != "" {
+			detail += ": " + issue.Diagnostic
+		}
+		code := issue.DiagnosticCode
+		if code == "" {
+			code = "managed_service_" + issue.Status
+		}
+		serviceCheck.Samples = append(serviceCheck.Samples, localapi.FullDoctorSample{
+			EntityType: "managed_service", EntityID: boundedDoctorText(issue.InstanceID, 128), Code: boundedDoctorCode(code), Detail: boundedDoctorText(detail, 2048),
+		})
+	}
+	checks = append(checks, serviceCheck)
 	queueChecked, queueIssues := int64(len(integrity.DurableQueues)), int64(0)
 	for _, queue := range integrity.DurableQueues {
 		queueChecked += queue.RowCount
@@ -316,6 +340,7 @@ func markIncompleteDoctorChecks(checks []localapi.FullDoctorCheck, integrity sto
 		"artifact_integrity":        len(integrity.DerivedProjections) == 0,
 		"derived_knowledge_index":   len(integrity.DerivedProjections) == 0,
 		"runtime_bindings":          integrity.Quiescence.ProofSHA256 == "",
+		"managed_services":          len(integrity.SemanticFamilies) == 0,
 		"durable_queues":            len(integrity.DurableQueues) == 0,
 		"filesystem_permissions":    len(integrity.DerivedProjections) == 0,
 	}

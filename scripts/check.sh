@@ -113,6 +113,9 @@ printf 'Herdr runtime black-box acceptance\n'
 printf 'Provider-free operator TUI black-box acceptance\n'
 "$repo_root/test/scenarios/operator-tui/run.sh"
 
+printf 'Generic managed local process black-box acceptance\n'
+"$repo_root/test/scenarios/managed-local-process/run.sh"
+
 printf 'Codex provider black-box acceptance\n'
 "$repo_root/test/scenarios/codex-provider/run.sh"
 

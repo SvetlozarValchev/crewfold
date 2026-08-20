@@ -382,6 +382,9 @@ type QuiescenceCounts struct {
 	OpenApprovals               int64 `json:"open_approvals"`
 	OpenOwnerManagerReviews     int64 `json:"open_owner_manager_reviews"`
 	OpenOwnerExecutiveExchanges int64 `json:"open_owner_executive_exchanges"`
+	NonterminalManagedServices  int64 `json:"nonterminal_managed_services"`
+	ManagedServiceBindings      int64 `json:"managed_service_bindings"`
+	UnsettledManagedServiceJobs int64 `json:"unsettled_managed_service_jobs"`
 }
 
 type QuiescenceBlocker struct {
@@ -840,6 +843,7 @@ type CreateRunReportCommand struct {
 	Message        string
 	Evidence       []string
 	Handoff        string
+	Assessment     string
 	Payload        any
 	IdempotencyKey string
 }
@@ -1175,6 +1179,178 @@ type RunWork struct {
 type MutationResult[T any] struct {
 	Value         T     `json:"value"`
 	EventSequence int64 `json:"event_sequence"`
+}
+
+type CreateManagedServiceDefinitionCommand struct {
+	WorkspaceIdentifier   string
+	ProjectIdentifier     string
+	WorkstreamID          string
+	CheckoutID            string
+	Name                  string
+	Description           string
+	Executable            string
+	Arguments             []string
+	WorkingDirectory      string
+	Environment           []domain.ManagedServiceEnvironmentVariable
+	Profile               string
+	ProfileRevision       int64
+	NetworkMode           string
+	Health                domain.ManagedServiceHealthCheck
+	RestartPolicy         string
+	MaximumRestarts       int
+	RestartCooldownMillis int64
+	StopSignal            string
+	StopGraceMillis       int64
+	OutputByteLimit       int64
+	CapacityClass         string
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type RetireManagedServiceDefinitionCommand struct {
+	WorkspaceIdentifier string
+	DefinitionID        string
+	ExpectedRevision    int64
+	Reason              string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListManagedServiceDefinitionsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	WorkstreamID        string
+	CheckoutID          string
+	Status              string
+	Limit               int
+}
+
+type StartManagedServiceCommand struct {
+	WorkspaceIdentifier string
+	DefinitionID        string
+	ExpectedRevision    int64
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type CreateManagedServiceGrantCommand struct {
+	WorkspaceIdentifier        string
+	DefinitionID               string
+	ExpectedDefinitionRevision int64
+	ManagerAgentIdentifier     string
+	ExpectedMembershipRevision int64
+	Actions                    []string
+	MaximumInstances           int
+	ExpiresAt                  string
+	IdempotencyKey             string
+	CorrelationID              string
+}
+
+type DelegateManagedServiceGrantCommand struct {
+	ThreadID                   string
+	ParentGrantID              string
+	ExpectedParentRevision     int64
+	ManagerAgentIdentifier     string
+	ExpectedMembershipRevision int64
+	Actions                    []string
+	MaximumInstances           int
+	ExpiresAt                  string
+	IdempotencyKey             string
+	CorrelationID              string
+}
+
+type RevokeManagedServiceGrantCommand struct {
+	WorkspaceIdentifier string
+	GrantID             string
+	ExpectedRevision    int64
+	Reason              string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListManagedServiceGrantsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	ManagerIdentifier   string
+	DefinitionID        string
+	Status              string
+	Limit               int
+}
+
+type SubmitManagedServiceRequestCommand struct {
+	ThreadID         string
+	DefinitionID     string
+	ExpectedRevision int64
+	Summary          string
+	IdempotencyKey   string
+	CorrelationID    string
+}
+
+type DecideManagedServiceRequestCommand struct {
+	WorkspaceIdentifier string
+	RequestID           string
+	ExpectedRevision    int64
+	Accept              bool
+	Reason              string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ListManagedServiceRequestsQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	AgentIdentifier     string
+	DefinitionID        string
+	Status              string
+	Limit               int
+}
+
+type AgentManagedServiceActionCommand struct {
+	ThreadID              string
+	GrantID               string
+	ExpectedGrantRevision int64
+	InstanceID            string
+	ExpectedRevision      int64
+	Action                string
+	IdempotencyKey        string
+	CorrelationID         string
+}
+
+type RequestManagedServiceActionCommand struct {
+	WorkspaceIdentifier string
+	InstanceID          string
+	ExpectedRevision    int64
+	Action              string
+	IdempotencyKey      string
+	CorrelationID       string
+}
+
+type ResolveManagedServiceUnknownCommand struct {
+	WorkspaceIdentifier     string
+	InstanceID              string
+	ExpectedRevision        int64
+	RuntimeRetiredConfirmed bool
+	Reason                  string
+	IdempotencyKey          string
+	CorrelationID           string
+}
+
+type ListManagedServiceInstancesQuery struct {
+	WorkspaceIdentifier string
+	ProjectIdentifier   string
+	WorkstreamID        string
+	CheckoutID          string
+	Status              string
+	Limit               int
+}
+
+// ManagedServiceWork is the exact internal launch/control closure claimed by
+// the daemon. CheckoutPath and runtime bindings are never public authority.
+type ManagedServiceWork struct {
+	Definition   domain.ManagedServiceDefinition
+	Instance     domain.ManagedServiceInstance
+	Job          domain.ManagedServiceJob
+	CheckoutPath string
 }
 
 type CreateManagerGrantCommand struct {
@@ -1718,6 +1894,21 @@ type DecideCheckRepairCommand struct {
 	DecisionNote          string
 	IdempotencyKey        string
 	CorrelationID         string
+}
+
+type DecideWorkstreamDeliveryCommand struct {
+	WorkspaceIdentifier       string
+	ObjectiveID               string
+	ExpectedObjectiveRevision int64
+	ExpectedSHA256            string
+	Reason                    string
+	IdempotencyKey            string
+	CorrelationID             string
+}
+
+type WorkstreamDeliveryMutationResult struct {
+	Delivery      domain.WorkstreamDelivery `json:"delivery"`
+	EventSequence int64                     `json:"event_sequence"`
 }
 
 type Options struct {

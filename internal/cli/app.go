@@ -258,6 +258,8 @@ func (a *App) RunContext(ctx context.Context, args []string) int {
 		return a.runDaemonCommand(ctx, mode, args[1:])
 	case "service":
 		return a.runServiceCommand(ctx, mode, args[1:])
+	case "process":
+		return a.runProcess(ctx, mode, args[1:])
 	case "open":
 		return a.runOpen(ctx, mode, args[1:])
 	case "status":
@@ -966,6 +968,8 @@ func (a *App) runHelp(args []string) int {
 		fmt.Fprint(a.stdout, daemonHelp)
 	case "service":
 		fmt.Fprint(a.stdout, serviceHelp)
+	case "process":
+		fmt.Fprint(a.stdout, processHelp)
 	case "open":
 		fmt.Fprint(a.stdout, openHelp)
 	case "status":
@@ -1697,6 +1701,7 @@ Commands:
   daemon run     Run the local daemon in the foreground
   daemon stop    Ask a running daemon to stop cleanly
   service        Install and control the owner-local background service
+  process        Define and operate checkout-attached local processes
   open           Open the authenticated local web workbench
   status         Query daemon health through its local socket
   workspace      Initialize or inspect a durable workspace

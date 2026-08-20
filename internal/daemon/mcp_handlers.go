@@ -26,6 +26,7 @@ const (
 	toolProgress            = "crewfold_report_progress"
 	toolBlocked             = "crewfold_report_blocked"
 	toolArtifact            = "crewfold_publish_artifact"
+	toolReadArtifact        = "crewfold_read_artifact"
 	toolKnowledge           = "crewfold_propose_knowledge"
 	toolContradictionReport = "crewfold_report_contradiction"
 	// toolKnowledgeAccept is a reserved governance operation. It is recognized
@@ -285,12 +286,12 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 		var arguments completionArguments
 		err = decodeToolArguments(params.Arguments, &arguments)
 		if err == nil {
-			err = arguments.validateForRun(briefing.Run)
+			err = arguments.validateForRun(briefing.Run, briefing.Packet.Task.TaskClass)
 		}
 		if err == nil {
 			value, err = s.store.SubmitRunReport(context.Background(), store.CreateRunReportCommand{
 				RunID: briefing.Run.ID, Kind: domain.ObservationCompletion, Message: arguments.Summary,
-				Evidence: arguments.EvidenceIDs, Handoff: arguments.Handoff, Payload: arguments, IdempotencyKey: arguments.IdempotencyKey,
+				Evidence: arguments.EvidenceIDs, Handoff: arguments.Handoff, Assessment: arguments.Assessment, Payload: arguments, IdempotencyKey: arguments.IdempotencyKey,
 			})
 		}
 	case toolArtifact:
@@ -301,6 +302,17 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 				RunID: briefing.Run.ID, Name: arguments.Name, MediaType: arguments.MediaType,
 				Content: arguments.Content, IdempotencyKey: arguments.IdempotencyKey,
 			})
+		}
+	case toolReadArtifact:
+		var arguments struct {
+			ArtifactID string `json:"artifact_id"`
+		}
+		err = decodeToolArguments(params.Arguments, &arguments)
+		if err == nil && !validManagerEntityID(arguments.ArtifactID, "artifact_") {
+			err = errors.New("artifact_id is invalid")
+		}
+		if err == nil {
+			value, err = s.store.ReadRunArtifactAsRun(context.Background(), briefing.Run.ID, arguments.ArtifactID)
 		}
 	case toolKnowledge:
 		var arguments proposeKnowledgeArguments
@@ -571,6 +583,7 @@ func scopedMCPTools() []mcp.Tool {
 		{Name: toolProgress, Description: "Submit a structured progress report for this run.", InputSchema: objectSchema([]string{"summary", "completed", "next", "risks", "evidence_ids", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "completed": stringArraySchema(), "next": stringArraySchema(), "risks": stringArraySchema(), "evidence_ids": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolBlocked, Description: "Report that this run needs an owner or coordinator decision.", InputSchema: objectSchema([]string{"reason", "needs", "severity", "related_ids", "idempotency_key"}, map[string]any{"reason": stringSchema(1, 1024), "needs": stringArraySchema(), "severity": map[string]any{"type": "string", "enum": []string{"blocking", "high", "medium", "low"}}, "related_ids": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolArtifact, Description: "Publish bounded evidence owned by this run.", InputSchema: objectSchema([]string{"name", "media_type", "content", "idempotency_key"}, map[string]any{"name": stringSchema(1, 128), "media_type": stringSchema(1, 128), "content": stringSchema(0, 32768), "idempotency_key": stringSchema(1, 128)})},
+		{Name: toolReadArtifact, Description: "Read one bounded immutable artifact from this run or from an accepted handoff_with_evidence dependency delivery. Guessed IDs, sibling work, and unapplied reports are denied.", InputSchema: objectSchema([]string{"artifact_id"}, map[string]any{"artifact_id": managerEntityIDSchema("artifact_")})},
 		{Name: toolKnowledge, Description: "Propose one concise decision or finding sourced from this run's task; owner acceptance is still required.", InputSchema: objectSchema([]string{"type", "title", "body", "confidence", "verification_status", "freshness_policy", "idempotency_key"}, map[string]any{"type": map[string]any{"type": "string", "enum": []string{"decision", "finding"}}, "title": stringSchema(1, 160), "body": stringSchema(1, 16384), "confidence": map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}}, "verification_status": map[string]any{"type": "string", "enum": []string{"unverified", "supported", "verified"}}, "freshness_policy": map[string]any{"type": "string", "enum": []string{"until_superseded", "expires_at"}}, "fresh_until": stringSchema(1, 64), "task_scope_id": stringSchema(1, 128), "supersedes_revision_id": stringSchema(1, 128), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolContradictionReport, Description: "Report a reasoned contradiction between two exact accepted/current knowledge revisions that both apply to this run's project and task. The local owner must still confirm it before either revision is quarantined.", InputSchema: objectSchema([]string{"left_revision", "right_revision", "reason", "idempotency_key"}, map[string]any{"left_revision": knowledgeRevisionIDSchema(), "right_revision": knowledgeRevisionIDSchema(), "reason": stringSchema(1, 2048), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolProposeAssignment, Description: "Propose assignment of an existing task through one exact owner-authored launch profile. This does not assign or launch work until local-owner acceptance and supervision.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionAssignTask})},
@@ -579,7 +592,7 @@ func scopedMCPTools() []mcp.Tool {
 		{Name: toolProposeTasks, Description: "Propose a bounded task decomposition using only exact owner-allowed launch profiles. This does not create tasks until the local owner accepts it.", InputSchema: managerProposalInputSchema([]string{domain.ProposalActionCreateTask, domain.ProposalActionAddDependency, domain.ProposalActionDeclareClaimRequirement})},
 		{Name: toolExecutiveContext, Description: "Read the exact frozen owner instruction, conversation, project snapshot, and citation namespace for this executive exchange.", InputSchema: empty},
 		{Name: toolRespondToOwner, Description: "Submit this executive exchange's sole typed owner response. Proposal responses explain linked proposals; decision responses ask a genuine owner choice. These shapes are exclusive. This tool does not accept proposals or execute effects.", InputSchema: ownerExecutiveResponseInputSchema()},
-		{Name: toolCompletion, Description: "Propose completion with an executive handoff and evidence. changed_paths means the exact implementation diff paths inspected for this completion; an independent verifier lists the paths it reviewed without claiming to have edited them. Every array item is limited to 128 printable characters.", InputSchema: objectSchema([]string{"summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "handoff": stringSchema(1, 4096), "evidence_ids": stringArraySchema(), "changed_paths": stringArraySchema(), "checks": stringArraySchema(), "remaining_risks": stringArraySchema(), "unknowns": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
+		{Name: toolCompletion, Description: "Propose completion with an executive handoff and evidence. Review and verification task classes must also state the structured assessment pass, block, or changes_requested; process exit alone is not a passing assessment. changed_paths means the exact implementation diff paths inspected for this completion; an independent verifier lists the paths it reviewed without claiming to have edited them. Every array item is limited to 128 printable characters.", InputSchema: objectSchema([]string{"summary", "handoff", "evidence_ids", "changed_paths", "checks", "remaining_risks", "unknowns", "idempotency_key"}, map[string]any{"summary": stringSchema(1, 1024), "handoff": stringSchema(1, 4096), "assessment": map[string]any{"type": "string", "enum": []string{"pass", "block", "changes_requested"}}, "evidence_ids": stringArraySchema(), "changed_paths": stringArraySchema(), "checks": stringArraySchema(), "remaining_risks": stringArraySchema(), "unknowns": stringArraySchema(), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolRunCheck, Description: "Request one exact active project requirement whose frozen definition revision is present in this run's check-watch grant.", InputSchema: objectSchema([]string{"requirement_id", "idempotency_key"}, map[string]any{"requirement_id": checkEntityIDSchema("checkreq_"), "idempotency_key": stringSchema(1, 128)})},
 		{Name: toolListCheckResults, Description: "List a bounded page of check results visible through this run's exact check-watch grant.", InputSchema: objectSchema([]string{"limit"}, map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 50}, "cursor": stringSchema(1, 256)})},
 		{Name: toolInspectCheckResult, Description: "Inspect one check run and its bounded structured evidence when visible through this run's exact grant.", InputSchema: objectSchema([]string{"check_run_id"}, map[string]any{"check_run_id": checkEntityIDSchema("checkrun_")})},
@@ -1337,6 +1350,7 @@ type blockedArguments struct {
 type completionArguments struct {
 	Summary        string   `json:"summary"`
 	Handoff        string   `json:"handoff"`
+	Assessment     string   `json:"assessment,omitempty"`
 	EvidenceIDs    []string `json:"evidence_ids"`
 	ChangedPaths   []string `json:"changed_paths"`
 	Checks         []string `json:"checks"`
@@ -1443,9 +1457,19 @@ func (arguments completionArguments) validate() error {
 	)
 }
 
-func (arguments completionArguments) validateForRun(run domain.Run) error {
+func (arguments completionArguments) validateForRun(run domain.Run, taskClass string) error {
 	if err := arguments.validate(); err != nil {
 		return err
+	}
+	assessment := strings.TrimSpace(arguments.Assessment)
+	if assessment != "" && assessment != "pass" && assessment != "block" && assessment != "changes_requested" {
+		return errors.New("assessment must be pass, block, or changes_requested")
+	}
+	if (taskClass == "review" || taskClass == "verification") && assessment == "" {
+		return fmt.Errorf("%s completion requires an explicit pass, block, or changes_requested assessment", taskClass)
+	}
+	if (taskClass == "review" || taskClass == "verification") && len(arguments.EvidenceIDs) == 0 {
+		return fmt.Errorf("%s completion requires at least one immutable evidence reference", taskClass)
 	}
 	if run.ScenarioName == "owner-workbench" && (len(arguments.Checks) == 0 || len(arguments.ChangedPaths) == 0) {
 		return errors.New("workbench completion requires at least one exact check and one inspected changed path")

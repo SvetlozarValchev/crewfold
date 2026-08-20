@@ -281,7 +281,7 @@ func TestM21WorkbenchCompletionRequiresStructuredChecksAndChangedPaths(t *testin
 
 	run := domain.Run{ScenarioName: "owner-workbench"}
 	valid := completionArguments{Checks: []string{"node --test"}, ChangedPaths: []string{"src/domain.js"}}
-	if err := valid.validateForRun(run); err != nil {
+	if err := valid.validateForRun(run, "implementation"); err != nil {
 		t.Fatalf("valid workbench completion = %v", err)
 	}
 	for name, arguments := range map[string]completionArguments{
@@ -289,12 +289,12 @@ func TestM21WorkbenchCompletionRequiresStructuredChecksAndChangedPaths(t *testin
 		"missing changed paths": {Checks: []string{"node --test"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := arguments.validateForRun(run); err == nil {
+			if err := arguments.validateForRun(run, "implementation"); err == nil {
 				t.Fatal("incomplete workbench completion was accepted")
 			}
 		})
 	}
-	if err := (completionArguments{}).validateForRun(domain.Run{ScenarioName: "fixture"}); err != nil {
+	if err := (completionArguments{}).validateForRun(domain.Run{ScenarioName: "fixture"}, "implementation"); err != nil {
 		t.Fatalf("unrelated scenario inherited workbench acceptance: %v", err)
 	}
 }

@@ -23,6 +23,7 @@ deployment shape, or difficult-to-reverse dependencies.
 
 Current decisions:
 
+- [ADR-0023: Operable workstreams and managed local services](0023-operable-workstreams-and-managed-local-services.md)
 - [ADR-0022: Workstream execution homes and durable context continuity](0022-workstream-execution-and-context-continuity.md)
 - [ADR-0021: Domain-oriented durable-agent console](0021-domain-oriented-durable-agent-console.md)
 - [ADR-0020: Local web workbench as the primary owner interface](0020-local-web-workbench.md)

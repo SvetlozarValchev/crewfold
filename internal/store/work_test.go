@@ -252,9 +252,20 @@ func TestM23DependencyDeliveryGatesReadinessAndBecomesSuccessorContext(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	artifact, err := storage.PublishRunArtifact(ctx, PublishRunArtifactCommand{
+		RunID: active.Run.ID, Name: "test report", MediaType: "text/plain", Content: "27 checks passed",
+		IdempotencyKey: "m24-source-evidence",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerArtifact, err := storage.RunArtifactContent(ctx, workspace.ID, artifact.ID)
+	if err != nil || ownerArtifact.Content != "27 checks passed" || ownerArtifact.TaskID != source.Task.ID {
+		t.Fatalf("RunArtifactContent() = %#v, %v", ownerArtifact, err)
+	}
 	report, err := storage.SubmitRunReport(ctx, CreateRunReportCommand{
 		RunID: active.Run.ID, Kind: domain.ObservationCompletion, Message: "implemented the storage seam",
-		Evidence: []string{"artifact:test-report"}, Handoff: "review the adapter boundary before changing the format",
+		Evidence: []string{artifact.ID}, Handoff: "review the adapter boundary before changing the format",
 		Payload: map[string]any{
 			"changed_paths": []string{"src/storage.ts"}, "checks": []string{"npm test"},
 			"remaining_risks": []string{"migration compatibility"}, "unknowns": []string{"upstream format revision"},
@@ -323,12 +334,32 @@ func TestM23DependencyDeliveryGatesReadinessAndBecomesSuccessorContext(t *testin
 	if dependency.DeliveryRequirement != domain.DependencyDeliveryHandoffWithEvidence || dependency.Output == nil ||
 		dependency.Output.RunID != active.Run.ID || dependency.Output.Summary != "implemented the storage seam" ||
 		dependency.Output.Handoff != "review the adapter boundary before changing the format" ||
-		strings.Join(dependency.Output.EvidenceIDs, ",") != "artifact:test-report" ||
+		strings.Join(dependency.Output.EvidenceIDs, ",") != artifact.ID ||
 		strings.Join(dependency.Output.ChangedPaths, ",") != "src/storage.ts" ||
 		strings.Join(dependency.Output.Checks, ",") != "npm test" ||
 		strings.Join(dependency.Output.RemainingRisks, ",") != "migration compatibility" ||
 		strings.Join(dependency.Output.Unknowns, ",") != "upstream format revision" {
 		t.Fatalf("successor dependency output = %#v", dependency)
+	}
+	successorRun, err := storage.CreateRun(ctx, CreateRunCommand{
+		WorkspaceIdentifier: workspace.ID, TaskID: successorAfter.Task.ID, CheckoutIdentifier: checkout.ID,
+		ContextPacketID: successorPacket.Value.ID, Runtime: "fake", Provider: "fake",
+		Scenario: managementProgressScenario("m24-read-evidence"), ExpectedTaskRevision: assignedSuccessor.Detail.Task.Revision,
+		IdempotencyKey: "m24-successor-run", CorrelationID: "m24-successor-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	successorStarting, err := storage.MarkRunStarting(ctx, successorRun.Detail.Run.ID, "m24-successor-starting")
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := storage.ReadRunArtifactAsRun(ctx, successorStarting.ID, artifact.ID)
+	if err != nil || read.Content != "27 checks passed" || read.Artifact.ContentHash != artifact.ContentHash {
+		t.Fatalf("ReadRunArtifactAsRun() = %#v, %v", read, err)
+	}
+	if _, err := storage.ReadRunArtifactAsRun(ctx, successorStarting.ID, "artifact_00000000000000000000000000000000"); ErrorCode(err) != CodeRunArtifactNotFound {
+		t.Fatalf("ReadRunArtifactAsRun(unknown) error = %v, code = %q", err, ErrorCode(err))
 	}
 }
 

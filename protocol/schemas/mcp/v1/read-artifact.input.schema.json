@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:mcp:read-artifact-input:v1",
+  "title": "crewfold_read_artifact input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_id"],
+  "properties": {
+    "artifact_id": {"type": "string", "pattern": "^artifact_[0-9a-f]{32}$"}
+  }
+}

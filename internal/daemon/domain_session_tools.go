@@ -24,6 +24,10 @@ const (
 	domainToolDelegateStaffing = "crewfold_delegate_staffing_grant"
 	domainToolProposeWork      = "crewfold_propose_work"
 	domainToolProposeKnowledge = "crewfold_propose_knowledge"
+	domainToolControlService   = "crewfold_control_managed_service"
+	domainToolInspectService   = "crewfold_inspect_managed_service"
+	domainToolRequestService   = "crewfold_request_managed_service"
+	domainToolDelegateService  = "crewfold_delegate_managed_service_grant"
 )
 
 type domainSessionToolCall struct {
@@ -119,6 +123,40 @@ type domainSessionProposeKnowledgeArguments struct {
 	FreshUntil           string                        `json:"fresh_until,omitempty"`
 	SupportingSources    []domain.KnowledgeSourceInput `json:"supporting_sources,omitempty"`
 	SupersedesRevisionID string                        `json:"supersedes_revision_id,omitempty"`
+}
+
+type domainSessionControlServiceArguments struct {
+	Action                     string `json:"action"`
+	GrantID                    string `json:"grant_id"`
+	ExpectedGrantRevision      int64  `json:"expected_grant_revision"`
+	DefinitionID               string `json:"definition_id,omitempty"`
+	ExpectedDefinitionRevision int64  `json:"expected_definition_revision,omitempty"`
+	InstanceID                 string `json:"instance_id,omitempty"`
+	ExpectedInstanceRevision   int64  `json:"expected_instance_revision,omitempty"`
+}
+
+type domainSessionInspectServiceArguments struct {
+	Action                   string `json:"action"`
+	GrantID                  string `json:"grant_id"`
+	ExpectedGrantRevision    int64  `json:"expected_grant_revision"`
+	InstanceID               string `json:"instance_id"`
+	ExpectedInstanceRevision int64  `json:"expected_instance_revision"`
+}
+
+type domainSessionRequestServiceArguments struct {
+	DefinitionID     string `json:"definition_id"`
+	ExpectedRevision int64  `json:"expected_revision"`
+	Summary          string `json:"summary"`
+}
+
+type domainSessionDelegateServiceArguments struct {
+	ParentGrantID              string   `json:"parent_grant_id"`
+	ExpectedParentRevision     int64    `json:"expected_parent_revision"`
+	ManagerAgent               string   `json:"manager_agent"`
+	ExpectedMembershipRevision int64    `json:"expected_membership_revision"`
+	Actions                    []string `json:"actions"`
+	MaximumInstances           int      `json:"maximum_instances"`
+	ExpiresAt                  string   `json:"expires_at,omitempty"`
 }
 
 func domainStaffingBudgetSchema() map[string]any {
@@ -277,6 +315,65 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 				},
 			},
 		},
+		{
+			Type: "function", Name: domainToolControlService,
+			Description: "Start, stop, or restart one owner-reviewed local process using this durable agent's exact current managed-service grant. This is a real local effect: use only the definition, instance, grant, and revisions returned by Crewfold domain context. Start uses a definition; stop and restart use an instance. Crewfold rejects any action outside the grant and records the exact receipt.",
+			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
+				"required": []string{"action", "grant_id", "expected_grant_revision"},
+				"properties": map[string]any{
+					"action":                       map[string]any{"type": "string", "enum": []string{domain.ManagedServiceActionStart, domain.ManagedServiceActionStop, domain.ManagedServiceActionRestart}},
+					"grant_id":                     map[string]any{"type": "string", "pattern": "^svcgrant_[0-9a-f]{32}$"},
+					"expected_grant_revision":      map[string]any{"type": "integer", "minimum": 1},
+					"definition_id":                map[string]any{"type": "string", "pattern": "^svcdef_[0-9a-f]{32}$"},
+					"expected_definition_revision": map[string]any{"type": "integer", "minimum": 1},
+					"instance_id":                  map[string]any{"type": "string", "pattern": "^svcinst_[0-9a-f]{32}$"},
+					"expected_instance_revision":   map[string]any{"type": "integer", "minimum": 1},
+				},
+			},
+		},
+		{
+			Type: "function", Name: domainToolInspectService,
+			Description: "Inspect one managed local process or read its bounded redacted logs using this durable agent's exact current grant. This is read-only but still definition-specific and revision-bound. Use only IDs and revisions returned by Crewfold domain context.",
+			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
+				"required": []string{"action", "grant_id", "expected_grant_revision", "instance_id", "expected_instance_revision"},
+				"properties": map[string]any{
+					"action":                     map[string]any{"type": "string", "enum": []string{domain.ManagedServiceActionInspect, domain.ManagedServiceActionLogs}},
+					"grant_id":                   map[string]any{"type": "string", "pattern": "^svcgrant_[0-9a-f]{32}$"},
+					"expected_grant_revision":    map[string]any{"type": "integer", "minimum": 1},
+					"instance_id":                map[string]any{"type": "string", "pattern": "^svcinst_[0-9a-f]{32}$"},
+					"expected_instance_revision": map[string]any{"type": "integer", "minimum": 1},
+				},
+			},
+		},
+		{
+			Type: "function", Name: domainToolRequestService,
+			Description: "Raise one inert owner-review request to start an exact owner-reviewed local process definition when this agent has no direct start grant. This never starts a process. State why the process is needed and what the owner will be enabling.",
+			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
+				"required": []string{"definition_id", "expected_revision", "summary"},
+				"properties": map[string]any{
+					"definition_id":     map[string]any{"type": "string", "pattern": "^svcdef_[0-9a-f]{32}$"},
+					"expected_revision": map[string]any{"type": "integer", "minimum": 1},
+					"summary":           map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
+				},
+			},
+		},
+		{
+			Type: "function", Name: domainToolDelegateService,
+			Description: "Delegate a strict subset of this durable agent's exact managed-service grant to one active durable child. The child can only receive actions, instance count, and expiry already held by the parent grant.",
+			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
+				"required": []string{"parent_grant_id", "expected_parent_revision", "manager_agent", "expected_membership_revision", "actions", "maximum_instances"},
+				"properties": map[string]any{
+					"parent_grant_id":              map[string]any{"type": "string", "pattern": "^svcgrant_[0-9a-f]{32}$"},
+					"expected_parent_revision":     map[string]any{"type": "integer", "minimum": 1},
+					"manager_agent":                map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+					"expected_membership_revision": map[string]any{"type": "integer", "minimum": 1},
+					"actions": map[string]any{"type": "array", "minItems": 1, "maxItems": 6, "uniqueItems": true,
+						"items": map[string]any{"type": "string", "enum": []string{domain.ManagedServiceActionInspect, domain.ManagedServiceActionLogs, domain.ManagedServiceActionStart, domain.ManagedServiceActionStop, domain.ManagedServiceActionRestart, domain.ManagedServiceActionDelegate}}},
+					"maximum_instances": map[string]any{"type": "integer", "minimum": 1, "maximum": 8},
+					"expires_at":        map[string]any{"type": "string", "format": "date-time"},
+				},
+			},
+		},
 	}
 	return []execution.CodexDynamicToolSpec{{
 		Type: "namespace", Name: "crewfold",
@@ -301,7 +398,7 @@ func (s *server) handleDomainSessionToolRequest(ctx context.Context, request exe
 	var result map[string]any
 	if call.Namespace != nil && *call.Namespace != "" && *call.Namespace != "crewfold" {
 		result = domainToolFailure("tool namespace is not Crewfold")
-	} else if call.Tool != domainToolContext && call.Tool != domainToolSendMessage && call.Tool != domainToolCreateChild && call.Tool != domainToolDelegateStaffing && call.Tool != domainToolProposeWork && call.Tool != domainToolProposeKnowledge {
+	} else if call.Tool != domainToolContext && call.Tool != domainToolSendMessage && call.Tool != domainToolCreateChild && call.Tool != domainToolDelegateStaffing && call.Tool != domainToolProposeWork && call.Tool != domainToolProposeKnowledge && call.Tool != domainToolControlService && call.Tool != domainToolInspectService && call.Tool != domainToolRequestService && call.Tool != domainToolDelegateService {
 		result = domainToolFailure("Crewfold did not advertise this durable-agent tool")
 	} else if call.Tool == domainToolContext {
 		if err := decodeEmptyDomainToolArguments(call.Arguments); err != nil {
@@ -333,6 +430,30 @@ func (s *server) handleDomainSessionToolRequest(ctx context.Context, request exe
 			result = domainToolFailure("work proposal arguments are invalid: " + safeDomainSessionDiagnostic(err))
 		} else {
 			result = s.domainProposeWorkToolResult(ctx, call, arguments)
+		}
+	} else if call.Tool == domainToolControlService {
+		if arguments, err := decodeDomainControlServiceArguments(call.Arguments); err != nil {
+			result = domainToolFailure("managed-service control arguments are invalid: " + safeDomainSessionDiagnostic(err))
+		} else {
+			result = s.domainControlServiceToolResult(ctx, call, arguments)
+		}
+	} else if call.Tool == domainToolInspectService {
+		if arguments, err := decodeDomainInspectServiceArguments(call.Arguments); err != nil {
+			result = domainToolFailure("managed-service inspection arguments are invalid: " + safeDomainSessionDiagnostic(err))
+		} else {
+			result = s.domainInspectServiceToolResult(ctx, call, arguments)
+		}
+	} else if call.Tool == domainToolRequestService {
+		if arguments, err := decodeDomainRequestServiceArguments(call.Arguments); err != nil {
+			result = domainToolFailure("managed-service request arguments are invalid: " + safeDomainSessionDiagnostic(err))
+		} else {
+			result = s.domainRequestServiceToolResult(ctx, call, arguments)
+		}
+	} else if call.Tool == domainToolDelegateService {
+		if arguments, err := decodeDomainDelegateServiceArguments(call.Arguments); err != nil {
+			result = domainToolFailure("managed-service delegation arguments are invalid: " + safeDomainSessionDiagnostic(err))
+		} else {
+			result = s.domainDelegateServiceToolResult(ctx, call, arguments)
 		}
 	} else if arguments, err := decodeDomainProposeKnowledgeArguments(call.Arguments); err != nil {
 		result = domainToolFailure("knowledge proposal arguments are invalid: " + safeDomainSessionDiagnostic(err))
@@ -373,6 +494,103 @@ func (s *server) domainProposeKnowledgeToolResult(ctx context.Context, call doma
 	})
 	if err != nil {
 		return domainToolFailure("encode knowledge proposal result: " + safeDomainSessionDiagnostic(err))
+	}
+	return domainToolSuccess(string(encoded))
+}
+
+func (s *server) domainControlServiceToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionControlServiceArguments) map[string]any {
+	digest := sha256.Sum256([]byte(call.CallID))
+	key := fmt.Sprintf("domain-tool-%x", digest[:])
+	var result store.MutationResult[domain.ManagedServiceInstance]
+	var err error
+	if arguments.Action == domain.ManagedServiceActionStart {
+		result, err = s.store.StartManagedServiceAsAgent(ctx, call.ThreadID, arguments.GrantID, arguments.ExpectedGrantRevision, arguments.DefinitionID, arguments.ExpectedDefinitionRevision, key, key)
+	} else {
+		result, err = s.store.RequestManagedServiceActionAsAgent(ctx, store.AgentManagedServiceActionCommand{
+			ThreadID: call.ThreadID, GrantID: arguments.GrantID, ExpectedGrantRevision: arguments.ExpectedGrantRevision,
+			InstanceID: arguments.InstanceID, ExpectedRevision: arguments.ExpectedInstanceRevision, Action: arguments.Action,
+			IdempotencyKey: key, CorrelationID: key,
+		})
+	}
+	if err != nil {
+		return domainToolFailure("apply managed-service action: " + safeDomainSessionDiagnostic(err))
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"schema": "urn:crewfold:schema:domain:managed-service-action-result:v1", "action": arguments.Action,
+		"instance": result.Value, "event_sequence": result.EventSequence, "effect": "queued_local_process_effect",
+	})
+	if err != nil {
+		return domainToolFailure("encode managed-service action result: " + safeDomainSessionDiagnostic(err))
+	}
+	return domainToolSuccess(string(encoded))
+}
+
+func (s *server) domainInspectServiceToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionInspectServiceArguments) map[string]any {
+	detail, err := s.store.ManagedServiceDetailAsAgent(ctx, call.ThreadID, arguments.GrantID, arguments.ExpectedGrantRevision, arguments.InstanceID, arguments.ExpectedInstanceRevision, arguments.Action)
+	if err != nil {
+		return domainToolFailure("inspect managed service: " + safeDomainSessionDiagnostic(err))
+	}
+	value := any(detail)
+	if arguments.Action == domain.ManagedServiceActionLogs {
+		logs, logErr := s.managedServiceLogs(ctx, detail)
+		if logErr != nil {
+			return domainToolFailure("read managed-service logs: " + safeDomainSessionDiagnostic(logErr))
+		}
+		// Revalidate after the filesystem read so a concurrent revocation cannot
+		// disclose the captured bytes under a grant that is no longer current.
+		if _, validateErr := s.store.ManagedServiceDetailAsAgent(ctx, call.ThreadID, arguments.GrantID, arguments.ExpectedGrantRevision, arguments.InstanceID, arguments.ExpectedInstanceRevision, arguments.Action); validateErr != nil {
+			return domainToolFailure("revalidate managed-service logs authority: " + safeDomainSessionDiagnostic(validateErr))
+		}
+		value = logs
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"schema": "urn:crewfold:schema:domain:managed-service-inspection-result:v1", "action": arguments.Action,
+		"result": value, "effect": "read_only",
+	})
+	if err != nil {
+		return domainToolFailure("encode managed-service inspection result: " + safeDomainSessionDiagnostic(err))
+	}
+	return domainToolSuccess(string(encoded))
+}
+
+func (s *server) domainRequestServiceToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionRequestServiceArguments) map[string]any {
+	digest := sha256.Sum256([]byte(call.CallID))
+	key := fmt.Sprintf("domain-tool-%x", digest[:])
+	result, err := s.store.SubmitManagedServiceRequest(ctx, store.SubmitManagedServiceRequestCommand{
+		ThreadID: call.ThreadID, DefinitionID: arguments.DefinitionID, ExpectedRevision: arguments.ExpectedRevision,
+		Summary: arguments.Summary, IdempotencyKey: key, CorrelationID: key,
+	})
+	if err != nil {
+		return domainToolFailure("submit managed-service owner request: " + safeDomainSessionDiagnostic(err))
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"schema": "urn:crewfold:schema:domain:managed-service-request-result:v1", "request": result.Value,
+		"event_sequence": result.EventSequence, "effect": "none_until_owner_acceptance",
+	})
+	if err != nil {
+		return domainToolFailure("encode managed-service request result: " + safeDomainSessionDiagnostic(err))
+	}
+	return domainToolSuccess(string(encoded))
+}
+
+func (s *server) domainDelegateServiceToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionDelegateServiceArguments) map[string]any {
+	digest := sha256.Sum256([]byte(call.CallID))
+	key := fmt.Sprintf("domain-tool-%x", digest[:])
+	result, err := s.store.DelegateManagedServiceGrant(ctx, store.DelegateManagedServiceGrantCommand{
+		ThreadID: call.ThreadID, ParentGrantID: arguments.ParentGrantID, ExpectedParentRevision: arguments.ExpectedParentRevision,
+		ManagerAgentIdentifier: arguments.ManagerAgent, ExpectedMembershipRevision: arguments.ExpectedMembershipRevision,
+		Actions: arguments.Actions, MaximumInstances: arguments.MaximumInstances, ExpiresAt: arguments.ExpiresAt,
+		IdempotencyKey: key, CorrelationID: key,
+	})
+	if err != nil {
+		return domainToolFailure("delegate managed-service grant: " + safeDomainSessionDiagnostic(err))
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"schema": "urn:crewfold:schema:domain:managed-service-grant-result:v1", "grant": result.Value,
+		"event_sequence": result.EventSequence,
+	})
+	if err != nil {
+		return domainToolFailure("encode managed-service grant result: " + safeDomainSessionDiagnostic(err))
 	}
 	return domainToolSuccess(string(encoded))
 }
@@ -775,6 +993,30 @@ func (s *server) domainContextToolResult(ctx context.Context, threadID string) m
 	if err != nil {
 		return domainToolFailure("read work proposals: " + safeDomainSessionDiagnostic(err))
 	}
+	serviceDefinitions, err := s.store.ManagedServiceDefinitions(ctx, store.ListManagedServiceDefinitionsQuery{
+		WorkspaceIdentifier: scope.Workspace.ID, ProjectIdentifier: scope.Project.ID, Limit: 100,
+	})
+	if err != nil {
+		return domainToolFailure("read managed local process definitions: " + safeDomainSessionDiagnostic(err))
+	}
+	serviceInstances, err := s.store.ManagedServiceInstances(ctx, store.ListManagedServiceInstancesQuery{
+		WorkspaceIdentifier: scope.Workspace.ID, ProjectIdentifier: scope.Project.ID, Limit: 100,
+	})
+	if err != nil {
+		return domainToolFailure("read managed local process state: " + safeDomainSessionDiagnostic(err))
+	}
+	serviceGrants, err := s.store.ManagedServiceGrants(ctx, store.ListManagedServiceGrantsQuery{
+		WorkspaceIdentifier: scope.Workspace.ID, ProjectIdentifier: scope.Project.ID, ManagerIdentifier: scope.Agent.ID, Limit: 100,
+	})
+	if err != nil {
+		return domainToolFailure("read managed local process grants: " + safeDomainSessionDiagnostic(err))
+	}
+	serviceRequests, err := s.store.ManagedServiceRequests(ctx, store.ListManagedServiceRequestsQuery{
+		WorkspaceIdentifier: scope.Workspace.ID, ProjectIdentifier: scope.Project.ID, AgentIdentifier: scope.Agent.ID, Limit: 100,
+	})
+	if err != nil {
+		return domainToolFailure("read managed local process requests: " + safeDomainSessionDiagnostic(err))
+	}
 	knowledge, err := s.store.ListKnowledge(ctx, store.ListKnowledgeQuery{
 		WorkspaceIdentifier: scope.Workspace.ID,
 		ProjectIdentifier:   scope.Project.ID,
@@ -807,15 +1049,21 @@ func (s *server) domainContextToolResult(ctx context.Context, threadID string) m
 		"domain": scope.Project, "agent": scope.Agent, "membership": scope.Membership,
 		"agent_tree": tree.Agents, "attached_repositories": inspection.Repositories, "attached_checkouts": inspection.Checkouts,
 		"workstreams": objectives.Objectives, "assigned_work": assigned, "staffing_grants": staffingGrants, "inbox": inbox,
-		"launch_profiles":      launchProfiles,
-		"work_proposals":       workProposals,
-		"knowledge_revisions":  knowledge,
-		"coordination_threads": coordinationThreads,
+		"launch_profiles":             launchProfiles,
+		"work_proposals":              workProposals,
+		"managed_service_definitions": serviceDefinitions,
+		"managed_service_instances":   serviceInstances,
+		"managed_service_grants":      serviceGrants,
+		"managed_service_requests":    serviceRequests,
+		"knowledge_revisions":         knowledge,
+		"coordination_threads":        coordinationThreads,
 		"bounds": map[string]any{
 			"workstreams_total": objectives.Total, "workstreams_truncated": objectives.HasMore,
 			"tasks_examined": len(tasks.Tasks), "project_tasks_total": tasks.Total, "project_tasks_truncated": tasks.HasMore,
 			"inbox_items": len(inbox), "inbox_limit": 20, "staffing_grants": len(staffingGrants), "work_proposals": len(workProposals),
-			"knowledge_revisions":  len(knowledge),
+			"knowledge_revisions":         len(knowledge),
+			"managed_service_definitions": len(serviceDefinitions), "managed_service_instances": len(serviceInstances),
+			"managed_service_grants": len(serviceGrants), "managed_service_requests": len(serviceRequests),
 			"coordination_threads": len(coordinationThreads), "coordination_thread_limit": 20,
 		},
 		"knowledge_authoring": map[string]any{
@@ -922,6 +1170,98 @@ func decodeDomainSendMessageArguments(data json.RawMessage) (domainSessionSendMe
 		return value, errors.New("message kind is unsupported")
 	}
 	return value, nil
+}
+
+func decodeDomainControlServiceArguments(data json.RawMessage) (domainSessionControlServiceArguments, error) {
+	var value domainSessionControlServiceArguments
+	if err := decodeStrictDomainToolArguments(data, &value); err != nil {
+		return value, err
+	}
+	value.Action = strings.TrimSpace(value.Action)
+	value.GrantID = strings.TrimSpace(value.GrantID)
+	value.DefinitionID = strings.TrimSpace(value.DefinitionID)
+	value.InstanceID = strings.TrimSpace(value.InstanceID)
+	if !validDomainToolIdentifier(value.GrantID, "svcgrant_") || value.ExpectedGrantRevision < 1 {
+		return value, errors.New("an exact managed-service grant and revision are required")
+	}
+	if value.Action == domain.ManagedServiceActionStart {
+		if !validDomainToolIdentifier(value.DefinitionID, "svcdef_") || value.ExpectedDefinitionRevision < 1 || value.InstanceID != "" || value.ExpectedInstanceRevision != 0 {
+			return value, errors.New("start requires one exact definition and no instance")
+		}
+		return value, nil
+	}
+	if (value.Action != domain.ManagedServiceActionStop && value.Action != domain.ManagedServiceActionRestart) || !validDomainToolIdentifier(value.InstanceID, "svcinst_") || value.ExpectedInstanceRevision < 1 || value.DefinitionID != "" || value.ExpectedDefinitionRevision != 0 {
+		return value, errors.New("stop or restart requires one exact instance and no definition")
+	}
+	return value, nil
+}
+
+func decodeDomainInspectServiceArguments(data json.RawMessage) (domainSessionInspectServiceArguments, error) {
+	var value domainSessionInspectServiceArguments
+	if err := decodeStrictDomainToolArguments(data, &value); err != nil {
+		return value, err
+	}
+	value.Action = strings.TrimSpace(value.Action)
+	value.GrantID = strings.TrimSpace(value.GrantID)
+	value.InstanceID = strings.TrimSpace(value.InstanceID)
+	if (value.Action != domain.ManagedServiceActionInspect && value.Action != domain.ManagedServiceActionLogs) || !validDomainToolIdentifier(value.GrantID, "svcgrant_") || value.ExpectedGrantRevision < 1 || !validDomainToolIdentifier(value.InstanceID, "svcinst_") || value.ExpectedInstanceRevision < 1 {
+		return value, errors.New("inspect or logs requires one exact managed-service grant and instance revision")
+	}
+	return value, nil
+}
+
+func decodeDomainRequestServiceArguments(data json.RawMessage) (domainSessionRequestServiceArguments, error) {
+	var value domainSessionRequestServiceArguments
+	if err := decodeStrictDomainToolArguments(data, &value); err != nil {
+		return value, err
+	}
+	value.DefinitionID = strings.TrimSpace(value.DefinitionID)
+	value.Summary = strings.TrimSpace(value.Summary)
+	if !validDomainToolIdentifier(value.DefinitionID, "svcdef_") || value.ExpectedRevision < 1 || !validDomainToolText(value.Summary, 2048) {
+		return value, errors.New("an exact definition revision and bounded owner-facing summary are required")
+	}
+	return value, nil
+}
+
+func decodeDomainDelegateServiceArguments(data json.RawMessage) (domainSessionDelegateServiceArguments, error) {
+	var value domainSessionDelegateServiceArguments
+	if err := decodeStrictDomainToolArguments(data, &value); err != nil {
+		return value, err
+	}
+	value.ParentGrantID = strings.TrimSpace(value.ParentGrantID)
+	value.ManagerAgent = strings.TrimSpace(value.ManagerAgent)
+	value.ExpiresAt = strings.TrimSpace(value.ExpiresAt)
+	if !validDomainToolIdentifier(value.ParentGrantID, "svcgrant_") || value.ExpectedParentRevision < 1 || !validDomainToolText(value.ManagerAgent, 128) || value.ExpectedMembershipRevision < 1 || len(value.Actions) < 1 || len(value.Actions) > 6 || value.MaximumInstances < 1 || value.MaximumInstances > 8 {
+		return value, errors.New("delegation requires exact parent and child authority plus bounded actions and capacity")
+	}
+	seen := map[string]bool{}
+	for index := range value.Actions {
+		value.Actions[index] = strings.TrimSpace(value.Actions[index])
+		action := value.Actions[index]
+		if seen[action] || !map[string]bool{domain.ManagedServiceActionInspect: true, domain.ManagedServiceActionLogs: true, domain.ManagedServiceActionStart: true, domain.ManagedServiceActionStop: true, domain.ManagedServiceActionRestart: true, domain.ManagedServiceActionDelegate: true}[action] {
+			return value, errors.New("delegated actions must be distinct known managed-service actions")
+		}
+		seen[action] = true
+	}
+	return value, nil
+}
+
+func decodeStrictDomainToolArguments(data json.RawMessage, target any) error {
+	if len(data) == 0 {
+		return errors.New("arguments are required")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("unexpected trailing JSON")
+		}
+		return err
+	}
+	return nil
 }
 
 func decodeDomainCreateChildArguments(data json.RawMessage) (domainSessionCreateChildArguments, error) {

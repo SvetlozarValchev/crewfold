@@ -119,27 +119,31 @@ WHERE workspace_id = sqlc.arg(workspace_id)
   AND (CAST(sqlc.arg(status) AS TEXT) = '' OR status = sqlc.arg(status));
 
 -- name: ListOperatorRuns :many
-SELECT id, workspace_id, project_id, task_id, agent_id, runtime, provider,
-       status, COALESCE(blocked_question, '') AS blocked_question,
-       COALESCE(result_summary, '') AS result_summary,
-       COALESCE(failure_code, '') AS failure_code, revision, created_at,
-       updated_at, COALESCE(started_at, '') AS started_at,
-       COALESCE(finished_at, '') AS finished_at,
+SELECT runs.id, runs.workspace_id, runs.project_id, runs.task_id, runs.agent_id, runs.runtime, runs.provider,
+       runs.status, COALESCE(runs.blocked_question, '') AS blocked_question,
+       COALESCE(runs.result_summary, '') AS result_summary,
+	   COALESCE(runs.failure_code, '') AS failure_code,
+	   CAST(COALESCE((SELECT report.assessment FROM run_reports report
+	     WHERE report.run_id=runs.id AND report.kind='completion' AND report.status='applied'
+	     ORDER BY report.sequence DESC LIMIT 1), '') AS TEXT) AS assessment,
+	   runs.revision, runs.created_at,
+       runs.updated_at, COALESCE(runs.started_at, '') AS started_at,
+       COALESCE(runs.finished_at, '') AS finished_at,
        CAST(EXISTS(SELECT 1 FROM run_runtime_bindings binding
          WHERE binding.run_id=runs.id AND binding.node_id=sqlc.arg(runtime_node_id)
            AND binding.node_fingerprint=sqlc.arg(runtime_node_fingerprint)
            AND binding.operation_id=runs.id) AS INTEGER) AS runtime_binding_current
 FROM runs
-WHERE workspace_id = sqlc.arg(workspace_id)
-  AND (CAST(sqlc.arg(project_id) AS TEXT) = '' OR project_id = sqlc.arg(project_id))
-  AND (CAST(sqlc.arg(task_id) AS TEXT) = '' OR task_id = sqlc.arg(task_id))
-  AND (CAST(sqlc.arg(status) AS TEXT) = '' OR status = sqlc.arg(status))
+WHERE runs.workspace_id = sqlc.arg(workspace_id)
+  AND (CAST(sqlc.arg(project_id) AS TEXT) = '' OR runs.project_id = sqlc.arg(project_id))
+  AND (CAST(sqlc.arg(task_id) AS TEXT) = '' OR runs.task_id = sqlc.arg(task_id))
+  AND (CAST(sqlc.arg(status) AS TEXT) = '' OR runs.status = sqlc.arg(status))
   AND (
     CAST(sqlc.arg(cursor_key) AS TEXT) = ''
-    OR created_at < sqlc.arg(cursor_key)
-    OR (created_at = sqlc.arg(cursor_key) AND id < sqlc.arg(cursor_id))
+	OR runs.created_at < sqlc.arg(cursor_key)
+	OR (runs.created_at = sqlc.arg(cursor_key) AND runs.id < sqlc.arg(cursor_id))
   )
-ORDER BY created_at DESC, id DESC
+ORDER BY runs.created_at DESC, runs.id DESC
 LIMIT sqlc.arg(result_limit);
 
 -- name: CountOperatorClaims :one

@@ -81,6 +81,12 @@ var semanticFamilyRegistry = []semanticFamilyDefinition{
 	{name: "messaging", tables: []string{
 		"message_threads", "messages", "message_recipients", "message_wake_jobs",
 	}},
+	{name: "services", tables: []string{
+		"managed_service_definitions", "managed_service_arguments", "managed_service_environment",
+		"managed_service_grants", "managed_service_requests",
+		"managed_service_instances", "managed_service_runtime_bindings", "managed_service_jobs",
+		"managed_service_log_artifacts",
+	}},
 	{name: "checks", tables: []string{
 		"check_definitions", "check_definition_arguments", "task_check_requirements",
 		"check_watch_grants", "check_watch_grant_operations", "check_watch_grant_definitions",
@@ -218,7 +224,8 @@ func (s *Store) VerifyCanonical(ctx context.Context, options CanonicalVerifyOpti
 SELECT
  (SELECT COUNT(*) FROM immutable_artifacts artifact
   WHERE NOT EXISTS(SELECT 1 FROM check_artifacts checked WHERE checked.content_sha256=artifact.content_sha256)
-    AND NOT EXISTS(SELECT 1 FROM run_log_artifacts run_log WHERE run_log.content_sha256=artifact.content_sha256))
+    AND NOT EXISTS(SELECT 1 FROM run_log_artifacts run_log WHERE run_log.content_sha256=artifact.content_sha256)
+    AND NOT EXISTS(SELECT 1 FROM managed_service_log_artifacts service_log WHERE service_log.content_sha256=artifact.content_sha256))
  +
  (SELECT COUNT(*) FROM check_artifacts checked
   LEFT JOIN immutable_artifacts artifact ON artifact.content_sha256=checked.content_sha256
@@ -227,6 +234,10 @@ SELECT
  (SELECT COUNT(*) FROM run_log_artifacts run_log
   LEFT JOIN immutable_artifacts artifact ON artifact.content_sha256=run_log.content_sha256
   WHERE artifact.content_sha256 IS NULL OR artifact.byte_size<>run_log.captured_bytes)
++
+ (SELECT COUNT(*) FROM managed_service_log_artifacts service_log
+  LEFT JOIN immutable_artifacts artifact ON artifact.content_sha256=service_log.content_sha256
+  WHERE artifact.content_sha256 IS NULL OR artifact.byte_size<>service_log.captured_bytes)
 `).Scan(&invalidArtifactLinks); err != nil {
 		return report, storageFailure("verify immutable artifact closure", err)
 	}
@@ -279,6 +290,15 @@ FROM (
     SELECT 1 FROM run_log_artifacts run_log
     WHERE run_log.content_sha256=artifact.content_sha256
   )
+	UNION ALL
+	SELECT artifact.content_sha256 AS content_sha256,
+	       artifact.byte_size AS byte_size,
+	       'service_log_artifact' AS kind
+	FROM immutable_artifacts artifact
+	WHERE EXISTS(
+	  SELECT 1 FROM managed_service_log_artifacts service_log
+	  WHERE service_log.content_sha256=artifact.content_sha256
+	)
 ) referenced
 ORDER BY referenced.kind,referenced.content_sha256`)
 	if err != nil {
@@ -704,12 +724,16 @@ SELECT
  (SELECT COALESCE(MAX(sequence),0) FROM events),
  (SELECT COUNT(*) FROM runs WHERE status IN ('requested','starting','active','blocked','stopping','lost')),
  ((SELECT COUNT(*) FROM run_runtime_bindings) + (SELECT COUNT(*) FROM check_runtime_bindings)),
- (SELECT COUNT(*) FROM check_runs WHERE status<>'finished')
+ (SELECT COUNT(*) FROM check_runs WHERE status<>'finished'),
+ (SELECT COUNT(*) FROM managed_service_instances WHERE status IN ('requested','starting','healthy','degraded','stopping','unknown')),
+ (SELECT COUNT(*) FROM managed_service_runtime_bindings)
 `).Scan(
 		&cut.EventHighWater,
 		&cut.Counts.NonterminalRuns,
 		&cut.Counts.RuntimeBindings,
 		&cut.Counts.UnfinishedCheckRuns,
+		&cut.Counts.NonterminalManagedServices,
+		&cut.Counts.ManagedServiceBindings,
 	)
 	if err != nil {
 		return QuiescentCut{}, storageFailure("read quiescence cut", err)
@@ -736,6 +760,8 @@ SELECT
 			cut.Counts.OpenOwnerManagerReviews = count
 		case "owner_executive_exchange":
 			cut.Counts.OpenOwnerExecutiveExchanges = count
+		case "managed_service_job":
+			cut.Counts.UnsettledManagedServiceJobs = count
 		default:
 			return QuiescentCut{}, storageFailure("map durable queue quiescence", fmt.Errorf("unmapped durable queue %q", definition.name))
 		}
@@ -763,7 +789,9 @@ func quiescenceCountsZero(counts QuiescenceCounts) bool {
 		counts.OpenSchedulingIntents == 0 &&
 		counts.OpenSupervisorActions == 0 &&
 		counts.OpenApprovals == 0 &&
-		counts.OpenOwnerManagerReviews == 0 && counts.OpenOwnerExecutiveExchanges == 0
+		counts.OpenOwnerManagerReviews == 0 && counts.OpenOwnerExecutiveExchanges == 0 &&
+		counts.NonterminalManagedServices == 0 && counts.ManagedServiceBindings == 0 &&
+		counts.UnsettledManagedServiceJobs == 0
 }
 
 func quiescenceBlockerSamples(ctx context.Context, tx *sql.Tx) ([]QuiescenceBlocker, error) {
@@ -773,6 +801,8 @@ SELECT blocker.kind,blocker.entity_id FROM (
  UNION ALL SELECT 'run_runtime_binding',run_id FROM run_runtime_bindings
  UNION ALL SELECT 'check_runtime_binding',check_run_id FROM check_runtime_bindings
  UNION ALL SELECT 'unfinished_check_run',id FROM check_runs WHERE status<>'finished'
+	UNION ALL SELECT 'nonterminal_managed_service',id FROM managed_service_instances WHERE status IN ('requested','starting','healthy','degraded','stopping','unknown')
+	UNION ALL SELECT 'managed_service_runtime_binding',instance_id FROM managed_service_runtime_bindings
 ) blocker ORDER BY blocker.kind,blocker.entity_id LIMIT ?`, maximumQuiescenceBlockerSamples)
 	if err != nil {
 		return nil, err

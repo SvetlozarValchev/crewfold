@@ -179,6 +179,16 @@ func TestM21WorkbenchRPCRequiresExactCSRFAndExposesOnlyOwnerMethods(t *testing.T
 	if !workbenchMethodAllowed(localapi.MethodLaunchProfileList) || !workbenchMethodAllowed(localapi.MethodProposalList) || !workbenchMethodAllowed(localapi.MethodProposalInspect) || !workbenchMethodAllowed(localapi.MethodProposalAccept) || !workbenchMethodAllowed(localapi.MethodProposalReject) {
 		t.Fatal("owner workbench must expose launch profiles and the exact manager-proposal review boundary")
 	}
+	for _, method := range []string{localapi.MethodManagedServiceStart, localapi.MethodManagedServiceStop, localapi.MethodManagedServiceRestart, localapi.MethodManagedServiceResolveUnknown, localapi.MethodManagedServiceLogs} {
+		if !workbenchMethodAllowed(method) {
+			t.Fatalf("managed process web method %q is unavailable", method)
+		}
+	}
+	for _, method := range []string{localapi.MethodWorkstreamDeliveryShow, localapi.MethodWorkstreamDeliveryAccept, localapi.MethodWorkstreamDeliveryReject} {
+		if !workbenchMethodAllowed(method) {
+			t.Fatalf("workstream delivery web method %q is unavailable", method)
+		}
+	}
 
 	running := startTestServer(t, testConfig(t))
 	bootstrap, err := localapi.NewClient(running.config.SocketPath).WebBootstrap(context.Background())

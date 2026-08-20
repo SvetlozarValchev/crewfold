@@ -3,7 +3,7 @@ set -eu
 
 if [ "${CREWFOLD_RUN_LIVE_CODEX:-}" != "1" ]
 then
-  printf 'SKIP: set CREWFOLD_RUN_LIVE_CODEX=1 to run the subscription-backed M23 browser canary\n'
+  printf 'SKIP: set CREWFOLD_RUN_LIVE_CODEX=1 to run the subscription-backed M24 browser canary\n'
   exit 0
 fi
 
@@ -23,7 +23,7 @@ cleanup() {
   status=$?
   if [ "$status" -ne 0 ]
   then
-    printf 'M23 live domain-agent acceptance failed; diagnostics follow\n' >&2
+    printf 'M24 live domain-agent acceptance failed; diagnostics follow\n' >&2
     [ ! -f "$daemon_log" ] || tail -n 200 "$daemon_log" >&2
     [ ! -f "$scenario_root/browser-result.json" ] || sed -n '1,240p' "$scenario_root/browser-result.json" >&2
     if [ -n "${CREWFOLD_SCREENSHOT_DIR:-}" ]
@@ -122,6 +122,7 @@ grep -Fq '"fernReply": true' "$scenario_root/browser-result.json"
 grep -Fq '"inertTeamBeforeAcceptance": true' "$scenario_root/browser-result.json"
 grep -Fq '"childVisible": true' "$scenario_root/browser-result.json"
 grep -Fq '"proposalAccepted": true' "$scenario_root/browser-result.json"
+grep -Fq '"deliveryAccepted": true' "$scenario_root/browser-result.json"
 grep -Fq '"workerCompleted": true' "$scenario_root/browser-result.json"
 grep -Fq '"proposalToolFailed": false' "$scenario_root/browser-result.json"
 grep -Fq '"providerLocalHelper": false' "$scenario_root/browser-result.json"
@@ -138,4 +139,4 @@ kill "$chrome_pid" 2>/dev/null || true
 wait "$chrome_pid" 2>/dev/null || true
 chrome_pid=""
 
-printf 'Subscription-backed M23 checkout-bound durable-agent browser acceptance: PASS\n'
+printf 'Subscription-backed M24 checkout-bound delivery browser acceptance: PASS\n'

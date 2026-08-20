@@ -38,6 +38,24 @@ type TerminalRunLogReferenceHealth struct {
 	RunsWithoutReferences int64 `json:"runs_without_references"`
 }
 
+// ManagedServiceExecutionIssue is one bounded, current definition-level
+// service diagnosis. Historical failed instances are deliberately excluded
+// once a newer instance for the same definition has resolved the condition.
+type ManagedServiceExecutionIssue struct {
+	InstanceID     string `json:"instance_id"`
+	DefinitionID   string `json:"definition_id"`
+	Status         string `json:"status"`
+	DiagnosticCode string `json:"diagnostic_code,omitempty"`
+	Diagnostic     string `json:"diagnostic,omitempty"`
+}
+
+type ManagedServiceExecutionHealth struct {
+	DefinitionCount int64                          `json:"definition_count"`
+	InstanceCount   int64                          `json:"instance_count"`
+	IssueCount      int64                          `json:"issue_count"`
+	Issues          []ManagedServiceExecutionIssue `json:"issues"`
+}
+
 type ExecutionHealth struct {
 	ObservedAt  string                        `json:"observed_at"`
 	Node        ExecutionRunCounts            `json:"node"`
@@ -46,4 +64,5 @@ type ExecutionHealth struct {
 	Providers   []ProviderExecutionHealth     `json:"providers"`
 	Queues      []ExecutionQueueState         `json:"queues"`
 	TerminalLog TerminalRunLogReferenceHealth `json:"terminal_log_references"`
+	Services    ManagedServiceExecutionHealth `json:"managed_services"`
 }

@@ -14,6 +14,7 @@
     "runtime": {"type": "string", "minLength": 1, "maxLength": 128},
     "provider": {"type": "string", "minLength": 1, "maxLength": 128},
     "status": {"enum": ["requested", "starting", "active", "blocked", "stopping", "stopped", "lost", "review", "completed", "start_failed", "failed"]},
+	"assessment": {"enum": ["pass", "block", "changes_requested"]},
     "can_attach": {"type": "boolean"},
     "blocked_question": {"type": "string", "minLength": 1, "maxLength": 1024},
     "result_summary": {"type": "string", "minLength": 1, "maxLength": 1024},

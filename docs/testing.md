@@ -864,6 +864,26 @@ output delivery, and logical-agent activity under ADR-0022.
 | `M23-REAL-01` | clean real Codex subscription browser workflow with coordinator → implementer → reviewer → remediation → verifier in one existing checkout | the owner approves one exact proposal, observes the complete placed team and dependency flow, sees genuine reviewed output delivered to remediation, and reaches verified completion without CLI composition, provider-local durable substitutes, or cold checkout recreation |
 | `M23-ALL-01` | clean current tree complete gate | generated DB, protocol/local API/store/daemon/web normal+race gates, all prior scenarios, the M23 browser fixture, and explicit real-provider canary pass under the one current baseline |
 
+M24 closes delivery operability and generic managed local services under
+ADR-0023. Vite is one real acceptance fixture; at least one non-Node process must
+pass the same service contract.
+
+| ID | Adversarial setup | Required observable result |
+| --- | --- | --- |
+| `M24-TIME-01` | durable conversation is absent/idle while implementation, blocking review, remediation, verification, and service operations execute | one ordered selected-agent timeline exposes every attached activity; status follows the consequential semantic state; a blocking review never renders as generic successful completion |
+| `M24-EVID-01` | publish two artifacts, require one through `handoff_with_evidence`, then read as successor, owner, unrelated run, and foreign domain | successor and owner read the exact authorized bytes/hash/metadata; every unrelated read fails; browser content stays bounded and inert |
+| `M24-OUT-01` | all required tasks/evidence finish with final PASS, then accept, replay, race a new blocker, and use a stale delivery revision | exact current state becomes `verified — awaiting owner acceptance`; one acceptance records the immutable outcome and closes the workstream; stale/raced/replayed cases are all-or-nothing |
+| `M24-SVC-01` | define and start Signal Garden Vite through owner and exact granted-agent paths | one structural argv definition binds the workstream checkout, becomes loopback HTTP healthy, exposes a safe local URL/logs/receipts, and remains running after the requesting task exits |
+| `M24-SVC-02` | run non-Vite process, TCP, and HTTP health fixtures | the same generic supervisor and schemas govern every fixture; no package-manager, language, framework, or role special case authorizes it |
+| `M24-SVC-03` | stop, restart, crash, crash-loop, ignore graceful signal, fork a child, and kill daemon around each lifecycle boundary | process group and children are reaped; generation/health/restart/terminal receipts are replayable; no PID heuristic contacts another process and retry remains bounded |
+| `M24-SVC-04` | missing executable/dependency, unsafe cwd/symlink, stale checkout/profile, occupied port, failed health, and checkout disappearance | no hidden install/bootstrap occurs; exact attributable failure and safe next action appear in workstream, agent timeline, CLI, and doctor |
+| `M24-AUTH-01` | expired/revoked/over-capacity/cross-domain grant, remote bind, opaque shell, unsafe env, narrower delegation, and response replay | every unauthorized expansion fails before process launch; valid narrower delegation commits once; names, roles, hierarchy, text, PID, and ports confer no authority |
+| `M24-LOG-01` | emit invalid UTF-8, C0/C1, ANSI/OSC, bidi, huge lines, binary bytes, and secret-shaped values | readable and raw disclosures remain bounded, redacted, terminal/DOM-safe, truncation-labelled, and linked to exact instance/generation without becoming knowledge/evidence automatically |
+| `M24-REC-01` | backup with requested/starting/healthy/degraded/stopping service, then stop and backup/restore/activate | every actionable state blocks with exact counts/samples; terminal cut verifies/restores; definitions return stopped and no PID/socket/handle/capability/process is copied or auto-started |
+| `M24-UI-01` | desktop/narrow keyboard workflow across domain/workstream/agent/service/evidence/delivery states and browser reconnect | service health/URL/actions, review assessment, exact evidence, owner acceptance, and unified timeline remain readable, focused, current, and directly navigable without a peer-admin maze |
+| `M24-END-01` | twenty service fault/restart cycles after warm-up plus full Signal Garden real-browser delivery | no child/process-group/socket/temp/FD/goroutine/log leak beyond frozen bounds; the app is served, inspected, stopped, and accepted through public surfaces only |
+| `M24-ALL-01` | clean current tree complete gate | generated DB/protocol, Store/daemon/execution/local API/CLI/web normal+race, every prior scenario, M24 provider-free fixtures, and explicit real Codex Signal Garden canary pass |
+
 ## Test suite commands
 
 The complete implemented offline gate is:

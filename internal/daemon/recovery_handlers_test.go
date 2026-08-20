@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,7 +104,7 @@ func TestFullDoctorDerivesDurableQueueFailureFromCanonicalRegistryReport(t *test
 	integrity := store.CanonicalIntegrityReport{DurableQueues: []store.DurableQueueIntegrity{
 		{Name: "run_job", Table: "run_jobs", RowCount: 3, OpenCount: 2, TerminalCount: 0, Status: "failed", ViolationCount: 1, Samples: []string{"run_bad"}},
 	}}
-	checks := buildFullDoctorChecks(integrity, recovery.ArtifactFilesystemReport{}, databaseFileProbe{ByteSize: 1}, 0, 0, 0, 0, nil)
+	checks := buildFullDoctorChecks(integrity, recovery.ArtifactFilesystemReport{}, databaseFileProbe{ByteSize: 1}, 0, domain.ManagedServiceExecutionHealth{}, 0, 0, 0, nil)
 	for _, check := range checks {
 		if check.Code != "durable_queues" {
 			continue
@@ -115,6 +116,24 @@ func TestFullDoctorDerivesDurableQueueFailureFromCanonicalRegistryReport(t *test
 		return
 	}
 	t.Fatal("durable_queues doctor check missing")
+}
+
+func TestFullDoctorSurfacesCurrentManagedServiceFailureWithSafeNextAction(t *testing.T) {
+	t.Parallel()
+	services := domain.ManagedServiceExecutionHealth{
+		DefinitionCount: 2, InstanceCount: 3, IssueCount: 2,
+		Issues: []domain.ManagedServiceExecutionIssue{
+			{InstanceID: "svc_failed", DefinitionID: "def_failed", Status: domain.ManagedServiceFailed, DiagnosticCode: "service_start_failed", Diagnostic: "executable is unavailable"},
+			{InstanceID: "svc_unknown", DefinitionID: "def_unknown", Status: domain.ManagedServiceUnknown},
+		},
+	}
+	checks := buildFullDoctorChecks(store.CanonicalIntegrityReport{Complete: true}, recovery.ArtifactFilesystemReport{}, databaseFileProbe{ByteSize: 1}, 0, services, 1, 0, 1, nil)
+	check := findFullDoctorCheck(t, checks, "managed_services")
+	if check.Status != "failed" || check.CheckedCount != 5 || check.IssueCount != 2 || len(check.Samples) != 2 ||
+		check.Samples[0].Code != "service_start_failed" || !strings.Contains(check.Samples[0].Detail, "repair") ||
+		check.Samples[1].Code != "managed_service_unknown" || !strings.Contains(check.Samples[1].Detail, "confirm that its process group ended") {
+		t.Fatalf("managed-service doctor check = %#v", check)
+	}
 }
 
 func TestFullDoctorRejectsForeignNodeRuntimeBindingFromCanonicalSemanticReport(t *testing.T) {
@@ -132,7 +151,7 @@ func TestFullDoctorRejectsForeignNodeRuntimeBindingFromCanonicalSemanticReport(t
 			}},
 		}},
 	}
-	checks := buildFullDoctorChecks(integrity, recovery.ArtifactFilesystemReport{}, databaseFileProbe{ByteSize: 1}, 1, 1, 0, 1, nil)
+	checks := buildFullDoctorChecks(integrity, recovery.ArtifactFilesystemReport{}, databaseFileProbe{ByteSize: 1}, 1, domain.ManagedServiceExecutionHealth{}, 1, 0, 1, nil)
 	runtimeCheck := findFullDoctorCheck(t, checks, "runtime_bindings")
 	if runtimeCheck.Status != "failed" || runtimeCheck.IssueCount != 1 || len(runtimeCheck.Samples) != 1 ||
 		runtimeCheck.Samples[0].EntityType != "runtime_binding" || runtimeCheck.Samples[0].EntityID != "run_runtime_binding:run_foreign" ||
@@ -277,7 +296,7 @@ func TestFullDoctorNeverPassesUnexecutedChecksAndRetainsBoundedCanonicalSamples(
 			Violations: []store.SemanticIntegrityViolation{{Check: "scope_parity", Count: int64(len(semanticSamples)), Samples: semanticSamples}},
 		}},
 	}
-	checks := buildFullDoctorChecks(complete, recovery.ArtifactFilesystemReport{}, databaseFileProbe{ByteSize: 1}, 0, 1, 0, 1, nil)
+	checks := buildFullDoctorChecks(complete, recovery.ArtifactFilesystemReport{}, databaseFileProbe{ByteSize: 1}, 0, domain.ManagedServiceExecutionHealth{}, 1, 0, 1, nil)
 	foreignKeyCheck := findFullDoctorCheck(t, checks, "foreign_keys")
 	projectionCheck := findFullDoctorCheck(t, checks, "projection_receipt_parity")
 	if foreignKeyCheck.IssueCount != int64(len(foreignKeys)) || len(foreignKeyCheck.Samples) != maximumDoctorSamples {
@@ -291,11 +310,11 @@ func TestFullDoctorNeverPassesUnexecutedChecksAndRetainsBoundedCanonicalSamples(
 		Complete: false,
 		Failures: []store.CanonicalIntegrityIssue{{Check: "current_baseline", Detail: "baseline scan stopped"}},
 	}
-	incompleteChecks := buildFullDoctorChecks(incomplete, recovery.ArtifactFilesystemReport{}, databaseFileProbe{ByteSize: 1}, 0, 1, 0, 1, nil)
+	incompleteChecks := buildFullDoctorChecks(incomplete, recovery.ArtifactFilesystemReport{}, databaseFileProbe{ByteSize: 1}, 0, domain.ManagedServiceExecutionHealth{}, 1, 0, 1, nil)
 	for _, code := range []string{
 		"current_baseline", "sqlite_integrity_check", "foreign_keys", "canonical_integrity", "event_contract",
 		"projection_receipt_parity", "artifact_integrity", "derived_knowledge_index", "runtime_bindings",
-		"durable_queues", "filesystem_permissions",
+		"managed_services", "durable_queues", "filesystem_permissions",
 	} {
 		check := findFullDoctorCheck(t, incompleteChecks, code)
 		if check.Status == "ok" || check.IssueCount == 0 {

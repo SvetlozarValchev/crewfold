@@ -4,7 +4,7 @@
   "title": "Crewfold task v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "workspace_id", "project_id", "title", "status", "priority", "budget", "revision", "created_at", "updated_at", "created_by", "updated_by"],
+  "required": ["id", "workspace_id", "project_id", "title", "task_class", "status", "priority", "budget", "revision", "created_at", "updated_at", "created_by", "updated_by"],
   "properties": {
     "id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
     "workspace_id": {"type": "string", "pattern": "^ws_[0-9a-f]{32}$"},
@@ -12,6 +12,7 @@
     "objective_id": {"type": "string", "pattern": "^obj_[0-9a-f]{32}$"},
     "title": {"type": "string", "minLength": 1, "maxLength": 256},
     "description": {"type": "string", "maxLength": 4096},
+    "task_class": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
     "status": {"enum": ["ready", "assigned", "active", "blocked", "review", "changes_requested", "completed", "failed", "cancelled"]},
     "blocked_reason": {"type": "string", "maxLength": 1024},
     "priority": {"type": "integer", "minimum": 0, "maximum": 1000},

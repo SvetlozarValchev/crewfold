@@ -140,6 +140,45 @@ FROM runs run WHERE run.status IN ('stopped','review','completed','start_failed'
 		return domain.ExecutionHealth{}, storageFailure("read terminal run log references", err)
 	}
 
+	if err := tx.QueryRowContext(ctx, `SELECT
+COUNT(*),
+(SELECT COUNT(*) FROM managed_service_instances)
+FROM managed_service_definitions WHERE status='active'`).Scan(
+		&health.Services.DefinitionCount, &health.Services.InstanceCount,
+	); err != nil {
+		return domain.ExecutionHealth{}, storageFailure("read managed-service health totals", err)
+	}
+	serviceRows, err := tx.QueryContext(ctx, `WITH latest AS (
+  SELECT instance.*,
+    ROW_NUMBER() OVER (PARTITION BY instance.definition_id ORDER BY instance.created_at DESC,instance.id DESC) AS position
+  FROM managed_service_instances instance
+  JOIN managed_service_definitions definition ON definition.id=instance.definition_id AND definition.status='active'
+)
+SELECT id,definition_id,status,diagnostic_code,diagnostic
+FROM latest
+WHERE position=1 AND status IN ('degraded','failed','unknown')
+ORDER BY updated_at,id`)
+	if err != nil {
+		return domain.ExecutionHealth{}, storageFailure("read current managed-service diagnoses", err)
+	}
+	for serviceRows.Next() {
+		var item domain.ManagedServiceExecutionIssue
+		if err := serviceRows.Scan(&item.InstanceID, &item.DefinitionID, &item.Status, &item.DiagnosticCode, &item.Diagnostic); err != nil {
+			serviceRows.Close()
+			return domain.ExecutionHealth{}, storageFailure("scan current managed-service diagnosis", err)
+		}
+		health.Services.IssueCount++
+		if len(health.Services.Issues) < 20 {
+			health.Services.Issues = append(health.Services.Issues, item)
+		}
+	}
+	if err := serviceRows.Close(); err != nil {
+		return domain.ExecutionHealth{}, storageFailure("close current managed-service diagnoses", err)
+	}
+	if err := serviceRows.Err(); err != nil {
+		return domain.ExecutionHealth{}, storageFailure("iterate current managed-service diagnoses", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return domain.ExecutionHealth{}, storageFailure("commit execution health snapshot", err)
 	}

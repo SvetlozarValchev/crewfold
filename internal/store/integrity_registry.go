@@ -29,7 +29,8 @@ var durableControlReceiptTables = map[string]bool{
 	"supervisor_action_receipts": true, "supervisor_state": true,
 	"run_scheduling_receipts": true, "run_retry_receipts": true,
 	"check_runtime_bindings": true, "check_launch_receipts": true,
-	"check_notification_receipts": true, "check_repair_decisions": true,
+	"managed_service_runtime_bindings": true,
+	"check_notification_receipts":      true, "check_repair_decisions": true,
 	"check_repair_effects": true, "check_watch_state": true, "check_watch_receipts": true,
 	"outcome_commitment_receipts": true, "outcome_assessment_submissions": true,
 	"outcome_assessment_governance": true, "outcome_assessment_acceptance_basis": true,
@@ -59,6 +60,7 @@ var durableQueueRegistry = []durableQueueDefinition{
 	{name: "approval", healthName: "approval", table: "approval_requests", idColumn: "id", openPredicate: "status IN ('pending','granted')", terminalRule: "status IN ('denied','expired','consumed')", blockerKind: "open_approval", statuses: []string{"pending", "granted", "denied", "expired", "consumed"}},
 	{name: "owner_manager_review", healthName: "owner_manager_review", table: "owner_manager_review_jobs", idColumn: "project_id", openPredicate: "status IN ('pending','leased')", terminalRule: "status IN ('idle','failed')", blockerKind: "open_owner_manager_review", statuses: []string{"idle", "pending", "leased", "failed"}},
 	{name: "owner_executive_exchange", healthName: "owner_executive_exchange", table: "owner_executive_exchanges", idColumn: "id", openPredicate: "status IN ('pending','leased','running')", terminalRule: "status IN ('responded','failed')", blockerKind: "open_owner_executive_exchange", statuses: []string{"pending", "leased", "running", "responded", "failed"}},
+	{name: "managed_service_job", healthName: "managed_service", table: "managed_service_jobs", idColumn: "id", openPredicate: "status IN ('pending','leased')", terminalRule: "status IN ('complete','failed_unknown')", blockerKind: "unsettled_managed_service_job", statuses: []string{"pending", "leased", "complete", "failed_unknown"}},
 }
 
 func queueDefinition(name string) (durableQueueDefinition, bool) {

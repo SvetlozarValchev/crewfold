@@ -244,6 +244,22 @@ func TestDirectLogRedactionPreservesDiagnosisWithoutSecretValue(t *testing.T) {
 	}
 }
 
+func TestTerminalOutputSanitizationRemovesControlEffectsButKeepsReadableDiagnosis(t *testing.T) {
+	t.Parallel()
+	unsafe := "before\x1b[31mred\x1b[0m\n\x1b]8;;https://example.invalid\x07link\x1b]8;;\x07\tbad\x00byte\xff\u202eright\nAPI_TOKEN=visible-secret\n"
+	got := RedactTerminalOutput(unsafe)
+	for _, forbidden := range []string{"\x1b", "\x00", "\u202e", "https://example.invalid", "visible-secret"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("sanitized terminal output %q contains %q", got, forbidden)
+		}
+	}
+	for _, visible := range []string{"beforered", "link", "badbyte", "API_TOKEN=[REDACTED]", "\uFFFD"} {
+		if !strings.Contains(got, visible) {
+			t.Fatalf("sanitized terminal output %q omits %q", got, visible)
+		}
+	}
+}
+
 func TestFixtureProviderRunsScenarioAsStructuredProcessReports(t *testing.T) {
 	t.Parallel()
 

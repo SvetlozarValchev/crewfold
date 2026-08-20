@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:local-api:run-artifact-show-result:v1",
+  "title": "Crewfold local API run artifact show result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "artifact"],
+  "properties": {
+    "schema": {"const": "urn:crewfold:schema:local-api:run-artifact-show-result:v1"},
+    "type": {"const": "run_artifact"},
+    "artifact": {"$ref": "../../domain/v1/run-artifact-content.schema.json"}
+  }
+}

@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	checkArtifactNamespace = "check-artifacts"
-	runArtifactNamespace   = "run-artifacts"
+	checkArtifactNamespace   = "check-artifacts"
+	runArtifactNamespace     = "run-artifacts"
+	serviceArtifactNamespace = "service-artifacts"
 
 	mutationAfterImmutableArtifactNamespaceParentSync = "after_immutable_artifact_namespace_parent_sync"
 	mutationAfterImmutableArtifactShardParentSync     = "after_immutable_artifact_shard_parent_sync"
@@ -96,7 +97,7 @@ func (s *Store) publishImmutableArtifact(namespace, _ string, hash string, conte
 }
 
 func (s *Store) openImmutableArtifactShard(namespace, hash string, create bool) (int, error) {
-	if namespace != checkArtifactNamespace && namespace != runArtifactNamespace {
+	if namespace != checkArtifactNamespace && namespace != runArtifactNamespace && namespace != serviceArtifactNamespace {
 		return -1, errors.New("immutable artifact namespace is invalid")
 	}
 	if !validLowerSHA256(hash) {

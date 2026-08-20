@@ -15,6 +15,7 @@ var canonicalProjectIDPattern = regexp.MustCompile(`^prj_[0-9a-f]{32}$`)
 var canonicalObjectiveIDPattern = regexp.MustCompile(`^obj_[0-9a-f]{32}$`)
 var canonicalTaskIDPattern = regexp.MustCompile(`^task_[0-9a-f]{32}$`)
 var canonicalAgentIDPattern = regexp.MustCompile(`^agent_[0-9a-f]{32}$`)
+var canonicalRunArtifactIDPattern = regexp.MustCompile(`^artifact_[0-9a-f]{32}$`)
 var canonicalScopeNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
 const (
@@ -37,6 +38,7 @@ var operatorReadResultDiscriminators = map[string][2]string{
 	MethodObjectiveList:          {ObjectiveListSchema, "objective_list"},
 	MethodTaskList:               {TaskListSchema, "task_list"},
 	MethodRunList:                {RunListSchema, "run_list"},
+	MethodRunArtifactShow:        {RunArtifactShowSchema, "run_artifact"},
 	MethodClaimList:              {ClaimListSchema, "claim_list"},
 	MethodOverlapList:            {OverlapListSchema, "overlap_list"},
 	MethodDriftList:              {DriftListSchema, "drift_list"},
@@ -54,54 +56,75 @@ type operatorResultContract struct {
 }
 
 var operatorResultContracts = map[string]operatorResultContract{
-	MethodWorkspaceShow:               {"local/v1/workspace-show.result.schema.json", WorkspaceShowSchema, "workspace"},
-	MethodProjectShow:                 {"local/v1/project-show.result.schema.json", ProjectShowSchema, "project"},
-	MethodAgentShow:                   {"local/v1/agent-show.result.schema.json", AgentShowSchema, "agent"},
-	MethodWorkspaceList:               {"local/v1/workspace-list.result.schema.json", WorkspaceListSchema, "workspace_list"},
-	MethodProjectList:                 {"local/v1/project-list.result.schema.json", ProjectListSchema, "project_list"},
-	MethodAgentList:                   {"local/v1/agent-list.result.schema.json", AgentListSchema, "agent_list"},
-	MethodDomainAgentCreate:           {"local/v1/domain-agent-create.result.schema.json", DomainAgentCreateSchema, "domain_agent_create"},
-	MethodDomainAgentSpecDraft:        {"local/v1/domain-agent-spec-draft.result.schema.json", DomainAgentSpecDraftSchema, "domain_agent_spec_draft"},
-	MethodDomainAgentAttach:           {"local/v1/domain-agent-mutation.result.schema.json", DomainAgentMutationSchema, "domain_agent_mutation"},
-	MethodDomainAgentUpdate:           {"local/v1/domain-agent-mutation.result.schema.json", DomainAgentMutationSchema, "domain_agent_mutation"},
-	MethodDomainAgentTree:             {"local/v1/domain-agent-tree.result.schema.json", DomainAgentTreeSchema, "domain_agent_tree"},
-	MethodDomainAgentSessionOpen:      {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
-	MethodDomainAgentSessionShow:      {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
-	MethodDomainAgentSessionSend:      {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
-	MethodDomainAgentSessionInterrupt: {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
-	MethodDomainAgentSessionCompact:   {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
-	MethodDomainAgentSessionRotate:    {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
-	MethodDomainStaffingGrantCreate:   {"local/v1/domain-staffing-grant-mutation.result.schema.json", DomainStaffingGrantMutationSchema, "domain_staffing_grant_mutation"},
-	MethodDomainStaffingGrantList:     {"local/v1/domain-staffing-grant-list.result.schema.json", DomainStaffingGrantListSchema, "domain_staffing_grant_list"},
-	MethodDomainStaffingGrantRevoke:   {"local/v1/domain-staffing-grant-mutation.result.schema.json", DomainStaffingGrantMutationSchema, "domain_staffing_grant_mutation"},
-	MethodDomainWorkProposalList:      {"local/v1/domain-work-proposal-list.result.schema.json", DomainWorkProposalListSchema, "domain_work_proposal_list"},
-	MethodDomainWorkProposalAccept:    {"local/v1/domain-work-proposal-decision.result.schema.json", DomainWorkProposalDecisionSchema, "domain_work_proposal_decision"},
-	MethodDomainWorkProposalReject:    {"local/v1/domain-work-proposal-decision.result.schema.json", DomainWorkProposalDecisionSchema, "domain_work_proposal_decision"},
-	MethodObjectiveList:               {"local/v1/objective-list.result.schema.json", ObjectiveListSchema, "objective_list"},
-	MethodTaskList:                    {"local/v1/task-list.result.schema.json", TaskListSchema, "task_list"},
-	MethodRunList:                     {"local/v1/run-list.result.schema.json", RunListSchema, "run_list"},
-	MethodClaimList:                   {"local/v1/claim-list.result.schema.json", ClaimListSchema, "claim_list"},
-	MethodOverlapList:                 {"local/v1/overlap-list.result.schema.json", OverlapListSchema, "overlap_list"},
-	MethodDriftList:                   {"local/v1/drift-list.result.schema.json", DriftListSchema, "drift_list"},
-	MethodMeetingList:                 {"local/v1/meeting-list.result.schema.json", MeetingListSchema, "meeting_list"},
-	MethodApprovalList:                {"local/v1/approval-list.result.schema.json", ApprovalListSchema, "approval_list"},
-	MethodCheckList:                   {"local/v1/check-run-list.result.schema.json", CheckRunListSchema, "check_run_list"},
-	MethodInboxList:                   {"local/v1/inbox-list.result.schema.json", InboxListSchema, "inbox"},
-	MethodThreadList:                  {"local/v1/thread-list.result.schema.json", ThreadListSchema, "thread_list"},
-	MethodEventsList:                  {"local/v1/events-list.result.schema.json", EventsListSchema, "event_list"},
-	MethodEventsTimeline:              {"local/v1/events-timeline.result.schema.json", EventsTimelineSchema, "event_timeline"},
-	MethodBriefingShow:                {"local/v1/briefing-show.result.schema.json", BriefingShowSchema, "management_briefing"},
-	MethodBriefingExplain:             {"local/v1/briefing-explain.result.schema.json", BriefingExplainSchema, "briefing_claim_explanation"},
-	MethodSupervisorActionShow:        {"local/v1/supervisor-action-show.result.schema.json", SupervisorActionShowSchema, "supervisor_action"},
-	MethodRunAttach:                   {"local/v1/run-attach.result.schema.json", RunAttachSchema, "run_attach"},
-	MethodRunResume:                   {"local/v1/run-mutation.result.schema.json", RunMutationSchema, "run_mutation"},
-	MethodRunStop:                     {"local/v1/run-mutation.result.schema.json", RunMutationSchema, "run_mutation"},
-	MethodRunLostResolve:              {"local/v1/run-loss-resolution.result.schema.json", RunLossResolutionSchema, "run_loss_resolution"},
-	MethodApprovalAllow:               {"local/v1/approval-mutation.result.schema.json", ApprovalMutationSchema, "approval_mutation"},
-	MethodApprovalDeny:                {"local/v1/approval-mutation.result.schema.json", ApprovalMutationSchema, "approval_mutation"},
-	MethodSystemDoctorFull:            {"local/v1/full-doctor.result.schema.json", FullDoctorSchema, "full_doctor"},
-	MethodBackupCreate:                {"local/v1/backup-create.result.schema.json", BackupCreateSchema, "backup"},
-	MethodWebBootstrap:                {"local/v1/web-bootstrap.result.schema.json", WebBootstrapSchema, "web_bootstrap"},
+	MethodWorkspaceShow:                  {"local/v1/workspace-show.result.schema.json", WorkspaceShowSchema, "workspace"},
+	MethodProjectShow:                    {"local/v1/project-show.result.schema.json", ProjectShowSchema, "project"},
+	MethodAgentShow:                      {"local/v1/agent-show.result.schema.json", AgentShowSchema, "agent"},
+	MethodWorkspaceList:                  {"local/v1/workspace-list.result.schema.json", WorkspaceListSchema, "workspace_list"},
+	MethodProjectList:                    {"local/v1/project-list.result.schema.json", ProjectListSchema, "project_list"},
+	MethodAgentList:                      {"local/v1/agent-list.result.schema.json", AgentListSchema, "agent_list"},
+	MethodDomainAgentCreate:              {"local/v1/domain-agent-create.result.schema.json", DomainAgentCreateSchema, "domain_agent_create"},
+	MethodDomainAgentSpecDraft:           {"local/v1/domain-agent-spec-draft.result.schema.json", DomainAgentSpecDraftSchema, "domain_agent_spec_draft"},
+	MethodDomainAgentAttach:              {"local/v1/domain-agent-mutation.result.schema.json", DomainAgentMutationSchema, "domain_agent_mutation"},
+	MethodDomainAgentUpdate:              {"local/v1/domain-agent-mutation.result.schema.json", DomainAgentMutationSchema, "domain_agent_mutation"},
+	MethodDomainAgentTree:                {"local/v1/domain-agent-tree.result.schema.json", DomainAgentTreeSchema, "domain_agent_tree"},
+	MethodDomainAgentSessionOpen:         {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainAgentSessionShow:         {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainAgentSessionSend:         {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainAgentSessionInterrupt:    {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainAgentSessionCompact:      {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainAgentSessionRotate:       {"local/v1/domain-agent-session.result.schema.json", DomainAgentSessionSchema, "domain_agent_session"},
+	MethodDomainStaffingGrantCreate:      {"local/v1/domain-staffing-grant-mutation.result.schema.json", DomainStaffingGrantMutationSchema, "domain_staffing_grant_mutation"},
+	MethodDomainStaffingGrantList:        {"local/v1/domain-staffing-grant-list.result.schema.json", DomainStaffingGrantListSchema, "domain_staffing_grant_list"},
+	MethodDomainStaffingGrantRevoke:      {"local/v1/domain-staffing-grant-mutation.result.schema.json", DomainStaffingGrantMutationSchema, "domain_staffing_grant_mutation"},
+	MethodDomainWorkProposalList:         {"local/v1/domain-work-proposal-list.result.schema.json", DomainWorkProposalListSchema, "domain_work_proposal_list"},
+	MethodDomainWorkProposalAccept:       {"local/v1/domain-work-proposal-decision.result.schema.json", DomainWorkProposalDecisionSchema, "domain_work_proposal_decision"},
+	MethodDomainWorkProposalReject:       {"local/v1/domain-work-proposal-decision.result.schema.json", DomainWorkProposalDecisionSchema, "domain_work_proposal_decision"},
+	MethodObjectiveList:                  {"local/v1/objective-list.result.schema.json", ObjectiveListSchema, "objective_list"},
+	MethodTaskList:                       {"local/v1/task-list.result.schema.json", TaskListSchema, "task_list"},
+	MethodRunList:                        {"local/v1/run-list.result.schema.json", RunListSchema, "run_list"},
+	MethodRunArtifactShow:                {"local/v1/run-artifact-show.result.schema.json", RunArtifactShowSchema, "run_artifact"},
+	MethodClaimList:                      {"local/v1/claim-list.result.schema.json", ClaimListSchema, "claim_list"},
+	MethodOverlapList:                    {"local/v1/overlap-list.result.schema.json", OverlapListSchema, "overlap_list"},
+	MethodDriftList:                      {"local/v1/drift-list.result.schema.json", DriftListSchema, "drift_list"},
+	MethodMeetingList:                    {"local/v1/meeting-list.result.schema.json", MeetingListSchema, "meeting_list"},
+	MethodApprovalList:                   {"local/v1/approval-list.result.schema.json", ApprovalListSchema, "approval_list"},
+	MethodCheckList:                      {"local/v1/check-run-list.result.schema.json", CheckRunListSchema, "check_run_list"},
+	MethodInboxList:                      {"local/v1/inbox-list.result.schema.json", InboxListSchema, "inbox"},
+	MethodThreadList:                     {"local/v1/thread-list.result.schema.json", ThreadListSchema, "thread_list"},
+	MethodEventsList:                     {"local/v1/events-list.result.schema.json", EventsListSchema, "event_list"},
+	MethodEventsTimeline:                 {"local/v1/events-timeline.result.schema.json", EventsTimelineSchema, "event_timeline"},
+	MethodBriefingShow:                   {"local/v1/briefing-show.result.schema.json", BriefingShowSchema, "management_briefing"},
+	MethodBriefingExplain:                {"local/v1/briefing-explain.result.schema.json", BriefingExplainSchema, "briefing_claim_explanation"},
+	MethodSupervisorActionShow:           {"local/v1/supervisor-action-show.result.schema.json", SupervisorActionShowSchema, "supervisor_action"},
+	MethodRunAttach:                      {"local/v1/run-attach.result.schema.json", RunAttachSchema, "run_attach"},
+	MethodRunResume:                      {"local/v1/run-mutation.result.schema.json", RunMutationSchema, "run_mutation"},
+	MethodRunStop:                        {"local/v1/run-mutation.result.schema.json", RunMutationSchema, "run_mutation"},
+	MethodRunLostResolve:                 {"local/v1/run-loss-resolution.result.schema.json", RunLossResolutionSchema, "run_loss_resolution"},
+	MethodApprovalAllow:                  {"local/v1/approval-mutation.result.schema.json", ApprovalMutationSchema, "approval_mutation"},
+	MethodApprovalDeny:                   {"local/v1/approval-mutation.result.schema.json", ApprovalMutationSchema, "approval_mutation"},
+	MethodSystemDoctorFull:               {"local/v1/full-doctor.result.schema.json", FullDoctorSchema, "full_doctor"},
+	MethodBackupCreate:                   {"local/v1/backup-create.result.schema.json", BackupCreateSchema, "backup"},
+	MethodWebBootstrap:                   {"local/v1/web-bootstrap.result.schema.json", WebBootstrapSchema, "web_bootstrap"},
+	MethodManagedServiceDefinitionCreate: {"local/v1/managed-service-definition-mutation.result.schema.json", ManagedServiceDefinitionMutationSchema, "managed_service_definition_mutation"},
+	MethodManagedServiceDefinitionRetire: {"local/v1/managed-service-definition-mutation.result.schema.json", ManagedServiceDefinitionMutationSchema, "managed_service_definition_mutation"},
+	MethodManagedServiceDefinitionShow:   {"local/v1/managed-service-definition-show.result.schema.json", ManagedServiceDefinitionShowSchema, "managed_service_definition"},
+	MethodManagedServiceDefinitionList:   {"local/v1/managed-service-definition-list.result.schema.json", ManagedServiceDefinitionListSchema, "managed_service_definition_list"},
+	MethodManagedServiceStart:            {"local/v1/managed-service-mutation.result.schema.json", ManagedServiceMutationSchema, "managed_service_mutation"},
+	MethodManagedServiceShow:             {"local/v1/managed-service-show.result.schema.json", ManagedServiceShowSchema, "managed_service"},
+	MethodManagedServiceList:             {"local/v1/managed-service-list.result.schema.json", ManagedServiceListSchema, "managed_service_list"},
+	MethodManagedServiceStop:             {"local/v1/managed-service-mutation.result.schema.json", ManagedServiceMutationSchema, "managed_service_mutation"},
+	MethodManagedServiceRestart:          {"local/v1/managed-service-mutation.result.schema.json", ManagedServiceMutationSchema, "managed_service_mutation"},
+	MethodManagedServiceResolveUnknown:   {"local/v1/managed-service-mutation.result.schema.json", ManagedServiceMutationSchema, "managed_service_mutation"},
+	MethodManagedServiceLogs:             {"local/v1/managed-service-logs.result.schema.json", ManagedServiceLogsSchema, "managed_service_logs"},
+	MethodManagedServiceGrantCreate:      {"local/v1/managed-service-grant-mutation.result.schema.json", ManagedServiceGrantMutationSchema, "managed_service_grant_mutation"},
+	MethodManagedServiceGrantRevoke:      {"local/v1/managed-service-grant-mutation.result.schema.json", ManagedServiceGrantMutationSchema, "managed_service_grant_mutation"},
+	MethodManagedServiceGrantList:        {"local/v1/managed-service-grant-list.result.schema.json", ManagedServiceGrantListSchema, "managed_service_grant_list"},
+	MethodManagedServiceRequestList:      {"local/v1/managed-service-request-list.result.schema.json", ManagedServiceRequestListSchema, "managed_service_request_list"},
+	MethodManagedServiceRequestAccept:    {"local/v1/managed-service-request-mutation.result.schema.json", ManagedServiceRequestMutationSchema, "managed_service_request_mutation"},
+	MethodManagedServiceRequestReject:    {"local/v1/managed-service-request-mutation.result.schema.json", ManagedServiceRequestMutationSchema, "managed_service_request_mutation"},
+	MethodWorkstreamDeliveryShow:         {"local/v1/workstream-delivery-show.result.schema.json", WorkstreamDeliveryShowSchema, "workstream_delivery"},
+	MethodWorkstreamDeliveryAccept:       {"local/v1/workstream-delivery-mutation.result.schema.json", WorkstreamDeliveryMutationSchema, "workstream_delivery_mutation"},
+	MethodWorkstreamDeliveryReject:       {"local/v1/workstream-delivery-mutation.result.schema.json", WorkstreamDeliveryMutationSchema, "workstream_delivery_mutation"},
 }
 
 func validateStrictOperatorResultWire(method string, raw []byte) error {
@@ -227,6 +250,13 @@ func validateOperatorReadResult(method string, paramsValue, result any) error {
 			}
 		}
 		return validatePage(method, value.PageResult, len(value.Runs), requestedPageLimit(paramsValue.(RunListParams).Limit, maximumOperatorPageLimit))
+	case *RunArtifactShowResult:
+		params := paramsValue.(RunArtifactShowParams)
+		if value.Artifact.WorkspaceID != params.Workspace || value.Artifact.Artifact.ID != params.Artifact ||
+			!canonicalRunArtifactIDPattern.MatchString(value.Artifact.Artifact.ID) {
+			return fmt.Errorf("decode local API result %s: artifact violates requested scope", method)
+		}
+		return nil
 	case *ClaimListResult:
 		params := paramsValue.(ClaimListParams)
 		for _, item := range value.Claims {

@@ -151,6 +151,103 @@ func TestCreateBundleRefusesActionableRunWithoutPublishingOrAppendingEvent(t *te
 	}
 }
 
+func TestManagedServiceBackupRefusesLiveAuthorityAndRestoresOnlyTerminalEvidence(t *testing.T) {
+	ctx := context.Background()
+	storage, dataDir, workspaceID, assigned, checkout := newAssignedRecoveryFixture(t)
+	definition, err := storage.CreateManagedServiceDefinition(ctx, store.CreateManagedServiceDefinitionCommand{
+		WorkspaceIdentifier: workspaceID, ProjectIdentifier: assigned.Task.ProjectID, CheckoutID: checkout.ID,
+		Name: "recovery-process", Description: "managed process recovery boundary", Executable: "/bin/sleep", Arguments: []string{"30"}, WorkingDirectory: ".",
+		Profile: "local-process", ProfileRevision: 1, NetworkMode: domain.ManagedServiceNetworkNone,
+		Health:        domain.ManagedServiceHealthCheck{Type: domain.ManagedServiceHealthProcess, IntervalMillis: 100, TimeoutMillis: 50},
+		RestartPolicy: domain.ManagedServiceRestartNever, StopSignal: domain.ManagedServiceStopSignalTerm, StopGraceMillis: 500,
+		OutputByteLimit: 4096, CapacityClass: domain.ManagedServiceCapacityLocalDevelop,
+		IdempotencyKey: "recovery-service-definition", CorrelationID: "recovery-service-definition",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := storage.StartManagedService(ctx, store.StartManagedServiceCommand{
+		WorkspaceIdentifier: workspaceID, DefinitionID: definition.Value.ID, ExpectedRevision: definition.Value.Revision,
+		IdempotencyKey: "recovery-service-start", CorrelationID: "recovery-service-start",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := storage.ListEvents(ctx, store.ListEventsQuery{WorkspaceIdentifier: workspaceID, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusedTarget := filepath.Join(t.TempDir(), "refused-service-bundle")
+	_, err = CreateBundle(ctx, storage, dataDir, refusedTarget, "recovery-service-refused")
+	if ErrorCode(err) != CodeBackupNotQuiescent {
+		t.Fatalf("CreateBundle(live service) error = %v, code = %q", err, ErrorCode(err))
+	}
+	typed, ok := err.(*Error)
+	if !ok || typed.Quiescence == nil || typed.Quiescence.Counts.NonterminalManagedServices != 1 || typed.Quiescence.Counts.UnsettledManagedServiceJobs != 1 || typed.Quiescence.Counts.ManagedServiceBindings != 0 {
+		t.Fatalf("live managed-service quiescence refusal = %#v", typed)
+	}
+	if _, err := os.Lstat(refusedTarget); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("live managed-service backup published target: %v", err)
+	}
+	after, err := storage.ListEvents(ctx, store.ListEventsQuery{WorkspaceIdentifier: workspaceID, Limit: 1})
+	if err != nil || after.HighWater != before.HighWater {
+		t.Fatalf("live managed-service backup refusal changed event high-water from %d to %d: %v", before.HighWater, after.HighWater, err)
+	}
+
+	work, found, err := storage.ClaimManagedServiceJob(ctx, time.Second)
+	if err != nil || !found || work.Instance.ID != requested.Value.ID {
+		t.Fatalf("ClaimManagedServiceJob() = %#v, %v, %v", work, found, err)
+	}
+	if _, err := storage.MarkManagedServiceStarting(ctx, work.Instance.ID, "recovery-service-starting"); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := storage.PrepareManagedServiceLogArchive(ctx, work.Instance.ID, domain.ManagedServiceLogs{
+		InstanceID: work.Instance.ID, State: "terminal",
+		Stdout: domain.CapturedLog{Text: "managed stdout\n", CapturedBytes: 15},
+		Stderr: domain.CapturedLog{Text: "managed stderr\n", CapturedBytes: 15},
+	}, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := storage.FailManagedServiceWithLogs(ctx, work.Instance.ID, "fixture_retired", "fixture process never launched", &archive, "", "recovery-service-terminal")
+	if err != nil || terminal.Status != domain.ManagedServiceFailed {
+		t.Fatalf("FailManagedServiceWithLogs() = %#v, %v", terminal, err)
+	}
+	bundle := filepath.Join(t.TempDir(), "service-bundle")
+	created, err := CreateBundle(ctx, storage, dataDir, bundle, "recovery-service-bundle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Manifest.Entries) != 2 {
+		t.Fatalf("managed-service terminal bundle entries = %#v, want stdout and stderr only", created.Manifest.Entries)
+	}
+	for _, entry := range created.Manifest.Entries {
+		if entry.Kind != "service_log_artifact" || !strings.HasPrefix(entry.Path, "service-artifacts/") {
+			t.Fatalf("managed-service artifact manifest entry = %#v", entry)
+		}
+	}
+	restored := filepath.Join(t.TempDir(), "restored-service")
+	if _, err := RestorePending(ctx, bundle, restored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(restored, "service-runtime")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("restore copied live service-runtime authority: %v", err)
+	}
+	restoredStore, err := store.Open(ctx, restored, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restoredStore.Close()
+	restoredInstance, err := restoredStore.ManagedServiceInstance(ctx, workspaceID, terminal.ID)
+	if err != nil || restoredInstance.Status != domain.ManagedServiceFailed || restoredInstance.RuntimePID != 0 || restoredInstance.RuntimeOperationID != "" {
+		t.Fatalf("restored managed-service state = %#v, %v", restoredInstance, err)
+	}
+	restoredLogs, err := restoredStore.ManagedServiceTerminalLogs(ctx, workspaceID, terminal.ID)
+	if err != nil || restoredLogs.Stdout.Text != "managed stdout\n" || restoredLogs.Stderr.Text != "managed stderr\n" {
+		t.Fatalf("restored managed-service logs = %#v, %v", restoredLogs, err)
+	}
+}
+
 func TestCreateBundleRefusesUnfinishedCheckAndItsDurableJob(t *testing.T) {
 	ctx := context.Background()
 	storage, dataDir, workspaceID, assigned, checkout := newAssignedRecoveryFixture(t)
@@ -366,6 +463,10 @@ func TestManifestRejectsEveryFrozenQuiescenceCount(t *testing.T) {
 		{name: "supervisor action", mutate: func(counts *store.QuiescenceCounts) { counts.OpenSupervisorActions = 1 }},
 		{name: "approval", mutate: func(counts *store.QuiescenceCounts) { counts.OpenApprovals = 1 }},
 		{name: "owner manager review", mutate: func(counts *store.QuiescenceCounts) { counts.OpenOwnerManagerReviews = 1 }},
+		{name: "owner executive exchange", mutate: func(counts *store.QuiescenceCounts) { counts.OpenOwnerExecutiveExchanges = 1 }},
+		{name: "managed service", mutate: func(counts *store.QuiescenceCounts) { counts.NonterminalManagedServices = 1 }},
+		{name: "managed service binding", mutate: func(counts *store.QuiescenceCounts) { counts.ManagedServiceBindings = 1 }},
+		{name: "managed service job", mutate: func(counts *store.QuiescenceCounts) { counts.UnsettledManagedServiceJobs = 1 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

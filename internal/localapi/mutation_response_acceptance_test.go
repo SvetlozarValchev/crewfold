@@ -166,7 +166,7 @@ func m19MutationRunDetail(workspaceID, runID, status string, revision, grace int
 		},
 		Task: domain.Task{
 			ID: taskID, WorkspaceID: workspaceID, ProjectID: projectID, Title: "Operator action task",
-			Status: domain.TaskActive, Budget: domain.Budget{}, Revision: 2,
+			TaskClass: "implementation", Status: domain.TaskActive, Budget: domain.Budget{}, Revision: 2,
 			CreatedAt: now, UpdatedAt: now, CreatedBy: "local-owner", UpdatedBy: "local-owner",
 		},
 		Agent: domain.AgentDefinition{

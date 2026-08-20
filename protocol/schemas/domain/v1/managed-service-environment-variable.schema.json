@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"urn:crewfold:schema:domain:managed-service-environment-variable:v1","type":"object","additionalProperties":false,"required":["name","value"],"properties":{"name":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]{0,127}$"},"value":{"type":"string","maxLength":4096,"pattern":"^[^\\x00]*$"}}}

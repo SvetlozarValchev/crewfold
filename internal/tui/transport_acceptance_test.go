@@ -1003,7 +1003,7 @@ func m19TransportTaskDetail(id, title string) domain.TaskDetail {
 	return domain.TaskDetail{
 		Task: domain.Task{
 			ID: id, WorkspaceID: m19TransportWorkspace, ProjectID: m19TransportProject,
-			Title: title, Status: domain.TaskReady, Priority: 100, Revision: 1,
+			Title: title, TaskClass: "implementation", Status: domain.TaskReady, Priority: 100, Revision: 1,
 			CreatedAt: "2026-08-14T12:00:00Z", UpdatedAt: "2026-08-14T12:00:00Z",
 			CreatedBy: "local-owner", UpdatedBy: "local-owner",
 		},
