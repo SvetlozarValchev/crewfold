@@ -47,7 +47,7 @@ type DomainAgentSession = { project_id: string; agent_id: string; provider?: str
 type DomainAgentSessionEpoch = { epoch: number; status: "current" | "archived"; rotation_reason?: string; created_at: string; rotated_at?: string };
 type DomainAgentSessionCommandAction = { type: "read" | "listFiles" | "search" | "unknown"; command?: string; name?: string; path?: string; query?: string };
 type DomainAgentSessionFileChange = { path: string; kind: "add" | "delete" | "update"; diff?: string };
-type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "mcpToolCall" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "webSearch" | "subAgentActivity" | "reasoning" | "error"; origin?: "owner" | "crewfold_delivery"; text?: string; command?: string; status?: string; cwd?: string; process_id?: string; exit_code?: number; duration_ms?: number; command_actions?: DomainAgentSessionCommandAction[]; changes?: DomainAgentSessionFileChange[] };
+type DomainAgentSessionItem = { id: string; type: "userMessage" | "agentMessage" | "plan" | "commandExecution" | "mcpToolCall" | "dynamicToolCall" | "collabAgentToolCall" | "fileChange" | "webSearch" | "subAgentActivity" | "reasoning" | "error"; origin?: "owner" | "crewfold_task" | "crewfold_delivery"; text?: string; command?: string; status?: string; cwd?: string; process_id?: string; exit_code?: number; duration_ms?: number; command_actions?: DomainAgentSessionCommandAction[]; changes?: DomainAgentSessionFileChange[] };
 type DomainAgentSessionTurn = { id: string; status: string; items: DomainAgentSessionItem[] };
 type DomainAgentSessionResult = { schema: string; type: "domain_agent_session"; view: { session: DomainAgentSession; epochs: DomainAgentSessionEpoch[]; thread_status: string; turns: DomainAgentSessionTurn[] }; accepted_turn?: DomainAgentSessionTurn };
 type DomainStaffingProfile = { provider: string; runtime: string; max_concurrency: number };
@@ -1172,7 +1172,7 @@ function DomainWorkstreamLifecyclePanel({ data, objective, inspectTask, inspectR
 }
 
 function sessionItemLabel(item: DomainAgentSessionItem, agentName: string) {
-  if (item.type === "userMessage") return item.origin === "crewfold_delivery" ? "crewfold delivery" : "you";
+  if (item.type === "userMessage") return item.origin === "crewfold_task" ? "crewfold task" : item.origin === "crewfold_delivery" ? "crewfold delivery" : "you";
   if (item.type === "agentMessage") return agentName;
   if (item.type === "commandExecution") return "command";
   if (item.type === "dynamicToolCall") return item.command?.startsWith("crewfold_") ? "crewfold tool" : "provider tool";
@@ -1342,7 +1342,7 @@ function SessionThreadItem({ item, agentName }: { item: DomainAgentSessionItem; 
       {changes.map((change) => { const changeStats = diffStats(change); return <details className="m22-file-change" key={`${change.kind}-${change.path}`}><summary><span>{change.path}</span><small><em>+{changeStats.added}</em> <del>-{changeStats.removed}</del></small></summary>{change.diff ? <DiffLines change={change} /> : <p>Patch content has not arrived yet.</p>}</details>; })}
     </article>;
   }
-  return <article className={`m22-thread-item ${item.type} ${item.status === "failed" ? "failed" : ""}`}>
+  return <article className={`m22-thread-item ${item.type} ${item.origin ?? ""} ${item.status === "failed" ? "failed" : ""}`}>
     <span>{sessionItemLabel(item, agentName)}</span>
     {command && <code>{command}</code>}
     {item.text && (item.type === "agentMessage" || item.type === "plan" ? <MarkdownText text={item.text} /> : <p>{item.text}</p>)}

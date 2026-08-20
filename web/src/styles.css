@@ -266,6 +266,8 @@
 .m22-thread-item > details pre { max-height: 220px; margin: 7px 0 0; padding: 8px; overflow: auto; white-space: pre-wrap; color: #b8b8b8; background: #171717; font: inherit; line-height: 1.5; }
 .m22-thread-item.userMessage { background: #272727; }
 .m22-thread-item.userMessage > span { color: var(--m22-cyan); }
+.m22-thread-item.userMessage.crewfold_task { border-left: 2px solid var(--m22-cyan); background: #202525; }
+.m22-thread-item.userMessage.crewfold_task > span { color: #9bc8c3; }
 .m22-thread-item.agentMessage > span { color: var(--m22-green); }
 .m22-thread-item.commandExecution { background: #1b1b1b; }
 .m22-thread-item.commandExecution > code { color: #dfdfdf; }

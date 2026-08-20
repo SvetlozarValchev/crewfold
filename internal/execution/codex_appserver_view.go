@@ -96,7 +96,9 @@ func ReadableCodexItem(raw json.RawMessage) (domain.DomainAgentSessionItem, bool
 	switch envelope.Type {
 	case "userMessage":
 		item.Origin = "owner"
-		if strings.HasPrefix(envelope.ClientID, "crewfold:wake:") {
+		if strings.HasPrefix(envelope.ClientID, "crewfold-run:") {
+			item.Origin = "crewfold_task"
+		} else if strings.HasPrefix(envelope.ClientID, "crewfold:wake:") {
 			item.Origin = "crewfold_delivery"
 		}
 		var contentItems []struct {

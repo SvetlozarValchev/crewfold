@@ -1634,6 +1634,11 @@ a thread with an active provider turn is returned to pending with a bounded
 retry time. Once the thread is idle, the message is delivered through a distinct
 provider turn whose input provenance is `crewfold_delivery`.
 
+Session items distinguish exact input provenance. Owner-authored turns use
+`owner`; an accepted task attached by Crewfold uses `crewfold_task`; and durable
+mailbox delivery uses `crewfold_delivery`. Owner surfaces must not render either
+Crewfold-originated input as if the owner typed it.
+
 The durable provider conversation is resumed with a read-only checkout sandbox.
 It is a real Codex thread for inspection, planning, communication, and these
 audited structured operations, but it is not a Crewfold implementation run.
