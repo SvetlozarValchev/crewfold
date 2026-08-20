@@ -114,6 +114,17 @@ type CodexTurnResponse struct {
 	Turn CodexTurn `json:"turn"`
 }
 
+// CodexTurnStartOptions changes the authority envelope for one turn without
+// creating another provider thread. Codex applies these values to this turn
+// and subsequent turns, so every Crewfold caller supplies the complete desired
+// boundary instead of relying on whichever kind of turn happened previously.
+type CodexTurnStartOptions struct {
+	ClientMessageID string
+	CWD             string
+	ApprovalPolicy  string
+	SandboxPolicy   map[string]any
+}
+
 type CodexThreadTurnsResponse struct {
 	Data       []CodexTurn `json:"data"`
 	NextCursor *string     `json:"nextCursor,omitempty"`
@@ -326,10 +337,14 @@ func (client *CodexAppServerClient) ListThreadTurns(ctx context.Context, threadI
 }
 
 func (client *CodexAppServerClient) StartTurn(ctx context.Context, threadID, text string) (CodexTurn, error) {
-	return client.StartTurnWithClientID(ctx, threadID, "", text)
+	return client.StartTurnWithOptions(ctx, threadID, text, CodexTurnStartOptions{})
 }
 
 func (client *CodexAppServerClient) StartTurnWithClientID(ctx context.Context, threadID, clientMessageID, text string) (CodexTurn, error) {
+	return client.StartTurnWithOptions(ctx, threadID, text, CodexTurnStartOptions{ClientMessageID: clientMessageID})
+}
+
+func (client *CodexAppServerClient) StartTurnWithOptions(ctx context.Context, threadID, text string, options CodexTurnStartOptions) (CodexTurn, error) {
 	if threadID == "" || text == "" {
 		return CodexTurn{}, errors.New("Codex turn requires thread id and input")
 	}
@@ -337,8 +352,17 @@ func (client *CodexAppServerClient) StartTurnWithClientID(ctx context.Context, t
 	params := map[string]any{
 		"threadId": threadID, "input": []map[string]string{{"type": "text", "text": text}},
 	}
-	if clientMessageID != "" {
-		params["clientUserMessageId"] = clientMessageID
+	if options.ClientMessageID != "" {
+		params["clientUserMessageId"] = options.ClientMessageID
+	}
+	if options.CWD != "" {
+		params["cwd"] = options.CWD
+	}
+	if options.ApprovalPolicy != "" {
+		params["approvalPolicy"] = options.ApprovalPolicy
+	}
+	if options.SandboxPolicy != nil {
+		params["sandboxPolicy"] = options.SandboxPolicy
 	}
 	if err := client.call(ctx, "turn/start", params, &response); err != nil {
 		return CodexTurn{}, err
@@ -347,6 +371,32 @@ func (client *CodexAppServerClient) StartTurnWithClientID(ctx context.Context, t
 		return CodexTurn{}, errors.New("Codex turn response is incomplete")
 	}
 	return response.Turn, nil
+}
+
+// SteerTurn adds owner or Crewfold input to the currently active turn. This is
+// how a human can talk to a durable worker while its accepted task is running:
+// the input joins the same provider turn instead of creating a second session.
+func (client *CodexAppServerClient) SteerTurn(ctx context.Context, threadID, turnID, clientMessageID, text string) (string, error) {
+	if threadID == "" || turnID == "" || text == "" {
+		return "", errors.New("Codex turn steer requires thread, active turn, and input")
+	}
+	params := map[string]any{
+		"threadId": threadID, "expectedTurnId": turnID,
+		"input": []map[string]string{{"type": "text", "text": text}},
+	}
+	if clientMessageID != "" {
+		params["clientUserMessageId"] = clientMessageID
+	}
+	var response struct {
+		TurnID string `json:"turnId"`
+	}
+	if err := client.call(ctx, "turn/steer", params, &response); err != nil {
+		return "", err
+	}
+	if response.TurnID != turnID {
+		return "", errors.New("Codex steered a different turn")
+	}
+	return response.TurnID, nil
 }
 
 func (client *CodexAppServerClient) DeleteThread(ctx context.Context, threadID string) error {
@@ -359,8 +409,8 @@ func (client *CodexAppServerClient) DeleteThread(ctx context.Context, threadID s
 
 // CompactThread starts Codex's native persisted context compaction. The
 // request only acknowledges that compaction was accepted; callers that need
-// to recycle the hosting process must also wait for thread/compacted before
-// closing the transport.
+// to recycle the hosting process must also wait for the contextCompaction
+// item's item/completed notification before closing the transport.
 func (client *CodexAppServerClient) CompactThread(ctx context.Context, threadID string) error {
 	if threadID == "" {
 		return errors.New("Codex thread id is required")

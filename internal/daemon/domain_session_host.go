@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"crewfold/internal/domain"
 	"crewfold/internal/execution"
@@ -20,14 +20,19 @@ type domainSessionHost struct {
 	bindingMu   sync.Mutex
 	operationMu sync.Mutex
 	factory     func() (execution.CodexAppServerTransport, error)
+	herdrHost   *execution.HerdrCodexAppServerOptions
 	toolHandler func(context.Context, execution.CodexAppServerRequest) (any, error)
 	clients     map[string]*execution.CodexAppServerClient
 	threads     map[string]execution.CodexThread
 	activity    map[string]*domainSessionLiveActivity
 	compactions map[string]chan struct{}
-	idleTimers  map[string]*time.Timer
-	idleAfter   time.Duration
+	runTurns    map[string]domainSessionRunTurn
 	closed      bool
+}
+
+type domainSessionRunTurn struct {
+	runID  string
+	turnID string
 }
 
 type domainSessionLiveActivity struct {
@@ -42,7 +47,7 @@ type domainSessionLiveTurn struct {
 	items     map[string]domain.DomainAgentSessionItem
 }
 
-const durableDomainCodexBaseInstructions = `You are Codex collaborating with the owner inside one Crewfold durable-agent conversation. This is a real continuing coordination agent, not a form interpreter and not an implementation run. Inspect attached checkouts read-only, explain material progress clearly, and keep going until the owner's request is genuinely handled or an exact blocker is reported. Domain-wide agents may compare every checkout listed by Crewfold context; a workstream-scoped agent should treat its workstream's primary checkout as the execution home and other attached checkouts only as read-only references.
+const durableDomainCodexBaseInstructions = `You are one real continuing Crewfold durable agent. Your owner conversation, accepted task work, mailbox activity, and Crewfold receipts all belong to this same Codex provider thread and identity. Do not create a second personality for task work. Ordinary owner turns are read-only; when Crewfold attaches an accepted task, that exact turn receives a checkout-scoped write sandbox and run tools. Keep going until the current owner request or attached task is genuinely handled or an exact blocker is reported. Domain-wide agents may compare every checkout listed by Crewfold context; a workstream-scoped agent treats its workstream's primary checkout as the execution home and other attached checkouts only as read-only references.
 
 Crewfold's client-owned tools are in the crewfold namespace. Current Codex hosts may expose a client-owned tool either as a direct namespace call or through the code-mode tools object under a crewfold__ name. Both forms cross the same app-server item/tool/call boundary and receive the same daemon-owned receipt. Use whichever structured form the current turn advertises; never shell out to the crewfold binary, call its socket or HTTP surface, or fabricate a tool result. Always read current domain context before coordinating or proposing work. The context contains your exact hierarchy, staffing grants, child allocations, launch profiles, work proposals, assignments, workstreams, and inbox. Names, roles, hierarchy, and conversation text are descriptive; only current Crewfold grants, assignments, claims, budgets, capabilities, accepted operations, and exact tool receipts authorize effects.
 
@@ -50,7 +55,7 @@ If the owner asks for a deliverable and your delegation policy or the work warra
 
 Managed local processes are generic reviewed commands attached to a checkout or workstream, not Vite-specific conveniences and not shell authority. Read the exact definitions, live instances, requests, and this agent's grants from Crewfold context. Use crewfold_inspect_managed_service with an exact inspect or logs grant to read current lifecycle, health, jobs, and bounded logs. When a current grant authorizes a lifecycle action, use crewfold_control_managed_service with its exact revisions. Without a direct start grant, use crewfold_request_managed_service; that request is inert until owner acceptance. A delegable service grant may be narrowed to a durable child. Never invent a definition, executable, port, grant, or process state, and never claim a request started anything.
 
-Never edit repository files—including Markdown—from this conversation. Implementation, review, and verification effects belong to exact assigned Crewfold runs. Owner conversation text is not source-effect authority. Continue an existing related coordination thread instead of opening a new one; create a new topic only for a genuinely distinct subject. Do not use messages as a substitute for assignments, progress reports, verification findings, or canonical knowledge. A durable message or participant thread is coordination, not canonical knowledge and not a domain-home update. Use crewfold_propose_knowledge for durable domain findings or decisions worth retaining; its exact proposal remains inert until owner review. Never claim shared knowledge was updated unless that tool returned an exact knowledge revision receipt. Provider-local temporary helpers may assist bounded private research within one turn, but they are not Crewfold agents and must never receive continuing responsibility.`
+Never edit repository files—including Markdown—during an ordinary owner turn. Repository effects are permitted only inside an exact accepted task turn and only within its supplied checkout sandbox. At the beginning of a task turn, call crewfold_get_briefing; use the run-scoped progress, artifact, blocked, and completion tools to record its outcome. For task-scoped messaging and knowledge, use crewfold_run_send_message and crewfold_run_propose_knowledge. Continue an existing related coordination thread instead of opening a new one; create a new topic only for a genuinely distinct subject. Do not use messages as a substitute for assignments, progress reports, verification findings, or canonical knowledge. A durable message or participant thread is coordination, not canonical knowledge and not a domain-home update. Use crewfold_propose_knowledge during owner coordination for durable domain findings or decisions worth retaining; its exact proposal remains inert until owner review. Never claim shared knowledge was updated unless that tool returned an exact knowledge revision receipt. Provider-local temporary helpers may assist bounded private research within one turn, but they are not Crewfold agents and must never receive continuing responsibility.`
 
 func domainSessionAppServerConfig() map[string]any {
 	return map[string]any{"code_mode.direct_only_tool_namespaces": []string{"crewfold"}}
@@ -66,30 +71,65 @@ func newDomainSessionHost(config Config, toolHandler func(context.Context, execu
 		codexHome = strings.TrimSpace(os.Getenv("CREWFOLD_CODEX_HOME"))
 	}
 	factory := config.CodexAppServerTransportFactory
+	var herdrHost *execution.HerdrCodexAppServerOptions
 	if factory == nil {
-		factory = func() (execution.CodexAppServerTransport, error) {
-			return execution.StartCodexAppServer(execution.CodexAppServerProcessOptions{Executable: executable, CodexHome: codexHome})
+		herdrExecutable := strings.TrimSpace(config.HerdrExecutable)
+		if herdrExecutable == "" {
+			herdrExecutable = strings.TrimSpace(os.Getenv("CREWFOLD_HERDR_BINARY"))
+		}
+		if herdrExecutable == "" {
+			herdrExecutable = "herdr"
+		}
+		herdrSession := strings.TrimSpace(config.HerdrSession)
+		if herdrSession == "" {
+			herdrSession = strings.TrimSpace(os.Getenv("CREWFOLD_HERDR_SESSION"))
+		}
+		if herdrSession == "" {
+			herdrSession = strings.TrimSpace(os.Getenv("HERDR_SESSION"))
+		}
+		stateRoot := filepath.Join(config.DataDir, "runtime", "domain-agent-epochs")
+		if socketPath := strings.TrimSpace(config.SocketPath); filepath.IsAbs(socketPath) {
+			// Codex canonicalizes its Unix listener path, whose Linux kernel
+			// limit is 108 bytes. Keep only the disposable Herdr host beside the
+			// already-short daemon socket; durable conversation state remains in
+			// the provider thread and Crewfold database.
+			stateRoot = filepath.Join(filepath.Dir(socketPath), ".agents")
+		}
+		herdrHost = &execution.HerdrCodexAppServerOptions{
+			CodexExecutable: executable, CodexHome: codexHome, HerdrExecutable: herdrExecutable,
+			HerdrSession: herdrSession, StateRoot: stateRoot,
 		}
 	}
 	return &domainSessionHost{
-		factory: factory, toolHandler: toolHandler,
+		factory: factory, herdrHost: herdrHost, toolHandler: toolHandler,
 		clients: make(map[string]*execution.CodexAppServerClient), threads: make(map[string]execution.CodexThread),
 		activity: make(map[string]*domainSessionLiveActivity), compactions: make(map[string]chan struct{}),
-		idleTimers: make(map[string]*time.Timer), idleAfter: 5 * time.Second,
+		runTurns: make(map[string]domainSessionRunTurn),
 	}
 }
 
-// newClient starts one disposable Codex app-server host. Durable-agent
-// conversations never share a process: compaction, a provider crash, or a
-// pathological resident set in one session must not interrupt another agent.
-func (host *domainSessionHost) newClient(ctx context.Context) (*execution.CodexAppServerClient, error) {
+// newClient starts one private Codex app-server inside a Herdr workspace for
+// one durable-agent epoch. Agents never share a process. The host remains
+// observable across ordinary turns and is replaced only by explicit lifecycle
+// work (compaction/rotation), daemon restart, or provider failure.
+func (host *domainSessionHost) newClient(ctx context.Context, label string) (*execution.CodexAppServerClient, error) {
 	host.mu.Lock()
 	if host.closed {
 		host.mu.Unlock()
 		return nil, errors.New("domain session host is closed")
 	}
 	host.mu.Unlock()
-	transport, err := host.factory()
+	var transport execution.CodexAppServerTransport
+	var err error
+	if host.factory != nil {
+		transport, err = host.factory()
+	} else if host.herdrHost != nil {
+		options := *host.herdrHost
+		options.Label = label
+		transport, err = execution.StartCodexAppServerInHerdr(ctx, options)
+	} else {
+		err = errors.New("durable Codex host is not configured")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +228,7 @@ func (host *domainSessionHost) invalidate(client *execution.CodexAppServerClient
 }
 
 func (host *domainSessionHost) startThread(ctx context.Context, cwd, threadName, instructions string) (execution.CodexThread, error) {
-	client, err := host.newClient(ctx)
+	client, err := host.newClient(ctx, threadName)
 	if err != nil {
 		return execution.CodexThread{}, err
 	}
@@ -252,7 +292,11 @@ func (host *domainSessionHost) readThread(ctx context.Context, threadID, cwd, in
 		host.mu.Unlock()
 		if !cachedOK {
 			var err error
-			client, err = host.newClient(ctx)
+			label := "Crewfold agent " + threadID
+			if len(threadID) > 20 {
+				label = "Crewfold agent " + threadID[len(threadID)-20:]
+			}
+			client, err = host.newClient(ctx, label)
 			if err != nil {
 				return execution.CodexThread{}, err
 			}
@@ -312,8 +356,11 @@ func (host *domainSessionHost) startTurn(ctx context.Context, threadID, clientMe
 	if !ok {
 		return execution.CodexTurn{}, errors.New("durable Codex thread is not loaded")
 	}
-	host.cancelIdleRecycle(threadID)
-	turn, err := client.StartTurnWithClientID(ctx, threadID, clientMessageID, text)
+	turn, err := client.StartTurnWithOptions(ctx, threadID, text, execution.CodexTurnStartOptions{
+		ClientMessageID: clientMessageID,
+		ApprovalPolicy:  "never",
+		SandboxPolicy:   map[string]any{"type": "readOnly", "networkAccess": false},
+	})
 	if err == nil {
 		host.mu.Lock()
 		thread := host.threads[threadID]
@@ -324,6 +371,119 @@ func (host *domainSessionHost) startTurn(ctx context.Context, threadID, clientMe
 		host.mu.Unlock()
 	}
 	return turn, err
+}
+
+func (host *domainSessionHost) bindRunTurn(threadID, runID, turnID string) {
+	host.mu.Lock()
+	host.runTurns[threadID] = domainSessionRunTurn{runID: runID, turnID: turnID}
+	host.mu.Unlock()
+}
+
+func (host *domainSessionHost) clearRunTurn(threadID, runID string) {
+	host.mu.Lock()
+	if current, ok := host.runTurns[threadID]; ok && current.runID == runID {
+		delete(host.runTurns, threadID)
+	}
+	host.mu.Unlock()
+}
+
+func (host *domainSessionHost) runForTool(threadID, turnID string) (string, bool) {
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	current, ok := host.runTurns[threadID]
+	if !ok || current.runID == "" || current.turnID != "" && current.turnID != turnID {
+		return "", false
+	}
+	return current.runID, true
+}
+
+func (host *domainSessionHost) activeRunTurn(threadID string) (domainSessionRunTurn, bool) {
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	current, ok := host.runTurns[threadID]
+	return current, ok && current.runID != "" && current.turnID != ""
+}
+
+// cachedThread returns the host's last complete provider projection without
+// issuing another app-server request. Accepted task turns update this cache
+// and the live-activity stream before the run becomes active. The owner UI
+// must be able to observe that in-flight turn even while worker reconciliation
+// is reading the provider, rather than waiting behind the worker operation and
+// showing the task only after it has finished.
+func (host *domainSessionHost) cachedThread(threadID string) (execution.CodexThread, bool) {
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	thread, ok := host.threads[threadID]
+	if !ok {
+		return execution.CodexThread{}, false
+	}
+	thread.Turns = append([]execution.CodexTurn{}, thread.Turns...)
+	for index := range thread.Turns {
+		thread.Turns[index].Items = append([]json.RawMessage{}, thread.Turns[index].Items...)
+	}
+	return thread, true
+}
+
+func (host *domainSessionHost) startRunTurn(ctx context.Context, threadID, runID, cwd, prompt string, networkAccess bool) (execution.CodexTurn, error) {
+	client, ok := host.clientForThread(threadID)
+	if !ok {
+		return execution.CodexTurn{}, errors.New("durable Codex thread is not loaded")
+	}
+	host.bindRunTurn(threadID, runID, "")
+	turn, err := client.StartTurnWithOptions(ctx, threadID, prompt, execution.CodexTurnStartOptions{
+		ClientMessageID: "crewfold-run:" + runID,
+		CWD:             cwd,
+		ApprovalPolicy:  "never",
+		SandboxPolicy: map[string]any{
+			"type": "workspaceWrite", "networkAccess": networkAccess,
+			"writableRoots": []string{},
+		},
+	})
+	if err != nil {
+		host.clearRunTurn(threadID, runID)
+		return execution.CodexTurn{}, err
+	}
+	host.bindRunTurn(threadID, runID, turn.ID)
+	host.mu.Lock()
+	thread := host.threads[threadID]
+	thread.Status.Type = "active"
+	thread.Turns = append(thread.Turns, turn)
+	host.threads[threadID] = thread
+	host.mu.Unlock()
+	return turn, nil
+}
+
+func (host *domainSessionHost) runTurn(ctx context.Context, threadID, runID, turnID string) (execution.CodexTurn, error) {
+	client, ok := host.clientForThread(threadID)
+	if !ok {
+		return execution.CodexTurn{}, errors.New("durable Codex thread is not loaded")
+	}
+	host.bindRunTurn(threadID, runID, turnID)
+	turns, err := client.ListThreadTurns(ctx, threadID, 100)
+	if err != nil {
+		return execution.CodexTurn{}, err
+	}
+	for _, turn := range turns {
+		if turn.ID == turnID {
+			return turn, nil
+		}
+	}
+	return execution.CodexTurn{}, errors.New("durable Codex task turn is absent")
+}
+
+func (host *domainSessionHost) steerRunTurn(ctx context.Context, threadID, clientMessageID, text string) (execution.CodexTurn, error) {
+	current, ok := host.activeRunTurn(threadID)
+	if !ok {
+		return execution.CodexTurn{}, errors.New("durable agent has no active task turn")
+	}
+	client, ok := host.clientForThread(threadID)
+	if !ok {
+		return execution.CodexTurn{}, errors.New("durable Codex thread is not loaded")
+	}
+	if _, err := client.SteerTurn(ctx, threadID, current.turnID, clientMessageID, text); err != nil {
+		return execution.CodexTurn{}, err
+	}
+	return execution.CodexTurn{ID: current.turnID, Status: "inProgress"}, nil
 }
 
 func (host *domainSessionHost) interruptTurn(ctx context.Context, threadID, turnID string) error {
@@ -365,9 +525,10 @@ func (host *domainSessionHost) deleteThread(ctx context.Context, threadID string
 }
 
 // compactThread completes Codex's native persisted compaction and then closes
-// only this agent's disposable app-server. The next read lazily resumes the
-// compacted rollout in a fresh process, which bounds resident memory without
-// changing durable-agent identity or its provider epoch.
+// only this agent's current Herdr-hosted provider process. The next read lazily
+// resumes the same compacted epoch. Ordinary terminal turns do not recycle the
+// host: one epoch remains one directly observable provider session until an
+// explicit compaction, handoff, daemon shutdown, or provider failure.
 func (host *domainSessionHost) compactThread(ctx context.Context, threadID string) error {
 	client, ok := host.clientForThread(threadID)
 	if !ok {
@@ -405,14 +566,10 @@ func (host *domainSessionHost) compactThread(ctx context.Context, threadID strin
 func (host *domainSessionHost) releaseThreadHost(threadID string) {
 	host.mu.Lock()
 	client := host.clients[threadID]
-	if timer := host.idleTimers[threadID]; timer != nil {
-		timer.Stop()
-	}
 	delete(host.clients, threadID)
 	delete(host.threads, threadID)
 	delete(host.activity, threadID)
 	delete(host.compactions, threadID)
-	delete(host.idleTimers, threadID)
 	host.mu.Unlock()
 	if client != nil {
 		_ = client.Close()
@@ -434,10 +591,6 @@ func (host *domainSessionHost) Close() error {
 	host.threads = make(map[string]execution.CodexThread)
 	host.activity = make(map[string]*domainSessionLiveActivity)
 	host.compactions = make(map[string]chan struct{})
-	for _, timer := range host.idleTimers {
-		timer.Stop()
-	}
-	host.idleTimers = make(map[string]*time.Timer)
 	host.mu.Unlock()
 	var closeError error
 	for _, client := range clients {
@@ -462,13 +615,6 @@ func (host *domainSessionHost) recordNotification(notification execution.CodexAp
 	}
 	host.mu.Lock()
 	defer host.mu.Unlock()
-	if notification.Method == "thread/compacted" {
-		if waiter := host.compactions[scope.ThreadID]; waiter != nil {
-			delete(host.compactions, scope.ThreadID)
-			close(waiter)
-		}
-		return
-	}
 	stream := host.activity[scope.ThreadID]
 	if stream == nil {
 		stream = &domainSessionLiveActivity{turns: make(map[string]*domainSessionLiveTurn)}
@@ -492,11 +638,6 @@ func (host *domainSessionHost) recordNotification(notification execution.CodexAp
 			}
 			host.threads[scope.ThreadID] = thread
 		}
-		if notification.Method == "turn/started" {
-			host.cancelIdleRecycleLocked(scope.ThreadID)
-		} else {
-			host.scheduleIdleRecycleLocked(scope.ThreadID)
-		}
 		turn := ensureDomainSessionLiveTurn(stream, params.Turn.ID)
 		turn.status = params.Turn.Status
 		for _, raw := range params.Turn.Items {
@@ -506,12 +647,28 @@ func (host *domainSessionHost) recordNotification(notification execution.CodexAp
 		}
 	case "item/started", "item/completed":
 		var params struct {
+			Item struct {
+				Type string `json:"type"`
+			} `json:"item"`
+		}
+		var envelope struct {
 			Item json.RawMessage `json:"item"`
 		}
-		if scope.TurnID == "" || json.Unmarshal(notification.Params, &params) != nil {
+		if scope.TurnID == "" || json.Unmarshal(notification.Params, &envelope) != nil || json.Unmarshal(envelope.Item, &params.Item) != nil {
 			return
 		}
-		item, ok := execution.ReadableCodexItem(params.Item)
+		// Current Codex app-server versions expose native compaction as one
+		// contextCompaction item. thread/compacted is deprecated and is not
+		// emitted by the current server, so this exact terminal item is the
+		// durable host-recycle boundary.
+		if notification.Method == "item/completed" && params.Item.Type == "contextCompaction" {
+			if waiter := host.compactions[scope.ThreadID]; waiter != nil {
+				delete(host.compactions, scope.ThreadID)
+				close(waiter)
+			}
+			return
+		}
+		item, ok := execution.ReadableCodexItem(envelope.Item)
 		if !ok {
 			return
 		}
@@ -618,56 +775,6 @@ func (host *domainSessionHost) recordNotification(notification execution.CodexAp
 		upsertDomainSessionLiveItem(ensureDomainSessionLiveTurn(stream, scope.TurnID), domain.DomainAgentSessionItem{
 			ID: fmt.Sprintf("turn-error:%s:%d", scope.TurnID, stream.sequence), Type: "error", Text: boundedDomainSessionActivityText(message), Status: status,
 		})
-	}
-}
-
-// A durable agent owns a persisted provider thread, not an immortal provider
-// process. Once a turn is terminal, retain the readable rollout but retire its
-// app-server after a short observation grace. The next owner/message turn
-// resumes the same current epoch in a fresh process.
-func (host *domainSessionHost) scheduleIdleRecycleLocked(threadID string) {
-	if host.idleTimers == nil {
-		host.idleTimers = make(map[string]*time.Timer)
-	}
-	if timer := host.idleTimers[threadID]; timer != nil {
-		timer.Stop()
-	}
-	client := host.clients[threadID]
-	if client == nil || host.closed {
-		delete(host.idleTimers, threadID)
-		return
-	}
-	delay := host.idleAfter
-	if delay <= 0 {
-		delay = 5 * time.Second
-	}
-	host.idleTimers[threadID] = time.AfterFunc(delay, func() {
-		host.mu.Lock()
-		current := host.clients[threadID]
-		thread := host.threads[threadID]
-		if current != client || thread.Status.Type == "active" || host.closed {
-			host.mu.Unlock()
-			return
-		}
-		delete(host.clients, threadID)
-		delete(host.threads, threadID)
-		delete(host.activity, threadID)
-		delete(host.idleTimers, threadID)
-		host.mu.Unlock()
-		_ = client.Close()
-	})
-}
-
-func (host *domainSessionHost) cancelIdleRecycle(threadID string) {
-	host.mu.Lock()
-	defer host.mu.Unlock()
-	host.cancelIdleRecycleLocked(threadID)
-}
-
-func (host *domainSessionHost) cancelIdleRecycleLocked(threadID string) {
-	if timer := host.idleTimers[threadID]; timer != nil {
-		timer.Stop()
-		delete(host.idleTimers, threadID)
 	}
 }
 

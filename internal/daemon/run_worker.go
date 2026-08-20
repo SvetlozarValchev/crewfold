@@ -83,6 +83,9 @@ func (s *server) waitForRunWork(ctx context.Context) bool {
 }
 
 func (s *server) processRunWork(ctx context.Context, work store.RunWork) error {
+	if handled, err := s.processDurableAgentRun(ctx, work); handled || err != nil {
+		return err
+	}
 	run := work.Run
 	correlationID := fmt.Sprintf("worker-%s-%d", run.ID, run.Revision)
 	runtimeDriver, runtimeFound := s.runtimes[run.Runtime]

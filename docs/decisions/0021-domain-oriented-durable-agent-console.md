@@ -186,9 +186,10 @@ Persistence does not require a provider process or provider context to consume
 resources forever.
 An agent may be `idle`, `starting`, `working`, `waiting`, `blocked`, or `failed`.
 When needed, Crewfold resumes the provider conversation through the provider's
-structured session transport. Herdr remains the interactive host for separately
-authorized execution runs; it is not a second implementation of the owner-facing
-Codex conversation. If provider continuity is unavailable,
+structured session transport inside the agent's one Herdr-hosted epoch. An
+accepted execution run attaches task authority and a writable checkout sandbox
+to a turn of that same conversation; it does not start a second provider
+personality, session, or Herdr workspace. If provider continuity is unavailable,
 Crewfold starts a replacement run from the agent's canonical task, messages,
 accepted knowledge, handoff, and evidence. The Crewfold agent identity survives
 either outcome.
@@ -199,10 +200,13 @@ private chain-of-thought and provider-private state are neither required nor
 claimed.
 
 Owner turns and durable message wakes are serialized per provider thread. If a
-child reply arrives while the coordinator is still handling owner input,
-Crewfold leaves that wake pending and retries after the active turn settles. The
-reply becomes a separate provider turn with explicit `crewfold_delivery`
-provenance; it is never spliced into the middle of the owner's instruction.
+durable message arrives while an accepted task turn is active, Crewfold steers
+that exact turn so the same agent can read its canonical inbox without creating
+a second runtime personality. If a child reply arrives while the coordinator is
+handling an unrelated owner turn, Crewfold leaves that wake pending and retries
+after the active turn settles. The reply then becomes a separate provider turn
+with explicit `crewfold_delivery` provenance; it is never spliced into the
+middle of the owner's instruction.
 
 The current app-server epoch resumes with `sandbox=read-only`, including after a
 daemon/provider restart. It may inspect the selected checkout and use the closed
@@ -240,13 +244,16 @@ private app-server host managed by the daemon. No two durable agents share that
 process. The daemon connects over its private local transport and binds one
 non-ephemeral Codex thread id to each provider epoch.
 Selecting an agent reads its current lineage. Sending owner input resumes the
-current thread and starts or steers a real Codex turn. After a terminal turn, the
-disposable app-server exits following a short observation grace; the next owner or
-message turn resumes the same persisted epoch in a fresh process. Native Codex
-compaction keeps that epoch while compacting its provider context and recycling
-the host. Rotation instead starts a new epoch from the canonical handoff. Full
-provider thread ids are operational bindings and are not presented as domain
-identity.
+current thread and starts or steers a real Codex turn. Owner input, accepted task
+work, delivered mailbox messages, and Crewfold tool receipts all enter that same
+thread: a task run is an authority and audit envelope, not a second provider
+session or personality. A terminal turn leaves the epoch's Herdr-hosted app-server
+available for direct inspection and the next turn. Native Codex compaction keeps
+that epoch while compacting its provider context and deliberately recycling the
+host. Rotation instead starts a new epoch from the canonical handoff. Daemon
+restart or provider failure may also re-host the persisted current thread, but
+Crewfold never silently recycles a healthy epoch after every turn. Full provider
+thread ids are operational bindings and are not presented as domain identity.
 
 The current `codex exec --ephemeral` integration is explicitly not this surface.
 It remains historical M21 worker/executive behavior and must not be relabeled as

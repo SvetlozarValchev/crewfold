@@ -373,7 +373,14 @@ func (client *Client) ProcessInfo(ctx context.Context, paneID string) (ProcessIn
 }
 
 func (client *Client) RunPane(ctx context.Context, paneID, command string) error {
-	_, err := client.run(ctx, "pane", "run", paneID, command)
+	if _, err := client.run(ctx, "pane", "run", paneID, command); err != nil {
+		return err
+	}
+	// Herdr's pane.run writes the command at the shell prompt. Submit that
+	// prompt explicitly so Crewfold never mistakes typed-but-unexecuted text
+	// for a launched runtime. This is deliberately a second acknowledged API
+	// operation: failure after pane.run means dispatch is unknown to callers.
+	_, err := client.run(ctx, "pane", "send-keys", paneID, "enter")
 	return err
 }
 

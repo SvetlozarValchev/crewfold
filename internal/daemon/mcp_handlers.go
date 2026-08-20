@@ -471,15 +471,25 @@ func (s *server) handleMCPToolCall(request mcp.Request, briefing domain.RunBrief
 	if _, err := s.store.RecordRunToolCall(context.Background(), briefing.Run.ID, mcpRequestID(request.ID), name, briefing.Run.ID, "allowed", ""); err != nil {
 		return mcp.Failure(request.ID, -32603, "record tool audit failed", nil)
 	}
-	message := "Crewfold accepted the scoped operation."
-	if name == toolContextDelta {
-		message = "Crewfold returned this run's pending context state."
-	} else if name == toolContextDeltaAck {
-		message = "Crewfold recorded this run's exact context delta acknowledgement."
-	}
+	message := mcpToolSuccessMessage(name, value)
 	return mcp.Success(request.ID, mcp.ToolCallResult{
 		Content: []mcp.Content{{Type: "text", Text: message}}, StructuredContent: structured,
 	})
+}
+
+func mcpToolSuccessMessage(name string, value any) string {
+	if name == toolArtifact {
+		if artifact, ok := value.(domain.RunArtifact); ok {
+			return fmt.Sprintf("Crewfold published exact run artifact %s (%s, %d bytes, sha256 %s). Use this exact artifact ID in the completion report evidence_ids.", artifact.ID, artifact.MediaType, artifact.ByteSize, artifact.ContentHash)
+		}
+	}
+	if name == toolContextDelta {
+		return "Crewfold returned this run's pending context state."
+	}
+	if name == toolContextDeltaAck {
+		return "Crewfold recorded this run's exact context delta acknowledgement."
+	}
+	return "Crewfold accepted the scoped operation."
 }
 
 func liveContextStatus(packet domain.ContextPacket, state domain.ContextDeltaFetchResult) map[string]any {

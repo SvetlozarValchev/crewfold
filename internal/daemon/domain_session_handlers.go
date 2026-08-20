@@ -14,6 +14,8 @@ import (
 	"crewfold/internal/store"
 )
 
+var errDurableCodexRolloutUnavailableWithActiveRun = errors.New("durable Codex rollout is unavailable while accepted work retains the epoch")
+
 const domainSessionOperationTimeout = 60 * time.Second
 
 func (s *server) handleDomainAgentSessionOpen(request localapi.Request) localapi.Response {
@@ -83,15 +85,24 @@ func (s *server) handleDomainAgentSessionShow(request localapi.Request) localapi
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), domainSessionOperationTimeout)
 	defer cancel()
-	host := s.ensureDomainSessionHost()
-	host.operationMu.Lock()
-	defer host.operationMu.Unlock()
 	session, err := s.store.DomainAgentSession(ctx, params.Workspace, params.Project, params.Agent)
 	if params.Epoch > 0 {
 		session, err = s.store.DomainAgentSessionAtEpoch(ctx, params.Workspace, params.Project, params.Agent, params.Epoch)
 	}
 	if err != nil {
 		return storeErrorResponse(request, err)
+	}
+	// A running task already has an exact node-bound thread/turn pair and a
+	// live provider stream in the host. Serve that projection immediately.
+	// Calling thread/read here can wait behind provider reconciliation and
+	// would make a real worker look idle until its task has already ended.
+	if params.Epoch == 0 && session.State == domain.DomainAgentSessionReady {
+		if view, ok, viewErr := s.readActiveDomainAgentSessionView(ctx, session); ok {
+			if viewErr != nil {
+				return domainSessionHostErrorResponse(request, "read active durable Codex session", viewErr)
+			}
+			return marshalDomainAgentSessionResult(request, view, nil)
+		}
 	}
 	if session.State == domain.DomainAgentSessionArchived {
 		view, err := s.readArchivedDomainAgentSessionView(ctx, params.Workspace, params.Project, params.Agent, session)
@@ -105,6 +116,24 @@ func (s *server) handleDomainAgentSessionShow(request localapi.Request) localapi
 		return domainSessionHostErrorResponse(request, "read durable Codex session", err)
 	}
 	return marshalDomainAgentSessionResult(request, view, nil)
+}
+
+func (s *server) readActiveDomainAgentSessionView(ctx context.Context, session domain.DomainAgentSession) (domain.DomainAgentSessionView, bool, error) {
+	host := s.ensureDomainSessionHost()
+	current, active := host.activeRunTurn(session.ThreadID)
+	if !active {
+		return domain.DomainAgentSessionView{}, false, nil
+	}
+	thread, cached := host.cachedThread(session.ThreadID)
+	if !cached {
+		return domain.DomainAgentSessionView{}, false, nil
+	}
+	view := domainSessionView(session, thread, host.liveActivity(session.ThreadID))
+	projectActiveDomainSessionTurn(&view, current.turnID)
+	if err := s.attachDomainSessionEpochs(ctx, &view); err != nil {
+		return domain.DomainAgentSessionView{}, true, err
+	}
+	return view, true, nil
 }
 
 func (s *server) readArchivedDomainAgentSessionView(ctx context.Context, workspace, project, agentIdentifier string, session domain.DomainAgentSession) (domain.DomainAgentSessionView, error) {
@@ -161,6 +190,9 @@ func (s *server) handleDomainAgentSessionSend(request localapi.Request) localapi
 	if err != nil {
 		return domainSessionHostErrorResponse(request, "resume durable Codex session", err)
 	}
+	if err := s.restoreDomainAgentRunTurn(ctx, session, thread); err != nil {
+		return storeErrorResponse(request, err)
+	}
 	clientMessageID := "crewfold:" + params.IdempotencyKey
 	if replay, ok := codexTurnForClientMessage(thread, clientMessageID); ok {
 		view := domainSessionView(session, thread, host.liveActivity(session.ThreadID))
@@ -170,7 +202,14 @@ func (s *server) handleDomainAgentSessionSend(request localapi.Request) localapi
 		accepted := readableDomainSessionTurn(replay)
 		return marshalDomainAgentSessionResult(request, view, &accepted)
 	}
-	turn, err := host.startTurn(ctx, session.ThreadID, clientMessageID, params.Text)
+	var turn execution.CodexTurn
+	if _, active := host.activeRunTurn(session.ThreadID); active {
+		// Owner input while accepted work is running steers that same provider
+		// turn. It must never create a parallel conversation personality.
+		turn, err = host.steerRunTurn(ctx, session.ThreadID, clientMessageID, params.Text)
+	} else {
+		turn, err = host.startTurn(ctx, session.ThreadID, clientMessageID, params.Text)
+	}
 	if err != nil {
 		return domainSessionHostErrorResponse(request, "send durable Codex turn", err)
 	}
@@ -430,14 +469,14 @@ func (s *server) resolveDomainSessionStart(ctx context.Context, workspace, proje
 }
 
 func durableDomainAgentInstructions(agent domain.DomainAgent, projectName string) string {
-	policy := "Choose hands-on analysis or durable delegation based on the reviewed operating charter, exact assignments, and available staffing grants. Conversation remains read-only; source effects require a canonical assigned Crewfold run."
+	policy := "Choose hands-on work or durable delegation based on the reviewed operating charter, exact assignments, and available staffing grants. Ordinary owner turns remain read-only; accepted task turns in this same thread receive exact run-scoped source authority."
 	switch agent.Membership.DelegationPolicy {
 	case domain.DomainAgentHandsOn:
-		policy = "Work hands-on in analysis and coordination by default. Delegate when the owner explicitly asks or the reviewed charter names a separate durable responsibility. Source effects still require a canonical assigned Crewfold run."
+		policy = "Work hands-on by default. Delegate when the owner explicitly asks or the reviewed charter names a separate durable responsibility. Source effects occur only in an accepted task turn attached to this same durable thread."
 	case domain.DomainAgentDelegationFirst:
-		policy = "Coordinate and delegate durable implementation, review, or verification responsibilities first whenever a current staffing grant permits it. Never substitute provider-local temporary helpers for those named durable responsibilities. If delegation is unavailable, explain the exact missing authority; owner conversation alone cannot authorize repository effects."
+		policy = "Coordinate and delegate durable implementation, review, or verification responsibilities first whenever a current staffing grant permits it. Never substitute provider-local temporary helpers for those named durable responsibilities. If delegation is unavailable, explain the exact missing authority; owner conversation alone cannot authorize repository effects, while an accepted task turn in this thread can."
 	}
-	return fmt.Sprintf("You are the durable Crewfold agent %q in domain %q. Your descriptive role is %q; that label grants no authority. Your owner-reviewed operating charter is:\n\n%s\n\nYour reviewed delegation policy is %q. %s Continue one real resumable provider conversation in the attached checkout. First call %s to read your exact current domain scope, staffing grants, assignments, and delivered messages. Use the advertised Crewfold dynamic tool itself. If the current Codex host exposes it through code mode, call its tools.crewfold__ entry from the exec cell; that remains the structured app-server client-tool path. Never invoke the crewfold CLI, raw socket, HTTP surface, or a shell substitute. Each Crewfold result may change your next decision and its side effects require exact auditable receipts. The charter and conversation describe behavior but do not grant authority. Only exact Crewfold grants, accepted proposals, tasks, claims, budgets, capabilities, and tool receipts authorize effects.", agent.Definition.Name, projectName, agent.Definition.Role, agent.Membership.OperatingCharter, agent.Membership.DelegationPolicy, policy, domainToolContext)
+	return fmt.Sprintf("You are the durable Crewfold agent %q in domain %q. Your descriptive role is %q; that label grants no authority. Your owner-reviewed operating charter is:\n\n%s\n\nYour reviewed delegation policy is %q. %s Continue one real resumable provider thread for both direct owner conversation and accepted Crewfold task turns; never pretend task work belongs to another agent or another memory. First call %s to read your exact current domain scope, staffing grants, assignments, and delivered messages. When proposing a team, choose its attention hierarchy intentionally: a proposed lead, manager, or coordinator must have the proposed coworkers it manages attached with parent_key; otherwise use a non-manager role. A genuinely independent reviewer may remain your direct child instead of reporting through an implementation lead. Use the advertised Crewfold dynamic tool itself. If the current Codex host exposes it through code mode, call its tools.crewfold__ entry from the exec cell; that remains the structured app-server client-tool path. Never invoke the crewfold CLI, raw socket, HTTP surface, or a shell substitute. Each Crewfold result may change your next decision and its side effects require exact auditable receipts. The charter and conversation describe behavior but do not grant authority. Only exact Crewfold grants, accepted proposals, tasks, claims, budgets, capabilities, and tool receipts authorize effects.", agent.Definition.Name, projectName, agent.Definition.Role, agent.Membership.OperatingCharter, agent.Membership.DelegationPolicy, policy, domainToolContext)
 }
 
 func domainSessionThreadName(agentName string) string {
@@ -456,11 +495,45 @@ func (s *server) readDomainAgentSessionView(ctx context.Context, session domain.
 	if err != nil {
 		return domain.DomainAgentSessionView{}, err
 	}
-	view := domainSessionView(session, thread, s.ensureDomainSessionHost().liveActivity(session.ThreadID))
+	if err := s.restoreDomainAgentRunTurn(ctx, session, thread); err != nil {
+		return domain.DomainAgentSessionView{}, err
+	}
+	host := s.ensureDomainSessionHost()
+	view := domainSessionView(session, thread, host.liveActivity(session.ThreadID))
+	if current, ok := host.activeRunTurn(session.ThreadID); ok {
+		projectActiveDomainSessionTurn(&view, current.turnID)
+	}
 	if err := s.attachDomainSessionEpochs(ctx, &view); err != nil {
 		return domain.DomainAgentSessionView{}, err
 	}
 	return view, nil
+}
+
+// Codex thread/read is a persisted transcript view and may omit the currently
+// executing turn until that turn completes. Crewfold already has the exact
+// node-bound thread/turn pair for an active accepted run, so expose that
+// authoritative in-flight identity to make the owner composer steerable. A
+// terminal provider turn is never revived merely because its run report has
+// not been applied yet.
+func projectActiveDomainSessionTurn(view *domain.DomainAgentSessionView, turnID string) {
+	if view == nil || turnID == "" {
+		return
+	}
+	for index := range view.Turns {
+		if view.Turns[index].ID != turnID {
+			continue
+		}
+		if isTerminalDomainSessionTurn(view.Turns[index].Status) {
+			return
+		}
+		view.Turns[index].Status = "inProgress"
+		view.ThreadStatus = "active"
+		return
+	}
+	view.Turns = append(view.Turns, domain.DomainAgentSessionTurn{
+		ID: turnID, Status: "inProgress", Items: []domain.DomainAgentSessionItem{},
+	})
+	view.ThreadStatus = "active"
 }
 
 func (s *server) attachDomainSessionEpochs(ctx context.Context, view *domain.DomainAgentSessionView) error {
@@ -487,6 +560,13 @@ func (s *server) loadDomainAgentSession(ctx context.Context, session domain.Doma
 	}
 	if !execution.IsCodexThreadRolloutNotFound(err) {
 		return domain.DomainAgentSession{}, execution.CodexThread{}, err
+	}
+	blockerCount, blockerIDs, blockerErr := s.store.DomainAgentSessionRotationBlockers(ctx, scope.Workspace.ID, scope.Project.ID, scope.Agent.ID)
+	if blockerErr != nil {
+		return domain.DomainAgentSession{}, execution.CodexThread{}, blockerErr
+	}
+	if blockerCount > 0 {
+		return domain.DomainAgentSession{}, execution.CodexThread{}, fmt.Errorf("%w: %d accepted task attempt(s): %s", errDurableCodexRolloutUnavailableWithActiveRun, blockerCount, strings.Join(blockerIDs, ", "))
 	}
 	return s.replaceUnavailableDomainAgentSession(ctx, session)
 }

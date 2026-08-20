@@ -84,6 +84,20 @@ func TestCommandErrorKeepsHerdrCodeAndBoundedDiagnostic(t *testing.T) {
 	}
 }
 
+func TestRunPaneSubmitsTheWrittenCommand(t *testing.T) {
+	runner := &recordedRunner{responses: map[string]CommandResult{
+		"pane run w1:p1 printf ready": {},
+		"pane send-keys w1:p1 enter":  {},
+	}}
+	if err := NewClient("herdr", "", runner).RunPane(context.Background(), "w1:p1", "printf ready"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"pane run w1:p1 printf ready", "pane send-keys w1:p1 enter"}
+	if strings.Join(runner.calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("RunPane calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", "test", "fixtures", "protocol", "herdr", name))

@@ -167,11 +167,15 @@ Rotation archives the previous epoch and inserts its successor atomically; it
 never rewrites historical thread provenance. Public results expose bounded epoch
 metadata and readable turns but not thread IDs, node identity, node fingerprint,
 raw reasoning, credentials, or capability material. Each current Codex epoch owns
-one disposable app-server process while active; durable agents never share that
-process. After a terminal turn the idle process exits, and Crewfold lazily resumes
-the same persisted thread on demand. Native compaction preserves the epoch while
-recycling its host; explicit rotation archives it and starts a successor from the
-bounded canonical handoff. Continuity failure records an explicit detached state.
+one private Herdr-hosted app-server process; durable agents never share that
+process. Owner input, accepted task turns, mailbox delivery, and tool receipts use
+that one provider thread. A mailbox wake steers an active accepted-task turn in
+place; it is deferred only while an unrelated owner turn occupies the thread.
+Terminal turns do not silently retire the host. Native
+compaction preserves the epoch while deliberately recycling its host; explicit
+rotation archives it and starts a successor from the bounded canonical handoff.
+Daemon restart or provider failure may re-host the same persisted current thread.
+Continuity failure records an explicit detached state.
 
 `domain_agent_tool_receipts` makes each dynamic-tool call replay-safe by exact
 agent/session revision, private call+turn identity, tool, argument hash, response

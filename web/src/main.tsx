@@ -266,7 +266,7 @@ function RuntimeActivityFeed({ logs, empty, limit = 40 }: { logs: string; empty:
 
 function RuntimeOutput({ logs, status }: { logs: string; status: string }) {
   const empty = logs
-    ? "This bounded tail starts inside protocol data. Open live activity to combine it with the current stream."
+    ? "This bounded tail starts inside protocol data. The advanced runtime can expose the current raw stream."
     : ["requested", "starting"].includes(status)
       ? "The provider session is launching; no readable event has arrived yet."
       : ["active", "blocked", "stopping"].includes(status)
@@ -719,6 +719,11 @@ function DomainWorkProposalReview({ data, proposal, apiBase, csrf, mutable, relo
   const agentByKey = new Map(proposal.content.agents.map((agent) => [agent.key, agent]));
   const newAgentCount = proposal.content.agents.filter((agent) => !agent.existing_agent_id).length;
   const dependencyCount = proposal.content.tasks.reduce((count, task) => count + (task.depends_on ?? []).length, 0);
+  const isFlatTeam = proposal.content.agents.length > 1 && proposal.content.agents.every((agent) => !agent.parent_key);
+  const proposalAgentName = (agent: DomainWorkProposalAgent) => agent.name ?? data.agents.find((candidate) => candidate.id === agent.existing_agent_id)?.name ?? agent.key;
+  const proposalAgentTree = (parentKey = "", depth = 0): React.ReactNode => proposal.content.agents.filter((agent) => (agent.parent_key ?? "") === parentKey).map((agent) => <li key={agent.key} style={{ "--proposal-depth": depth } as React.CSSProperties}>
+    <strong>{proposalAgentName(agent)}</strong><span>{agent.role ?? "existing durable agent"}</span>{proposalAgentTree(agent.key, depth + 1)}
+  </li>);
   const summaryLead = proposal.summary.match(/^[\s\S]*?[.!?](?:\s|$)/)?.[0]?.trim() || proposal.summary;
   const decide = async (accept: boolean) => {
     if (!data.workspace || proposal.status !== "pending") return;
@@ -737,7 +742,7 @@ function DomainWorkProposalReview({ data, proposal, apiBase, csrf, mutable, relo
     <header><div><p className="m22-kicker">review proposed work</p><h3>{proposal.content.objective_title}</h3><p className="m22-proposal-summary">{summaryLead}</p>{summaryLead !== proposal.summary && <details className="m22-proposal-brief"><summary>Read the complete proposal brief</summary><p>{proposal.summary}</p></details>}</div><StatusPill value={proposal.status} /></header>
     <div className="m22-proposal-impact" aria-label="Proposal effect summary"><span><strong>1</strong> workstream</span><span><strong>{newAgentCount}</strong> new agent{newAgentCount === 1 ? "" : "s"}</span><span><strong>{proposal.content.tasks.length}</strong> task{proposal.content.tasks.length === 1 ? "" : "s"}</span><span><strong>{dependencyCount}</strong> dependenc{dependencyCount === 1 ? "y" : "ies"}</span></div>
     <div className="m22-proposal-overview">
-      <section className="m22-proposal-team"><h4>Who will do the work</h4><p>These durable coworkers are created or placed only after acceptance.</p>{proposal.content.agents.map((agent) => <div key={agent.key}><strong>{agent.name ?? data.agents.find((candidate) => candidate.id === agent.existing_agent_id)?.name ?? agent.key}</strong><span>{agent.role ?? "existing durable agent"}{agent.parent_key ? ` · reports to ${agent.parent_key}` : " · reports to coordinator"}</span></div>)}</section>
+      <section className="m22-proposal-team"><h4>Who reports to whom</h4><p>Canonical attention tree after acceptance. The proposing coordinator is the root.</p><div className="m22-proposal-root"><strong>{source?.name ?? "coordinator"}</strong><span>proposing coordinator</span></div><ul>{proposalAgentTree()}</ul>{isFlatTeam && <p className="m22-proposal-topology-warning"><strong>Flat team:</strong> every proposed agent reports directly to the coordinator; none manages another.</p>}</section>
       <section className="m22-proposal-plan"><h4>Work plan</h4><p>Tasks run in this dependency order.</p><ol className="m22-proposal-tasks">{proposal.content.tasks.map((task, index) => {
         const proposedAssignee = agentByKey.get(task.assignee_key);
         const assigneeName = proposedAssignee?.name ?? data.agents.find((candidate) => candidate.id === proposedAssignee?.existing_agent_id)?.name ?? task.assignee_key;
@@ -1179,6 +1184,70 @@ function sessionItemLabel(item: DomainAgentSessionItem, agentName: string) {
   return item.type.replaceAll(/([A-Z])/g, " $1").toLowerCase();
 }
 
+function MarkdownInline({ text }: { text: string }) {
+  const tokens = text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\))/g).filter(Boolean);
+  return <>{tokens.map((token, index) => {
+    if (token.startsWith("`") && token.endsWith("`")) return <code key={index}>{token.slice(1, -1)}</code>;
+    if (token.startsWith("**") && token.endsWith("**")) return <strong key={index}>{token.slice(2, -2)}</strong>;
+    if (token.startsWith("*") && token.endsWith("*")) return <em key={index}>{token.slice(1, -1)}</em>;
+    const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
+    if (link) return <a key={index} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>;
+    return token;
+  })}</>;
+}
+
+function MarkdownText({ text }: { text: string }) {
+  const lines = text.replaceAll("\r\n", "\n").split("\n");
+  const blocks: ReactNode[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    if (!lines[index].trim()) { index++; continue; }
+    if (lines[index].trimStart().startsWith("```")) {
+      const language = lines[index].trim().slice(3).trim();
+      const body: string[] = [];
+      index++;
+      while (index < lines.length && !lines[index].trimStart().startsWith("```")) body.push(lines[index++]);
+      if (index < lines.length) index++;
+      blocks.push(<pre className="m22-markdown-code" key={`code-${index}`}><code data-language={language || undefined}>{body.join("\n")}</code></pre>);
+      continue;
+    }
+    const heading = lines[index].match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      const level = heading[1].length;
+      const content = <MarkdownInline text={heading[2]} />;
+      blocks.push(level <= 2 ? <h3 key={`heading-${index}`}>{content}</h3> : <h4 key={`heading-${index}`}>{content}</h4>);
+      index++;
+      continue;
+    }
+    const unordered = lines[index].match(/^\s*[-*]\s+(.+)$/);
+    if (unordered) {
+      const items: string[] = [];
+      while (index < lines.length) {
+        const match = lines[index].match(/^\s*[-*]\s+(.+)$/);
+        if (!match) break;
+        items.push(match[1]); index++;
+      }
+      blocks.push(<ul key={`list-${index}`}>{items.map((item, itemIndex) => <li key={itemIndex}><MarkdownInline text={item} /></li>)}</ul>);
+      continue;
+    }
+    const ordered = lines[index].match(/^\s*\d+[.)]\s+(.+)$/);
+    if (ordered) {
+      const items: string[] = [];
+      while (index < lines.length) {
+        const match = lines[index].match(/^\s*\d+[.)]\s+(.+)$/);
+        if (!match) break;
+        items.push(match[1]); index++;
+      }
+      blocks.push(<ol key={`ordered-${index}`}>{items.map((item, itemIndex) => <li key={itemIndex}><MarkdownInline text={item} /></li>)}</ol>);
+      continue;
+    }
+    const paragraph: string[] = [];
+    while (index < lines.length && lines[index].trim() && !/^(#{1,4})\s+/.test(lines[index]) && !/^\s*(?:[-*]|\d+[.)])\s+/.test(lines[index]) && !lines[index].trimStart().startsWith("```")) paragraph.push(lines[index++].trim());
+    blocks.push(<p key={`paragraph-${index}`}><MarkdownInline text={paragraph.join(" ")} /></p>);
+  }
+  return <div className="m22-markdown">{blocks}</div>;
+}
+
 function sessionItemCommand(item: DomainAgentSessionItem) {
   if (item.type !== "dynamicToolCall") return item.command;
   return ({
@@ -1276,7 +1345,7 @@ function SessionThreadItem({ item, agentName }: { item: DomainAgentSessionItem; 
   return <article className={`m22-thread-item ${item.type} ${item.status === "failed" ? "failed" : ""}`}>
     <span>{sessionItemLabel(item, agentName)}</span>
     {command && <code>{command}</code>}
-    {item.text && <p>{item.text}</p>}
+    {item.text && (item.type === "agentMessage" || item.type === "plan" ? <MarkdownText text={item.text} /> : <p>{item.text}</p>)}
     {(item.status || item.duration_ms) && <small>{[item.status?.replaceAll("_", " "), formatActivityDuration(item.duration_ms)].filter(Boolean).join(" · ")}</small>}
   </article>;
 }
@@ -1374,15 +1443,15 @@ function AgentCanonicalActivity({ data, agent, runs, attached, inspectRun }: { d
   const latest = items.at(-1);
   const latestCopy = latest?.run ? <button type="button" onClick={() => inspectRun(latest.run!)}><strong>{latest.title}</strong><small>{latest.detail}</small></button> : latest ? <span className="m24-agent-record-copy"><strong>{latest.title}</strong><small>{latest.detail}</small></span> : null;
   return <section className="m24-agent-records" aria-label="Exact Crewfold records for this durable agent">
-    <header><div><strong>Current Crewfold work</strong><small>authority records for this durable coworker</small></div><span>{items.length ? `${items.length} event${items.length === 1 ? "" : "s"}` : "none yet"}</span></header>
+    <header><div><strong>Current assignment and status</strong><small>the exact Crewfold authority attached to this same Codex session</small></div><span>{items.length ? `${items.length} record${items.length === 1 ? "" : "s"}` : "none yet"}</span></header>
     {latest ? <div className={`m24-agent-latest ${statusTone(latest.state)}`}>
       <time dateTime={latest.occurredAt}>{displayTime(latest.occurredAt)}</time>
       {latestCopy}
       <StatusPill value={latest.state} tone={latest.state} />
     </div> : <p className="m22-empty">No task attempt, managed process, or durable coordination record exists yet.</p>}
     {items.length > 0 && <details className="m24-agent-history">
-      <summary><span>Show exact execution history</span><small>{items.length} canonical record{items.length === 1 ? "" : "s"}</small></summary>
-      <p>Task transitions, process operations, messages, and bounded provider traces are retained here in canonical order. They belong to this same coworker; they are not extra agents or conversation turns.</p>
+      <summary><span>Show lifecycle receipts</span><small>{items.length} canonical record{items.length === 1 ? "" : "s"}</small></summary>
+      <p>These are the durable task, process, message, and outcome receipts produced around the Codex turns below. They are audit history for this agent—not separate sessions.</p>
       <ol>{items.map((item) => <li className={statusTone(item.state)} key={item.id}>
         <time dateTime={item.occurredAt}>{displayTime(item.occurredAt)}</time>
         <span className="m24-agent-record-kind">{item.kind}</span>
@@ -1467,10 +1536,14 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
 		void load(false, 0);
 	}, [agent.definition.id, data.project?.id, defaultCheckout]);
   useEffect(() => {
-    if (result?.view.session.state !== "ready" || result.view.thread_status !== "active" && !activeTurn) return;
+    // The selected agent is a live console. Its accepted task may be bound
+    // after the last domain snapshot, so an idle or even unbound view cannot
+    // be used as a reason to stop reading it. Archived epochs are immutable;
+    // the current epoch follows its provider thread continuously.
+    if (!result || selectedEpoch > 0 || ["archived", "detached"].includes(result.view.session.state)) return;
     const timer = window.setInterval(() => void load(true), 900);
     return () => window.clearInterval(timer);
-  }, [activeTurn?.id, load, result?.view.session.state, result?.view.thread_status]);
+  }, [load, result?.view.session.state, selectedEpoch]);
   useLayoutEffect(() => {
     const composer = composerRef.current;
     if (!composer) return;
@@ -1491,7 +1564,7 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
   };
   const send = async () => {
     const text = input.trim();
-    if (!text || activeTurn) return;
+    if (!text) return;
     setBusy("sending"); setError("");
     try {
       setResult(await rpc<DomainAgentSessionResult>(apiBase, csrf, "domain.agent.session.send", { ...scope, text, idempotency_key: newKey("domain-session-turn") }));
@@ -1550,7 +1623,7 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
         const thread = event.currentTarget;
         followThreadRef.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48;
       }}>
-        <div className="m24-provider-boundary"><strong>Conversation</strong><span>epoch {result?.view.session.epoch || 1} · provider sequence</span></div>
+        <div className="m24-provider-boundary"><strong>Codex session</strong><span>epoch {result?.view.session.epoch || 1} · owner and accepted task turns</span></div>
         {turns.length === 0 ? <p className="m22-empty">The provider thread is ready. Send the first owner message below.</p> : turns.map((turn) => <section className="m22-turn" key={turn.id}>
           <SessionTurnItems items={turn.items} agentName={agent.definition.name} />
           {["inProgress", "in_progress"].includes(turn.status) && <ActiveTurnProgress turn={turn} />}
@@ -1562,7 +1635,7 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
           <textarea ref={composerRef} rows={1} value={input} onChange={(event) => setInput(event.target.value)} placeholder={`Message ${agent.definition.name} directly…`} maxLength={65536} onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); }
           }} />
-          <span>{activeTurn && <button disabled={busy !== ""} onClick={() => void interrupt()}><Square size={13} /> interrupt</button>}<button className="m22-send" disabled={busy !== "" || !input.trim() || Boolean(activeTurn)} onClick={() => void send()}>{busy === "sending" ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />} send</button></span>
+          <span>{activeTurn && <button disabled={busy !== ""} onClick={() => void interrupt()}><Square size={13} /> interrupt</button>}<button className="m22-send" disabled={busy !== "" || !input.trim()} onClick={() => void send()}>{busy === "sending" ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />} {activeTurn ? "steer" : "send"}</button></span>
         </div>
         <small>Enter to send · Shift+Enter for a new line · conversation text is not authority</small>
       </div>}
@@ -1658,7 +1731,10 @@ function LiveTerminal({ apiBase, csrf, workspace, run, initialLogs, close, mutab
   const controlsEnabled = useRef(mutable);
   const decoder = useRef(new TextDecoder());
   const rawBuffer = useRef("");
-  const readableLogs = useMemo(() => [initialLogs, streamRaw].filter(Boolean).join("\n"), [initialLogs, streamRaw]);
+  // The terminal websocket often begins with the same bounded tail returned by
+  // run.logs. Prefer the live stream once it exists so the readable surface
+  // never renders the same provider events twice.
+  const readableLogs = useMemo(() => streamRaw || initialLogs, [initialLogs, streamRaw]);
 
   useEffect(() => { controlsEnabled.current = mutable; }, [mutable]);
 
@@ -1752,8 +1828,8 @@ function LiveTerminal({ apiBase, csrf, workspace, run, initialLogs, close, mutab
     if (next) { terminal.current?.scrollToBottom(); setUnseenOutput(false); }
   };
   return <section className="live-terminal" aria-label="Live agent activity">
-    <div className="section-title"><h3>Live provider activity</h3><span><CircleDot size={11} />{state}</span></div>
-    <p>Codex protocol events are rendered into a readable live stream. Canonical Crewfold state and receipts remain above.</p>
+    <div className="section-title"><h3>Advanced live runtime</h3><span><CircleDot size={11} />{state}</span></div>
+    <p>This is the current Herdr stream and optional raw terminal—not a second agent session. The durable agent’s readable conversation and task receipts remain in its main session.</p>
     {!mutable && <div className="terminal-paused">Canonical state is refreshing; output remains connected while controls are temporarily disabled.</div>}
     <div className="live-activity-scroll"><RuntimeActivityFeed logs={readableLogs} empty={state === "connected" ? "Connected. No readable provider event has been emitted yet." : "Connecting to the current Herdr run…"} /></div>
     <details className="protocol-console" onToggle={(event) => setProtocolOpen(event.currentTarget.open)}>
@@ -1764,7 +1840,7 @@ function LiveTerminal({ apiBase, csrf, workspace, run, initialLogs, close, mutab
         <form onSubmit={(event) => { event.preventDefault(); sendInput(input + "\r"); setInput(""); }}><input aria-label="Raw terminal input" value={input} maxLength={4095} onChange={(event) => setInput(event.target.value)} placeholder="Send raw terminal input…" disabled={!mutable} /><button className="secondary-button" disabled={!mutable || state !== "connected" || !input}><Send size={14} />Send</button><button type="button" className="secondary-button" disabled={!mutable || state !== "connected"} onClick={() => sendInput("\u0003")}><AlertCircle size={14} />Ctrl-C</button></form>
       </div>}
     </details>
-    <button type="button" className="secondary-button close-live-activity" onClick={close}><X size={14} />Hide live activity</button>
+    <button type="button" className="secondary-button close-live-activity" onClick={close}><X size={14} />Close advanced runtime</button>
   </section>;
 }
 

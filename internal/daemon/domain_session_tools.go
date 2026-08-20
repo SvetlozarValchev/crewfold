@@ -14,6 +14,7 @@ import (
 
 	"crewfold/internal/domain"
 	"crewfold/internal/execution"
+	"crewfold/internal/mcp"
 	"crewfold/internal/store"
 )
 
@@ -28,6 +29,8 @@ const (
 	domainToolInspectService   = "crewfold_inspect_managed_service"
 	domainToolRequestService   = "crewfold_request_managed_service"
 	domainToolDelegateService  = "crewfold_delegate_managed_service_grant"
+	runToolSendMessage         = "crewfold_run_send_message"
+	runToolProposeKnowledge    = "crewfold_run_propose_knowledge"
 )
 
 type domainSessionToolCall struct {
@@ -235,7 +238,7 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 		},
 		{
 			Type: "function", Name: domainToolProposeWork,
-			Description: "Submit one inert, owner-reviewable checkout-bound workstream, team, and task graph. Describe intent only: Crewfold selects a current staffing grant, freezes the checkout revision, resolves any existing agent and launch profile, assigns the permitted provider/runtime, derives bounded budgets and priorities, and treats a missing parent_key as reporting directly to this coordinator. Never include this coordinator in agents and never invent manager keys, IDs, revisions, profiles, providers, runtimes, or budgets. New team members do not exist before acceptance. Every task names an assignee_key; omitted dependency delivery defaults to handoff_with_evidence. Owner acceptance atomically creates and places the team with the graph.",
+			Description: "Submit one inert, owner-reviewable checkout-bound workstream, team, and task graph. Describe intent only: Crewfold selects a current staffing grant, freezes the checkout revision, resolves any existing agent and launch profile, assigns the permitted provider/runtime, derives bounded budgets and priorities, and treats a missing parent_key as reporting directly to this coordinator. Choose the hierarchy intentionally: when a proposed agent is accountable for another proposed agent, set that child's parent_key; do not give a flat peer a lead, manager, or coordinator title. Keep a reviewer directly under this coordinator only when independence from the delivery lead is material. Never include this coordinator in agents and never invent manager keys, IDs, revisions, profiles, providers, runtimes, or budgets. New team members do not exist before acceptance. Every task names an assignee_key; omitted dependency delivery defaults to handoff_with_evidence. Owner acceptance atomically creates and places the team with the graph.",
 			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
 				"required": []string{"summary", "objective_title", "agents", "tasks"},
 				"properties": map[string]any{
@@ -375,6 +378,20 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 			},
 		},
 	}
+	for _, runTool := range scopedMCPTools() {
+		name := runTool.Name
+		switch name {
+		case toolSend:
+			name = runToolSendMessage
+		case toolKnowledge:
+			name = runToolProposeKnowledge
+		}
+		tools = append(tools, execution.CodexDynamicNamespaceTool{
+			Type: "function", Name: name,
+			Description: "Accepted task turn only. " + runTool.Description,
+			InputSchema: runTool.InputSchema,
+		})
+	}
 	return []execution.CodexDynamicToolSpec{{
 		Type: "namespace", Name: "crewfold",
 		Description: "Canonical Crewfold domain context, durable messaging, owner-bounded staffing and work proposals, and sourced knowledge proposals. Direct namespace calls and Codex code-mode tools-object calls both use the same audited app-server client-tool boundary.",
@@ -386,6 +403,9 @@ func (s *server) handleDomainSessionToolRequest(ctx context.Context, request exe
 	var call domainSessionToolCall
 	if err := decodeDomainSessionToolCall(request.Params, &call); err != nil {
 		return domainToolFailure("invalid tool request: " + err.Error()), nil
+	}
+	if runID, ok := s.ensureDomainSessionHost().runForTool(call.ThreadID, call.TurnID); ok && isRunDynamicTool(call.Tool) {
+		return s.domainRunToolResult(ctx, runID, call), nil
 	}
 	receiptCommand := store.DomainAgentToolReceiptCommand{
 		ThreadID: call.ThreadID, CallID: call.CallID, TurnID: call.TurnID, ToolName: call.Tool, Arguments: call.Arguments,
@@ -465,6 +485,73 @@ func (s *server) handleDomainSessionToolRequest(ctx context.Context, request exe
 		return nil, fmt.Errorf("record durable agent tool receipt: %w", err)
 	}
 	return receipt.Response, nil
+}
+
+func isRunDynamicTool(name string) bool {
+	if name == runToolSendMessage || name == runToolProposeKnowledge {
+		return true
+	}
+	if name == domainToolSendMessage || name == domainToolProposeKnowledge || name == domainToolContext ||
+		name == domainToolCreateChild || name == domainToolDelegateStaffing || name == domainToolProposeWork ||
+		name == domainToolControlService || name == domainToolInspectService || name == domainToolRequestService ||
+		name == domainToolDelegateService {
+		return false
+	}
+	return knownMCPTool(name)
+}
+
+func canonicalRunDynamicTool(name string) string {
+	switch name {
+	case runToolSendMessage:
+		return toolSend
+	case runToolProposeKnowledge:
+		return toolKnowledge
+	default:
+		return name
+	}
+}
+
+func (s *server) domainRunToolResult(ctx context.Context, runID string, call domainSessionToolCall) map[string]any {
+	briefing, err := s.store.AuthorizeRunCapability(ctx, runID)
+	if err != nil {
+		return domainToolFailure("accepted task authority is unavailable: " + safeDomainSessionDiagnostic(err))
+	}
+	params, err := json.Marshal(map[string]any{
+		"name": canonicalRunDynamicTool(call.Tool), "arguments": json.RawMessage(call.Arguments),
+	})
+	if err != nil {
+		return domainToolFailure("encode task tool call: " + safeDomainSessionDiagnostic(err))
+	}
+	requestID, _ := json.Marshal(call.CallID)
+	response := s.handleMCPToolCall(mcp.Request{JSONRPC: mcp.JSONRPCVersion, ID: requestID, Method: "tools/call", Params: params}, briefing)
+	if response.Error != nil {
+		message := response.Error.Message
+		if response.Error.Data != nil && response.Error.Data.Message != "" {
+			message = response.Error.Data.Message
+		}
+		return domainToolFailure(message)
+	}
+	encoded, err := json.Marshal(response.Result)
+	if err != nil {
+		return domainToolFailure("encode task tool result: " + safeDomainSessionDiagnostic(err))
+	}
+	var result mcp.ToolCallResult
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return domainToolFailure("decode task tool result: " + safeDomainSessionDiagnostic(err))
+	}
+	items := make([]map[string]string, 0, len(result.Content))
+	for _, content := range result.Content {
+		if content.Type == "text" {
+			items = append(items, map[string]string{"type": "inputText", "text": content.Text})
+		}
+	}
+	if len(items) == 0 && len(result.StructuredContent) != 0 {
+		items = append(items, map[string]string{"type": "inputText", "text": string(result.StructuredContent)})
+	}
+	if len(items) == 0 {
+		items = append(items, map[string]string{"type": "inputText", "text": "Crewfold recorded the task operation."})
+	}
+	return map[string]any{"success": !result.IsError, "contentItems": items}
 }
 
 func (s *server) domainProposeKnowledgeToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionProposeKnowledgeArguments) map[string]any {

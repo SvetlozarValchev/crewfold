@@ -28,8 +28,12 @@ func StartCodexAppServer(options CodexAppServerProcessOptions) (CodexAppServerTr
 		executable = "codex"
 	}
 	command := exec.Command(executable, "app-server", "--listen", "stdio://")
+	return startCodexAppServerCommand(command, options.CodexHome)
+}
+
+func startCodexAppServerCommand(command *exec.Cmd, codexHome string) (CodexAppServerTransport, error) {
 	command.Env = os.Environ()
-	if codexHome := strings.TrimSpace(options.CodexHome); codexHome != "" {
+	if codexHome := strings.TrimSpace(codexHome); codexHome != "" {
 		command.Env = append(command.Env, "CODEX_HOME="+codexHome)
 	}
 	stdin, err := command.StdinPipe()

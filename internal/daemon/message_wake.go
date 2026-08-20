@@ -164,15 +164,25 @@ func (s *server) wakeMessage(ctx context.Context, job domain.MessageWakeJob) err
 		if err != nil {
 			return err
 		}
+		if err := s.restoreDomainAgentRunTurn(ctx, session, thread); err != nil {
+			return err
+		}
 		clientMessageID := "crewfold:wake:" + job.MessageID
 		if _, found := codexTurnForClientMessage(thread, clientMessageID); found {
 			return nil
 		}
 		if codexThreadHasActiveTurn(thread) {
-			// The durable inbox already contains the message, but starting another
-			// turn now would interleave two provider turns in one agent session.
-			// Return the pre-effect job to the durable queue and wake it after the
-			// current turn has settled.
+			if _, activeRun := host.activeRunTurn(session.ThreadID); activeRun {
+				// Mailbox input belongs to the same durable identity. When accepted
+				// work is already running, steer that exact turn instead of waiting
+				// behind it or addressing a second runtime personality.
+				_, err = host.steerRunTurn(ctx, session.ThreadID, clientMessageID,
+					"Crewfold delivered a durable message while this task turn is active. Call crewfold_get_domain_context now, read the delivered domain inbox, and incorporate or answer it through exact Crewfold tools when relevant.")
+				return err
+			}
+			// An owner turn is already active and there is no accepted task turn
+			// to steer. Return this pre-effect job to the durable queue; it will
+			// wake the same thread after the current turn settles.
 			return errMessageWakeTargetBusy
 		}
 		_, err = host.startTurn(ctx, session.ThreadID, clientMessageID,

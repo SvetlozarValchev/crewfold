@@ -73,6 +73,16 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 				}
 				result = map[string]any{}
 			case "turn/start":
+				params := request["params"].(map[string]any)
+				if params["clientUserMessageId"] != "run-message" || params["cwd"] != "/work/task" || params["approvalPolicy"] != "never" {
+					t.Errorf("turn/start authority params = %#v", params)
+					return
+				}
+				policy, ok := params["sandboxPolicy"].(map[string]any)
+				if !ok || policy["type"] != "workspaceWrite" || policy["networkAccess"] != true {
+					t.Errorf("turn/start sandbox policy = %#v", params["sandboxPolicy"])
+					return
+				}
 				result = map[string]any{"turn": map[string]any{"id": "turn-1", "status": "inProgress", "items": []any{}}}
 			case "turn/interrupt", "thread/compact/start":
 				result = map[string]any{}
@@ -82,7 +92,11 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 				return
 			}
 			if want == "thread/compact/start" {
-				_ = encoder.Encode(map[string]any{"method": "thread/compacted", "params": map[string]any{"threadId": "019-thread", "turnId": "turn-compact"}})
+				_ = encoder.Encode(map[string]any{"method": "item/completed", "params": map[string]any{
+					"threadId": "019-thread",
+					"turnId":   "turn-compact",
+					"item":     map[string]any{"id": "item-compact", "type": "contextCompaction"},
+				}})
 			}
 			if want == "turn/start" {
 				_ = encoder.Encode(map[string]any{"method": "item/agentMessage/delta", "params": map[string]any{"threadId": "019-thread", "turnId": "turn-1", "itemId": "item-1", "delta": "exact provider text"}})
@@ -118,7 +132,10 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 	if err != nil || len(turns) != 2 || turns[0].ID != "turn-oldest" || turns[1].ID != "turn-newest" {
 		t.Fatalf("ListThreadTurns() = %#v, %v", turns, err)
 	}
-	turn, err := client.StartTurn(ctx, thread.ID, "continue exactly")
+	turn, err := client.StartTurnWithOptions(ctx, thread.ID, "continue exactly", CodexTurnStartOptions{
+		ClientMessageID: "run-message", CWD: "/work/task", ApprovalPolicy: "never",
+		SandboxPolicy: map[string]any{"type": "workspaceWrite", "networkAccess": true, "writableRoots": []string{}},
+	})
 	if err != nil || turn.ID != "turn-1" {
 		t.Fatalf("StartTurn() = %#v, %v", turn, err)
 	}
@@ -149,7 +166,7 @@ func TestM22CodexAppServerUsesDurableThreadLifecycleAndFaithfulNotifications(t *
 	}
 	select {
 	case notification := <-client.Notifications():
-		if notification.Method != "thread/compacted" {
+		if notification.Method != "item/completed" {
 			t.Fatalf("compaction notification = %#v", notification)
 		}
 	case <-ctx.Done():

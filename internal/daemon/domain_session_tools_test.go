@@ -46,7 +46,7 @@ func TestM23WorkProposalToolStagesACompleteInertTeam(t *testing.T) {
 		t.Fatalf("proposal task leaked an internal budget: %#v", taskProperties)
 	}
 	description := strings.ToLower(proposalDescription(domainToolProposeWork))
-	if !containsRequiredString(required, "assignee_key") || !strings.Contains(description, "do not exist before acceptance") || !strings.Contains(description, "missing parent_key") || !strings.Contains(description, "never invent") {
+	if !containsRequiredString(required, "assignee_key") || !strings.Contains(description, "do not exist before acceptance") || !strings.Contains(description, "missing parent_key") || !strings.Contains(description, "choose the hierarchy intentionally") || !strings.Contains(description, "do not give a flat peer") || !strings.Contains(description, "never invent") {
 		t.Fatalf("proposal tool does not freeze an inert logical team: required=%#v description=%q", required, proposalDescription(domainToolProposeWork))
 	}
 }

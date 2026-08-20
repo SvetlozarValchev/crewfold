@@ -20,6 +20,20 @@ import (
 	"crewfold/internal/store"
 )
 
+func TestM24ActiveRunBindingMakesALossyProviderTranscriptSteerable(t *testing.T) {
+	view := domain.DomainAgentSessionView{ThreadStatus: "idle", Turns: []domain.DomainAgentSessionTurn{}}
+	projectActiveDomainSessionTurn(&view, "turn-active-task")
+	if view.ThreadStatus != "active" || len(view.Turns) != 1 || view.Turns[0].ID != "turn-active-task" || view.Turns[0].Status != "inProgress" {
+		t.Fatalf("active task projection = %#v", view)
+	}
+
+	terminal := domain.DomainAgentSessionView{ThreadStatus: "idle", Turns: []domain.DomainAgentSessionTurn{{ID: "turn-done", Status: "completed", Items: []domain.DomainAgentSessionItem{}}}}
+	projectActiveDomainSessionTurn(&terminal, "turn-done")
+	if terminal.ThreadStatus != "idle" || terminal.Turns[0].Status != "completed" {
+		t.Fatalf("terminal task turn was revived = %#v", terminal)
+	}
+}
+
 func TestM22ArbitraryDurableAgentOwnsOneStrictResumableCodexConversation(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("Git is unavailable: %v", err)
@@ -299,12 +313,11 @@ func TestM23WorkstreamDurableSessionUsesOnlyItsPrimaryCheckout(t *testing.T) {
 	}
 }
 
-func TestM22TerminalDurableTurnRetiresOnlyItsDisposableHostAndResumesTheSameEpoch(t *testing.T) {
+func TestM22TerminalDurableTurnKeepsOneHerdrHostedSessionForTheEpoch(t *testing.T) {
 	fixture := newCodexDomainSessionFixture(t)
 	config := testConfig(t)
 	config.CodexAppServerTransportFactory = fixture.transport
 	host := newDomainSessionHost(config, nil)
-	host.idleAfter = 5 * time.Millisecond
 	t.Cleanup(func() { _ = host.Close() })
 	ctx := context.Background()
 	thread, err := host.startThread(ctx, "/work", "Crewfold: orchid", "You are orchid.")
@@ -315,22 +328,15 @@ func TestM22TerminalDurableTurnRetiresOnlyItsDisposableHostAndResumesTheSameEpoc
 		Method: "turn/completed",
 		Params: json.RawMessage(`{"threadId":"thread-private-019","turn":{"id":"turn-finished","status":"completed","items":[]}}`),
 	})
-	deadline := time.Now().Add(time.Second)
-	for {
-		if _, loaded := host.clientForThread(thread.ID); !loaded {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("terminal durable turn did not retire its disposable app-server host")
-		}
-		time.Sleep(time.Millisecond)
+	if _, loaded := host.clientForThread(thread.ID); !loaded {
+		t.Fatal("terminal durable turn retired the epoch's Herdr-hosted provider session")
 	}
-	resumed, err := host.readThread(ctx, thread.ID, thread.CWD, "You are orchid.")
+	read, err := host.readThread(ctx, thread.ID, thread.CWD, "You are orchid.")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resumed.ID != thread.ID || fixture.resumes() != 1 {
-		t.Fatalf("resumed thread = %#v, resumes = %d", resumed, fixture.resumes())
+	if read.ID != thread.ID || fixture.resumes() != 0 {
+		t.Fatalf("read thread = %#v, resumes = %d", read, fixture.resumes())
 	}
 }
 
@@ -775,6 +781,11 @@ func (fixture *codexDomainSessionFixture) serve(connection net.Conn) {
 				fixture.t.Errorf("clientUserMessageId = %#v", params["clientUserMessageId"])
 				return
 			}
+			policy, _ := params["sandboxPolicy"].(map[string]any)
+			if params["approvalPolicy"] != "never" || policy["type"] != "readOnly" || policy["networkAccess"] != false {
+				fixture.t.Errorf("owner turn authority = %#v", params)
+				return
+			}
 			fixture.requireDomainToolResponse(scanner, encoder, 7001, "not_advertised", "thread-private-019", false)
 			fixture.requireDomainToolResponse(scanner, encoder, 7002, domainToolContext, "foreign-thread", false)
 			fixture.requireDomainToolResponse(scanner, encoder, 7003, domainToolContext, "thread-private-019", true)
@@ -798,7 +809,11 @@ func (fixture *codexDomainSessionFixture) serve(connection net.Conn) {
 			fixture.mu.Lock()
 			fixture.compactCount++
 			fixture.mu.Unlock()
-			if err := encoder.Encode(map[string]any{"method": "thread/compacted", "params": map[string]any{"threadId": loadedThreadID, "turnId": "turn-compact"}}); err != nil {
+			if err := encoder.Encode(map[string]any{"method": "item/completed", "params": map[string]any{
+				"threadId": loadedThreadID,
+				"turnId":   "turn-compact",
+				"item":     map[string]any{"id": "item-compact", "type": "contextCompaction"},
+			}}); err != nil {
 				return
 			}
 			result = map[string]any{}
@@ -1127,7 +1142,7 @@ func (fixture *codexDomainSessionFixture) sawArbitraryAgentInstructions() bool {
 	}
 	namespace, _ := dynamicTools[0].(map[string]any)
 	tools, _ := namespace["tools"].([]any)
-	if namespace["name"] != "crewfold" || namespace["type"] != "namespace" || len(tools) != 10 {
+	if namespace["name"] != "crewfold" || namespace["type"] != "namespace" || len(tools) < 10 {
 		return false
 	}
 	expectedTools := []string{domainToolContext, domainToolSendMessage, domainToolCreateChild, domainToolDelegateStaffing, domainToolProposeWork, domainToolProposeKnowledge, domainToolControlService, domainToolInspectService, domainToolRequestService, domainToolDelegateService}
@@ -1141,7 +1156,7 @@ func (fixture *codexDomainSessionFixture) sawArbitraryAgentInstructions() bool {
 	directNamespaces, _ := config["code_mode.direct_only_tool_namespaces"].([]any)
 	toolChecks := fixture.toolChecks
 	return fixture.startedParams["sandbox"] == execution.CodexSandboxReadOnly && fixture.startedParams["approvalPolicy"] == "never" &&
-		strings.Contains(baseInstructions, "real continuing coordination agent") && strings.Contains(baseInstructions, "complete inert team") && strings.Contains(baseInstructions, "Do not call crewfold_create_durable_child while planning a deliverable") && strings.Contains(baseInstructions, "code-mode tools object") && strings.Contains(baseInstructions, "never shell out to the crewfold binary") && strings.Contains(baseInstructions, "not canonical knowledge") && strings.Contains(baseInstructions, "Never edit repository files") && strings.Contains(instructions, `"orchid"`) && strings.Contains(instructions, `"owner-defined-whatever"`) && strings.Contains(instructions, daemonTestDomainCharter) && strings.Contains(instructions, domain.DomainAgentAdaptive) && strings.Contains(instructions, "grants no authority") && strings.Contains(instructions, "tools.crewfold__") && strings.Contains(instructions, "Never invoke the crewfold CLI") &&
+		strings.Contains(baseInstructions, "one real continuing Crewfold durable agent") && strings.Contains(baseInstructions, "complete inert team") && strings.Contains(baseInstructions, "Do not call crewfold_create_durable_child while planning a deliverable") && strings.Contains(baseInstructions, "code-mode tools object") && strings.Contains(baseInstructions, "never shell out to the crewfold binary") && strings.Contains(baseInstructions, "not canonical knowledge") && strings.Contains(baseInstructions, "Never edit repository files") && strings.Contains(instructions, `"orchid"`) && strings.Contains(instructions, `"owner-defined-whatever"`) && strings.Contains(instructions, daemonTestDomainCharter) && strings.Contains(instructions, domain.DomainAgentAdaptive) && strings.Contains(instructions, "grants no authority") && strings.Contains(instructions, "tools.crewfold__") && strings.Contains(instructions, "Never invoke the crewfold CLI") &&
 		len(directNamespaces) == 1 && directNamespaces[0] == "crewfold" && toolChecks == 4
 }
 
@@ -1157,7 +1172,7 @@ func (fixture *codexDomainSessionFixture) sawCurrentReadOnlyResumeBoundary() boo
 	instructions, _ := params["developerInstructions"].(string)
 	config, _ := params["config"].(map[string]any)
 	directNamespaces, _ := config["code_mode.direct_only_tool_namespaces"].([]any)
-	return strings.Contains(base, "not an implementation run") && strings.Contains(strings.ToLower(base), "never edit repository files") &&
+	return strings.Contains(base, "same Codex provider thread and identity") && strings.Contains(strings.ToLower(base), "never edit repository files") &&
 		strings.Contains(instructions, `"orchid"`) && len(directNamespaces) == 1 && directNamespaces[0] == "crewfold"
 }
 

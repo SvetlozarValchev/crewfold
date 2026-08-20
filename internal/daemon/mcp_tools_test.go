@@ -11,6 +11,23 @@ import (
 	"crewfold/internal/store"
 )
 
+func TestArtifactToolTextReturnsTheExactEvidenceID(t *testing.T) {
+	t.Parallel()
+	artifact := domain.RunArtifact{
+		ID: "artifact_0123456789abcdef0123456789abcdef", MediaType: "text/plain", ByteSize: 42,
+		ContentHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	message := mcpToolSuccessMessage(toolArtifact, artifact)
+	for _, required := range []string{artifact.ID, artifact.MediaType, "42 bytes", artifact.ContentHash, "completion report evidence_ids"} {
+		if !strings.Contains(message, required) {
+			t.Fatalf("artifact tool result omitted %q: %s", required, message)
+		}
+	}
+	if got := mcpToolSuccessMessage(toolProgress, domain.RunReport{}); got != "Crewfold accepted the scoped operation." {
+		t.Fatalf("unrelated tool result = %q", got)
+	}
+}
+
 func TestImmutableToolAllowlistHidesLaterCapabilities(t *testing.T) {
 	t.Parallel()
 	frozenAllowed := []string{toolBriefing, toolStatus, toolCompletion, toolArtifact, toolBlocked, toolProgress}

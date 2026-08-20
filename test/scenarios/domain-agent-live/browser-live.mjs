@@ -167,14 +167,15 @@ await clickText("button", "start Codex session");
 await waitFor("document.body.innerText.toLowerCase().includes('codex conversation · epoch 1 · codex') && document.querySelector('.m22-composer textarea')", "opened real Codex thread");
 
 const orchidInstruction = `Coordinate this domain end to end according to your operating charter. Submit one inert work proposal for the one attached writable checkout. Describe exactly four new durable agents: m23-implementer (task class implementation), m23-reviewer (task class review), m23-remediator (task class implementation), and m23-verifier (task class verification). Give each proposal-local agent a concise charter limited to its named stage and key each task to its logical assignee. Do not call crewfold_create_durable_child: none of these deliverable-specific agents may exist before acceptance. Do not invent or send grant IDs, checkout IDs or revisions, manager keys, membership/profile references, providers, runtimes, or budgets; Crewfold must resolve those exact authority fields from your current context. Send fern one durable inform message that the exact M23 delivery team and graph have been proposed. Use objective "Deliver the M23 checkout chain" and these four assigned tasks in order:
-1. key implement, title "Create the M23 fixture delivery", implementation. Create M23_DELIVERY.txt with a short implementation line, preserve README.md, inspect the diff, and complete through Crewfold with changed_paths and a check so a structured handoff is available.
+1. key implement, title "Create the M23 fixture delivery", implementation. Create M23_DELIVERY.txt with a short implementation line, preserve README.md, inspect the diff, report progress, then run /bin/sleep 12 before final completion so the owner can inspect and steer this exact active durable session. Complete through Crewfold with changed_paths and a check so a structured handoff is available.
 2. key review, title "Independently review the M23 delivery", review, depending on implement with handoff_with_evidence. Read the predecessor output from the Crewfold briefing and inspect README.md and M23_DELIVERY.txt without editing. The first implementation intentionally lacks a remediation acknowledgement, so complete with assessment changes_requested, reviewed paths, checks, and an exact handoff requiring that acknowledgement.
 3. key remediate, title "Apply the M23 review handoff", implementation, depending on review with handoff_with_evidence. Read the reviewer output from the Crewfold briefing, append one remediation acknowledgement to M23_DELIVERY.txt if absent, inspect the diff, and complete with changed paths, checks, and handoff.
 4. key verify, title "Verify the M23 checkout chain", verification, depending on remediate with handoff_with_evidence. Read the predecessor output from the Crewfold briefing, verify both delivery lines and the preserved README.md without editing, then complete with reviewed paths, checks, and a final handoff.
 Do not use provider-local temporary helpers and do not perform the implementation yourself. Once the fern message and the one pending proposal are confirmed by exact Crewfold receipts, answer exactly LIVE_M23_OK and explain that the four agents and all work remain nonexistent until the owner accepts the displayed graph.`;
+const orchidHierarchyInstruction = `Hierarchy is exact, not inferred from role labels: make m23-implementer the implementation lead and set parent_key to m23-implementer on m23-reviewer, m23-remediator, and m23-verifier. The accepted workstream must render those three agents beneath that lead.`;
 await evaluate(`(() => {
   const input = document.querySelector('.m22-composer textarea');
-  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(orchidInstruction)});
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(`${orchidInstruction}\n\n${orchidHierarchyInstruction}`)});
   input.dispatchEvent(new Event('input', { bubbles: true }));
   return true;
 })()`);
@@ -194,11 +195,40 @@ if (!inertTeamBeforeAcceptance) throw new Error("proposed team became durable be
 await capture("01-orchid-real-session");
 
 await clickText(".m22-domain-row", "m23-live-domain");
-await waitFor("document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Deliver the M23 checkout chain') && document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Who will do the work') && document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Work plan') && document.querySelector('.m22-work-proposals')?.textContent.includes('Conversation alone has changed nothing')", "inert coordinator team and decision-shaped work proposal");
+await waitFor("document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Deliver the M23 checkout chain') && document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Who reports to whom') && document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Work plan') && document.querySelector('.m22-work-proposals')?.textContent.includes('Conversation alone has changed nothing') && !document.querySelector('.m22-work-proposal.pending')?.textContent.includes('Flat team:')", "inert hierarchical team and decision-shaped work proposal");
 await capture("02-pending-exact-work-graph");
 await clickText(".m22-work-proposal button", "accept exact graph");
 await waitFor("[...document.querySelectorAll('.m22-domain-home .m22-block h2')].some((heading) => heading.textContent.trim() === 'active workstreams') && !document.querySelector('.m22-work-proposal.pending') && document.querySelectorAll('.m22-agent-row').length >= 6", "atomically accepted team and workstream graph");
 const proposalAccepted = true;
+const hierarchyExact = await evaluate(`(() => {
+  const group = [...document.querySelectorAll('.m22-workstream-group')].find((candidate) => candidate.textContent.includes('Deliver the M23 checkout chain'));
+  if (!group) return false;
+  const rows = [...group.querySelectorAll('.m22-agent-row')];
+  const lead = rows.find((row) => row.textContent.includes('m23-implementer'));
+  const children = ['m23-reviewer', 'm23-remediator', 'm23-verifier'].map((name) => rows.find((row) => row.textContent.includes(name)));
+  if (!lead || children.some((row) => !row)) return false;
+  const leadPadding = Number.parseInt(getComputedStyle(lead).paddingLeft, 10);
+  return children.every((row) => Number.parseInt(getComputedStyle(row).paddingLeft, 10) > leadPadding);
+})()`);
+if (!hierarchyExact) throw new Error("accepted proposal did not preserve the explicit lead/child attention hierarchy");
+// Select the durable worker immediately after the accepted team appears. The
+// domain overview intentionally summarizes a workstream rather than exposing
+// every transient task state, so using that summary as a synchronization
+// barrier can miss a short task turn entirely.
+await clickText(".m22-agent-row", "m23-implementer");
+await waitFor("document.querySelector('.m22-composer textarea') && [...document.querySelectorAll('.m22-composer button')].some((button) => button.textContent.toLowerCase().includes('steer')) && document.querySelector('.m22-thread')?.textContent.includes('Create the M23 fixture delivery')", "same durable implementation session while task is active");
+const ownerSteer = "OWNER_SAME_SESSION_STEER: keep the exact accepted task scope and mention this steering input in your final Crewfold progress or completion summary.";
+await evaluate(`(() => {
+  const input = document.querySelector('.m22-composer textarea');
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(ownerSteer)});
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+})()`);
+await waitFor("[...document.querySelectorAll('.m22-composer button')].some((button) => button.textContent.toLowerCase().includes('steer') && !button.disabled)", "enabled same-turn steering control");
+await clickText(".m22-composer button", "steer");
+await waitFor("document.querySelector('.m22-thread')?.textContent.includes('OWNER_SAME_SESSION_STEER')", "owner input recorded inside the active task turn");
+const ownerSteeredSameSession = true;
+await clickText(".m22-domain-row", "m23-live-domain");
 await waitFor("[...document.querySelectorAll('.m22-domain-home .m22-line')].some((item) => item.textContent.includes('Deliver the M23 checkout chain') && item.textContent.includes('0 open tasks')) && ![...document.querySelectorAll('.m22-domain-home .m22-block h2')].some((heading) => heading.textContent.trim() === 'needs attention')", "checkout-bound implement-review-remediate-verify completion", 900000);
 await evaluate(`(() => { const section = [...document.querySelectorAll('.m22-domain-home .m22-block')].find((candidate) => candidate.querySelector('h2')?.textContent.trim() === 'active workstreams'); const row = [...(section?.querySelectorAll('.m22-line') ?? [])].find((candidate) => candidate.textContent.includes('Deliver the M23 checkout chain')); row?.click(); return Boolean(row); })()`);
 const expectedTaskOutcomes = ['completed', 'findings delivered', 'completed', 'verification passed'];
@@ -213,7 +243,8 @@ await capture("04-accepted-durable-work");
 
 await evaluate("document.querySelector('.m22-lifecycle-review button[aria-label=\"Close workstream lifecycle\"]').click(); true");
 await clickText(".m22-agent-row", "m23-reviewer");
-await waitFor("document.querySelector('.m24-agent-records')?.textContent.includes('same durable coworker') && document.querySelector('.m24-agent-records')?.textContent.includes('Independently review the M23 delivery') && document.querySelector('.m24-agent-records')?.textContent.includes('run.completed')", "reviewer task work in unified durable coworker timeline");
+await waitFor("document.querySelector('.m24-agent-records')?.textContent.includes('same Codex session') && document.querySelector('.m24-agent-records')?.textContent.includes('Independently review the M23 delivery') && document.querySelector('.m24-agent-records')?.textContent.includes('run.completed') && document.querySelector('.m22-thread')?.textContent.includes('Independently review the M23 delivery')", "reviewer task work in unified durable coworker session");
+const taskInDurableSession = await evaluate("document.querySelector('.m24-agent-records')?.textContent.includes('Independently review the M23 delivery') && document.querySelector('.m22-thread')?.textContent.includes('Independently review the M23 delivery')");
 await evaluate(`(() => {
   const button = [...document.querySelectorAll('.m24-agent-records button')].find((candidate) => candidate.textContent.includes('Independently review the M23 delivery') && candidate.textContent.includes('run.completed'));
   button?.click();
@@ -262,6 +293,9 @@ const result = await evaluate(`(() => ({
   inertTeamBeforeAcceptance: ${JSON.stringify(inertTeamBeforeAcceptance)},
   fernReply: ${JSON.stringify(fernReplySeen)},
   childVisible: ['m23-implementer', 'm23-reviewer', 'm23-remediator', 'm23-verifier'].every((name) => [...document.querySelectorAll('.m22-agent-row')].some((candidate) => candidate.textContent.includes(name))),
+  hierarchyExact: ${JSON.stringify(hierarchyExact)},
+  taskInDurableSession: ${JSON.stringify(taskInDurableSession)},
+  ownerSteeredSameSession: ${JSON.stringify(ownerSteeredSameSession)},
   proposalAccepted: ${JSON.stringify(proposalAccepted)},
   deliveryAccepted: ${JSON.stringify(deliveryAccepted)},
   workerCompleted: ${JSON.stringify(workerCompleted)},
@@ -272,7 +306,7 @@ const result = await evaluate(`(() => ({
   epochLineage: ${JSON.stringify(epochLineage)},
 }))()`);
 result.browserExceptions = browserExceptions;
-if (!result.orchidReply || !result.fernReply || !result.inertTeamBeforeAcceptance || !result.childVisible || !result.proposalAccepted || !result.deliveryAccepted || !result.workerCompleted || !result.epochLineage || result.legacyExecutive || result.leakedPrivateBinding || result.providerLocalHelper || result.proposalToolFailed || browserExceptions.length) {
+if (!result.orchidReply || !result.fernReply || !result.inertTeamBeforeAcceptance || !result.childVisible || !result.hierarchyExact || !result.taskInDurableSession || !result.ownerSteeredSameSession || !result.proposalAccepted || !result.deliveryAccepted || !result.workerCompleted || !result.epochLineage || result.legacyExecutive || result.leakedPrivateBinding || result.providerLocalHelper || result.proposalToolFailed || browserExceptions.length) {
   throw new Error(`live M23 invariant failed: ${JSON.stringify(result)}`);
 }
 fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));

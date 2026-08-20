@@ -556,23 +556,33 @@ VALUES (?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULLIF(?, ''
 	}
 	wakeStatus := domain.WakeNotRequested
 	var targetRunID, targetDomainThreadID string
+	wakeProjectID := projectID
 	if threadKind == domain.ThreadKindParticipantBound {
-		err = tx.QueryRowContext(ctx, `SELECT id FROM runs
-WHERE workspace_id = ? AND agent_id = ? AND project_id = ? AND task_id = ?
-AND status IN ('starting', 'active', 'blocked') ORDER BY created_at DESC, id DESC LIMIT 1`, workspace.ID, recipient.ID, recipientParticipant.ProjectID, recipientParticipant.TaskID).Scan(&targetRunID)
-	} else {
-		err = tx.QueryRowContext(ctx, `SELECT id FROM runs
-WHERE workspace_id = ? AND agent_id = ? AND status IN ('starting', 'active', 'blocked')
-AND (? = '' OR project_id = ?) ORDER BY created_at DESC, id DESC LIMIT 1`, workspace.ID, recipient.ID, projectID, projectID).Scan(&targetRunID)
+		wakeProjectID = recipientParticipant.ProjectID
 	}
-	if errors.Is(err, sql.ErrNoRows) && threadKind == domain.ThreadKindDirect && projectID != "" {
+	// A durable agent has one provider identity. Prefer its domain thread even
+	// while an accepted task run is active; the daemon will steer that exact
+	// turn. Routing to the run's ordinary runtime driver would create a second
+	// control plane and cannot decode the durable-thread binding.
+	if wakeProjectID != "" {
 		err = tx.QueryRowContext(ctx, `SELECT binding.thread_id
 FROM domain_agent_session_bindings binding
 JOIN domain_agent_memberships membership
   ON membership.project_id=binding.project_id AND membership.agent_id=binding.agent_id
 JOIN agents agent ON agent.id=binding.agent_id
 WHERE binding.project_id=? AND binding.agent_id=?
-  AND membership.status='active' AND agent.enabled=1`, projectID, recipient.ID).Scan(&targetDomainThreadID)
+  AND membership.status='active' AND agent.enabled=1`, wakeProjectID, recipient.ID).Scan(&targetDomainThreadID)
+	} else {
+		err = sql.ErrNoRows
+	}
+	if errors.Is(err, sql.ErrNoRows) && threadKind == domain.ThreadKindParticipantBound {
+		err = tx.QueryRowContext(ctx, `SELECT id FROM runs
+WHERE workspace_id = ? AND agent_id = ? AND project_id = ? AND task_id = ?
+AND status IN ('starting', 'active', 'blocked') ORDER BY created_at DESC, id DESC LIMIT 1`, workspace.ID, recipient.ID, recipientParticipant.ProjectID, recipientParticipant.TaskID).Scan(&targetRunID)
+	} else if errors.Is(err, sql.ErrNoRows) {
+		err = tx.QueryRowContext(ctx, `SELECT id FROM runs
+WHERE workspace_id = ? AND agent_id = ? AND status IN ('starting', 'active', 'blocked')
+AND (? = '' OR project_id = ?) ORDER BY created_at DESC, id DESC LIMIT 1`, workspace.ID, recipient.ID, projectID, projectID).Scan(&targetRunID)
 	}
 	if err == nil {
 		wakeID, generateErr := randomID("wake_")
