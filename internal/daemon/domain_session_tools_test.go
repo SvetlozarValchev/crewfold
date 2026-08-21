@@ -6,7 +6,19 @@ import (
 	"testing"
 
 	"crewfold/internal/domain"
+	"crewfold/internal/mcp"
 )
+
+func TestDomainRunToolContentRetainsReadableReceiptAndExactStructuredPacket(t *testing.T) {
+	t.Parallel()
+	items := domainRunToolContentItems(mcp.ToolCallResult{
+		Content:           []mcp.Content{{Type: "text", Text: "Crewfold accepted the briefing read."}},
+		StructuredContent: json.RawMessage(`{"packet":{"included":[{"entity_id":"artifact_exact"}]}}`),
+	})
+	if len(items) != 2 || items[0]["text"] != "Crewfold accepted the briefing read." || !strings.Contains(items[1]["text"], "artifact_exact") {
+		t.Fatalf("domain run tool items = %#v", items)
+	}
+}
 
 func TestM23WorkProposalToolStagesACompleteInertTeam(t *testing.T) {
 	t.Parallel()

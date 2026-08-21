@@ -112,7 +112,12 @@
 .m22-knowledge > footer { margin: 0 2px 10px; color: var(--m22-faint); font-size: 9px; }
 .m22-knowledge-pending { margin-top: 10px; padding: 9px 10px; display: grid; gap: 4px; border-left: 2px solid var(--m22-amber); background: #28251e; color: var(--m22-muted); font-size: 10px; }
 .m22-knowledge-pending strong { color: var(--m22-amber); }
+.m22-knowledge-empty { padding: 13px 2px; color: var(--m22-muted); }
+.m22-knowledge-empty strong { color: var(--m22-text); font-size: 13px; }
+.m22-knowledge-empty p { max-width: 760px; margin: 5px 0 0; font-size: 12px; line-height: 1.6; }
 .m22-threads { margin-top: 18px; }
+.m22-thread-list { border-top: 1px solid #303030; }
+.m22-thread-list .m22-line.selected { padding-left: 9px; border-left: 2px solid var(--m22-cyan); background: #252727; }
 .m22-thread-index { border-top: 1px solid #303030; }
 .m22-thread-index > summary { padding: 9px 2px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; cursor: pointer; color: var(--m22-text); font-size: 11px; list-style: none; }
 .m22-thread-index > summary::-webkit-details-marker { display: none; }
@@ -349,6 +354,10 @@
 .m24-mailbox-items header small, .m24-mailbox-items footer { color: var(--m22-muted); font-size: 10px; }
 .m24-mailbox-items p { margin: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--m22-text); font-size: 14px; line-height: 1.6; }
 .m24-mailbox-items footer code { max-width: 55%; overflow: hidden; text-overflow: ellipsis; color: var(--m22-faint); font: inherit; white-space: nowrap; }
+.m24-mailbox-items footer button { padding: 3px 6px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid #555; color: var(--m22-text); background: #292929; font: inherit; font-size: 10px; }
+.m24-mailbox-items footer button:hover { border-color: var(--m22-cyan); }
+.m24-mailbox-items footer button:disabled { opacity: .5; }
+.m24-mailbox > .m22-thread-detail { margin-top: 16px; }
 .m22-session-lifecycle > summary { padding: 9px 2px; display: flex; align-items: center; gap: 7px; cursor: pointer; color: var(--m22-muted); font-size: 10px; list-style: none; }
 .m22-session-lifecycle > summary::-webkit-details-marker { display: none; }
 .m22-session-lifecycle > summary span { margin-left: auto; color: var(--m22-faint); }

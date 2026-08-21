@@ -127,6 +127,7 @@ await evaluate(`(() => {
 })()`);
 await waitFor("document.querySelector('.m22-console') && document.body.innerText.includes('world-engine')", "domain console after onboarding");
 await waitFor("document.body.innerText.includes('orchid') && document.body.innerText.includes('owner-facing coordinator')", "canonical arbitrary agent");
+await waitFor("document.body.innerText.includes('SHARED DOMAIN KNOWLEDGE') && document.body.innerText.includes('No shared knowledge has been accepted yet.')", "explicit empty shared-knowledge boundary");
 if (await evaluate("document.body.innerText.includes('project-executive')")) throw new Error("legacy hardcoded project-executive leaked into M22 onboarding");
 await capture("02-domain-home");
 
@@ -303,9 +304,22 @@ await waitFor("![...document.querySelectorAll('.m22-tabs button')].some((candida
 await clickUntil("document.querySelector('.m22-detail-toggle')", "document.querySelector('.m22-context')", "agent details before narrow-layout proof");
 await capture("11-adaptive-agent-tabs");
 
+// Exercise the actual narrow responsive layout. Chromium establishes its
+// mobile layout viewport during navigation; changing metrics in-place can
+// otherwise retain a 980px CSS viewport while returning a 390px screenshot.
 await command("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+await command("Page.reload", { ignoreCache: true });
+await waitFor("document.querySelector('.m22-domain-row')", "narrow workbench reload");
+await evaluate(`(() => {
+  const agent = [...document.querySelectorAll('.m22-agent-row')].find((candidate) => candidate.textContent.includes('orchid'));
+  agent?.click();
+  return Boolean(agent);
+})()`);
+await waitFor("document.querySelector('.m22-agent-center')", "narrow agent selection");
 await evaluate("window.scrollTo(0, 0)");
-await waitFor("getComputedStyle(document.querySelector('.m22-context')).display === 'none'", "narrow context rail collapse");
+await waitFor("!document.querySelector('.m22-context') || getComputedStyle(document.querySelector('.m22-context')).display === 'none'", "narrow context rail collapse");
+await waitFor("document.querySelector('.m22-center').getBoundingClientRect().width >= 360", "full-width narrow agent content");
+if (await evaluate("document.querySelector('.m22-root').scrollWidth > document.querySelector('.m22-root').clientWidth")) throw new Error("narrow console introduced horizontal page overflow");
 await capture("12-narrow-console");
 
 const result = await evaluate(`(() => ({

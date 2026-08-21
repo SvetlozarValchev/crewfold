@@ -117,6 +117,15 @@ and owner inspection never advances recipient state. Agent-created rosters,
 broadcast, thread closing, human recipients, and arbitrary live prompting are not
 implemented.
 
+A durable domain-agent session receives the same canonical mailbox in its
+continuing provider thread. After processing a delivery it either replies with
+the exact `thread_id` and `reply_to_message_id`, which atomically acknowledges the
+message, or records an explicit acknowledgement when no reply is warranted.
+Replying does not inherit a task-bound sender identity from the thread: the
+thread can retain its task context while the durable reply remains attributed to
+the durable agent session. Owner UI reads expose the complete conversation and
+delivery states but never perform these recipient transitions.
+
 Participant conversation does not imply orchestration state. It creates no task
 dependency, claim, meeting, or accepted knowledge; those require their own
 explicit commands and authority.

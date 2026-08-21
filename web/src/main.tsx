@@ -977,10 +977,11 @@ function DomainHome({ data, chooseAgent, reviewWorkstream, inspectTask, inspectR
       {activeRuns.length > 0 && <section className="m22-block"><h2>current runs</h2>{activeRuns.map((run) => <button className="m22-line" key={run.id} onClick={() => inspectRun(run)}><span><strong>{projectTasks.find((detail) => detail.task.id === run.task_id)?.task.title ?? run.id}</strong><small>{data.agents.find((agent) => agent.id === run.agent_id)?.name ?? run.agent_id}</small></span><StatusPill value={run.status} /></button>)}</section>}
     </div>
     <ManagedProcesses data={data} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />
-    {(currentKnowledge.length > 0 || proposedKnowledge.length > 0) && <section className="m22-block"><h2>shared domain knowledge</h2>
+    <section className="m22-block"><h2>shared domain knowledge</h2>
       {proposedKnowledge.length > 0 && <div className="m22-knowledge-proposals"><p><strong>{proposedKnowledge.length} sourced proposal{proposedKnowledge.length === 1 ? "" : "s"} need owner review.</strong> Agent conversation and coordination threads do not become knowledge by themselves.</p>{proposedKnowledge.map((revision) => <KnowledgeProposalReview key={revision.id} data={data} revision={revision} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />)}</div>}
       {currentKnowledge.map((revision) => <details className="m22-knowledge" key={revision.id}><summary><span><strong>{revision.title}</strong><small>{revision.type} · {revision.verification_status} · revision {revision.revision_number} · accepted {displayTime(revision.accepted_at)}</small></span><StatusPill value="current" /></summary><p>{revision.body}</p><footer>proposed by {revision.proposed_by_type} {revision.proposed_by} · {revision.sources.length} exact source{revision.sources.length === 1 ? "" : "s"}</footer></details>)}
-    </section>}
+      {currentKnowledge.length === 0 && proposedKnowledge.length === 0 && <div className="m22-knowledge-empty"><strong>No shared knowledge has been accepted yet.</strong><p>Task artifacts and agent conversations remain evidence or coordination. A durable agent must synthesize sourced findings or decisions into a knowledge proposal, and the owner must accept it before it appears here.</p></div>}
+    </section>
     {data.threads.length > 0 && <CoordinationThreads data={data} apiBase={apiBase} csrf={csrf} />}
     {decidedWork.length > 0 && <details className="m22-history"><summary><ClipboardCheck size={14} /> coordinator proposal history <span>{decidedWork.length}</span></summary><div className="m22-proposal-history">{decidedWork.map((proposal) => <DomainWorkProposalReview key={proposal.id} data={data} proposal={proposal} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />)}</div></details>}
     {(retiredAgents.length > 0 || closedObjectives.length > 0) && <details className="m22-history"><summary><Archive size={14} /> retired and closed history <span>{retiredAgents.length + closedObjectives.length}</span></summary><div>{retiredAgents.map((agent) => <div className="m22-line static" key={agent.definition.id}><span><strong>{agent.definition.name}</strong><small>retired agent · {agent.definition.role} · updated {displayTime(agent.membership.updated_at)}</small></span><StatusPill value="retired" /></div>)}{closedObjectives.map((objective) => <div className="m22-line static" key={objective.id}><span><strong>{objective.title}</strong><small>closed workstream · revision {objective.revision} · updated {displayTime(objective.updated_at)}</small></span><StatusPill value={objective.status} /></div>)}</div></details>}
@@ -1004,13 +1005,17 @@ function CoordinationThreads({ data, apiBase, csrf, threads = data.threads, head
     }
   };
   return <section className="m22-block m22-threads"><h2>{heading}</h2><p className="m22-caveat">Durable messages exchanged by owners and agents. Accepted domain knowledge is kept separately.</p>
-    {threads.length ? <details className="m22-thread-index"><summary><span>{threads.length} thread{threads.length === 1 ? "" : "s"}</span><small>latest {displayTime(threads[0]?.thread.updated_at)}</small></summary><div>{threads.map((summary) => <button className="m22-line" key={summary.thread.id} onClick={() => void open(summary)}><span><strong>{summary.thread.subject}</strong><small>{summary.message_count} message{summary.message_count === 1 ? "" : "s"} · updated {displayTime(summary.thread.updated_at)}</small></span>{loading === summary.thread.id ? <LoaderCircle className="spin" size={14} /> : <StatusPill value={summary.thread.status} />}</button>)}</div></details> : <p className="m22-empty">No durable coordination thread is recorded in this scope.</p>}
+    {threads.length ? <div className="m22-thread-list">{threads.map((summary) => <button className={`m22-line ${selected?.thread.id === summary.thread.id ? "selected" : ""}`} key={summary.thread.id} onClick={() => void open(summary)}><span><strong>{summary.thread.subject}</strong><small>{summary.message_count} message{summary.message_count === 1 ? "" : "s"} · updated {displayTime(summary.thread.updated_at)}</small></span>{loading === summary.thread.id ? <LoaderCircle className="spin" size={14} /> : <StatusPill value={summary.thread.status} />}</button>)}</div> : <p className="m22-empty">No durable coordination thread is recorded in this scope.</p>}
     {error && <p className="m22-session-error" role="alert">{error}</p>}
-    {selected && <article className="m22-thread-detail"><header><div><p className="m22-kicker">coordination thread</p><h3>{selected.thread.subject}</h3><small>{selected.messages.length} message{selected.messages.length === 1 ? "" : "s"} · audit ID {selected.thread.id}</small></div><button onClick={() => setSelected(null)} aria-label="Close coordination thread"><X size={14} /></button></header>{selected.messages.map((message) => {
-      const delivery = selected.recipients.filter((recipient) => recipient.message_id === message.id);
-      return <div className="m22-thread-message" key={message.id}><p><strong>{message.sender_agent_name || (message.sender_type === "owner" ? "You" : message.sender_type)}</strong><span>{message.kind.replaceAll("_", " ")} · {displayTime(message.created_at)}</span></p><div>{message.body}</div>{delivery.length > 0 && <small>to {delivery.map((recipient) => `${recipient.recipient_name} · ${recipient.status}${recipient.wake_status === "not_requested" ? "" : ` · wake ${recipient.wake_status}`}`).join("; ")}</small>}</div>;
-    })}</article>}
+    {selected && <ThreadConversation detail={selected} close={() => setSelected(null)} />}
   </section>;
+}
+
+function ThreadConversation({ detail, close }: { detail: ThreadDetail; close?: () => void }) {
+  return <article className="m22-thread-detail"><header><div><p className="m22-kicker">complete durable conversation</p><h3>{detail.thread.subject}</h3><small>{detail.messages.length} message{detail.messages.length === 1 ? "" : "s"} · {detail.thread.status} · audit ID {detail.thread.id}</small></div>{close && <button onClick={close} aria-label="Close coordination thread"><X size={14} /></button>}</header>{detail.messages.map((message) => {
+    const delivery = detail.recipients.filter((recipient) => recipient.message_id === message.id);
+    return <div className="m22-thread-message" key={message.id}><p><strong>{message.sender_agent_name || (message.sender_type === "owner" ? "You" : message.sender_type)}</strong><span>{message.kind.replaceAll("_", " ")} · {displayTime(message.created_at)}</span></p><div>{message.body}</div>{delivery.length > 0 && <small>delivery: {delivery.map((recipient) => `${recipient.recipient_name} · ${recipient.status}${recipient.wake_status === "not_requested" ? "" : ` · wake ${recipient.wake_status}`}`).join("; ")}</small>}</div>;
+  })}</article>;
 }
 
 function DomainWorkstreamCreatePanel({ data, apiBase, csrf, mutable, close, created, reload }: { data: WorkbenchData; apiBase: string; csrf: string; mutable: boolean; close: () => void; created: (title: string) => void; reload: () => Promise<void> }) {
@@ -1667,6 +1672,8 @@ function DurableAgentSession({ data, agent, runs, inspectRun, apiBase, csrf }: {
 
 function AgentMailbox({ data, agent, apiBase, csrf }: { data: WorkbenchData; agent: DomainAgent; apiBase: string; csrf: string }) {
   const [items, setItems] = useState<InboxItem[]>([]);
+  const [selected, setSelected] = useState<ThreadDetail | null>(null);
+  const [opening, setOpening] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const load = useCallback(async (quiet = false) => {
@@ -1681,22 +1688,35 @@ function AgentMailbox({ data, agent, apiBase, csrf }: { data: WorkbenchData; age
     } finally { if (!quiet) setLoading(false); }
   }, [agent.definition.id, apiBase, csrf, data.workspace?.id]);
   useEffect(() => {
-    setItems([]); setError(""); void load();
+    setItems([]); setSelected(null); setError(""); void load();
     const timer = window.setInterval(() => void load(true), 2000);
     return () => window.clearInterval(timer);
   }, [load]);
-  const awaiting = items.filter((item) => !["acknowledged", "read", "complete"].includes(item.delivery.status)).length;
+  const queued = items.filter((item) => item.delivery.status === "queued").length;
+  const delivered = items.filter((item) => item.delivery.status === "delivered").length;
+  const settled = items.filter((item) => ["acknowledged", "read", "complete"].includes(item.delivery.status)).length;
+  const openThread = async (item: InboxItem) => {
+    if (!data.workspace || !item.message.thread_id) return;
+    setOpening(item.message.thread_id); setError("");
+    try {
+      const result = await rpc<{ detail: ThreadDetail }>(apiBase, csrf, "thread.show", { workspace: data.workspace.id, thread: item.message.thread_id });
+      setSelected(result.detail);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not open the complete durable conversation.");
+    } finally { setOpening(""); }
+  };
   return <section className="m22-block m24-mailbox" aria-label={`${agent.definition.name} mailbox`}>
-    <div className="m22-block-heading"><div><h2>durable mailbox</h2><p>Messages addressed to this exact agent identity, with delivery and wake state.</p></div><button className="m22-command" type="button" disabled={loading} onClick={() => void load()}>{loading ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />} refresh</button></div>
-    <div className="m24-mailbox-summary"><Inbox size={16} /><strong>{items.length} message{items.length === 1 ? "" : "s"}</strong><span>{awaiting ? `${awaiting} awaiting acknowledgement` : "nothing awaiting acknowledgement"}</span></div>
+    <div className="m22-block-heading"><div><h2>mailbox delivery</h2><p>Delivery queue for this durable identity. Open any item to read the complete two-sided conversation.</p></div><button className="m22-command" type="button" disabled={loading} onClick={() => void load()}>{loading ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />} refresh</button></div>
+    <div className="m24-mailbox-summary"><Inbox size={16} /><strong>{items.length} message{items.length === 1 ? "" : "s"}</strong><span>{queued ? `${queued} waiting for delivery` : delivered ? `${delivered} delivered to the agent session` : settled ? `${settled} read or acknowledged` : "mailbox empty"}</span></div>
     {error && <p className="m22-session-error" role="alert">{error}</p>}
     {!loading && !error && items.length === 0 && <p className="m22-empty">This agent has no durable inbox messages at the current event cut.</p>}
     {items.length > 0 && <ol className="m24-mailbox-items">{items.map((item) => <li key={item.message.id}>
       <header><span><strong>{item.message.sender_agent_name || (item.message.sender_type === "owner" ? "You" : item.message.sender_type)}</strong><small>{item.message.kind.replaceAll("_", " ")} · {displayTime(item.message.created_at)}</small></span><StatusPill value={item.delivery.status} tone={item.delivery.status} /></header>
       <p>{item.message.body}</p>
-      <footer><span>wake {item.delivery.wake_status.replaceAll("_", " ")}</span>{item.message.thread_id && <code>{item.message.thread_id}</code>}</footer>
+      <footer><span>{item.delivery.status === "queued" ? `waiting for delivery · wake ${item.delivery.wake_status.replaceAll("_", " ")}` : item.delivery.status === "delivered" ? "delivered to the agent session; no response recorded yet" : `${item.delivery.status.replaceAll("_", " ")} by the agent`}</span>{item.message.thread_id && <button type="button" disabled={opening === item.message.thread_id} onClick={() => void openThread(item)}>{opening === item.message.thread_id ? <LoaderCircle className="spin" size={12} /> : null} open conversation</button>}</footer>
     </li>)}</ol>}
-    <p className="m22-caveat">This view is observational. Opening it does not acknowledge messages on the agent's behalf; acknowledgements are exact agent actions.</p>
+    {selected && <ThreadConversation detail={selected} close={() => setSelected(null)} />}
+    <p className="m22-caveat">Opening a conversation is observational. Only the addressed agent can acknowledge it—either explicitly or by replying in that exact thread.</p>
   </section>;
 }
 

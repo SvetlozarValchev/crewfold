@@ -510,13 +510,44 @@ VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, 1, ?, ?, ?, ?)`, thread.ID, th
 					return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "agent replies are limited to existing thread participants"}
 				}
 			}
-			projectID, resolvedTaskID = thread.ProjectID, thread.TaskID
+			projectID = thread.ProjectID
+			// A durable provider thread carries domain authority. It may continue
+			// a direct coordination thread opened by a task run, but it must not
+			// impersonate that task-bound sender merely because the thread retains
+			// its original task scope.
+			if senderDomainThreadID != "" {
+				resolvedTaskID = ""
+			} else {
+				resolvedTaskID = thread.TaskID
+			}
 		}
 	}
 	if replyTo != "" {
 		var replyThread string
 		if err := tx.QueryRowContext(ctx, "SELECT thread_id FROM messages WHERE id = ? AND workspace_id = ?", replyTo, workspace.ID).Scan(&replyThread); err != nil || replyThread != thread.ID {
 			return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeInvalidMessage, Message: "reply target must belong to the selected thread"}
+		}
+		if senderDomainThreadID != "" {
+			var recipientStatus string
+			if err := tx.QueryRowContext(ctx, `SELECT status FROM message_recipients
+WHERE message_id=? AND recipient_agent_id=?`, replyTo, senderAgentID).Scan(&recipientStatus); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return MutationResult[domain.MessageMutation]{}, &Error{Code: CodeMessageDenied, Message: "a durable-agent reply target must be addressed to that exact agent"}
+				}
+				return MutationResult[domain.MessageMutation]{}, storageFailure("authorize durable-agent reply acknowledgement", err)
+			}
+			if recipientStatus != domain.DeliveryAcknowledged {
+				if _, err := tx.ExecContext(ctx, `UPDATE message_recipients
+SET status='acknowledged', delivered_at=COALESCE(delivered_at, ?), read_at=COALESCE(read_at, ?), acknowledged_at=?
+WHERE message_id=? AND recipient_agent_id=?`, now, now, now, replyTo, senderAgentID); err != nil {
+					return MutationResult[domain.MessageMutation]{}, storageFailure("acknowledge durable-agent reply target", err)
+				}
+				if _, err := appendEventForActor(ctx, tx, workspace.ID, "message", replyTo, 4,
+					messageAcknowledgedEvent, correlationID, now, senderAgentID, domain.EventActorIntegration,
+					map[string]any{"recipient_agent_id": senderAgentID, "delivery_surface": "durable_agent_session", "acknowledgement": "reply"}); err != nil {
+					return MutationResult[domain.MessageMutation]{}, err
+				}
+			}
 		}
 	}
 	if err := validateMessageArtifacts(ctx, tx, senderRunID, artifactIDs); err != nil {
@@ -714,6 +745,77 @@ WHERE message_id=? AND recipient_agent_id=? AND status='queued'`, now, items[ind
 		return nil, storageFailure("commit domain session inbox", err)
 	}
 	return items, nil
+}
+
+// AcknowledgeDomainAgentSessionMessage records that the exact current durable
+// provider session processed one message from its same-domain inbox. Provider
+// wake success alone is not an acknowledgement: this transition is explicit,
+// replay-safe, and attributed to the durable agent identity.
+func (s *Store) AcknowledgeDomainAgentSessionMessage(ctx context.Context, threadID, messageID, key string) (MutationResult[domain.InboxItem], error) {
+	threadID, messageID, key = strings.TrimSpace(threadID), strings.TrimSpace(messageID), strings.TrimSpace(key)
+	if threadID == "" || messageID == "" || key == "" || len(key) > 128 {
+		return MutationResult[domain.InboxItem]{}, &Error{Code: CodeInvalidMessage, Message: "domain message acknowledgement requires one private thread, message, and bounded idempotency key"}
+	}
+	tx, err := s.beginTx(ctx, nil)
+	if err != nil {
+		return MutationResult[domain.InboxItem]{}, storageFailure("begin domain message acknowledgement", err)
+	}
+	defer tx.Rollback()
+	scope, err := s.domainAgentSessionScopeInTransaction(ctx, tx, threadID)
+	if err != nil {
+		return MutationResult[domain.InboxItem]{}, err
+	}
+	requestHash, _ := hashCommand("domain-message.acknowledged", map[string]string{
+		"agent_id": scope.Agent.ID, "project_id": scope.Project.ID, "message_id": messageID,
+	})
+	scopedKey := "domain-message-acknowledged:" + scope.Agent.ID + ":" + key
+	var replay MutationResult[domain.InboxItem]
+	if found, lookupErr := lookupIdempotency(ctx, tx, scopedKey, "domain-message.acknowledged", requestHash, &replay); lookupErr != nil {
+		return MutationResult[domain.InboxItem]{}, lookupErr
+	} else if found {
+		return replay, nil
+	}
+	item, err := queryInboxItem(ctx, tx, messageID, scope.Agent.ID)
+	if err != nil || item.Message.ProjectID != scope.Project.ID {
+		return MutationResult[domain.InboxItem]{}, &Error{Code: CodeMessageNotFound, Message: "message is outside this durable agent domain inbox", Cause: err}
+	}
+	now := s.nowText()
+	sequence := int64(0)
+	if item.Delivery.Status == domain.DeliveryQueued {
+		if _, err := tx.ExecContext(ctx, `UPDATE message_recipients
+SET status='delivered', delivered_at=? WHERE message_id=? AND recipient_agent_id=? AND status='queued'`, now, messageID, scope.Agent.ID); err != nil {
+			return MutationResult[domain.InboxItem]{}, storageFailure("deliver domain message before acknowledgement", err)
+		}
+		sequence, err = appendEventForActor(ctx, tx, scope.Workspace.ID, "message", messageID, 2,
+			messageDeliveredEvent, "domain-message-deliver-"+messageID, now, scope.Agent.ID, domain.EventActorIntegration,
+			map[string]any{"recipient_agent_id": scope.Agent.ID, "delivery_surface": "durable_agent_session"})
+		if err != nil {
+			return MutationResult[domain.InboxItem]{}, err
+		}
+		item.Delivery.Status, item.Delivery.DeliveredAt = domain.DeliveryDelivered, now
+	}
+	if item.Delivery.Status != domain.DeliveryAcknowledged {
+		if _, err := tx.ExecContext(ctx, `UPDATE message_recipients
+SET status='acknowledged', delivered_at=COALESCE(delivered_at, ?), read_at=COALESCE(read_at, ?), acknowledged_at=?
+WHERE message_id=? AND recipient_agent_id=?`, now, now, now, messageID, scope.Agent.ID); err != nil {
+			return MutationResult[domain.InboxItem]{}, storageFailure("acknowledge domain message", err)
+		}
+		sequence, err = appendEventForActor(ctx, tx, scope.Workspace.ID, "message", messageID, 4,
+			messageAcknowledgedEvent, "domain-message-acknowledge-"+messageID, now, scope.Agent.ID, domain.EventActorIntegration,
+			map[string]any{"recipient_agent_id": scope.Agent.ID, "delivery_surface": "durable_agent_session"})
+		if err != nil {
+			return MutationResult[domain.InboxItem]{}, err
+		}
+		item.Delivery.Status, item.Delivery.ReadAt, item.Delivery.AcknowledgedAt = domain.DeliveryAcknowledged, now, now
+	}
+	result := MutationResult[domain.InboxItem]{Value: item, EventSequence: sequence}
+	if err := recordIdempotency(ctx, tx, scopedKey, "domain-message.acknowledged", requestHash, result, now); err != nil {
+		return MutationResult[domain.InboxItem]{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return MutationResult[domain.InboxItem]{}, storageFailure("commit domain message acknowledgement", err)
+	}
+	return result, nil
 }
 
 func (s *Store) RunInbox(ctx context.Context, runID string, limit int) ([]domain.InboxItem, error) {

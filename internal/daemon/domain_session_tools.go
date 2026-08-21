@@ -23,6 +23,7 @@ import (
 const (
 	domainToolContext          = "crewfold_get_domain_context"
 	domainToolSendMessage      = "crewfold_send_message"
+	domainToolAcknowledge      = "crewfold_acknowledge_message"
 	domainToolCreateChild      = "crewfold_create_durable_child"
 	domainToolDelegateStaffing = "crewfold_delegate_staffing_grant"
 	domainToolProposeWork      = "crewfold_propose_work"
@@ -53,6 +54,10 @@ type domainSessionSendMessageArguments struct {
 	Body             string `json:"body"`
 	ThreadID         string `json:"thread_id,omitempty"`
 	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
+}
+
+type domainSessionAcknowledgeMessageArguments struct {
+	MessageID string `json:"message_id"`
 }
 
 type domainSessionCreateChildArguments struct {
@@ -206,7 +211,7 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 		},
 		{
 			Type: "function", Name: domainToolSendMessage,
-			Description: "Send one durable typed Crewfold message to another active durable agent in this same domain. Read the domain context first. Continue a related existing coordination thread with new_topic=false and its thread_id. Use new_topic=true with a concise subject only for a genuinely distinct topic. This records an immutable message and exact tool receipt; it does not grant authority, create knowledge, or impersonate a task run.",
+			Description: "Send one durable typed Crewfold message to another active durable agent in this same domain. Read the domain context first. Continue a related existing coordination thread with new_topic=false and its thread_id. When replying, include the exact reply_to_message_id; the committed reply also acknowledges that incoming message. Use new_topic=true with a concise subject only for a genuinely distinct topic. This records an immutable message and exact tool receipt; it does not grant authority, create knowledge, or impersonate a task run.",
 			InputSchema: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"required": []string{"recipient_agent", "kind", "new_topic", "body"},
@@ -219,6 +224,14 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 					"thread_id":           map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
 					"reply_to_message_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
 				},
+			},
+		},
+		{
+			Type: "function", Name: domainToolAcknowledge,
+			Description: "Acknowledge one delivered message after this exact durable agent has processed it and no reply is warranted. A reply with reply_to_message_id acknowledges automatically. Wake success or merely listing the inbox is not acknowledgement.",
+			InputSchema: map[string]any{
+				"type": "object", "additionalProperties": false, "required": []string{"message_id"},
+				"properties": map[string]any{"message_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}},
 			},
 		},
 		{
@@ -323,7 +336,7 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 		},
 		{
 			Type: "function", Name: domainToolProposeKnowledge,
-			Description: "Propose one canonical domain knowledge revision for explicit owner review. Crewfold injects this authenticated durable agent as the exact primary source and proposer; the caller cannot forge provenance or acceptance. Optional supporting task/meeting sources must already exist in the same domain. This does not edit repository Markdown and does not make the proposal current until the owner accepts its exact state revision.",
+			Description: "Propose one canonical domain knowledge revision for explicit owner review. Use this after synthesis or knowledge-curation work to retain a sourced cross-task finding or decision that future work should rely on; do not leave durable conclusions only in artifacts or coordination threads. Crewfold injects this authenticated durable agent as the exact primary source and proposer; the caller cannot forge provenance or acceptance. Optional supporting task/meeting sources must already exist in the same domain. This does not edit repository Markdown and does not make the proposal current until the owner accepts its exact state revision.",
 			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
 				"required": []string{"type", "title", "body", "confidence", "verification_status", "freshness_policy"},
 				"properties": map[string]any{
@@ -440,6 +453,11 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 			name = runToolSendMessage
 		case toolKnowledge:
 			name = runToolProposeKnowledge
+		case toolAcknowledge:
+			// One acknowledgement tool is advertised. During an accepted task
+			// turn it resolves through the run mailbox; otherwise it resolves
+			// through the durable domain session mailbox.
+			continue
 		}
 		tools = append(tools, execution.CodexDynamicNamespaceTool{
 			Type: "function", Name: name,
@@ -473,7 +491,7 @@ func (s *server) handleDomainSessionToolRequest(ctx context.Context, request exe
 	var result map[string]any
 	if call.Namespace != nil && *call.Namespace != "" && *call.Namespace != "crewfold" {
 		result = domainToolFailure("tool namespace is not Crewfold")
-	} else if call.Tool != domainToolContext && call.Tool != domainToolSendMessage && call.Tool != domainToolCreateChild && call.Tool != domainToolDelegateStaffing && call.Tool != domainToolProposeWork && call.Tool != domainToolProposeKnowledge && call.Tool != domainToolControlService && call.Tool != domainToolInspectService && call.Tool != domainToolProposeService && call.Tool != domainToolRequestService && call.Tool != domainToolDelegateService {
+	} else if call.Tool != domainToolContext && call.Tool != domainToolSendMessage && call.Tool != domainToolAcknowledge && call.Tool != domainToolCreateChild && call.Tool != domainToolDelegateStaffing && call.Tool != domainToolProposeWork && call.Tool != domainToolProposeKnowledge && call.Tool != domainToolControlService && call.Tool != domainToolInspectService && call.Tool != domainToolProposeService && call.Tool != domainToolRequestService && call.Tool != domainToolDelegateService {
 		result = domainToolFailure("Crewfold did not advertise this durable-agent tool")
 	} else if call.Tool == domainToolContext {
 		if err := decodeEmptyDomainToolArguments(call.Arguments); err != nil {
@@ -486,6 +504,13 @@ func (s *server) handleDomainSessionToolRequest(ctx context.Context, request exe
 			result = domainToolFailure("message arguments are invalid: " + safeDomainSessionDiagnostic(err))
 		} else {
 			result = s.domainSendMessageToolResult(ctx, call, arguments)
+		}
+	} else if call.Tool == domainToolAcknowledge {
+		var arguments domainSessionAcknowledgeMessageArguments
+		if err := decodeStrictDomainToolArguments(call.Arguments, &arguments); err != nil || !validDomainToolText(strings.TrimSpace(arguments.MessageID), 128) {
+			result = domainToolFailure("acknowledgement arguments require one bounded message_id")
+		} else {
+			result = s.domainAcknowledgeMessageToolResult(ctx, call, strings.TrimSpace(arguments.MessageID))
 		}
 	} else if call.Tool == domainToolCreateChild {
 		arguments, err := decodeDomainCreateChildArguments(call.Arguments)
@@ -600,19 +625,27 @@ func (s *server) domainRunToolResult(ctx context.Context, runID string, call dom
 	if err := json.Unmarshal(encoded, &result); err != nil {
 		return domainToolFailure("decode task tool result: " + safeDomainSessionDiagnostic(err))
 	}
-	items := make([]map[string]string, 0, len(result.Content))
+	return map[string]any{"success": !result.IsError, "contentItems": domainRunToolContentItems(result)}
+}
+
+func domainRunToolContentItems(result mcp.ToolCallResult) []map[string]string {
+	items := make([]map[string]string, 0, len(result.Content)+1)
 	for _, content := range result.Content {
 		if content.Type == "text" {
 			items = append(items, map[string]string{"type": "inputText", "text": content.Text})
 		}
 	}
-	if len(items) == 0 && len(result.StructuredContent) != 0 {
+	// MCP text is the human-readable receipt; StructuredContent is the exact
+	// packet the provider must reason from. Several tools intentionally return
+	// both. Dropping the latter when text exists turns real task briefings into
+	// opaque "accepted operation" messages and hides dependency evidence.
+	if len(result.StructuredContent) != 0 {
 		items = append(items, map[string]string{"type": "inputText", "text": string(result.StructuredContent)})
 	}
 	if len(items) == 0 {
 		items = append(items, map[string]string{"type": "inputText", "text": "Crewfold recorded the task operation."})
 	}
-	return map[string]any{"success": !result.IsError, "contentItems": items}
+	return items
 }
 
 func (s *server) domainProposeKnowledgeToolResult(ctx context.Context, call domainSessionToolCall, arguments domainSessionProposeKnowledgeArguments) map[string]any {
@@ -1166,6 +1199,24 @@ func (s *server) domainSendMessageToolResult(ctx context.Context, call domainSes
 	return domainToolSuccess(string(encoded))
 }
 
+func (s *server) domainAcknowledgeMessageToolResult(ctx context.Context, call domainSessionToolCall, messageID string) map[string]any {
+	digest := sha256.Sum256([]byte(call.CallID))
+	key := fmt.Sprintf("domain-tool-%x", digest[:])
+	result, err := s.store.AcknowledgeDomainAgentSessionMessage(ctx, call.ThreadID, messageID, key)
+	if err != nil {
+		return domainToolFailure("acknowledge durable domain message: " + safeDomainSessionDiagnostic(err))
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"schema":     "urn:crewfold:schema:domain:durable-agent-message-acknowledgement:v1",
+		"message_id": result.Value.Message.ID, "delivery": result.Value.Delivery,
+		"event_sequence": result.EventSequence,
+	})
+	if err != nil {
+		return domainToolFailure("encode durable domain message acknowledgement: " + safeDomainSessionDiagnostic(err))
+	}
+	return domainToolSuccess(string(encoded))
+}
+
 func (s *server) domainContextToolResult(ctx context.Context, threadID string) map[string]any {
 	scope, err := s.store.DomainAgentSessionScopeByThread(ctx, threadID)
 	if err != nil {
@@ -1282,6 +1333,7 @@ func (s *server) domainContextToolResult(ctx context.Context, threadID string) m
 			"available":  true,
 			"operation":  domainToolProposeKnowledge,
 			"governance": "proposals are inert until the owner accepts the exact revision; this authenticated agent is recorded as primary source and proposer",
+			"workflow":   "review evidence and coordination, synthesize the durable conclusion, propose each sourced finding or decision, then direct the owner to the pending Domain Home review; artifacts and messages alone are not shared memory",
 		},
 		"authority_note": "Hierarchy, names, roles, and conversation text do not grant authority. Only Crewfold grants, assignments, claims, budgets, capabilities, and accepted typed operations authorize effects.",
 	}

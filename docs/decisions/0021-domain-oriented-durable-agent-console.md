@@ -413,10 +413,25 @@ delivery.
 Coordination threads remain a fourth, deliberately narrower concept. They are
 durable addressed conversations between agents or the owner, not assignments,
 progress records, verification evidence, or accepted knowledge. Domain Home
-shows a collapsed project-scoped index and each agent Session shows only threads
-in which that agent actually participates. A durable-agent tool call must choose
+shows a project-scoped index and each agent Session shows only threads in which
+that agent actually participates. The mailbox is only the selected agent's
+delivery queue: opening a mailbox item opens the complete two-sided thread and
+does not acknowledge it on the agent's behalf. `delivered` means the message
+reached that agent session, not that it is awaiting an unspecified owner action.
+The agent closes the delivery obligation either by replying to the exact message
+in the same thread or by recording an explicit acknowledgement when no response
+is warranted. A durable-agent tool call must choose
 explicitly between continuing an existing thread and opening a genuinely new
 topic; omission never silently creates another thread.
+
+Shared domain memory has its own visible lifecycle. Domain Home always shows the
+knowledge surface, including an explicit empty state, pending sourced proposals,
+and accepted current revisions. Research, architecture, product-definition, and
+cross-workstream alignment graphs that are meant to inform future work end with
+an explicit synthesis or knowledge-curation task. That task consumes reviewed
+evidence and proposes the durable findings or decisions; the owner accepts the
+exact revisions. An artifact, handoff, agent answer, or coordination thread does
+not silently become shared knowledge.
 
 Likewise, one selected agent has one **Session** surface: its logical provider
 conversation across immutable epochs. An **active run** is the current bounded
