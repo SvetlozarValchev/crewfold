@@ -336,7 +336,7 @@ func domainAgentDynamicToolSpecs() []execution.CodexDynamicToolSpec {
 		},
 		{
 			Type: "function", Name: domainToolProposeKnowledge,
-			Description: "Propose one canonical domain knowledge revision for explicit owner review. Use this after synthesis or knowledge-curation work to retain a sourced cross-task finding or decision that future work should rely on; do not leave durable conclusions only in artifacts or coordination threads. Crewfold injects this authenticated durable agent as the exact primary source and proposer; the caller cannot forge provenance or acceptance. Optional supporting task/meeting sources must already exist in the same domain. This does not edit repository Markdown and does not make the proposal current until the owner accepts its exact state revision.",
+			Description: "Propose one canonical domain knowledge revision for explicit owner review. Use this after synthesis or knowledge-curation work to retain a sourced cross-task finding or decision that future work should rely on; do not leave durable conclusions only in artifacts or coordination threads. Write owner-facing prose and never paste raw Crewfold entity IDs into the title or body. Crewfold injects this authenticated durable agent as the exact primary source and proposer; the caller cannot forge provenance or acceptance. Optional supporting task/meeting sources must already exist in the same domain. This does not edit repository Markdown and does not make the proposal current until the owner accepts its exact state revision.",
 			InputSchema: map[string]any{"type": "object", "additionalProperties": false,
 				"required": []string{"type", "title", "body", "confidence", "verification_status", "freshness_policy"},
 				"properties": map[string]any{

@@ -4,12 +4,13 @@
   "title": "Crewfold canonical knowledge detail v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["revision", "authority_checks"],
+  "required": ["revision", "authority_checks", "presentation"],
   "properties": {
     "revision": {"$ref": "knowledge-revision.schema.json"},
     "authority_checks": {
       "type": "array",
       "items": {"$ref": "knowledge-authority.schema.json"}
-    }
+    },
+    "presentation": {"$ref": "knowledge-presentation.schema.json"}
   }
 }

@@ -17,6 +17,9 @@ func TestKnowledgeSchemaIDsMatchPublishedContract(t *testing.T) {
 		"schemas/domain/v1/knowledge-source.schema.json":              "urn:crewfold:schema:domain:knowledge-source:v1",
 		"schemas/domain/v1/knowledge-revision.schema.json":            "urn:crewfold:schema:domain:knowledge-revision:v1",
 		"schemas/domain/v1/knowledge-authority.schema.json":           "urn:crewfold:schema:domain:knowledge-authority:v1",
+		"schemas/domain/v1/knowledge-producer.schema.json":            "urn:crewfold:schema:domain:knowledge-producer:v1",
+		"schemas/domain/v1/knowledge-evidence.schema.json":            "urn:crewfold:schema:domain:knowledge-evidence:v1",
+		"schemas/domain/v1/knowledge-presentation.schema.json":        "urn:crewfold:schema:domain:knowledge-presentation:v1",
 		"schemas/domain/v1/knowledge-detail.schema.json":              "urn:crewfold:schema:domain:knowledge-detail:v1",
 		"schemas/domain/v1/knowledge-list.schema.json":                "urn:crewfold:schema:domain:knowledge-list:v1",
 		"schemas/local/v1/knowledge-propose.params.schema.json":       "urn:crewfold:schema:local-api:knowledge-propose-params:v1",
@@ -236,7 +239,7 @@ func TestKnowledgeIdentifiersAreStableAndAuthorityIsInspectable(t *testing.T) {
 	}
 
 	detail := readKnowledgeSchema(t, "schemas/domain/v1/knowledge-detail.schema.json")
-	for _, field := range []string{"revision", "authority_checks"} {
+	for _, field := range []string{"revision", "authority_checks", "presentation"} {
 		if !containsKnowledgeString(detail.Required, field) {
 			t.Errorf("knowledge detail does not require %q", field)
 		}
@@ -251,6 +254,15 @@ func TestKnowledgeIdentifiersAreStableAndAuthorityIsInspectable(t *testing.T) {
 	}
 	if revisions.MaxItems != 200 {
 		t.Errorf("knowledge list maxItems = %d, want 200", revisions.MaxItems)
+	}
+	var presentations struct {
+		MaxItems int `json:"maxItems"`
+	}
+	if err := json.Unmarshal(list.Properties["presentations"], &presentations); err != nil {
+		t.Fatalf("decode bounded knowledge presentations: %v", err)
+	}
+	if presentations.MaxItems != 200 {
+		t.Errorf("knowledge presentations maxItems = %d, want 200", presentations.MaxItems)
 	}
 }
 

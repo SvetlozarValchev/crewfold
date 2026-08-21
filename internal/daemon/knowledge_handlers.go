@@ -32,17 +32,13 @@ func (s *server) handleKnowledgeShow(request localapi.Request) localapi.Response
 	if err := decodeParams(request.Params, &params); err != nil {
 		return invalidParamsResponse(request, "knowledge.show requires workspace and knowledge_revision")
 	}
-	revision, err := s.store.KnowledgeRevision(context.Background(), params.Workspace, params.KnowledgeRevision)
-	if err != nil {
-		return storeErrorResponse(request, err)
-	}
-	checks, err := s.store.ListKnowledgeAuthorityChecks(context.Background(), params.Workspace, params.KnowledgeRevision)
+	detail, err := s.store.KnowledgeDetail(context.Background(), params.Workspace, params.KnowledgeRevision)
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.KnowledgeShowResult{
 		Schema: localapi.KnowledgeShowSchema, Type: "knowledge_detail",
-		Detail: domain.KnowledgeDetail{Revision: revision, AuthorityChecks: checks},
+		Detail: detail,
 	})
 }
 
@@ -58,8 +54,13 @@ func (s *server) handleKnowledgeList(request localapi.Request) localapi.Response
 	if err != nil {
 		return storeErrorResponse(request, err)
 	}
+	presentations, err := s.store.KnowledgePresentations(context.Background(), params.Workspace, revisions)
+	if err != nil {
+		return storeErrorResponse(request, err)
+	}
 	return localapi.MarshalResult(request.ID, request.Protocol, localapi.KnowledgeListResult{
-		Schema: localapi.KnowledgeListSchema, Type: "knowledge_list", List: domain.KnowledgeList{Revisions: revisions},
+		Schema: localapi.KnowledgeListSchema, Type: "knowledge_list",
+		List: domain.KnowledgeList{Revisions: revisions, Presentations: presentations},
 	})
 }
 

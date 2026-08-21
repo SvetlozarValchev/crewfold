@@ -136,13 +136,50 @@ type KnowledgeAuthorityCheck struct {
 	CreatedAt      string         `json:"created_at"`
 }
 
+// KnowledgeProducer is the resolved, owner-readable identity behind a
+// knowledge proposal. Exact identifiers remain available for audit while Label
+// is the value an operator surface should normally present.
+type KnowledgeProducer struct {
+	Type      string `json:"type"`
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	RunID     string `json:"run_id,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
+	AgentName string `json:"agent_name,omitempty"`
+	TaskID    string `json:"task_id,omitempty"`
+	TaskTitle string `json:"task_title,omitempty"`
+}
+
+// KnowledgeEvidence is bounded artifact metadata resolved from the producing
+// run's exact reports. Artifact content remains behind run.artifact.show so
+// ordinary knowledge reads do not copy evidence bytes.
+type KnowledgeEvidence struct {
+	ID          string `json:"id"`
+	RunID       string `json:"run_id"`
+	Name        string `json:"name"`
+	MediaType   string `json:"media_type"`
+	ContentHash string `json:"content_hash"`
+	ByteSize    int    `json:"byte_size"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// KnowledgePresentation is a derived read model. It is not part of the sealed
+// knowledge revision and cannot alter governance, provenance, or authority.
+type KnowledgePresentation struct {
+	RevisionID string              `json:"revision_id"`
+	Producer   KnowledgeProducer   `json:"producer"`
+	Evidence   []KnowledgeEvidence `json:"evidence"`
+}
+
 type KnowledgeDetail struct {
 	Revision        KnowledgeRevision         `json:"revision"`
 	AuthorityChecks []KnowledgeAuthorityCheck `json:"authority_checks"`
+	Presentation    KnowledgePresentation     `json:"presentation"`
 }
 
 type KnowledgeList struct {
-	Revisions []KnowledgeRevision `json:"revisions"`
+	Revisions     []KnowledgeRevision     `json:"revisions"`
+	Presentations []KnowledgePresentation `json:"presentations"`
 }
 
 const (

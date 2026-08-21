@@ -53,11 +53,14 @@ func TestKnowledgeLocalAPIAndExplicitContextDelivery(t *testing.T) {
 		t.Fatalf("KnowledgeList(without project) error = %v, code = %q", err, localAPIErrorCode(err))
 	}
 	listed, err := client.KnowledgeList(context.Background(), localapi.KnowledgeListParams{Workspace: "personal", Project: project.Project.ID})
-	if err != nil || len(listed.List.Revisions) != 1 || listed.List.Revisions[0].ID != accepted.Revision.ID {
+	if err != nil || len(listed.List.Revisions) != 1 || listed.List.Revisions[0].ID != accepted.Revision.ID ||
+		len(listed.List.Presentations) != 1 || listed.List.Presentations[0].RevisionID != accepted.Revision.ID ||
+		listed.List.Presentations[0].Producer.Label != "local owner" {
 		t.Fatalf("KnowledgeList() = %#v, %v", listed, err)
 	}
 	after, err := client.KnowledgeShow(context.Background(), "personal", accepted.Revision.ID)
-	if err != nil || len(after.Detail.AuthorityChecks) != 1 || after.Detail.AuthorityChecks[0].Outcome != domain.KnowledgeAuthorityAllowed {
+	if err != nil || len(after.Detail.AuthorityChecks) != 1 || after.Detail.AuthorityChecks[0].Outcome != domain.KnowledgeAuthorityAllowed ||
+		after.Detail.Presentation.RevisionID != accepted.Revision.ID || after.Detail.Presentation.Producer.Label != "local owner" {
 		t.Fatalf("KnowledgeShow(accepted) = %#v, %v", after, err)
 	}
 	indexBefore, err := client.KnowledgeIndexStatus(context.Background(), "personal")

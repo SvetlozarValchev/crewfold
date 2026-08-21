@@ -478,7 +478,124 @@ func (s *Store) KnowledgeDetail(ctx context.Context, workspaceIdentifier, revisi
 	if err != nil {
 		return domain.KnowledgeDetail{}, err
 	}
-	return domain.KnowledgeDetail{Revision: revision, AuthorityChecks: checks}, nil
+	presentations, err := s.KnowledgePresentations(ctx, workspaceIdentifier, []domain.KnowledgeRevision{revision})
+	if err != nil {
+		return domain.KnowledgeDetail{}, err
+	}
+	return domain.KnowledgeDetail{Revision: revision, AuthorityChecks: checks, Presentation: presentations[0]}, nil
+}
+
+// KnowledgePresentations resolves owner-readable producer and evidence labels
+// from canonical records without modifying the sealed knowledge revisions.
+// Missing historical producer records degrade to their exact recorded actor
+// instead of making otherwise valid knowledge unreadable.
+func (s *Store) KnowledgePresentations(ctx context.Context, workspaceIdentifier string, revisions []domain.KnowledgeRevision) ([]domain.KnowledgePresentation, error) {
+	workspace, err := s.Workspace(ctx, strings.TrimSpace(workspaceIdentifier))
+	if err != nil {
+		return nil, err
+	}
+	result := make([]domain.KnowledgePresentation, 0, len(revisions))
+	for _, revision := range revisions {
+		if revision.WorkspaceID != workspace.ID {
+			return nil, knowledgeInvalid("knowledge presentation revision is outside the workspace")
+		}
+		presentation := domain.KnowledgePresentation{
+			RevisionID: revision.ID,
+			Producer: domain.KnowledgeProducer{
+				Type: revision.ProposedByType, ID: revision.ProposedBy,
+				Label: knowledgeProducerFallbackLabel(revision.ProposedByType, revision.ProposedBy),
+			},
+			Evidence: []domain.KnowledgeEvidence{},
+		}
+		switch revision.ProposedByType {
+		case domain.KnowledgeActorAgentRun:
+			var runID, agentID, agentName, taskID, taskTitle string
+			err := s.db.QueryRowContext(ctx, `SELECT run.id, agent.id, agent.name, task.id, task.title
+FROM runs run
+JOIN agents agent ON agent.id=run.agent_id
+JOIN tasks task ON task.id=run.task_id
+WHERE run.id=? AND run.workspace_id=?`, revision.ProposedBy, workspace.ID).Scan(
+				&runID, &agentID, &agentName, &taskID, &taskTitle)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, storageFailure("resolve knowledge producer", err)
+			}
+			if err == nil {
+				presentation.Producer.Label = agentName
+				presentation.Producer.RunID = runID
+				presentation.Producer.AgentID = agentID
+				presentation.Producer.AgentName = agentName
+				presentation.Producer.TaskID = taskID
+				presentation.Producer.TaskTitle = taskTitle
+				evidence, evidenceErr := knowledgeRunEvidence(ctx, s.db, workspace.ID, runID)
+				if evidenceErr != nil {
+					return nil, evidenceErr
+				}
+				presentation.Evidence = evidence
+			}
+		case domain.KnowledgeActorIntegration:
+			var name string
+			err := s.db.QueryRowContext(ctx, `SELECT agent.name
+FROM agents agent
+JOIN domain_agent_memberships membership ON membership.agent_id=agent.id
+WHERE agent.id=? AND agent.workspace_id=? AND membership.project_id=?`,
+				revision.ProposedBy, workspace.ID, revision.ProjectID).Scan(&name)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, storageFailure("resolve durable knowledge producer", err)
+			}
+			if err == nil {
+				presentation.Producer.Label = name
+				presentation.Producer.AgentID = revision.ProposedBy
+				presentation.Producer.AgentName = name
+			}
+		}
+		result = append(result, presentation)
+	}
+	return result, nil
+}
+
+func knowledgeProducerFallbackLabel(actorType, actorID string) string {
+	switch actorType {
+	case domain.KnowledgeActorHuman:
+		return "local owner"
+	case domain.KnowledgeActorAgentRun:
+		return "recorded agent"
+	case domain.KnowledgeActorIntegration:
+		return "durable agent"
+	case domain.KnowledgeActorSubsystem:
+		return "Crewfold"
+	default:
+		return actorID
+	}
+}
+
+func knowledgeRunEvidence(ctx context.Context, database *sql.DB, workspaceID, runID string) ([]domain.KnowledgeEvidence, error) {
+	rows, err := database.QueryContext(ctx, `SELECT artifact.id, artifact.run_id, artifact.name,
+artifact.media_type, artifact.content_hash, artifact.byte_size, artifact.created_at
+FROM run_reports report
+JOIN runs run ON run.id=report.run_id
+JOIN json_each(report.evidence_json) evidence_reference
+JOIN run_artifacts artifact ON artifact.id=evidence_reference.value AND artifact.run_id=report.run_id
+WHERE report.run_id=? AND run.workspace_id=? AND report.status='applied'
+GROUP BY artifact.id, artifact.run_id, artifact.name, artifact.media_type,
+artifact.content_hash, artifact.byte_size, artifact.created_at
+ORDER BY artifact.created_at, artifact.id`, runID, workspaceID)
+	if err != nil {
+		return nil, storageFailure("resolve knowledge evidence", err)
+	}
+	defer rows.Close()
+	result := []domain.KnowledgeEvidence{}
+	for rows.Next() {
+		var evidence domain.KnowledgeEvidence
+		if err := rows.Scan(&evidence.ID, &evidence.RunID, &evidence.Name, &evidence.MediaType,
+			&evidence.ContentHash, &evidence.ByteSize, &evidence.CreatedAt); err != nil {
+			return nil, storageFailure("scan knowledge evidence", err)
+		}
+		result = append(result, evidence)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storageFailure("iterate knowledge evidence", err)
+	}
+	return result, nil
 }
 
 // KnowledgeRevisionInTransaction loads an exact immutable-content revision and

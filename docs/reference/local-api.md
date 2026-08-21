@@ -665,6 +665,15 @@ owner-governance contract described in [Knowledge](../knowledge.md). Mutation
 payloads cannot select a trusted actor. Search adds three owner-socket methods
 without changing those authority rules.
 
+`knowledge.show` includes one `presentation`; `knowledge.list` includes a
+positionally corresponding bounded `presentations` array. Each presentation is
+a read-only resolution of the recorded producer plus named metadata for artifacts
+referenced by that producer run's applied reports. It is not part of the immutable
+knowledge content or its authority hash, and artifact bytes remain behind the
+separately authorized `run.artifact.show` read. Owner UI uses the readable agent,
+task, and attachment labels while keeping exact IDs and hashes available for
+audit.
+
 `knowledge.search` requires `workspace`, `project`, and a bounded literal `query`.
 It optionally accepts `task`, `type`, and a limit from 1 through 100. Its result is
 `knowledge_search`: normalized query, evaluation instant, canonical event cursor,

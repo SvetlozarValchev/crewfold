@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:knowledge-presentation:v1",
+  "title": "Crewfold owner-readable knowledge presentation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["revision_id", "producer", "evidence"],
+  "properties": {
+    "revision_id": {"type": "string", "pattern": "^krev_[0-9a-f]{32}$"},
+    "producer": {"$ref": "knowledge-producer.schema.json"},
+    "evidence": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {"$ref": "knowledge-evidence.schema.json"}
+    }
+  }
+}

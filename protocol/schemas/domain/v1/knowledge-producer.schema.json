@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:crewfold:schema:domain:knowledge-producer:v1",
+  "title": "Crewfold resolved knowledge producer v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "id", "label"],
+  "properties": {
+    "type": {"enum": ["human", "agent_run", "subsystem", "integration"]},
+    "id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "label": {"type": "string", "minLength": 1, "maxLength": 256},
+    "run_id": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"},
+    "agent_id": {"type": "string", "pattern": "^agent_[0-9a-f]{32}$"},
+    "agent_name": {"type": "string", "minLength": 1, "maxLength": 63},
+    "task_id": {"type": "string", "pattern": "^task_[0-9a-f]{32}$"},
+    "task_title": {"type": "string", "minLength": 1, "maxLength": 256}
+  }
+}

@@ -4,12 +4,17 @@
   "title": "Crewfold bounded canonical knowledge list v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["revisions"],
+  "required": ["revisions", "presentations"],
   "properties": {
     "revisions": {
       "type": "array",
       "maxItems": 200,
       "items": {"$ref": "knowledge-revision.schema.json"}
+    },
+    "presentations": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {"$ref": "knowledge-presentation.schema.json"}
     }
   }
 }

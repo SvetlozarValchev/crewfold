@@ -12,6 +12,9 @@ their acceptance/review gate has passed. The current implementation supports:
 - task, concluded-meeting, and accepted meeting-proposal provenance;
 - owner-governed acceptance, rejection, staleness, and supersession;
 - proposals from either the owner CLI or an authenticated agent run;
+- an owner-readable presentation projection that resolves an agent-run producer
+  to its durable agent and source task and exposes the named artifacts referenced
+  by that run's applied reports;
 - explicit, exact revision links in bounded context packets; and
 - explanation of selection, exclusion, revision, and byte budgets;
 - deterministic, scoped full-text discovery over canonical revisions; and
@@ -79,6 +82,16 @@ The record also carries confidence (`low|medium|high`), verification status
 (`unverified|supported|verified`), and either `until_superseded` freshness or an
 RFC3339 expiry. Sources are stored in deterministic order with frozen source
 revisions, so the knowledge body is useful and inspectable without a transcript.
+
+`knowledge show` and `knowledge list` also return a derived `presentation` for
+each revision. This projection does not rewrite the sealed title, body, sources,
+actor, or authority history. For an agent-run proposal it resolves the recorded
+run to the durable agent and source task and joins only artifacts referenced by
+that exact run's applied reports. Normal owner surfaces use those names and render
+the bounded artifact as supporting evidence; exact run, task, agent, artifact,
+and content-hash identities remain available behind the audit/evidence boundary.
+A missing historical producer degrades to an attributed generic label rather
+than inventing provenance or making the canonical revision unreadable.
 
 ### Authority
 

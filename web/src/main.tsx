@@ -57,6 +57,7 @@ type DomainWorkProposalTask = { key: string; title: string; description: string;
 type DomainWorkProposalAgent = { key: string; existing_agent_id?: string; existing_membership_revision?: number; existing_launch_profile_id?: string; name?: string; role?: string; parent_key?: string; operating_charter?: string; delegation_policy?: string; provider?: string; runtime?: string; max_concurrency?: number; task_class?: string; budget: Budget };
 type DomainWorkProposal = { id: string; workspace_id: string; project_id: string; source_agent_id: string; source_thread_id: string; staffing_grant_id: string; staffing_grant_revision: number; summary: string; as_of_event_sequence: number; content: { objective_title: string; objective_budget: Budget; primary_checkout_id: string; primary_checkout_revision: number; reference_checkout_ids: string[]; agents: DomainWorkProposalAgent[]; tasks: DomainWorkProposalTask[] }; content_sha256: string; status: "pending" | "accepted" | "rejected" | "stale"; decision_note?: string; revision: number; created_at: string; updated_at: string; decided_at?: string };
 type KnowledgeRevision = { id: string; item_id: string; project_id: string; task_scope_id?: string; type: "decision" | "finding"; revision_number: number; state_revision: number; title: string; body: string; review_status: "proposed" | "accepted" | "rejected"; currency_status: "pending" | "current" | "stale" | "superseded"; confidence: string; verification_status: string; proposed_at: string; proposed_by: string; proposed_by_type: string; accepted_at?: string; sources: Array<{ type: string; id: string; revision: number; role: string; ordinal: number }> };
+type KnowledgePresentation = { revision_id: string; producer: { type: string; id: string; label: string; run_id?: string; agent_id?: string; agent_name?: string; task_id?: string; task_title?: string }; evidence: Array<{ id: string; run_id: string; name: string; media_type: string; content_hash: string; byte_size: number; created_at: string }> };
 type MessageThread = { id: string; workspace_id: string; project_id?: string; task_id?: string; subject: string; status: "open" | "closed"; revision: number; created_at: string; updated_at: string; created_by: string; updated_by: string };
 type ThreadSummary = { thread: MessageThread; message_count: number; agent_ids: string[] };
 type ThreadMessage = { id: string; thread_id: string; sender_type: string; sender_agent_name?: string; kind: string; body: string; created_at: string };
@@ -94,6 +95,7 @@ type WorkbenchData = {
   runs: Run[];
   checks: CheckRunItem[];
   knowledge: KnowledgeRevision[];
+  knowledgePresentations: KnowledgePresentation[];
   threads: ThreadSummary[];
   launchProfiles: LaunchProfile[];
   workProposals: DomainWorkProposal[];
@@ -127,7 +129,7 @@ type SessionResponse = {
 
 const expectedStatusSchema = "urn:crewfold:schema:web:workbench-status:v1";
 const expectedSessionSchema = "urn:crewfold:schema:web:workbench-session:v1";
-const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], domainAgents: [], objectives: [], tasks: [], runs: [], checks: [], knowledge: [], threads: [], launchProfiles: [], workProposals: [], processDefinitions: [], processInstances: [], processGrants: [], processRequests: [], highWater: 0 };
+const emptyData: WorkbenchData = { workspaces: [], workspace: null, projects: [], project: null, checkouts: [], agents: [], domainAgents: [], objectives: [], tasks: [], runs: [], checks: [], knowledge: [], knowledgePresentations: [], threads: [], launchProfiles: [], workProposals: [], processDefinitions: [], processInstances: [], processGrants: [], processRequests: [], highWater: 0 };
 
 class RPCFailure extends Error {
   readonly apiError: APIError;
@@ -344,11 +346,11 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
     rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: eventAfter, limit: 200 }),
   ]);
   const project = projectPage.projects.find((item) => item.id === preferredProject) ?? projectPage.projects[0] ?? null;
-  const [checkouts, checks, domainAgents, knowledge, threads, launchProfiles, workProposals, processDefinitions, processInstances, processGrants, processRequests] = project ? await Promise.all([
+  const [checkouts, checks, domainAgents, knowledgeResult, threads, launchProfiles, workProposals, processDefinitions, processInstances, processGrants, processRequests] = project ? await Promise.all([
     rpc<{ checkouts: Checkout[] }>(apiBase, csrf, "checkout.list", { workspace: workspace.id, project: project.id }).then((value) => value.checkouts),
     rpc<{ runs: CheckRunItem[] } & Page>(apiBase, csrf, "check.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.runs),
     rpc<{ project_id: string; agents: DomainAgent[] }>(apiBase, csrf, "domain.agent.tree", { workspace: workspace.id, project: project.id }).then((value) => value.agents),
-    rpc<{ list: { revisions: KnowledgeRevision[] } }>(apiBase, csrf, "knowledge.list", { workspace: workspace.id, project: project.id }).then((value) => value.list.revisions),
+    rpc<{ list: { revisions: KnowledgeRevision[]; presentations: KnowledgePresentation[] } }>(apiBase, csrf, "knowledge.list", { workspace: workspace.id, project: project.id }).then((value) => value.list),
     rpc<{ threads: ThreadSummary[] }>(apiBase, csrf, "thread.list", { workspace: workspace.id, project: project.id, limit: 50 }).then((value) => value.threads),
     rpc<{ profiles: LaunchProfile[] }>(apiBase, csrf, "launch_profile.list", { workspace: workspace.id, project: project.id, limit: 100 }).then((value) => value.profiles),
     rpc<{ proposals: DomainWorkProposal[] }>(apiBase, csrf, "domain.work_proposal.list", { workspace: workspace.id, project: project.id }).then((value) => value.proposals),
@@ -356,7 +358,7 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
     rpc<{ instances: ManagedProcessInstance[] }>(apiBase, csrf, "managed_service.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.instances),
     rpc<{ grants: ManagedProcessGrant[] }>(apiBase, csrf, "managed_service.grant.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.grants),
     rpc<{ requests: ManagedProcessRequest[] }>(apiBase, csrf, "managed_service.request.list", { workspace: workspace.id, project: project.id, limit: 200 }).then((value) => value.requests),
-  ]) : [[], [], [], [], [], [], [], [], [], [], []];
+  ]) : [[], [], [], { revisions: [], presentations: [] }, [], [], [], [], [], [], []];
   const after = await rpc<{ events: EventRecord[]; high_water: number } & Page>(apiBase, csrf, "events.list", { workspace: workspace.id, after: before.high_water, limit: 1 });
   if (after.high_water !== before.high_water) {
     if (attempt >= 2) throw new Error("Canonical state kept changing during refresh; retry when the current event cut settles.");
@@ -365,7 +367,8 @@ async function loadWorkbench(apiBase: string, csrf: string, preferredWorkspace =
   return {
     workspaces: workspacePage.workspaces, workspace, projects: projectPage.projects, project, checkouts,
     agents: agentPage.agents, domainAgents, objectives: objectivePage.objectives, tasks: taskPage.tasks,
-    runs: runPage.runs, checks, knowledge, threads, launchProfiles, workProposals, processDefinitions, processInstances, processGrants, processRequests,
+    runs: runPage.runs, checks, knowledge: knowledgeResult.revisions, knowledgePresentations: knowledgeResult.presentations,
+    threads, launchProfiles, workProposals, processDefinitions, processInstances, processGrants, processRequests,
     highWater: eventPage.high_water,
   };
 }
@@ -758,12 +761,53 @@ function DomainWorkProposalReview({ data, proposal, apiBase, csrf, mutable, relo
   </article>;
 }
 
+function formatEvidenceSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+}
+
+function readableKnowledgeText(text: string, presentation?: KnowledgePresentation) {
+  let readable = text;
+  readable = readable.replace(/\bartifact_[0-9a-f]{32}\b/g, (id) => {
+    const evidence = presentation?.evidence.find((candidate) => candidate.id === id);
+    return evidence ? `the attached report “${evidence.name}”` : "the recorded supporting evidence";
+  });
+  readable = readable.replace(/\brun_[0-9a-f]{32}\b/g, (id) => id === presentation?.producer.run_id ? `${presentation.producer.label}’s recorded task attempt` : "a recorded task attempt");
+  readable = readable.replace(/\btask_[0-9a-f]{32}\b/g, (id) => id === presentation?.producer.task_id && presentation.producer.task_title ? `the task “${presentation.producer.task_title}”` : "a recorded task");
+  readable = readable.replace(/\bagent_[0-9a-f]{32}\b/g, (id) => id === presentation?.producer.agent_id ? presentation.producer.label : "a recorded contributor");
+  return readable.replace(/\b(?:krev|kitem|report|thread)_[0-9a-f]{32}\b/g, "a recorded Crewfold reference");
+}
+
+function KnowledgeEvidencePanel({ presentation, workspace, apiBase, csrf }: { presentation?: KnowledgePresentation; workspace: string; apiBase: string; csrf: string }) {
+  const [artifact, setArtifact] = useState<RunArtifactContent | null>(null);
+  const [loading, setLoading] = useState("");
+  const [error, setError] = useState("");
+  if (!presentation?.evidence.length) return null;
+  const openArtifact = async (artifactID: string) => {
+    setLoading(artifactID); setArtifact(null); setError("");
+    try {
+      const result = await rpc<{ artifact: RunArtifactContent }>(apiBase, csrf, "run.artifact.show", { workspace, artifact: artifactID });
+      setArtifact(result.artifact);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "The supporting evidence could not be opened."); }
+    finally { setLoading(""); }
+  };
+  return <section className="m22-knowledge-evidence" aria-label="Supporting evidence">
+    <h4>Supporting evidence</h4>
+    <div className="m22-knowledge-evidence-list">{presentation.evidence.map((evidence) => <button type="button" key={evidence.id} onClick={() => void openArtifact(evidence.id)} disabled={Boolean(loading)}>
+      <FileText size={16} aria-hidden="true" /><span><strong>{evidence.name}</strong><small>{evidence.media_type === "text/markdown" ? "Markdown report" : evidence.media_type} · {formatEvidenceSize(evidence.byte_size)}</small></span>{loading === evidence.id ? <LoaderCircle className="spin" size={14} /> : <span className="m22-evidence-open">open</span>}
+    </button>)}</div>
+    {artifact && <article className="m22-knowledge-report"><header><div><strong>{artifact.artifact.name}</strong><small>{artifact.artifact.media_type} · {formatEvidenceSize(artifact.artifact.byte_size)}</small></div><button type="button" onClick={() => setArtifact(null)} aria-label="Close supporting report"><X size={15} /></button></header><MarkdownText text={artifact.content} /><details><summary>Exact evidence identity</summary><code>{artifact.artifact.content_hash}</code></details></article>}
+    {error && <p className="m22-session-error" role="alert">{error}</p>}
+  </section>;
+}
+
 function KnowledgeProposalReview({ data, revision, apiBase, csrf, mutable, reload }: { data: WorkbenchData; revision: KnowledgeRevision; apiBase: string; csrf: string; mutable: boolean; reload: () => Promise<void> }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<"accept" | "reject" | "">("");
   const [error, setError] = useState("");
   const primary = revision.sources.find((source) => source.role === "primary");
   const sourceAgent = primary?.type === "domain_agent" ? data.agents.find((agent) => agent.id === primary.id) : null;
+  const presentation = data.knowledgePresentations.find((candidate) => candidate.revision_id === revision.id);
   const decide = async (accept: boolean) => {
     if (!data.workspace || revision.review_status !== "proposed") return;
     setBusy(accept ? "accept" : "reject"); setError("");
@@ -778,9 +822,10 @@ function KnowledgeProposalReview({ data, revision, apiBase, csrf, mutable, reloa
     finally { setBusy(""); }
   };
   return <article className="m22-knowledge-review">
-    <header><div><p className="m22-kicker">knowledge proposal · no current authority yet</p><h3>{revision.title}</h3></div><StatusPill value="proposed" /></header>
-    <p className="m22-knowledge-body">{revision.body}</p>
-    <dl className="m22-proposal-facts"><div><dt>proposed by</dt><dd>{sourceAgent?.name ?? revision.proposed_by}</dd></div><div><dt>quality claim</dt><dd>{revision.confidence} confidence · {revision.verification_status}</dd></div><div><dt>provenance</dt><dd>{primary ? `${primary.type.replaceAll("_", " ")} ${sourceAgent?.name ?? primary.id} at revision ${primary.revision}` : "missing primary source"} · {revision.sources.length - (primary ? 1 : 0)} supporting</dd></div></dl>
+    <header><div><p className="m22-kicker">knowledge proposal · no current authority yet</p><h3>{readableKnowledgeText(revision.title, presentation)}</h3></div><StatusPill value="proposed" /></header>
+    <p className="m22-knowledge-body">{readableKnowledgeText(revision.body, presentation)}</p>
+    <KnowledgeEvidencePanel presentation={presentation} workspace={data.workspace?.id ?? ""} apiBase={apiBase} csrf={csrf} />
+    <dl className="m22-proposal-facts"><div><dt>proposed by</dt><dd>{presentation?.producer.label ?? sourceAgent?.name ?? "Recorded contributor"}</dd></div><div><dt>quality claim</dt><dd>{revision.confidence} confidence · {revision.verification_status}</dd></div><div><dt>source task</dt><dd>{presentation?.producer.task_title ?? (primary ? `${primary.type.replaceAll("_", " ")} at revision ${primary.revision}` : "No readable source task")}</dd></div><div><dt>exact sources</dt><dd>{revision.sources.length} canonical source{revision.sources.length === 1 ? "" : "s"} · {presentation?.evidence.length ?? 0} evidence attachment{presentation?.evidence.length === 1 ? "" : "s"}</dd></div></dl>
     <div className="m22-exact-effect"><ShieldCheck size={15} /><span><strong>Exact effect</strong> Accepting makes only this immutable sourced revision current domain knowledge. It does not edit a checkout, start an agent, or authorize implementation.</span></div>
     <label className="m22-proposal-note"><span>owner decision note</span><input value={note} maxLength={1024} onChange={(event) => setNote(event.target.value)} placeholder="Optional acceptance rationale; rejection records the default reason" /></label>
     <div className="m22-proposal-actions"><button disabled={!mutable || Boolean(busy)} onClick={() => void decide(false)}>{busy === "reject" ? <LoaderCircle className="spin" size={14} /> : <X size={14} />} reject</button><button className="m22-send" disabled={!mutable || Boolean(busy)} onClick={() => void decide(true)}>{busy === "accept" ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />} accept as current knowledge</button></div>
@@ -979,7 +1024,10 @@ function DomainHome({ data, chooseAgent, reviewWorkstream, inspectTask, inspectR
     <ManagedProcesses data={data} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />
     <section className="m22-block"><h2>shared domain knowledge</h2>
       {proposedKnowledge.length > 0 && <div className="m22-knowledge-proposals"><p><strong>{proposedKnowledge.length} sourced proposal{proposedKnowledge.length === 1 ? "" : "s"} need owner review.</strong> Agent conversation and coordination threads do not become knowledge by themselves.</p>{proposedKnowledge.map((revision) => <KnowledgeProposalReview key={revision.id} data={data} revision={revision} apiBase={apiBase} csrf={csrf} mutable={mutable} reload={reload} />)}</div>}
-      {currentKnowledge.map((revision) => <details className="m22-knowledge" key={revision.id}><summary><span><strong>{revision.title}</strong><small>{revision.type} · {revision.verification_status} · revision {revision.revision_number} · accepted {displayTime(revision.accepted_at)}</small></span><StatusPill value="current" /></summary><p>{revision.body}</p><footer>proposed by {revision.proposed_by_type} {revision.proposed_by} · {revision.sources.length} exact source{revision.sources.length === 1 ? "" : "s"}</footer></details>)}
+      {currentKnowledge.map((revision) => {
+        const presentation = data.knowledgePresentations.find((candidate) => candidate.revision_id === revision.id);
+        return <details className="m22-knowledge" key={revision.id}><summary><span><strong>{readableKnowledgeText(revision.title, presentation)}</strong><small>{revision.type} · {revision.verification_status} · revision {revision.revision_number} · accepted {displayTime(revision.accepted_at)}</small></span><StatusPill value="current" /></summary><p>{readableKnowledgeText(revision.body, presentation)}</p><KnowledgeEvidencePanel presentation={presentation} workspace={data.workspace?.id ?? ""} apiBase={apiBase} csrf={csrf} /><footer><span>{presentation?.producer.label ?? "Recorded contributor"}</span>{presentation?.producer.task_title ? <> · {presentation.producer.task_title}</> : null} · {revision.sources.length} exact source{revision.sources.length === 1 ? "" : "s"}</footer></details>;
+      })}
       {currentKnowledge.length === 0 && proposedKnowledge.length === 0 && <div className="m22-knowledge-empty"><strong>No shared knowledge has been accepted yet.</strong><p>Task artifacts and agent conversations remain evidence or coordination. A durable agent must synthesize sourced findings or decisions into a knowledge proposal, and the owner must accept it before it appears here.</p></div>}
     </section>
     {data.threads.length > 0 && <CoordinationThreads data={data} apiBase={apiBase} csrf={csrf} />}
