@@ -81,6 +81,28 @@ func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 	if delivery.Kind != "codex" || delivery.Target != "01a0626f-7a48-70d2-b540-112ccf94e5bf" || (delivery.Status != "bound" && delivery.Status != "delivered") {
 		t.Fatalf("delivery = %#v", delivery)
 	}
+
+	previousDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workingDirectory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previousDirectory) })
+	app.stdin = strings.NewReader("## Finding\n\n- client and service differ\n- owner review needed\n")
+	stdout.Reset()
+	if code := app.Run(context.Background(), []string{"room", "--socket", socket, "send", "shared", "--stdin"}); code != 0 {
+		t.Fatalf("stdin send exit %d: %s", code, stderr.String())
+	}
+	snapshot, err = readSnapshot(client, created.Room.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBody := "## Finding\n\n- client and service differ\n- owner review needed"
+	if got := snapshot.Messages[len(snapshot.Messages)-1].Body; got != wantBody {
+		t.Fatalf("multiline message body = %q, want %q", got, wantBody)
+	}
 }
 
 func waitForSocket(t *testing.T, socket string) {

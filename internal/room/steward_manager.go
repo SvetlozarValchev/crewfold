@@ -288,10 +288,12 @@ If no intervention trigger is present, call no publishing command and end this p
 
 If intervention is necessary, add information or coordination value that is not already in the feed and perform at most one public action for this entire delivery:
   %s send %s MESSAGE
+For a readable multiline response, pipe or heredoc concise GitHub-flavored Markdown with short paragraphs, headings, or bullets into:
+  %s send %s --stdin
   %s context %s CURRENT-CONTEXT
   %s upload %s FILE --caption TEXT
 
-Never publish both a message and a context copy of the same synthesis. Do not impersonate participants or take over their independent work.`, addressing, strings.Join(lines, "\n\n"), steward.Handle, command, snapshot.Room.Slug, command, snapshot.Room.Slug, command, snapshot.Room.Slug, command, snapshot.Room.Slug)
+Never publish dense transcript or log-dump prose. Never publish both a message and a context copy of the same synthesis. Do not impersonate participants or take over their independent work.`, addressing, strings.Join(lines, "\n\n"), steward.Handle, command, snapshot.Room.Slug, command, snapshot.Room.Slug, command, snapshot.Room.Slug, command, snapshot.Room.Slug, command, snapshot.Room.Slug)
 	promptCtx, promptCancel := context.WithTimeout(ctx, 12*time.Second)
 	err = m.runtime.Prompt(promptCtx, *steward, prompt)
 	promptCancel()
@@ -318,10 +320,11 @@ Use the CLI from this directory to inspect and publish shared state:
 
 - %s read %s
 - %s send %s MESSAGE
+- %s send %s --stdin (preferred for concise multiline Markdown)
 - %s context %s CURRENT-CONTEXT
 - %s upload %s FILE --caption TEXT
 
-Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then remain silent until an intervention trigger occurs.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
+Public messages should be concise GitHub-flavored Markdown with short paragraphs, headings, or bullets—not dense transcript or log-dump prose. Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then remain silent until an intervention trigger occurs.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
 }
 
 func (m *StewardManager) roomCommand() string {

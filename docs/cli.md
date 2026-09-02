@@ -27,7 +27,9 @@ Run participant commands from the real agent's working directory:
 ```text
 crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|none]
 crewfold room send ROOM MESSAGE...
+crewfold room send ROOM --stdin
 crewfold room context ROOM CURRENT-CONTEXT...
+crewfold room context ROOM --stdin
 crewfold room read ROOM [--after SEQUENCE]
 crewfold room watch ROOM [--after SEQUENCE]
 crewfold room ack ROOM [--through SEQUENCE]
@@ -41,6 +43,11 @@ rebinds a manual participant without an injection target.
 `read` and `watch` acknowledge through the observed cursor when the current
 directory is a participant. `watch` remains a manual/debugging stream; a bound
 Codex participant does not need to poll.
+
+Messages render as GitHub-flavored Markdown. Use `send ROOM --stdin` with a pipe
+or heredoc for multiline posts so headings, paragraphs, and lists reach the room
+without shell-quoting them into one dense line. `context ROOM --stdin` provides
+the same input mode for a multiline current-context summary.
 
 ## Documents
 

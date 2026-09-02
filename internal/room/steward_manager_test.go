@@ -71,7 +71,7 @@ func TestHostedStewardManagerStartsAndRelaysRoomActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 3*time.Second, func() bool { return runtime.promptCount() >= 1 })
-	if first := runtime.prompt(0); !strings.Contains(first, `"/opt/crewfold" room --socket "/run/crewfold.sock" read relay`) {
+	if first := runtime.prompt(0); !strings.Contains(first, `"/opt/crewfold" room --socket "/run/crewfold.sock" read relay`) || !strings.Contains(first, "send relay --stdin") || !strings.Contains(first, "GitHub-flavored Markdown") {
 		t.Fatalf("onboarding does not target exact daemon: %s", first)
 	}
 
@@ -83,7 +83,7 @@ func TestHostedStewardManagerStartsAndRelaysRoomActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 3*time.Second, func() bool { return runtime.promptCount() >= 2 })
-	if second := runtime.prompt(1); !strings.Contains(second, "The interface contracts disagree.") || !strings.Contains(second, "shared-room records") || !strings.Contains(second, "NO_ROOM_ACTION") || !strings.Contains(second, "Do not answer or repeat a message directed to another participant") || !strings.Contains(second, "at most one public action") {
+	if second := runtime.prompt(1); !strings.Contains(second, "The interface contracts disagree.") || !strings.Contains(second, "shared-room records") || !strings.Contains(second, "NO_ROOM_ACTION") || !strings.Contains(second, "send relay --stdin") || !strings.Contains(second, "Do not answer or repeat a message directed to another participant") || !strings.Contains(second, "at most one public action") {
 		t.Fatalf("room relay prompt lost the exact event: %s", second)
 	}
 	console, err := manager.Status(ctx, "relay")

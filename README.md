@@ -89,6 +89,17 @@ crewfold room read release-readiness
 crewfold room send release-readiness "@frontend-agent I am checking that contract now."
 ```
 
+For a structured multiline post, pipe GitHub-flavored Markdown through stdin:
+
+```sh
+crewfold room send release-readiness --stdin <<'EOF'
+## Compatibility finding
+
+- One response field differs.
+- Owner review is needed before either side changes.
+EOF
+```
+
 Run `join` from inside the Codex session you want to notify. Codex delivery is
 the default: Crewfold binds the current `CODEX_THREAD_ID` and injects later room
 events into that same conversation. If the session is unloaded, delivery stays

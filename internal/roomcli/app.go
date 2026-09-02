@@ -22,13 +22,14 @@ import (
 )
 
 type App struct {
+	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
 	info   buildinfo.Info
 }
 
 func New(stdout, stderr io.Writer, info buildinfo.Info) *App {
-	return &App{stdout: stdout, stderr: stderr, info: info}
+	return &App{stdin: os.Stdin, stdout: stdout, stderr: stderr, info: info}
 }
 
 func (a *App) Run(ctx context.Context, args []string) int {
@@ -315,13 +316,32 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 		}
 		return a.print(participant, jsonMode, func() {
 			fmt.Fprintf(a.stdout, "joined %s as @%s from %s · delivery %s\n", identifier, participant.Handle, participant.WorkingDirectory, delivery)
+			fmt.Fprintf(a.stdout, "room messages render GitHub-flavored Markdown; use `crewfold room send %s --stdin` for readable multiline posts\n", identifier)
 		})
 	case "send", "context":
 		identifier, rest, err := leading(args[1:], "room")
 		if err != nil {
 			return a.fail(err)
 		}
-		if len(rest) == 0 {
+		fromStdin, rest, err := pullFlag(rest, "stdin")
+		if err != nil {
+			return a.fail(err)
+		}
+		if fromStdin && len(rest) != 0 {
+			return a.fail(errors.New("message text and --stdin cannot be used together"))
+		}
+		body := strings.Join(rest, " ")
+		if fromStdin {
+			content, readErr := io.ReadAll(io.LimitReader(a.stdin, 16385))
+			if readErr != nil {
+				return a.fail(fmt.Errorf("read message from stdin: %w", readErr))
+			}
+			if len(content) > 16384 {
+				return a.fail(errors.New("message from stdin exceeds 16384 bytes"))
+			}
+			body = string(content)
+		}
+		if strings.TrimSpace(body) == "" {
 			return a.fail(errors.New("message text is required"))
 		}
 		cwd, _ := os.Getwd()
@@ -330,7 +350,7 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 			kind = "context"
 		}
 		var message room.Message
-		if err := client.Call(ctx, "message.send", room.SendInput{Room: identifier, WorkingDirectory: cwd, Kind: kind, Body: strings.Join(rest, " ")}, &message); err != nil {
+		if err := client.Call(ctx, "message.send", room.SendInput{Room: identifier, WorkingDirectory: cwd, Kind: kind, Body: body}, &message); err != nil {
 			return a.fail(err)
 		}
 		return a.print(message, jsonMode, func() { fmt.Fprintf(a.stdout, "#%d @%s: %s\n", message.Sequence, message.SenderHandle, message.Body) })
@@ -674,6 +694,24 @@ func pullOption(args []string, name string) (string, []string, error) {
 	}
 	return result, remaining, nil
 }
+func pullFlag(args []string, name string) (bool, []string, error) {
+	found := false
+	remaining := []string{}
+	for _, argument := range args {
+		if argument == "--"+name {
+			if found {
+				return false, nil, fmt.Errorf("--%s was provided more than once", name)
+			}
+			found = true
+			continue
+		}
+		if strings.HasPrefix(argument, "--"+name+"=") {
+			return false, nil, fmt.Errorf("--%s does not take a value", name)
+		}
+		remaining = append(remaining, argument)
+	}
+	return found, remaining, nil
+}
 func leading(args []string, name string) (string, []string, error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "--") {
 		return "", nil, fmt.Errorf("%s is required", name)
@@ -707,8 +745,8 @@ const roomHelp = `Room commands:
   crewfold room list
   crewfold room show ROOM
   crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|none]
-  crewfold room send ROOM MESSAGE...
-  crewfold room context ROOM CURRENT-CONTEXT...
+  crewfold room send ROOM MESSAGE... | --stdin
+  crewfold room context ROOM CURRENT-CONTEXT... | --stdin
   crewfold room read ROOM [--after SEQUENCE]
   crewfold room watch ROOM [--after SEQUENCE]
   crewfold room ack ROOM [--through SEQUENCE]
