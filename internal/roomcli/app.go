@@ -135,7 +135,7 @@ func (a *App) daemon(ctx context.Context, args []string, paths appdirs.Paths) in
 
 func (a *App) service(ctx context.Context, args []string, paths appdirs.Paths, jsonMode bool) int {
 	if len(args) != 1 {
-		return a.fail(errors.New("usage: crewfold service install|start|stop|status"))
+		return a.fail(errors.New("usage: crewfold service install|uninstall|start|stop|status"))
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -708,7 +708,7 @@ func leading(args []string, name string) (string, []string, error) {
 const rootHelp = `Crewfold is a shared room for independently run AI sessions.
 
 Usage:
-  crewfold service install|start|stop|status
+  crewfold service install|uninstall|start|stop|status
   crewfold open
   crewfold status
   crewfold room COMMAND

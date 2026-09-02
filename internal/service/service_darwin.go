@@ -48,6 +48,20 @@ func managePlatform(ctx context.Context, action string, config Config) (string, 
 		if _, err := runLaunchctl(ctx, "kickstart", "-k", serviceTarget); err != nil {
 			return "", err
 		}
+	case "uninstall":
+		status, err := launchdStatus(ctx, serviceTarget)
+		if err != nil {
+			return "", err
+		}
+		if status != "not-loaded" {
+			if _, err := runLaunchctl(ctx, "bootout", serviceTarget); err != nil {
+				return "", err
+			}
+		}
+		if err := os.Remove(config.DefinitionPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("remove launchd agent: %w", err)
+		}
+		return "not-installed", nil
 	case "start":
 		if _, err := os.Stat(config.DefinitionPath); errors.Is(err, os.ErrNotExist) {
 			return "", errors.New("Crewfold launch agent is not installed; run `crewfold service install`")

@@ -26,9 +26,9 @@ type Result struct {
 // Manage validates action and delegates to the host service manager.
 func Manage(ctx context.Context, action string, config Config) (Result, error) {
 	switch action {
-	case "install", "start", "stop", "status":
+	case "install", "uninstall", "start", "stop", "status":
 	default:
-		return Result{}, errors.New("service action must be install, start, stop, or status")
+		return Result{}, errors.New("service action must be install, uninstall, start, stop, or status")
 	}
 	status, err := managePlatform(ctx, action, config)
 	if err != nil {

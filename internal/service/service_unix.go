@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -31,6 +32,22 @@ func managePlatform(ctx context.Context, action string, config Config) (string, 
 				return "", fmt.Errorf("systemctl %s: %s: %w", strings.Join(command, " "), strings.TrimSpace(string(output)), err)
 			}
 		}
+	} else if action == "uninstall" {
+		if _, err := os.Stat(config.DefinitionPath); errors.Is(err, os.ErrNotExist) {
+			return "not-installed", nil
+		} else if err != nil {
+			return "", err
+		}
+		if output, err := exec.CommandContext(ctx, "systemctl", "--user", "disable", "--now", unit).CombinedOutput(); err != nil {
+			return "", fmt.Errorf("systemctl disable --now: %s: %w", strings.TrimSpace(string(output)), err)
+		}
+		if err := os.Remove(config.DefinitionPath); err != nil {
+			return "", err
+		}
+		if output, err := exec.CommandContext(ctx, "systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
+			return "", fmt.Errorf("systemctl daemon-reload: %s: %w", strings.TrimSpace(string(output)), err)
+		}
+		return "not-installed", nil
 	} else if action == "start" || action == "stop" {
 		if output, err := exec.CommandContext(ctx, "systemctl", "--user", action, unit).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("systemctl %s: %s: %w", action, strings.TrimSpace(string(output)), err)

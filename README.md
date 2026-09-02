@@ -165,7 +165,7 @@ its current context or revise a shared document without interrupting the feed.
 ## Useful commands
 
 ```text
-crewfold service install|start|stop|status
+crewfold service install|uninstall|start|stop|status
 crewfold open
 crewfold status
 

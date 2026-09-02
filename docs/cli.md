@@ -3,7 +3,7 @@
 ## Service and web
 
 ```text
-crewfold service install|start|stop|status
+crewfold service install|uninstall|start|stop|status
 crewfold open
 crewfold status
 ```
@@ -12,7 +12,8 @@ crewfold status
 a systemd user service. Windows writes a transparent command launcher to the
 owner's Startup folder and starts the daemon in its own console; no elevation is
 required. macOS uses a launchd user agent. `stop` stops the current daemon but
-retains login startup. `open` mints
+retains login startup. `uninstall` stops it and removes login startup without
+deleting the binary or room data. `open` mints
 a one-time browser URL from the private owner-local endpoint.
 
 ## Rooms
