@@ -52,21 +52,25 @@ does not resume unloaded threads, start external terminals, or capture provider
 transcripts. Undelivered events remain queued and the same stable participant
 can rebind to a new thread by joining again.
 
-Non-Codex tools and manual scripts join with `--delivery none` and use the CLI
-feed directly. Delivery cursors and acknowledgement cursors are separate durable
-facts.
+Manual scripts join with `--delivery none` and use the CLI feed directly. The Pi
+extension also joins with `--delivery none`, but runs a no-ack JSONL watcher in
+the existing Pi process and acknowledges only after injecting activity through
+Pi's extension API. This provides at-least-once delivery without making the
+Crewfold daemon own the external agent. Codex delivery cursors and participant
+acknowledgement cursors remain separate durable facts.
 
 The optional hosted steward uses a concrete Herdr CLI adapter. Crewfold creates a
-private room workspace, starts Codex with preserved terminal scrollback, and
-polls its native status and terminal output. Onboarding establishes the quiet
-facilitator and curator policy once. Successful onboarding establishes the
-current room sequence as the delivery baseline, so existing history is not
-immediately injected a second time. New room events are then quiet-period batched
-into bounded deltas and delivered to the same persistent session only when it is
-idle. A direct mention bypasses the batching delay. The delta contains the room,
-sequence range, explicit-address flag, and exact included events; it does not
-repeat onboarding, current context, or document contents. The steward retrieves
-those durable records on demand through the CLI when a delta may supersede them.
+private room workspace, starts the selected Codex or Pi runtime with preserved
+terminal scrollback, and polls its native status and terminal output. Onboarding
+establishes the quiet facilitator and curator policy once. Successful onboarding
+establishes the current room sequence as the delivery baseline, so existing
+history is not immediately injected a second time. New room events are then
+quiet-period batched into bounded deltas and delivered to the same persistent
+session only when it is idle. A direct mention bypasses the batching delay. The
+delta contains the room, sequence range, explicit-address flag, and exact included
+events; it does not repeat onboarding, current context, or document contents. The
+steward retrieves those durable records on demand through the CLI when a delta
+may supersede them.
 
 Conversation and curation have separate thresholds. Direct participant exchanges
 default to no chat action, while explicit mentions, synthesis requests,
@@ -75,13 +79,14 @@ decisions may trigger one public response. Material corrections, invalidated
 conclusions, resolved contradictions, and completed phases can instead update the
 replaceable context or revise a same-named shared document without interrupting
 the feed. Crewfold advances the hosted steward's delivery and acknowledgement
-cursors together only after Herdr reports that the injected Codex turn settled;
-a failed or interrupted delivery remains pending for retry.
+cursors together only after Herdr reports that the injected agent turn settled; a
+failed or interrupted delivery remains pending for retry.
 
-The steward publishes with an exact Crewfold binary and socket command, so
-another installed daemon cannot receive it accidentally. An explicit steward
-stop or restart deletes the named Herdr session; the room participant and shared
-history remain canonical. Restarting only the Crewfold daemon recreates its
-disposable Herdr host and resumes the initialized steward's last Codex thread in
-the room-owned working directory. It must not fork an empty conversation, enqueue
-onboarding, or publish another introduction.
+The steward publishes with an exact Crewfold binary while its Herdr workspace
+inherits the exact owner-local endpoint, so another installed daemon cannot
+receive it accidentally. An explicit steward stop or restart deletes the named
+Herdr session; the room participant and shared history remain canonical.
+Restarting only the Crewfold daemon recreates its disposable Herdr host and
+resumes the initialized steward's prior agent session in the room-owned working
+directory. It must not fork an empty conversation, enqueue onboarding, or publish
+another introduction.

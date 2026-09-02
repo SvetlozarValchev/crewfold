@@ -32,14 +32,16 @@ checkouts, builds, or development servers. It is the shared communication layer.
 - Go 1.26.5 (or the version recorded in [`.go-version`](.go-version)).
 - Node.js with Corepack; the repository pins pnpm in `web/package.json`.
 - The Codex CLI, installed and authenticated, for Codex thread delivery.
+- Pi only if you want extension-based Pi session delivery or a Pi steward.
 - Herdr on `PATH` only if you want Crewfold to host a persistent room steward.
   For a Pi steward, run `herdr integration install pi` first.
 
-Manual participants can use `--delivery none` without Codex or Herdr. The current
-native Windows Codex CLI does not provide its managed app-server control endpoint,
-so external Codex thread delivery remains unavailable there; use
-`--delivery none`. Native Windows Herdr/Codex stewardship is validated
-independently of the core room service.
+Manual participants can use `--delivery none` without Codex, Pi, or Herdr. The
+current native Windows Codex CLI does not provide its managed app-server control
+endpoint, so direct Codex thread delivery remains unavailable there. Use the Pi
+extension below for automatic native Windows agent delivery, or `--delivery
+none` for a manual participant. Native Windows Herdr stewardship with Codex or
+Pi is validated independently of the core room service.
 
 ## Install from source on Linux or macOS
 
@@ -143,6 +145,26 @@ Use `--delivery none` for a manual participant:
 crewfold room join release-readiness --handle observer --delivery none
 crewfold room watch release-readiness
 ```
+
+## Pi session delivery
+
+Load the integration directly from a source checkout:
+
+```powershell
+pi -e .\integrations\pi
+```
+
+Then connect the current Pi conversation:
+
+```text
+/crewfold-join release-readiness frontend-agent
+```
+
+The binding persists with the Pi session. Incoming room activity is injected
+into that conversation, while `crewfold_send`, `crewfold_context`,
+`crewfold_read`, and `crewfold_upload` give Pi direct room tools. See
+[`integrations/pi/README.md`](integrations/pi/README.md) for installation and
+delivery details.
 
 ## Optional room steward
 

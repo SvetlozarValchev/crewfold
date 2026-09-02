@@ -48,6 +48,11 @@ func TestStewardAgentStartArguments(t *testing.T) {
 			steward: HostedSteward{AgentName: "steward", AgentKind: "pi", ManagedWorkingDirectory: true},
 			want:    []string{"agent", "start", "steward", "--kind", "pi", "--pane", "w1:p1", "--timeout", "60000", "--", "--approve"},
 		},
+		{
+			name:    "pi initialized session",
+			steward: HostedSteward{AgentName: "steward", AgentKind: "pi", ManagedWorkingDirectory: true, InitializedAt: "2026-09-04T00:00:00Z"},
+			want:    []string{"agent", "start", "steward", "--kind", "pi", "--pane", "w1:p1", "--timeout", "60000", "--", "--approve", "--continue"},
+		},
 	}
 	for _, test := range tests {
 		test := test

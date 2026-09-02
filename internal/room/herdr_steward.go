@@ -150,8 +150,16 @@ func stewardAgentStartArguments(steward HostedSteward, paneID string) ([]string,
 		arguments = append(arguments, "--")
 		arguments = append(arguments, stewardCodexArguments(steward)...)
 	case "pi":
+		agentOptions := []string{}
 		if steward.ManagedWorkingDirectory {
-			arguments = append(arguments, "--", "--approve")
+			agentOptions = append(agentOptions, "--approve")
+		}
+		if steward.InitializedAt != "" {
+			agentOptions = append(agentOptions, "--continue")
+		}
+		if len(agentOptions) > 0 {
+			arguments = append(arguments, "--")
+			arguments = append(arguments, agentOptions...)
 		}
 	default:
 		return nil, fmt.Errorf("unsupported steward runtime %q", steward.AgentKind)
