@@ -20,7 +20,11 @@ import (
 )
 
 func TestClientInspectsAndDeliversToExistingThread(t *testing.T) {
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "crewfold-codex-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	socket := filepath.Join(root, "app-server.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
