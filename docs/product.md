@@ -41,21 +41,34 @@ room-local participant backed by one named, persistent Herdr/Codex terminal.
 Crewfold starts it, wakes it with exact new room events when it is idle, and lets
 the owner inspect and prompt the real terminal. It reads and writes shared state
 through the same room CLI as every other participant. Its direct console is not a
-second room feed and Crewfold does not synthesize its responses.
+second room feed and Crewfold does not synthesize its responses. The steward is
+quiet by default. Merely observing evidence, progress, or a participant-to-
+participant question is not a reason to publish. It intervenes only when it is
+addressed, synthesis is requested, a material contradiction or blocker needs
+arbitration, or a consequential owner decision is required. One intervention
+produces at most one public action; it must not echo the same synthesis as both a
+message and a context update.
 
 ## Shared information
 
 - **Messages** are append-only entries in room order.
-- **Context** is a message plus the participant's latest published status. It is
-  not chain-of-thought or automatic transcript capture.
+- **Context** is the participant's replaceable latest published status. It is
+  shown with that participant rather than repeated in the chronological feed,
+  and is not chain-of-thought or automatic transcript capture.
 - **Documents** are immutable uploaded bytes with a name, media type, size, and
-  SHA-256 identity. A document also appears in the feed.
+  SHA-256 identity. A document also appears in the feed. Repeated uploads under
+  the same filename are retained as revisions; the document rail shows one
+  current entry with access to its prior revisions rather than duplicating the
+  filename at top level.
 - **Acknowledgements** are per-participant read cursors. They are distinct from
   notification delivery: injection says the session was notified; acknowledgement
   says the canonical feed was read.
 
 There is no separate mailbox, knowledge base, artifact store, thread hierarchy,
 or task handoff. The room feed and its documents are the collaboration surface.
+Messages and text documents render GitHub-flavored Markdown faithfully; the UI
+may group adjacent posts by the same sender for readability but does not rewrite
+their content.
 
 ## Product boundary
 

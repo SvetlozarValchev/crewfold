@@ -79,11 +79,11 @@ func TestHostedStewardManagerStartsAndRelaysRoomActivity(t *testing.T) {
 	if _, err := store.Join(ctx, JoinInput{Room: "relay", Handle: "external", WorkingDirectory: external}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Send(ctx, SendInput{Room: "relay", WorkingDirectory: external, Body: "The slip curves disagree."}); err != nil {
+	if _, err := store.Send(ctx, SendInput{Room: "relay", WorkingDirectory: external, Body: "The interface contracts disagree."}); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, 3*time.Second, func() bool { return runtime.promptCount() >= 2 })
-	if second := runtime.prompt(1); !strings.Contains(second, "The slip curves disagree.") || !strings.Contains(second, "shared-room records") {
+	if second := runtime.prompt(1); !strings.Contains(second, "The interface contracts disagree.") || !strings.Contains(second, "shared-room records") || !strings.Contains(second, "NO_ROOM_ACTION") || !strings.Contains(second, "Do not answer or repeat a message directed to another participant") || !strings.Contains(second, "at most one public action") {
 		t.Fatalf("room relay prompt lost the exact event: %s", second)
 	}
 	console, err := manager.Status(ctx, "relay")
@@ -95,6 +95,45 @@ func TestHostedStewardManagerStartsAndRelaysRoomActivity(t *testing.T) {
 	}
 	if !runtime.stopped {
 		t.Fatal("runtime was not stopped")
+	}
+}
+
+func TestHostedStewardManagerResumesWithoutRepeatingOnboarding(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	created, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "resume", Title: "Resume", Topic: "Keep one persistent steward."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRuntime := &fakeStewardRuntime{}
+	firstManager := NewStewardManager(ctx, store, firstRuntime, "/opt/crewfold", "/run/crewfold.sock")
+	if _, err := firstManager.ConfigureAndStart(ctx, StartStewardInput{Room: created.Room.ID, Handle: "resume-steward"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		steward, readErr := store.HostedSteward(ctx, created.Room.ID)
+		return readErr == nil && steward.InitializedAt != ""
+	})
+	firstManager.Close()
+
+	secondRuntime := &fakeStewardRuntime{}
+	secondManager := NewStewardManager(ctx, store, secondRuntime, "/opt/crewfold", "/run/crewfold.sock")
+	defer secondManager.Close()
+	if err := secondManager.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		steward, readErr := store.HostedSteward(ctx, created.Room.ID)
+		return readErr == nil && steward.Status == "running" && steward.AgentStatus == "idle"
+	})
+	time.Sleep(100 * time.Millisecond)
+	if count := secondRuntime.promptCount(); count != 0 {
+		t.Fatalf("manager restart repeated steward onboarding with %d prompt(s)", count)
 	}
 }
 

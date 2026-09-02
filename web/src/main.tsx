@@ -1,6 +1,8 @@
-import { StrictMode, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Archive, Bot, ChevronRight, CircleStop, FileText, Keyboard, LoaderCircle, MessageSquare, Plus, RefreshCw, RotateCcw, Send, Terminal, Users, X } from "lucide-react";
+import { Archive, Bot, ChevronLeft, ChevronRight, CircleStop, FileText, Keyboard, LoaderCircle, MessageSquare, Plus, RefreshCw, RotateCcw, Send, Terminal, Users, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import "./styles.css";
 
 type Connection = "connecting" | "connected" | "unauthorized" | "failed";
@@ -13,7 +15,8 @@ type Document = { id: string; room_id: string; participant_id?: string; name: st
 type Message = { sequence: number; id: string; room_id: string; participant_id?: string; sender_handle: string; sender_name: string; sender_kind: "owner" | "agent" | "steward" | "system"; kind: "message" | "context" | "document" | "system"; body: string; document?: Document; created_at: string };
 type Snapshot = { room: Room; participants: Participant[]; messages: Message[]; documents: Document[]; steward?: HostedSteward };
 type RPCResponse<T> = { id: string; result?: T; error?: string };
-type OpenDocument = { document: Document; content: string };
+type DocumentGroup = { name: string; latest: Document; revisions: Document[] };
+type OpenDocument = { document: Document; content: string; revisions: Document[]; revisionIndex: number };
 
 const tokenKey = "crewfold-room-session";
 
@@ -43,25 +46,18 @@ function decodeBase64(value: string) { return new TextDecoder().decode(Uint8Arra
 function formatTime(value: string) { return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 function formatSize(bytes: number) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KB`; return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
 
-function MarkdownInline({ text }: { text: string }) {
-  return <>{text.split(/(`[^`]+`|\*\*[^*]+\*\*|https?:\/\/[^\s]+)/g).map((token, index) => {
-    if (token.startsWith("`") && token.endsWith("`")) return <code key={index}>{token.slice(1, -1)}</code>;
-    if (token.startsWith("**") && token.endsWith("**")) return <strong key={index}>{token.slice(2, -2)}</strong>;
-    if (token.startsWith("http")) return <a key={index} href={token} target="_blank" rel="noreferrer">{token}</a>;
-    return token;
-  })}</>;
+function Markdown({ text, className = "markdown" }: { text: string; className?: string }) {
+  return <div className={className}><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer">{children}</a> }}>{text}</ReactMarkdown></div>;
 }
 
-function Markdown({ text }: { text: string }) {
-  const lines = text.replaceAll("\r\n", "\n").split("\n"); const blocks: ReactNode[] = []; let index = 0;
-  while (index < lines.length) {
-    if (!lines[index].trim()) { index++; continue; }
-    if (lines[index].trimStart().startsWith("```")) { const body: string[] = []; index++; while (index < lines.length && !lines[index].trimStart().startsWith("```")) body.push(lines[index++]); index++; blocks.push(<pre key={`code-${index}`}><code>{body.join("\n")}</code></pre>); continue; }
-    const heading = lines[index].match(/^(#{1,4})\s+(.+)$/); if (heading) { blocks.push(heading[1].length <= 2 ? <h2 key={index}><MarkdownInline text={heading[2]} /></h2> : <h3 key={index}><MarkdownInline text={heading[2]} /></h3>); index++; continue; }
-    if (/^\s*[-*]\s+/.test(lines[index])) { const items: string[] = []; while (index < lines.length) { const match = lines[index].match(/^\s*[-*]\s+(.+)$/); if (!match) break; items.push(match[1]); index++; } blocks.push(<ul key={`list-${index}`}>{items.map((item, itemIndex) => <li key={itemIndex}><MarkdownInline text={item} /></li>)}</ul>); continue; }
-    const paragraph: string[] = []; while (index < lines.length && lines[index].trim() && !/^(#{1,4})\s+/.test(lines[index]) && !/^\s*[-*]\s+/.test(lines[index]) && !lines[index].trimStart().startsWith("```")) paragraph.push(lines[index++].trim()); blocks.push(<p key={`p-${index}`}><MarkdownInline text={paragraph.join(" ")} /></p>);
+function groupDocuments(documents: Document[]): DocumentGroup[] {
+  const grouped = new Map<string, Document[]>();
+  for (const document of documents) {
+    const revisions = grouped.get(document.name) ?? [];
+    revisions.push(document);
+    grouped.set(document.name, revisions);
   }
-  return <div className="markdown">{blocks}</div>;
+  return [...grouped.entries()].map(([name, revisions]) => ({ name, latest: revisions[0], revisions }));
 }
 
 function CreateRoom({ token, close, created }: { token: string; close: () => void; created: (snapshot: Snapshot, warning?: string) => void }) {
@@ -77,11 +73,11 @@ function CreateRoom({ token, close, created }: { token: string; close: () => voi
   };
   return <div className="modal-backdrop"><form className="modal" role="dialog" aria-modal="true" aria-labelledby="create-room-title" onSubmit={submit}>
     <header><div><span>NEW SHARED ROOM</span><h1 id="create-room-title">Create a room</h1></div><button type="button" onClick={close} aria-label="Close"><X size={18} /></button></header>
-    <label>ROOM HANDLE<input autoFocus required maxLength={63} value={slug} onChange={(event) => setSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="tire-slip" /></label>
-    <label>TITLE<input required maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Tire slip model" /></label>
-    <label>WHAT ARE THEY SHARING?<textarea required maxLength={2048} value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="Compare the new tire slip model across both simulations." /></label>
-    <label className="toggle"><input type="checkbox" checked={host} onChange={(event) => setHost(event.target.checked)} /><span><strong>Start a persistent Herdr steward</strong><small>One real Codex terminal watches this room. External participants still run independently.</small></span></label>
-    {host && <div className="steward-fields"><label>STEWARD HANDLE<input maxLength={63} value={handle} onChange={(event) => setHandle(event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ""))} placeholder={suggested} /></label><label>ROLE / OPERATING NOTE<textarea maxLength={8192} value={role} onChange={(event) => setRole(event.target.value)} placeholder="Keep the room aligned, surface disagreements, and consolidate useful context." /></label></div>}
+    <label>ROOM HANDLE<input autoFocus required maxLength={63} value={slug} onChange={(event) => setSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="room-name" /></label>
+    <label>TITLE<input required maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Readable room title" /></label>
+    <label>WHAT ARE THEY SHARING?<textarea required maxLength={2048} value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="Describe what the participating agent sessions need to coordinate." /></label>
+    <label className="toggle"><input type="checkbox" checked={host} onChange={(event) => setHost(event.target.checked)} /><span><strong>Start a persistent Herdr steward</strong><small>One quiet Codex facilitator watches the room and speaks only when coordination needs it.</small></span></label>
+    {host && <div className="steward-fields"><label>STEWARD HANDLE<input maxLength={63} value={handle} onChange={(event) => setHandle(event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ""))} placeholder={suggested} /></label><label>ROLE / OPERATING NOTE<textarea maxLength={8192} value={role} onChange={(event) => setRole(event.target.value)} placeholder="Observe silently. Intervene for explicit requests, unresolved contradictions, blockers, or owner decisions." /></label></div>}
     {error && <p className="error">{error}</p>}
     <footer><button type="button" onClick={close}>cancel</button><button className="primary" disabled={busy || !slug || !title || !topic}>{busy ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />} create room</button></footer>
   </form></div>;
@@ -91,9 +87,9 @@ function StartSteward({ token, room, close, started }: { token: string; room: Ro
   const [handle, setHandle] = useState(`${room.slug}-steward`.slice(0, 63)); const [role, setRole] = useState(""); const [cwd, setCwd] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { await rpc(token, "steward.start", { room: room.id, handle, role, working_directory: cwd }); started(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not start steward."); } finally { setBusy(false); } };
   return <div className="modal-backdrop"><form className="modal" role="dialog" aria-modal="true" aria-labelledby="start-steward-title" onSubmit={submit}><header><div><span>ROOM-OWNED HERDR SESSION</span><h1 id="start-steward-title">Start a persistent steward</h1></div><button type="button" onClick={close} aria-label="Close"><X size={18} /></button></header>
-    <p className="modal-copy">Crewfold starts one named Herdr session with a real Codex terminal. The steward sees room events and can publish through the same CLI as every external participant.</p>
+    <p className="modal-copy">Crewfold starts one named Herdr session with a real Codex terminal. It observes room events but remains silent unless explicitly addressed or coordination genuinely needs intervention.</p>
     <label>STEWARD HANDLE<input autoFocus required value={handle} onChange={(event) => setHandle(event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ""))} /></label>
-    <label>ROLE / OPERATING NOTE<textarea maxLength={8192} value={role} onChange={(event) => setRole(event.target.value)} placeholder="Keep the room aligned and consolidate useful context." /></label>
+    <label>ROLE / OPERATING NOTE<textarea maxLength={8192} value={role} onChange={(event) => setRole(event.target.value)} placeholder="Observe silently. Intervene for explicit requests, unresolved contradictions, blockers, or owner decisions." /></label>
     <label>WORKING DIRECTORY · OPTIONAL<input value={cwd} onChange={(event) => setCwd(event.target.value)} placeholder="Crewfold creates a private room workspace by default" /><small>A custom directory may show Codex's trust prompt in the terminal; Crewfold never accepts that prompt for you.</small></label>
     {error && <p className="error">{error}</p>}<footer><button type="button" onClick={close}>cancel</button><button className="primary" disabled={busy || !handle}>{busy ? <LoaderCircle className="spin" size={15} /> : <Terminal size={15} />} start steward</button></footer>
   </form></div>;
@@ -118,9 +114,18 @@ function StewardConsolePanel({ token, room, close, changed }: { token: string; r
   </div>;
 }
 
-function MessageRow({ message, openDocument }: { message: Message; openDocument: (document: Document) => void }) {
+function sameMessageGroup(previous: Message, current: Message) {
+  if (previous.kind === "system" || current.kind === "system" || previous.sender_handle !== current.sender_handle || previous.sender_kind !== current.sender_kind) return false;
+  const elapsed = new Date(current.created_at).getTime() - new Date(previous.created_at).getTime();
+  return elapsed >= 0 && elapsed <= 10 * 60 * 1000;
+}
+
+function MessageRow({ message, compact, openDocument }: { message: Message; compact: boolean; openDocument: (document: Document) => void }) {
   if (message.kind === "system") return <div className="system-message"><span>#{message.sequence}</span>{message.body}</div>;
-  return <article className={`message ${message.sender_kind}`}><div className="message-mark">{message.sender_kind === "steward" ? <Bot size={15} /> : message.sender_handle.slice(0, 2).toUpperCase()}</div><div className="message-content"><header><strong>{message.sender_name}</strong><span>@{message.sender_handle}</span><time>{formatTime(message.created_at)}</time>{message.kind === "context" && <em>context</em>}</header><p>{message.body}</p>{message.document && <button className="attachment" onClick={() => openDocument(message.document!)}><FileText size={17} /><span><strong>{message.document.name}</strong><small>{message.document.media_type} · {formatSize(message.document.byte_size)}</small></span><ChevronRight size={16} /></button>}</div></article>;
+  return <article className={`message ${message.sender_kind} ${compact ? "compact" : ""}`} aria-label={`${message.sender_name} at ${formatTime(message.created_at)}`} title={`Room event #${message.sequence}`}>
+    {compact ? <div className="message-mark-placeholder" /> : <div className="message-mark">{message.sender_kind === "steward" ? <Bot size={15} /> : message.sender_handle.slice(0, 2).toUpperCase()}</div>}
+    <div className="message-content">{!compact && <header><strong>{message.sender_name}</strong><span>@{message.sender_handle}</span><time>{formatTime(message.created_at)}</time></header>}<Markdown text={message.body} className="message-markdown" />{message.document && <button className="attachment" onClick={() => openDocument(message.document!)}><FileText size={17} /><span><strong>{message.document.name}</strong><small>{message.document.media_type} · {formatSize(message.document.byte_size)}</small></span><ChevronRight size={16} /></button>}</div>
+  </article>;
 }
 
 function App() {
@@ -133,23 +138,25 @@ function App() {
   useEffect(() => { if (!token || !selectedRoom) return; void loadSnapshot(token, selectedRoom).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not read room.")); const timer = setInterval(() => void Promise.all([loadSnapshot(token, selectedRoom), loadRooms(token)]).catch(() => undefined), 1200); return () => clearInterval(timer); }, [token, selectedRoom, loadSnapshot, loadRooms]);
   useEffect(() => { if (feed.current) feed.current.scrollTop = feed.current.scrollHeight; }, [snapshot?.room.last_sequence]);
   const send = async (event: React.FormEvent) => { event.preventDefault(); if (!message.trim() || !snapshot) return; setSending(true); setError(""); try { await rpc(token, "message.send", { room: snapshot.room.id, owner: true, body: message.trim() }); setMessage(""); await loadSnapshot(token, snapshot.room.id); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not send."); } finally { setSending(false); } };
-  const openDocument = async (item: Document) => { setError(""); try { const result = await rpc<{ document: Document; content_base64: string }>(token, "document.read", { room: item.room_id, document: item.id }); setDocument({ document: result.document, content: decodeBase64(result.content_base64) }); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not open document."); } };
+  const openDocument = async (item: Document) => { setError(""); try { const result = await rpc<{ document: Document; content_base64: string }>(token, "document.read", { room: item.room_id, document: item.id }); const revisions = snapshot?.documents.filter((candidate) => candidate.name === item.name) ?? [item]; const revisionIndex = Math.max(0, revisions.findIndex((candidate) => candidate.id === item.id)); setDocument({ document: result.document, content: decodeBase64(result.content_base64), revisions, revisionIndex }); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not open document."); } };
   const participantByID = useMemo(() => new Map(snapshot?.participants.map((participant) => [participant.id, participant]) ?? []), [snapshot?.participants]);
+  const visibleMessages = useMemo(() => snapshot?.messages.filter((item) => item.kind !== "context") ?? [], [snapshot?.messages]);
+  const documentGroups = useMemo(() => groupDocuments(snapshot?.documents ?? []), [snapshot?.documents]);
   const refresh = () => { if (snapshot) void loadSnapshot(token, snapshot.room.id); void loadRooms(token); };
 
   if (connection !== "connected") return <main className="gate"><div className="brand-mark">CF</div><h1>{connection === "connecting" ? "Connecting to Crewfold…" : "Crewfold is not available"}</h1>{error && <p>{error}</p>}</main>;
   return <div className={`app ${snapshot ? "" : "no-room"}`}>
     <header className="topbar"><div className="brand"><span>CF</span><strong>Crewfold</strong><small>shared rooms</small></div><div className="current-room">{snapshot ? `# ${snapshot.room.slug}` : "No room selected"}</div><div className="online"><i />local</div></header>
     <aside className="room-rail"><div className="rail-heading"><span>ROOMS</span><button onClick={() => setCreateOpen(true)} aria-label="Create room"><Plus size={16} /></button></div>{rooms.map((room) => <button key={room.id} className={selectedRoom === room.slug ? "selected" : ""} onClick={() => setSelected(room.slug)}><MessageSquare size={15} /><span><strong>{room.title}</strong><small>#{room.slug} · {room.last_sequence} messages</small></span>{room.status === "archived" && <Archive size={13} />}</button>)}{!rooms.length && <p>No rooms yet. Create one to connect independent agent sessions.</p>}</aside>
-    <main className={`room-main ${snapshot ? "" : "room-empty"}`}>{snapshot ? <><header className="room-header"><div><span>SHARED ROOM</span><h1>{snapshot.room.title}</h1><p>{snapshot.room.topic}</p></div><div><strong>{snapshot.participants.filter((item) => item.status === "joined").length}</strong><span>joined</span></div><div><strong>{snapshot.documents.length}</strong><span>documents</span></div></header><div className="feed" ref={feed}>{snapshot.messages.map((item) => <MessageRow key={item.id} message={item} openDocument={openDocument} />)}</div><form className="composer" onSubmit={send}><span>›</span><textarea rows={1} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message #${snapshot.room.slug}`} /><button aria-label="Send message" disabled={sending || !message.trim()}>{sending ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}</button></form>{error && <div className="toast error">{error}</div>}</> : <div className="empty"><MessageSquare size={25} /><h1>Create a shared room</h1><p>Independent agent sessions join through the Crewfold CLI. A room may also host one persistent Herdr steward.</p><button className="primary" onClick={() => setCreateOpen(true)}><Plus size={15} /> new room</button></div>}</main>
+    <main className={`room-main ${snapshot ? "" : "room-empty"}`}>{snapshot ? <><header className="room-header"><div><span>SHARED ROOM</span><h1>{snapshot.room.title}</h1><p>{snapshot.room.topic}</p></div><div><strong>{snapshot.participants.filter((item) => item.status === "joined").length}</strong><span>joined</span></div><div><strong>{documentGroups.length}</strong><span>documents</span></div></header><div className="feed" ref={feed}>{visibleMessages.map((item, index) => <MessageRow key={item.id} message={item} compact={index > 0 && sameMessageGroup(visibleMessages[index - 1], item)} openDocument={openDocument} />)}</div><form className="composer" onSubmit={send}><span>›</span><textarea rows={1} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message #${snapshot.room.slug}`} /><button aria-label="Send message" disabled={sending || !message.trim()}>{sending ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}</button></form>{error && <div className="toast error">{error}</div>}</> : <div className="empty"><MessageSquare size={25} /><h1>Create a shared room</h1><p>Independent agent sessions join through the Crewfold CLI. A room may also host one persistent Herdr steward.</p><button className="primary" onClick={() => setCreateOpen(true)}><Plus size={15} /> new room</button></div>}</main>
     {snapshot && <aside className="room-context"><section><h2><Bot size={14} /> HOSTED STEWARD</h2>{snapshot.steward ? <button className="steward-card" onClick={() => setConsoleOpen(true)}><span><strong>@{snapshot.steward.handle}</strong><small>{snapshot.steward.status} · {snapshot.steward.agent_status || "Herdr"}</small></span><Terminal size={16} /></button> : <div className="start-steward"><p>Optional: one real, persistent Codex terminal can watch and help this room.</p><button onClick={() => setStartSteward(true)}><Terminal size={14} /> start steward</button></div>}</section>
-      <section><h2><Users size={14} /> PARTICIPANTS <span>{snapshot.participants.length}</span></h2>{snapshot.participants.map((participant) => <article className={`participant ${participant.kind === "steward" ? "clickable" : ""}`} key={participant.id} onClick={() => participant.kind === "steward" && snapshot.steward && setConsoleOpen(true)}><header><i className={participant.status} /><strong>@{participant.handle}</strong>{participant.kind === "steward" && <em>hosted</em>}<span>{participant.unread_count ? `${participant.unread_count} unread` : participant.status}</span></header>{participant.working_directory && <code title={participant.working_directory}>{participant.working_directory}</code>}{participant.delivery && <div className={`participant-delivery ${participant.delivery.status}`} title={participant.delivery.error}><span>Codex delivery</span><strong>{participant.delivery.status}</strong>{participant.delivery.last_delivered_sequence > 0 && <small>through #{participant.delivery.last_delivered_sequence}</small>}</div>}{participant.context && <p>{participant.context}</p>}</article>)}</section>
+      <section><h2><Users size={14} /> PARTICIPANTS <span>{snapshot.participants.length}</span></h2>{snapshot.participants.map((participant) => <article className="participant" key={participant.id}><header><i className={participant.status} /><strong>@{participant.handle}</strong>{participant.kind === "steward" && <em>hosted</em>}<span>{participant.unread_count ? `${participant.unread_count} unread` : participant.status}</span></header>{participant.working_directory && <code title={participant.working_directory}>{participant.working_directory}</code>}{participant.delivery && <div className={`participant-delivery ${participant.delivery.status}`} title={participant.delivery.error}><span>Codex delivery</span><strong>{participant.delivery.status}</strong>{participant.delivery.last_delivered_sequence > 0 && <small>through #{participant.delivery.last_delivered_sequence}</small>}</div>}{participant.context && <details className="participant-context"><summary>{participant.context}</summary><p>{participant.context}</p></details>}</article>)}</section>
       <section className="join-help"><h2><MessageSquare size={14} /> CONNECT A CODEX SESSION</h2><code>crewfold room join {snapshot.room.slug} --handle &lt;name&gt;</code><p>Run this inside that Codex session's working folder. Crewfold binds its current thread and injects later room activity into the same conversation. Use <code>--delivery none</code> only when injection is unwanted.</p></section>
-      <section><h2><FileText size={14} /> DOCUMENTS <span>{snapshot.documents.length}</span></h2>{snapshot.documents.map((item) => <button className="document-row" key={item.id} onClick={() => void openDocument(item)}><FileText size={15} /><span><strong>{item.name}</strong><small>{participantByID.get(item.participant_id ?? "")?.handle ?? "owner"} · {formatSize(item.byte_size)}</small></span></button>)}{!snapshot.documents.length && <p className="quiet">No shared documents yet.</p>}</section></aside>}
+      <section><h2><FileText size={14} /> DOCUMENTS <span>{documentGroups.length}</span></h2>{documentGroups.map((group) => <button className="document-row" key={group.name} onClick={() => void openDocument(group.latest)}><FileText size={15} /><span><strong>{group.name}</strong><small>{participantByID.get(group.latest.participant_id ?? "")?.handle ?? "owner"} · {formatSize(group.latest.byte_size)}{group.revisions.length > 1 ? ` · ${group.revisions.length} revisions` : ""}</small></span></button>)}{!documentGroups.length && <p className="quiet">No shared documents yet.</p>}</section></aside>}
     {createOpen && <CreateRoom token={token} close={() => setCreateOpen(false)} created={(created, warning) => { setCreateOpen(false); setSelected(created.room.slug); setSnapshot(created); if (warning) setError(warning); void loadRooms(token); }} />}
     {startSteward && snapshot && <StartSteward token={token} room={snapshot.room} close={() => setStartSteward(false)} started={() => { setStartSteward(false); setConsoleOpen(true); refresh(); }} />}
     {consoleOpen && snapshot && <StewardConsolePanel token={token} room={snapshot.room} close={() => setConsoleOpen(false)} changed={refresh} />}
-    {document && <div className="document-panel"><header><div><span>SHARED DOCUMENT</span><h1>{document.document.name}</h1><p>{document.document.media_type} · {formatSize(document.document.byte_size)}</p></div><button onClick={() => setDocument(null)} aria-label="Close document"><X size={18} /></button></header><Markdown text={document.content} /><footer>sha256:{document.document.sha256}</footer></div>}
+    {document && <div className="document-panel"><header><div><span>SHARED DOCUMENT</span><h1>{document.document.name}</h1><p>{document.document.media_type} · {formatSize(document.document.byte_size)}{document.revisions.length > 1 ? ` · revision ${document.revisions.length - document.revisionIndex} of ${document.revisions.length}` : ""}</p></div><div className="document-actions">{document.revisions.length > 1 && <div><button disabled={document.revisionIndex >= document.revisions.length - 1} onClick={() => void openDocument(document.revisions[document.revisionIndex + 1])} aria-label="Older revision"><ChevronLeft size={17} /></button><button disabled={document.revisionIndex <= 0} onClick={() => void openDocument(document.revisions[document.revisionIndex - 1])} aria-label="Newer revision"><ChevronRight size={17} /></button></div>}<button onClick={() => setDocument(null)} aria-label="Close document"><X size={18} /></button></div></header><Markdown text={document.content} /><footer>sha256:{document.document.sha256}</footer></div>}
   </div>;
 }
 

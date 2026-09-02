@@ -22,10 +22,15 @@ conversation.
 
 The release gate also performs a manual real-runtime probe with a temporary
 daemon and named Herdr session: start Codex, observe onboarding in the actual
-terminal, send a private owner prompt, relay an external room message, verify the
-steward publishes back to the shared feed, stop, and restart fresh.
+terminal, send a private owner prompt, relay a direct participant exchange and
+verify that the quiet steward takes no public action, explicitly address the
+steward and verify one useful response, then stop and restart fresh.
+Manager restart coverage verifies that a daemon restart resumes an initialized
+steward without repeating onboarding or publishing another introduction.
 
 Visual review uses a fresh temporary daemon and representative room data. It must
 check the empty state, populated conversation, participant context, unread labels,
 Codex delivery state, room creation dialog, hosted-steward console and lifecycle
-controls, responsive layout, and document reader.
+controls, responsive layout, adjacent-message grouping, and GitHub-flavored
+Markdown tables in both messages and the document reader. Repeated uploads of
+one filename must appear as one document with navigable revisions.

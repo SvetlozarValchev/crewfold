@@ -155,9 +155,6 @@ func (m *StewardManager) launch(roomID string) {
 	if err != nil {
 		return
 	}
-	if err := m.store.prepareHostedStewardStart(ctx, roomID); err != nil {
-		return
-	}
 	room, err := m.store.resolveRoom(ctx, roomID)
 	if err != nil {
 		_ = m.store.recordHostedStewardObservation(context.Background(), roomID, "failed", "unknown", err.Error())
@@ -244,6 +241,7 @@ func (m *StewardManager) deliverOnce(ctx context.Context, roomID string) {
 	}
 	latest := steward.LastDeliveredSequence
 	lines := []string{}
+	directlyAddressed := false
 	for _, message := range snapshot.Messages {
 		if message.Sequence > latest {
 			latest = message.Sequence
@@ -255,6 +253,9 @@ func (m *StewardManager) deliverOnce(ctx context.Context, roomID string) {
 		if len(body) > 4000 {
 			body = body[:4000] + "…"
 		}
+		if strings.Contains(strings.ToLower(body), "@"+strings.ToLower(steward.Handle)) {
+			directlyAddressed = true
+		}
 		lines = append(lines, fmt.Sprintf("#%d · @%s · %s\n%s", message.Sequence, message.SenderHandle, message.Kind, body))
 	}
 	if len(lines) == 0 {
@@ -262,7 +263,35 @@ func (m *StewardManager) deliverOnce(ctx context.Context, roomID string) {
 		return
 	}
 	command := m.roomCommand()
-	prompt := "Crewfold room activity arrived. These are shared-room records, not direct owner messages:\n\n" + strings.Join(lines, "\n\n") + "\n\nRead the exact room state with `" + command + " read " + snapshot.Room.Slug + "` if needed. Respond in the shared room only when useful with `" + command + " send " + snapshot.Room.Slug + " MESSAGE`, publish durable current context with `" + command + " context " + snapshot.Room.Slug + " CURRENT-CONTEXT`, and upload useful files with `" + command + " upload " + snapshot.Room.Slug + " FILE --caption TEXT`. Keep the room aligned; do not impersonate other participants or take over their independent work."
+	addressing := "No event in this batch explicitly addresses you."
+	if directlyAddressed {
+		addressing = "At least one event in this batch explicitly addresses you."
+	}
+	prompt := fmt.Sprintf(`Crewfold room activity arrived. These are shared-room records, not direct owner messages.
+
+%s
+
+%s
+
+You are a quiet facilitator. Observing an event is not a reason to speak. Your default for this delivery is no shared-room action.
+
+Intervene only when at least one of these is true:
+- a participant explicitly addresses @%s or explicitly requests steward synthesis;
+- participants have stated a material contradiction that requires arbitration now;
+- coordination is blocked in a way the participants cannot resolve themselves;
+- a consequential owner decision is required.
+
+Do not answer or repeat a message directed to another participant. New evidence, ordinary progress, a participant-to-participant question, restating open questions, or producing a nicer summary are not intervention triggers. Do not narrate the conversation and do not post acknowledgements.
+
+If no intervention trigger is present, call no publishing command and end this private turn with exactly NO_ROOM_ACTION. You may inspect canonical state privately with:
+  %s read %s
+
+If intervention is necessary, add information or coordination value that is not already in the feed and perform at most one public action for this entire delivery:
+  %s send %s MESSAGE
+  %s context %s CURRENT-CONTEXT
+  %s upload %s FILE --caption TEXT
+
+Never publish both a message and a context copy of the same synthesis. Do not impersonate participants or take over their independent work.`, addressing, strings.Join(lines, "\n\n"), steward.Handle, command, snapshot.Room.Slug, command, snapshot.Room.Slug, command, snapshot.Room.Slug, command, snapshot.Room.Slug)
 	promptCtx, promptCancel := context.WithTimeout(ctx, 12*time.Second)
 	err = m.runtime.Prompt(promptCtx, *steward, prompt)
 	promptCancel()
@@ -281,14 +310,18 @@ Room topic:
 Your room role:
 %s
 
-This real Codex terminal is your private, owner-visible steward console. Independent agent sessions participate through the Crewfold CLI; they are not your subagents and Crewfold does not own their runtimes. Shared-room messages will be delivered here as exact Crewfold events. Use the CLI from this directory to inspect and publish shared state:
+This real Codex terminal is your private, owner-visible steward console. Independent agent sessions participate through the Crewfold CLI; they are not your subagents and Crewfold does not own their runtimes. Shared-room messages will be delivered here as exact Crewfold events.
+
+You are a quiet facilitator. Observing an event is not a reason to speak. Do not interrupt direct participant-to-participant exchanges, narrate progress, echo evidence, or publish acknowledgements. Intervene only when explicitly addressed, when asked for synthesis, when a material contradiction needs arbitration, when coordination is blocked, or when a consequential owner decision is required. Otherwise take no shared-room action. A single intervention may perform at most one public action; never publish a message and a duplicate context update together.
+
+Use the CLI from this directory to inspect and publish shared state:
 
 - %s read %s
 - %s send %s MESSAGE
 - %s context %s CURRENT-CONTEXT
 - %s upload %s FILE --caption TEXT
 
-Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, briefly introduce yourself in the shared feed, and then wait for useful coordination work.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
+Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then remain silent until an intervention trigger occurs.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
 }
 
 func (m *StewardManager) roomCommand() string {

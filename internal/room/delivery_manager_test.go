@@ -70,12 +70,12 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 	if _, err := store.Join(ctx, JoinInput{Room: "shared", Handle: "second", WorkingDirectory: secondDirectory}); err != nil {
 		t.Fatal(err)
 	}
-	message, err := store.Send(ctx, SendInput{Room: "shared", WorkingDirectory: secondDirectory, Body: "compare the slip curve"})
+	message, err := store.Send(ctx, SendInput{Room: "shared", WorkingDirectory: secondDirectory, Body: "compare the interface contract"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	manager.deliverPending()
-	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], "compare the slip curve") || !strings.Contains(runtime.prompts[0], "Do not poll") {
+	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], "compare the interface contract") || !strings.Contains(runtime.prompts[0], "Do not poll") {
 		t.Fatalf("unexpected delivery: targets=%#v prompts=%#v", runtime.targets, runtime.prompts)
 	}
 	if runtime.messageIDs[0] != "crewfold:"+first.ID+":"+fmt.Sprint(message.Sequence) {

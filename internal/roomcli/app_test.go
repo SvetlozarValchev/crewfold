@@ -63,7 +63,7 @@ func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	app := New(&stdout, &stderr, buildinfo.Info{Version: "test"})
-	code := app.Run(context.Background(), []string{"room", "--socket", socket, "join", "shared", "--handle", "world-engine-2", "--cwd", workingDirectory})
+	code := app.Run(context.Background(), []string{"room", "--socket", socket, "join", "shared", "--handle", "service-agent", "--cwd", workingDirectory})
 	if code != 0 {
 		t.Fatalf("join exit %d: %s", code, stderr.String())
 	}
