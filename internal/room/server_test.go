@@ -14,7 +14,11 @@ import (
 
 func TestLocalServerExposesRoomWorkflow(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "cf-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	socket := localipc.Endpoint(filepath.Join(root, "runtime"))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -82,7 +86,7 @@ func TestLocalServerExposesRoomWorkflow(t *testing.T) {
 	}
 
 	var rejected any
-	err := client.Call(context.Background(), "message.send", map[string]any{"room": "shared-test", "body": "bad", "invented": true}, &rejected)
+	err = client.Call(context.Background(), "message.send", map[string]any{"room": "shared-test", "body": "bad", "invented": true}, &rejected)
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("unknown request field was not rejected: %v", err)
 	}

@@ -22,6 +22,7 @@ jobs:
           node-version: 24
       - run: corepack enable
       - run: corepack prepare pnpm@10.34.5 --activate
+      - run: ./scripts/build-web.sh
       - run: ./scripts/check.sh
 
   windows:
@@ -37,6 +38,8 @@ jobs:
           node-version: 24
       - run: corepack enable
       - run: corepack prepare pnpm@10.34.5 --activate
+      - shell: powershell
+        run: .\scripts\build-web.ps1
       - shell: powershell
         run: .\scripts\check.ps1
 

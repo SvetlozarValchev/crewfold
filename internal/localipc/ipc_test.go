@@ -5,13 +5,19 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestOwnerLocalTransport(t *testing.T) {
-	endpoint := Endpoint(filepath.Join(t.TempDir(), "runtime"))
+	root, err := os.MkdirTemp("", "cf-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	endpoint := Endpoint(filepath.Join(root, "runtime"))
 	listener, err := Listen(endpoint)
 	if err != nil {
 		t.Fatal(err)

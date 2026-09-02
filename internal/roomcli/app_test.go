@@ -25,7 +25,11 @@ func (availableCodexRuntime) Inspect(_ context.Context, threadID string) (codexa
 func (availableCodexRuntime) Deliver(context.Context, string, string, string) error { return nil }
 
 func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "cf-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	socket := localipc.Endpoint(filepath.Join(root, "runtime"))
 	serverContext, stopServer := context.WithCancel(context.Background())
 	serverDone := make(chan error, 1)
