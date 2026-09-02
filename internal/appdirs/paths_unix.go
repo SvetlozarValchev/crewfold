@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"crewfold/internal/localipc"
 )
 
 const maximumUnixSocketBytes = 100
@@ -62,7 +64,7 @@ func Resolve(home string, getenv func(string) string) (Paths, error) {
 		ConfigDir:  configDir,
 		RuntimeDir: runtimeDir,
 		DataDir:    stateDir,
-		SocketPath: filepath.Join(runtimeDir, "crewfold.sock"),
+		SocketPath: localipc.Endpoint(runtimeDir),
 		UnitPath:   filepath.Join(configHome, "systemd", "user", "crewfold.service"),
 	})
 	if err != nil {

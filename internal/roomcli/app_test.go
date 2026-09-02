@@ -11,6 +11,7 @@ import (
 
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/codexapp"
+	"crewfold/internal/localipc"
 	"crewfold/internal/room"
 )
 
@@ -25,7 +26,7 @@ func (availableCodexRuntime) Deliver(context.Context, string, string, string) er
 
 func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 	root := t.TempDir()
-	socket := filepath.Join(root, "runtime", "crewfold.sock")
+	socket := localipc.Endpoint(filepath.Join(root, "runtime"))
 	serverContext, stopServer := context.WithCancel(context.Background())
 	serverDone := make(chan error, 1)
 	go func() {
@@ -126,13 +127,15 @@ func TestMessageReadabilityRequiresStructuredStdinForSubstantialPosts(t *testing
 
 func waitForSocket(t *testing.T, socket string) {
 	t.Helper()
+	client := room.Client{SocketPath: socket}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		if _, err := os.Stat(socket); err == nil {
+		var status map[string]any
+		if err := client.Call(context.Background(), "status", map[string]any{}, &status); err == nil {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("server socket was not created")
+			t.Fatal("local server did not become ready")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

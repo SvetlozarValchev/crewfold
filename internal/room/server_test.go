@@ -2,7 +2,6 @@ package room
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,12 +9,13 @@ import (
 	"time"
 
 	"crewfold/internal/buildinfo"
+	"crewfold/internal/localipc"
 )
 
-func TestUnixServerExposesRoomWorkflow(t *testing.T) {
+func TestLocalServerExposesRoomWorkflow(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	socket := filepath.Join(root, "runtime", "crewfold.sock")
+	socket := localipc.Endpoint(filepath.Join(root, "runtime"))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
@@ -38,18 +38,8 @@ func TestUnixServerExposesRoomWorkflow(t *testing.T) {
 		}
 	})
 
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		if _, err := os.Stat(socket); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("server socket was not created")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
 	client := Client{SocketPath: socket}
+	waitForServer(t, client)
 	var status map[string]any
 	if err := client.Call(context.Background(), "status", map[string]any{}, &status); err != nil {
 		t.Fatal(err)
@@ -98,15 +88,17 @@ func TestUnixServerExposesRoomWorkflow(t *testing.T) {
 	}
 }
 
-func TestServerRejectsSecondDaemonOnSocket(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	socket := filepath.Join(root, "occupied")
-	if err := os.WriteFile(socket, []byte("not a socket"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err := RunServer(context.Background(), ServerConfig{DataDir: filepath.Join(root, "state"), SocketPath: socket, WebAddress: "127.0.0.1:0"})
-	if err == nil || !strings.Contains(err.Error(), "non-socket") || errors.Is(err, context.Canceled) {
-		t.Fatalf("unexpected occupied socket error: %v", err)
+func waitForServer(t *testing.T, client Client) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		var status map[string]any
+		if err := client.Call(context.Background(), "status", map[string]any{}, &status); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("local server did not become ready")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

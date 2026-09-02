@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"crewfold/internal/localipc"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -62,7 +64,7 @@ func ResolveWindows(localAppData, roamingAppData string, getenv func(string) str
 		ConfigDir:  filepath.Join(configHome, "crewfold"),
 		RuntimeDir: runtimeDir,
 		DataDir:    stateDir,
-		SocketPath: filepath.Join(runtimeDir, "crewfold.sock"),
+		SocketPath: localipc.Endpoint(runtimeDir),
 		UnitPath:   filepath.Join(configHome, "crewfold", "service.json"),
 	})
 }

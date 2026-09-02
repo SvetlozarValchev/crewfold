@@ -21,6 +21,9 @@ func TestResolveWindowsUsesKnownFolderLayout(t *testing.T) {
 	if paths.RuntimeDir != `C:\Users\owner\AppData\Local\crewfold\runtime` {
 		t.Fatalf("RuntimeDir = %q", paths.RuntimeDir)
 	}
+	if len(paths.SocketPath) <= len(`\\.\pipe\crewfold-`) || paths.SocketPath[:len(`\\.\pipe\crewfold-`)] != `\\.\pipe\crewfold-` {
+		t.Fatalf("SocketPath = %q", paths.SocketPath)
+	}
 }
 
 func TestResolveWindowsAcceptsCrewfoldOverrides(t *testing.T) {
