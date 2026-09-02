@@ -1047,11 +1047,16 @@ func exactDirectory(value string) (string, error) {
 		return "", err
 	}
 	absolute = filepath.Clean(absolute)
-	info, err := os.Stat(absolute)
+	canonical, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", errors.New("working directory must be an existing directory")
+	}
+	canonical = filepath.Clean(canonical)
+	info, err := os.Stat(canonical)
 	if err != nil || !info.IsDir() {
 		return "", errors.New("working directory must be an existing directory")
 	}
-	return absolute, nil
+	return canonical, nil
 }
 
 func boundedText(name, value string, minimum, maximum int) (string, error) {
