@@ -8,7 +8,7 @@ import (
 )
 
 func TestResolveWindowsUsesKnownFolderLayout(t *testing.T) {
-	paths, err := ResolveWindows(`C:\Users\owner\AppData\Local`, `C:\Users\owner\AppData\Roaming`, nil)
+	paths, err := ResolveWindows(`C:\Users\owner\AppData\Local`, `C:\Users\owner\AppData\Roaming`, `C:\Users\owner\Startup`, nil)
 	if err != nil {
 		t.Fatalf("ResolveWindows() error = %v", err)
 	}
@@ -32,7 +32,7 @@ func TestResolveWindowsAcceptsCrewfoldOverrides(t *testing.T) {
 		"CREWFOLD_CONFIG_HOME": `D:\Crewfold Config`,
 		"CREWFOLD_RUNTIME_DIR": `D:\Crewfold Runtime`,
 	}
-	paths, err := ResolveWindows(`C:\Local`, `C:\Roaming`, func(name string) string { return environment[name] })
+	paths, err := ResolveWindows(`C:\Local`, `C:\Roaming`, `C:\Startup`, func(name string) string { return environment[name] })
 	if err != nil {
 		t.Fatalf("ResolveWindows() error = %v", err)
 	}
@@ -48,7 +48,7 @@ func TestResolveWindowsAcceptsCrewfoldOverrides(t *testing.T) {
 }
 
 func TestResolveWindowsRejectsRelativeOverride(t *testing.T) {
-	_, err := ResolveWindows(`C:\Local`, `C:\Roaming`, func(name string) string {
+	_, err := ResolveWindows(`C:\Local`, `C:\Roaming`, `C:\Startup`, func(name string) string {
 		if name == "CREWFOLD_STATE_HOME" {
 			return `relative\state`
 		}

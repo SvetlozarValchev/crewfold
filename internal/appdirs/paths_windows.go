@@ -23,13 +23,17 @@ func Default() (Paths, error) {
 	if err != nil {
 		return Paths{}, fmt.Errorf("resolve Roaming AppData: %w", err)
 	}
-	return ResolveWindows(local, roaming, os.Getenv)
+	startup, err := windows.KnownFolderPath(windows.FOLDERID_Startup, 0)
+	if err != nil {
+		return Paths{}, fmt.Errorf("resolve Startup folder: %w", err)
+	}
+	return ResolveWindows(local, roaming, startup, os.Getenv)
 }
 
 // ResolveWindows derives the Crewfold layout from native Windows folder roots
 // and an environment lookup. It is exposed to keep path policy independently
 // testable without calling Windows shell APIs.
-func ResolveWindows(localAppData, roamingAppData string, getenv func(string) string) (Paths, error) {
+func ResolveWindows(localAppData, roamingAppData, startup string, getenv func(string) string) (Paths, error) {
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
@@ -38,6 +42,10 @@ func ResolveWindows(localAppData, roamingAppData string, getenv func(string) str
 		return Paths{}, err
 	}
 	roamingAppData, err = exactAbsoluteDirectoryRoot("Roaming AppData", roamingAppData)
+	if err != nil {
+		return Paths{}, err
+	}
+	startup, err = environmentRoot("CREWFOLD_SERVICE_DIR", getenv("CREWFOLD_SERVICE_DIR"), startup)
 	if err != nil {
 		return Paths{}, err
 	}
@@ -65,6 +73,6 @@ func ResolveWindows(localAppData, roamingAppData string, getenv func(string) str
 		RuntimeDir: runtimeDir,
 		DataDir:    stateDir,
 		SocketPath: localipc.Endpoint(runtimeDir),
-		UnitPath:   filepath.Join(configHome, "crewfold", "service.json"),
+		UnitPath:   filepath.Join(startup, "Crewfold.cmd"),
 	})
 }

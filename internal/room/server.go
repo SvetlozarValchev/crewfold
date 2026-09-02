@@ -61,9 +61,12 @@ type Server struct {
 	stewards   *StewardManager
 	deliveries *DeliveryManager
 	closeOnce  sync.Once
+	shutdown   context.CancelFunc
 }
 
 func RunServer(ctx context.Context, config ServerConfig) error {
+	ctx, shutdown := context.WithCancel(ctx)
+	defer shutdown()
 	if strings.TrimSpace(config.DataDir) == "" || strings.TrimSpace(config.SocketPath) == "" {
 		return errors.New("daemon requires --data-dir and --socket")
 	}
@@ -94,7 +97,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 			return err
 		}
 	}
-	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, sessions: map[[32]byte]time.Time{}}
+	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, sessions: map[[32]byte]time.Time{}, shutdown: shutdown}
 	cliPath, err := os.Executable()
 	if err != nil {
 		server.stewards = NewStewardManager(ctx, store, runtime, "crewfold", socketPath)
@@ -206,6 +209,13 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 	case "status":
 		rooms, err := s.store.ListRooms(ctx)
 		return map[string]any{"status": "ok", "pid": os.Getpid(), "started_at": s.startedAt.Format(time.RFC3339Nano), "rooms": len(rooms), "version": s.config.Version}, err
+	case "daemon.shutdown":
+		var input struct{}
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		time.AfterFunc(10*time.Millisecond, s.shutdown)
+		return map[string]string{"status": "stopping"}, nil
 	case "web.bootstrap":
 		return s.mintBootstrap()
 	case "room.create":
