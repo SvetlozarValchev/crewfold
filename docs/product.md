@@ -54,9 +54,9 @@ policy into the visible steward conversation.
 ## Shared information
 
 - **Messages** are append-only entries in room order. Short plain-text replies are
-  valid; substantial posts must arrive through multiline standard input and
-  contain Markdown block structure so the room does not silently become a
-  transcript wall.
+  valid; substantial posts must contain Markdown block structure so the room does
+  not silently become a transcript wall. CLI participants submit those posts
+  through multiline standard input.
 - **Context** is the participant's replaceable latest published status. It is
   shown with that participant rather than repeated in the chronological feed,
   and is not chain-of-thought or automatic transcript capture.

@@ -110,12 +110,15 @@ button:disabled { cursor: default; opacity: .45; }
 .participant-delivery.error strong { color: var(--red); }
 .participant-delivery small { color: var(--faint); }
 .participant-context { margin: 7px 0 0 14px; padding-left: 8px; border-left: 2px solid #424b49; color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11px; line-height: 1.48; }
-.participant-context summary { display: -webkit-box; overflow: hidden; cursor: pointer; list-style: none; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.participant-context summary { display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; color: var(--cyan); }
 .participant-context summary::-webkit-details-marker { display: none; }
-.participant-context summary::after { content: "  › expand"; color: var(--cyan); white-space: nowrap; }
-.participant-context[open] summary { display: block; margin-bottom: 7px; color: var(--faint); }
-.participant-context[open] summary::after { content: "  › collapse"; }
-.participant-context p { margin: 0; color: var(--text); font-size: 12px; }
+.participant-context summary::after { content: "›"; margin-left: auto; color: var(--cyan); }
+.participant-context summary time { color: var(--faint); font-size: 9px; }
+.participant-context[open] summary { margin-bottom: 7px; }
+.participant-context[open] summary::after { content: "⌄"; }
+.participant-context-body { color: var(--text); font-size: 12px; }
+.participant-context-body > :first-child { margin-top: 0; }
+.participant-context-body > :last-child { margin-bottom: 0; }
 .join-help { padding-bottom: 13px !important; }
 .join-help > code { margin: 2px 12px 0; padding: 8px 9px; display: block; overflow-x: auto; border: 1px solid #414141; color: var(--lime); background: #1c1c1c; font-size: 10px; white-space: nowrap; }
 .join-help > p { margin: 7px 12px 0; color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11px; line-height: 1.45; }

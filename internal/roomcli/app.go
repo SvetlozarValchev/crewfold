@@ -720,44 +720,15 @@ func pullFlag(args []string, name string) (bool, []string, error) {
 }
 
 func validateMessageReadability(roomIdentifier, body string, fromStdin bool) error {
-	const structuredMessageThreshold = 320
 	body = strings.TrimSpace(strings.ReplaceAll(body, "\r\n", "\n"))
 	count := utf8.RuneCountInString(body)
-	if count <= structuredMessageThreshold {
-		return nil
-	}
-	if !fromStdin {
+	if count > room.MaximumInlineMessageRunes && !fromStdin {
 		return fmt.Errorf("message is %d characters; substantial room posts must use `crewfold room send %s --stdin` with short Markdown paragraphs or bullets", count, roomIdentifier)
 	}
-	if hasMarkdownBlocks(body) {
-		return nil
+	if err := room.ValidateSharedMessage(body); err != nil {
+		return fmt.Errorf("%w; use `crewfold room send %s --stdin`", err, roomIdentifier)
 	}
-	return fmt.Errorf("message is %d characters of unstructured prose; use `crewfold room send %s --stdin` and split it into short Markdown paragraphs or bullets, or upload a document", count, roomIdentifier)
-}
-
-func hasMarkdownBlocks(body string) bool {
-	if strings.Contains(body, "\n\n") {
-		return true
-	}
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimLeft(line, " \t")
-		if strings.HasPrefix(line, "# ") || strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "### ") || strings.HasPrefix(line, "#### ") || strings.HasPrefix(line, "##### ") || strings.HasPrefix(line, "###### ") || strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") || strings.HasPrefix(line, "+ ") || strings.HasPrefix(line, "> ") || strings.HasPrefix(line, "```") || (strings.HasPrefix(line, "|") && strings.Count(line, "|") >= 2) {
-			return true
-		}
-		if dot := strings.Index(line, ". "); dot > 0 {
-			numbered := true
-			for _, character := range line[:dot] {
-				if character < '0' || character > '9' {
-					numbered = false
-					break
-				}
-			}
-			if numbered {
-				return true
-			}
-		}
-	}
-	return false
+	return nil
 }
 
 func leading(args []string, name string) (string, []string, error) {

@@ -9,6 +9,33 @@ import (
 	"testing"
 )
 
+func TestCanonicalFeedRejectsUnstructuredSubstantialContent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "readable", Title: "Readable", Topic: "Keep the shared feed readable."}); err != nil {
+		t.Fatal(err)
+	}
+	dense := strings.Repeat("Substantial verified status without any block structure. ", 10)
+	if _, err := store.Send(ctx, SendInput{Room: "readable", Owner: true, Body: dense}); err == nil || !strings.Contains(err.Error(), "unstructured prose") {
+		t.Fatalf("canonical message validation error = %v", err)
+	}
+	structured := "## Findings\n\n- " + dense
+	if _, err := store.Send(ctx, SendInput{Room: "readable", Owner: true, Body: structured}); err != nil {
+		t.Fatalf("structured message rejected: %v", err)
+	}
+	if _, err := store.Send(ctx, SendInput{Room: "readable", Owner: true, Kind: "context", Body: dense}); err != nil {
+		t.Fatalf("replaceable context rejected: %v", err)
+	}
+	if _, err := store.Upload(ctx, UploadInput{Room: "readable", Owner: true, Name: "finding.md", ContentBase64: base64.StdEncoding.EncodeToString([]byte("# Finding\n")), Caption: dense}); err == nil || !strings.Contains(err.Error(), "document caption") {
+		t.Fatalf("canonical document-caption validation error = %v", err)
+	}
+}
+
 func TestRoomCollaborationLifecycle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

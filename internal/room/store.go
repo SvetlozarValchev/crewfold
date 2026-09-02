@@ -334,6 +334,11 @@ func (s *Store) Send(ctx context.Context, input SendInput) (Message, error) {
 	if kind != "message" && kind != "context" {
 		return Message{}, errors.New("message kind must be message or context")
 	}
+	if kind == "message" {
+		if err := ValidateSharedMessage(body); err != nil {
+			return Message{}, err
+		}
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -401,6 +406,12 @@ func (s *Store) Upload(ctx context.Context, input UploadInput) (Message, error) 
 	if err != nil {
 		return Message{}, err
 	}
+	if caption == "" {
+		caption = "Shared " + name
+	}
+	if err := ValidateSharedMessage(caption); err != nil {
+		return Message{}, fmt.Errorf("document caption: %w", err)
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	documentID, err := randomID("doc_")
 	if err != nil {
@@ -440,9 +451,6 @@ func (s *Store) Upload(ctx context.Context, input UploadInput) (Message, error) 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO documents(id,room_id,participant_id,name,media_type,byte_size,sha256,relative_path,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, documentID, room.ID, participantID, name, mediaType, len(content), hex.EncodeToString(digest[:]), relative, now); err != nil {
 		_ = os.Remove(absolute)
 		return Message{}, err
-	}
-	if caption == "" {
-		caption = "Shared " + name
 	}
 	message, err := insertMessage(ctx, tx, room.ID, participantID, handle, display, senderKind, "document", caption, documentID, now)
 	if err != nil {
