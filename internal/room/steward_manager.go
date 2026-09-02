@@ -323,7 +323,7 @@ func shouldWaitForStewardBatch(now, first, last time.Time, quietPeriod, maximumD
 }
 
 func (m *StewardManager) stewardOnboarding(room Room, steward HostedSteward) string {
-	command := m.roomCommand()
+	command := m.roomCommand(steward.AgentKind)
 	return fmt.Sprintf(`You are @%s, the persistent hosted steward for the Crewfold room %q (%s).
 
 Room topic:
@@ -350,10 +350,10 @@ Use the CLI from this directory to inspect and publish shared state:
 Normal deliveries contain only new canonical events. Existing context and document inventories remain in Crewfold; retrieve them only when a delta may make them stale. Public messages should be concise GitHub-flavored Markdown with short paragraphs, headings, or bullets—not dense transcript or log-dump prose. Refer to shared documents by readable filename in public messages, never by an internal document ID. Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then follow these duties.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, steward.AgentKind, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
 }
 
-func (m *StewardManager) roomCommand() string {
+func (m *StewardManager) roomCommand(agentKind string) string {
 	// The Herdr workspace inherits CREWFOLD_SOCKET, so the exact endpoint does
 	// not need to pass through another command-line parser.
-	return hostedAgentExecutable(m.cliPath) + " room"
+	return agentShellExecutable(agentKind, m.cliPath) + " room"
 }
 
 func shellQuote(value string) string {

@@ -2,6 +2,6 @@
 
 package room
 
-func hostedAgentExecutable(path string) string {
+func agentShellExecutable(_ string, path string) string {
 	return shellQuote(path)
 }

@@ -68,9 +68,9 @@ func (r *HerdrStewardRuntime) Ensure(ctx context.Context, steward HostedSteward,
 		return StewardRuntimeState{}, err
 	}
 
-	pathValue := filepath.Dir(r.crewfoldPath)
-	if inherited := os.Getenv("PATH"); inherited != "" {
-		pathValue += string(os.PathListSeparator) + inherited
+	pathValue, err := r.herdrEnvironmentPath(steward.AgentKind)
+	if err != nil {
+		return StewardRuntimeState{}, err
 	}
 	output, err := r.run(ctx, steward.HerdrSession, "workspace", "create",
 		"--cwd", steward.WorkingDirectory,

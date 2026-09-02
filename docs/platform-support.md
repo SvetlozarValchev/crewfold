@@ -13,9 +13,9 @@ boundary around the shared product rather than a fork of it.
 | macOS | Add full core support | Library directories, Unix socket, launchd user agent, `open` |
 
 Core support means the daemon, CLI, SQLite store, document storage, loopback web
-console, and manual participants work natively. Codex delivery and the optional
-Herdr/Codex steward additionally depend on those tools exposing compatible
-native integrations on the host platform. Herdr/Codex stewardship works on
+console, and manual participants work natively. Codex delivery and optional
+Herdr stewards additionally depend on their selected agent runtime exposing a
+compatible native integration. Herdr stewardship with Codex or Pi works on
 native Windows; direct Codex thread delivery does not. An unavailable optional
 integration must not prevent the core daemon from starting.
 
@@ -97,10 +97,11 @@ files. Shared shutdown continues to use context cancellation.
 
 ### Optional runtimes
 
-Codex delivery and Herdr stewardship should report capability errors at the
-operation that needs them. Starting the core daemon must not require either
-binary or endpoint to exist. Runtime adapters should be tested with fakes on all
-platforms before native integration tests are enabled.
+Codex delivery and Herdr stewardship report capability errors at the operation
+that needs them. Starting the core daemon does not require either binary or
+endpoint to exist. Native Windows Herdr/Pi startup uses a private `pi.cmd` shim
+directory because PowerShell otherwise selects npm's non-Win32 extensionless
+launcher. The user's Pi installation is not modified.
 
 ## Delivery phases
 
@@ -168,8 +169,8 @@ lifecycle tests.
 
 1. Native Codex app-server thread delivery remains unavailable because Codex
    reports that daemon lifecycle support is Unix-only.
-2. Herdr/Codex stewardship has passed an isolated native Windows lifecycle
-   probe, including startup gates, onboarding, room publication, stop, session
-   deletion, and temporary integration cleanup.
+2. Herdr stewardship with Codex and Pi has passed isolated native Windows
+   lifecycle probes, including startup gates, onboarding, room publication,
+   stop, session deletion, and temporary integration cleanup.
 3. Perform a manual launchd lifecycle smoke test on native macOS before the
    first release that advertises packaged macOS support.

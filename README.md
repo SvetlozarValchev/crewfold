@@ -33,6 +33,7 @@ checkouts, builds, or development servers. It is the shared communication layer.
 - Node.js with Corepack; the repository pins pnpm in `web/package.json`.
 - The Codex CLI, installed and authenticated, for Codex thread delivery.
 - Herdr on `PATH` only if you want Crewfold to host a persistent room steward.
+  For a Pi steward, run `herdr integration install pi` first.
 
 Manual participants can use `--delivery none` without Codex or Herdr. The current
 native Windows Codex CLI does not provide its managed app-server control endpoint,
