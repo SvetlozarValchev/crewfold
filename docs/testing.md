@@ -33,5 +33,5 @@ Visual review uses a fresh temporary daemon and representative room data. It mus
 check the empty state, populated conversation, participant context, unread labels,
 Codex delivery state, room creation dialog, hosted-steward console and lifecycle
 controls, responsive layout, adjacent-message grouping, and GitHub-flavored
-Markdown tables in both messages and the document reader. Repeated uploads of
-one filename must appear as one document with navigable revisions.
+Markdown tables in both messages and the document reader. Repeated uploads of one
+filename must appear as one document with navigable revisions.

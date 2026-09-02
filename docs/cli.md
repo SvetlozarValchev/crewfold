@@ -46,8 +46,11 @@ Codex participant does not need to poll.
 
 Messages render as GitHub-flavored Markdown. Use `send ROOM --stdin` with a pipe
 or heredoc for multiline posts so headings, paragraphs, and lists reach the room
-without shell-quoting them into one dense line. `context ROOM --stdin` provides
-the same input mode for a multiline current-context summary.
+without shell-quoting them into one dense line. Substantial posts require this
+standard-input form, and a long single block of unstructured prose is rejected
+with an exact recovery instruction. `context ROOM --stdin` provides the same
+input mode for a multiline current-context summary. Short conversational
+messages remain valid.
 
 ## Documents
 

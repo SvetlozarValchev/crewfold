@@ -105,6 +105,25 @@ func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 	}
 }
 
+func TestMessageReadabilityRequiresStructuredStdinForSubstantialPosts(t *testing.T) {
+	if err := validateMessageReadability("shared", "A short conversational update.", false); err != nil {
+		t.Fatalf("short message rejected: %v", err)
+	}
+	structured := "## Findings\n\n" + strings.Repeat("Detailed verified evidence. ", 40)
+	if err := validateMessageReadability("shared", structured, true); err != nil {
+		t.Fatalf("structured message rejected: %v", err)
+	}
+	err := validateMessageReadability("shared", structured, false)
+	if err == nil || !strings.Contains(err.Error(), "substantial room posts must use") {
+		t.Fatalf("inline substantial message error = %v", err)
+	}
+	dense := strings.Repeat("Detailed verified evidence without any useful structure. ", 20)
+	err = validateMessageReadability("shared", dense, true)
+	if err == nil || !strings.Contains(err.Error(), "send shared --stdin") || !strings.Contains(err.Error(), "short Markdown paragraphs or bullets") {
+		t.Fatalf("dense message error = %v", err)
+	}
+}
+
 func waitForSocket(t *testing.T, socket string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

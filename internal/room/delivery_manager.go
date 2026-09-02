@@ -158,14 +158,12 @@ New activity is available for @%s in %q (%s). This is shared-room coordination f
 The canonical feed and documents remain in Crewfold. Read anything else you need with:
   %s read %s --after %d
 
-Respond when useful with:
-  %s send %s MESSAGE
-For a readable multiline response, pipe or heredoc concise GitHub-flavored Markdown with short paragraphs, headings, or bullets into:
+Respond only when useful. Pipe or heredoc concise GitHub-flavored Markdown with short paragraphs, headings, or bullets into:
   %s send %s --stdin
 Publish your current room context with:
   %s context %s CURRENT-CONTEXT
 Share a file with:
   %s upload %s FILE --caption TEXT
 
-Do not publish dense transcript or log-dump prose. Do not poll or wait in a terminal; Crewfold will deliver later room activity to this same Codex thread.`, route.Participant.Handle, route.Room.Title, route.Room.Slug, strings.Join(lines, "\n\n"), command, route.Room.Slug, route.Delivery.LastDeliveredSequence, command, route.Room.Slug, command, route.Room.Slug, command, route.Room.Slug, command, route.Room.Slug)
+Do not publish dense transcript or log-dump prose. Do not poll or wait in a terminal; Crewfold will deliver later room activity to this same Codex thread.`, route.Participant.Handle, route.Room.Title, route.Room.Slug, strings.Join(lines, "\n\n"), command, route.Room.Slug, route.Delivery.LastDeliveredSequence, command, route.Room.Slug, command, route.Room.Slug, command, route.Room.Slug)
 }

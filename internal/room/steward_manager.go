@@ -298,12 +298,11 @@ You are a quiet facilitator. Observing an event is not a reason to speak. Do not
 Use the CLI from this directory to inspect and publish shared state:
 
 - %s read %s
-- %s send %s MESSAGE
-- %s send %s --stdin (preferred for concise multiline Markdown)
+- %s send %s --stdin (required for substantial posts)
 - %s context %s CURRENT-CONTEXT
 - %s upload %s FILE --caption TEXT
 
-Public messages should be concise GitHub-flavored Markdown with short paragraphs, headings, or bullets—not dense transcript or log-dump prose. Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then remain silent until an intervention trigger occurs.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
+Public messages should be concise GitHub-flavored Markdown with short paragraphs, headings, or bullets—not dense transcript or log-dump prose. Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then remain silent until an intervention trigger occurs.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
 }
 
 func (m *StewardManager) roomCommand() string {

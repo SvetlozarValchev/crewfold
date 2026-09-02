@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"crewfold/internal/appdirs"
 	"crewfold/internal/buildinfo"
@@ -343,6 +344,11 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 		}
 		if strings.TrimSpace(body) == "" {
 			return a.fail(errors.New("message text is required"))
+		}
+		if args[0] == "send" {
+			if err := validateMessageReadability(identifier, body, fromStdin); err != nil {
+				return a.fail(err)
+			}
 		}
 		cwd, _ := os.Getwd()
 		kind := "message"
@@ -712,6 +718,48 @@ func pullFlag(args []string, name string) (bool, []string, error) {
 	}
 	return found, remaining, nil
 }
+
+func validateMessageReadability(roomIdentifier, body string, fromStdin bool) error {
+	const structuredMessageThreshold = 320
+	body = strings.TrimSpace(strings.ReplaceAll(body, "\r\n", "\n"))
+	count := utf8.RuneCountInString(body)
+	if count <= structuredMessageThreshold {
+		return nil
+	}
+	if !fromStdin {
+		return fmt.Errorf("message is %d characters; substantial room posts must use `crewfold room send %s --stdin` with short Markdown paragraphs or bullets", count, roomIdentifier)
+	}
+	if hasMarkdownBlocks(body) {
+		return nil
+	}
+	return fmt.Errorf("message is %d characters of unstructured prose; use `crewfold room send %s --stdin` and split it into short Markdown paragraphs or bullets, or upload a document", count, roomIdentifier)
+}
+
+func hasMarkdownBlocks(body string) bool {
+	if strings.Contains(body, "\n\n") {
+		return true
+	}
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(line, "# ") || strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "### ") || strings.HasPrefix(line, "#### ") || strings.HasPrefix(line, "##### ") || strings.HasPrefix(line, "###### ") || strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") || strings.HasPrefix(line, "+ ") || strings.HasPrefix(line, "> ") || strings.HasPrefix(line, "```") || (strings.HasPrefix(line, "|") && strings.Count(line, "|") >= 2) {
+			return true
+		}
+		if dot := strings.Index(line, ". "); dot > 0 {
+			numbered := true
+			for _, character := range line[:dot] {
+				if character < '0' || character > '9' {
+					numbered = false
+					break
+				}
+			}
+			if numbered {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func leading(args []string, name string) (string, []string, error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "--") {
 		return "", nil, fmt.Errorf("%s is required", name)

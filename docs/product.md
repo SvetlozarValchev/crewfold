@@ -53,7 +53,10 @@ policy into the visible steward conversation.
 
 ## Shared information
 
-- **Messages** are append-only entries in room order.
+- **Messages** are append-only entries in room order. Short plain-text replies are
+  valid; substantial posts must arrive through multiline standard input and
+  contain Markdown block structure so the room does not silently become a
+  transcript wall.
 - **Context** is the participant's replaceable latest published status. It is
   shown with that participant rather than repeated in the chronological feed,
   and is not chain-of-thought or automatic transcript capture.
@@ -68,9 +71,9 @@ policy into the visible steward conversation.
 
 There is no separate mailbox, knowledge base, artifact store, thread hierarchy,
 or task handoff. The room feed and its documents are the collaboration surface.
-Messages and text documents render GitHub-flavored Markdown faithfully; the UI
-may group adjacent posts by the same sender for readability but does not rewrite
-their content.
+Messages and text documents render GitHub-flavored Markdown faithfully. The UI
+may group adjacent posts by the same sender for readability, but it does not
+rewrite canonical content.
 
 ## Product boundary
 
