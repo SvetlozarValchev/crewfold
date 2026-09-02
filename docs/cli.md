@@ -84,4 +84,7 @@ json` includes bounded real terminal scrollback. `restart` starts a fresh
 Herdr/Codex session while preserving the room participant and shared history.
 
 `CREWFOLD_SOCKET` selects a daemon socket for any CLI command. An explicit
-`--socket` still takes precedence.
+`--socket` still takes precedence. `crewfold daemon shutdown [--socket PATH]`
+requests graceful shutdown of a directly launched daemon and is intended for
+isolated integration tests; installed services should use `crewfold service
+stop`.

@@ -66,6 +66,13 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	case "version":
 		return a.print(a.info, jsonMode, func() { fmt.Fprintf(a.stdout, "Crewfold %s (%s)\n", a.info.Version, a.info.Commit) })
 	case "daemon":
+		if len(remaining) == 1 && remaining[0] == "shutdown" {
+			var result map[string]string
+			if err := client.Call(ctx, "daemon.shutdown", map[string]any{}, &result); err != nil {
+				return a.fail(err)
+			}
+			return a.print(result, jsonMode, func() { fmt.Fprintln(a.stdout, "Crewfold daemon is stopping") })
+		}
 		return a.daemon(ctx, append([]string{}, args[1:]...), paths)
 	case "service":
 		return a.service(ctx, remaining, paths, jsonMode)
@@ -94,7 +101,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 
 func (a *App) daemon(ctx context.Context, args []string, paths appdirs.Paths) int {
 	if len(args) == 0 || args[0] != "run" {
-		return a.fail(errors.New("usage: crewfold daemon run [--data-dir PATH] [--socket PATH] [--web-address 127.0.0.1:PORT]"))
+		return a.fail(errors.New("usage: crewfold daemon run [--data-dir PATH] [--socket PATH] [--web-address 127.0.0.1:PORT] | crewfold daemon shutdown [--socket PATH]"))
 	}
 	dataDir, args, err := pullOption(args[1:], "data-dir")
 	if err != nil {
@@ -705,7 +712,7 @@ Usage:
   crewfold open
   crewfold status
   crewfold room COMMAND
-  crewfold daemon run
+  crewfold daemon run|shutdown
 
 Run 'crewfold room' for room commands.
 `
@@ -718,7 +725,7 @@ const roomHelp = `Room commands:
   crewfold room send ROOM MESSAGE... | --stdin
   crewfold room context ROOM CURRENT-CONTEXT... | --stdin
   crewfold room read ROOM [--after SEQUENCE]
-  crewfold room watch ROOM [--after SEQUENCE]
+  crewfold room watch ROOM [--after SEQUENCE] [--no-ack]
   crewfold room ack ROOM [--through SEQUENCE]
   crewfold room upload ROOM FILE [--caption TEXT]
   crewfold room document ROOM DOCUMENT [--to PATH]
