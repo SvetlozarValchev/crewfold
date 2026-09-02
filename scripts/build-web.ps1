@@ -8,9 +8,14 @@ $repositoryRoot = Split-Path -Parent $scriptDirectory
 
 Push-Location $repositoryRoot
 try {
-    Invoke-CrewfoldCommand -Command "corepack" -Arguments @("pnpm", "--dir", "web", "install", "--frozen-lockfile")
-    Invoke-CrewfoldCommand -Command "corepack" -Arguments @("pnpm", "--dir", "web", "run", "check")
-    Invoke-CrewfoldCommand -Command "corepack" -Arguments @("pnpm", "--dir", "web", "run", "build")
+    Push-Location "web"
+    try {
+        Invoke-CrewfoldCommand -Command "corepack" -Arguments @("pnpm", "install", "--frozen-lockfile")
+        Invoke-CrewfoldCommand -Command "corepack" -Arguments @("pnpm", "run", "check")
+        Invoke-CrewfoldCommand -Command "corepack" -Arguments @("pnpm", "run", "build")
+    } finally {
+        Pop-Location
+    }
 
     $sourceHash = Get-CrewfoldWebSourceHash -RepositoryRoot $repositoryRoot
     $hashPath = Join-Path $repositoryRoot "web\dist\.source-sha256"

@@ -21,7 +21,10 @@ then
 fi
 
 printf 'TypeScript room console\n'
-corepack pnpm --dir web run check
+(
+  cd web
+  corepack pnpm run check
+)
 
 printf 'go vet ./...\n'
 $go_runner vet ./...

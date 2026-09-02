@@ -35,7 +35,12 @@ try {
     }
 
     Write-Output "TypeScript room console"
-    Invoke-CrewfoldCommand -Command "corepack" -Arguments @("pnpm", "--dir", "web", "run", "check")
+    Push-Location "web"
+    try {
+        Invoke-CrewfoldCommand -Command "corepack" -Arguments @("pnpm", "run", "check")
+    } finally {
+        Pop-Location
+    }
 
     Write-Output "go vet ./..."
     Invoke-CrewfoldCommand -Command $goBinary -Arguments @("vet", "./...")
