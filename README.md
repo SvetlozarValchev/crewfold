@@ -28,17 +28,19 @@ checkouts, builds, or development servers. It is the shared communication layer.
 
 ## Requirements
 
-- Linux with a systemd user session, or Windows 10/11.
+- Linux with a systemd user session, macOS, or Windows 10/11.
 - Go 1.26.5 (or the version recorded in [`.go-version`](.go-version)).
 - Node.js with Corepack; the repository pins pnpm in `web/package.json`.
 - The Codex CLI, installed and authenticated, for Codex thread delivery.
 - Herdr on `PATH` only if you want Crewfold to host a persistent room steward.
 
-Manual participants can use `--delivery none` without Codex or Herdr. Native
-Windows compatibility for Codex delivery and Herdr stewardship is still being
-validated independently of the core room service.
+Manual participants can use `--delivery none` without Codex or Herdr. The current
+native Windows Codex CLI does not provide its managed app-server control endpoint,
+so external Codex thread delivery remains unavailable there; use
+`--delivery none`. Native Herdr stewardship is still being validated independently of the
+core room service.
 
-## Install from source on Linux
+## Install from source on Linux or macOS
 
 ```sh
 git clone https://github.com/SvetlozarValchev/crewfold.git
@@ -47,7 +49,8 @@ cd crewfold
 corepack enable
 ./scripts/build-web.sh
 ./scripts/go.sh build -o ./bin/crewfold ./cmd/crewfold
-install -Dm755 ./bin/crewfold "$HOME/.local/bin/crewfold"
+mkdir -p "$HOME/.local/bin"
+install -m755 ./bin/crewfold "$HOME/.local/bin/crewfold"
 
 crewfold service install
 crewfold service status
@@ -55,7 +58,8 @@ crewfold open
 ```
 
 Make sure `$HOME/.local/bin` is on `PATH`. `service install` writes and starts a
-systemd user unit using the installed executable.
+systemd user unit on Linux or a launchd user agent on macOS using the installed
+executable.
 
 ## Install from source on Windows
 
@@ -198,6 +202,11 @@ On Linux, Crewfold stores canonical room state under
 `~/.local/state/crewfold/` and writes its user unit beneath
 `~/.config/systemd/user/`. It respects `XDG_STATE_HOME`, `XDG_CONFIG_HOME`, and
 `XDG_RUNTIME_DIR`.
+
+On macOS, state and configuration default to
+`~/Library/Application Support/Crewfold`, transient runtime data uses
+`~/Library/Caches/Crewfold`, and the launch agent is written beneath
+`~/Library/LaunchAgents`.
 
 On Windows, state defaults to `%LOCALAPPDATA%\crewfold`, configuration defaults
 to `%APPDATA%\crewfold`, and the service launcher is written to the owner's

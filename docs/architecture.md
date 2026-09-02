@@ -27,6 +27,7 @@ format.
 | Method | Effect |
 | --- | --- |
 | `status` | Read daemon health and room count |
+| `daemon.shutdown` | Request an owner-local graceful shutdown for service lifecycle management |
 | `room.create`, `room.list`, `room.snapshot`, `room.archive` | Manage rooms |
 | `participant.join`, `participant.ack` | Bind a working directory and optional Codex delivery target; advance its read cursor |
 | `message.send` | Append a message or publish current context |

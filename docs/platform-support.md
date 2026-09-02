@@ -10,7 +10,7 @@ boundary around the shared product rather than a fork of it.
 | --- | --- | --- |
 | Linux | Preserve full support | XDG directories, Unix socket, systemd user service, `xdg-open` |
 | Windows | Add full core support | Known Folders, named pipe, per-user Startup launcher, default browser |
-| macOS | Keep the architecture ready and compile-tested | Library directories, Unix socket, launchd user agent, `open` |
+| macOS | Add full core support | Library directories, Unix socket, launchd user agent, `open` |
 
 Core support means the daemon, CLI, SQLite store, document storage, loopback web
 console, and manual participants work natively. Codex delivery and the optional
@@ -132,7 +132,7 @@ platforms before native integration tests are enabled.
 - Implement non-elevated Windows install/start/stop/status behavior with a
   transparent Startup-folder command launcher.
 - Add isolated lifecycle tests and manual reboot/login validation.
-- Add launchd when macOS moves from compile-ready to runtime-supported.
+- Add launchd user-agent lifecycle support.
 
 ### Phase 4: external integrations
 
@@ -168,5 +168,5 @@ lifecycle tests.
 1. Confirm the endpoint exposed by native Codex app-server on Windows.
 2. Confirm whether Herdr supports native Windows sessions; if not, keep steward
    support explicitly optional while preserving all core features.
-3. Decide whether macOS is part of the first release gate or only guaranteed not
-   to be blocked by the abstractions.
+3. Perform a manual launchd lifecycle smoke test on native macOS before the
+   first release that advertises packaged macOS support.
