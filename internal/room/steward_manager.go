@@ -351,5 +351,11 @@ Normal deliveries contain only new canonical events. Existing context and docume
 }
 
 func (m *StewardManager) roomCommand() string {
-	return fmt.Sprintf("%q room --socket %q", m.cliPath, m.socketPath)
+	// The Herdr workspace inherits CREWFOLD_SOCKET, so the exact endpoint does
+	// not need to pass through another command-line parser.
+	return hostedAgentExecutable(m.cliPath) + " room"
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

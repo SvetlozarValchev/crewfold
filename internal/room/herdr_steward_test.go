@@ -19,3 +19,13 @@ func TestStewardCodexArgumentsResumeInitializedThread(t *testing.T) {
 		t.Fatalf("initialized steward does not resume its prior thread: %#v", resuming)
 	}
 }
+
+func TestHasPendingCodexPasteUsesOnlyRecentTerminal(t *testing.T) {
+	t.Parallel()
+	if !hasPendingCodexPaste("ready\n› task [Pasted Content 1200 chars]") {
+		t.Fatal("pending paste was not detected")
+	}
+	if hasPendingCodexPaste("[Pasted Content 1200 chars]" + string(make([]byte, 5000))) {
+		t.Fatal("stale paste marker was detected")
+	}
+}

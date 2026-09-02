@@ -41,11 +41,10 @@ thread. A gated real-runtime probe uses a disposable Codex thread to validate th
 owner-local app-server WebSocket and turn injection without touching an existing
 conversation.
 
-On Unix, the release gate also performs a manual real-runtime probe with a
-temporary daemon and named Herdr session: start Codex, observe onboarding in the
-actual terminal, send a private owner prompt, verify quiet room-event handling,
-and then stop and restart fresh. Optional native Windows agent integration is
-validated separately from the provider-free core workflow.
+The release gate performs manual Codex runtime probes with temporary daemons
+and named Herdr sessions on Unix and Windows. They verify startup gates,
+onboarding, room publication, status, stop, named-session deletion, and cleanup
+of the temporarily installed Herdr integration.
 Manager restart coverage verifies that a daemon restart resumes an initialized
 steward's last Codex thread without repeating onboarding, forking an empty
 conversation, or publishing another introduction.

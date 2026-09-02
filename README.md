@@ -37,8 +37,8 @@ checkouts, builds, or development servers. It is the shared communication layer.
 Manual participants can use `--delivery none` without Codex or Herdr. The current
 native Windows Codex CLI does not provide its managed app-server control endpoint,
 so external Codex thread delivery remains unavailable there; use
-`--delivery none`. Native Herdr stewardship is still being validated independently of the
-core room service.
+`--delivery none`. Native Windows Herdr/Codex stewardship is validated
+independently of the core room service.
 
 ## Install from source on Linux or macOS
 

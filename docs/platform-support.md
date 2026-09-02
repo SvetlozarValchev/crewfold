@@ -14,9 +14,10 @@ boundary around the shared product rather than a fork of it.
 
 Core support means the daemon, CLI, SQLite store, document storage, loopback web
 console, and manual participants work natively. Codex delivery and the optional
-Herdr steward additionally depend on those tools exposing compatible native
-integrations on the host platform. An unavailable optional integration must not
-prevent the core daemon from starting.
+Herdr/Codex steward additionally depend on those tools exposing compatible
+native integrations on the host platform. Herdr/Codex stewardship works on
+native Windows; direct Codex thread delivery does not. An unavailable optional
+integration must not prevent the core daemon from starting.
 
 ## Design principles
 
@@ -163,10 +164,12 @@ Windows IPC and service tests run from native Windows. Cross-compilation is a
 useful early check but does not replace native transport, ACL, browser, or
 lifecycle tests.
 
-## Initial decisions still required
+## Remaining validation
 
-1. Confirm the endpoint exposed by native Codex app-server on Windows.
-2. Confirm whether Herdr supports native Windows sessions; if not, keep steward
-   support explicitly optional while preserving all core features.
+1. Native Codex app-server thread delivery remains unavailable because Codex
+   reports that daemon lifecycle support is Unix-only.
+2. Herdr/Codex stewardship has passed an isolated native Windows lifecycle
+   probe, including startup gates, onboarding, room publication, stop, session
+   deletion, and temporary integration cleanup.
 3. Perform a manual launchd lifecycle smoke test on native macOS before the
    first release that advertises packaged macOS support.

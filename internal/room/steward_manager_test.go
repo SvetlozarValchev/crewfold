@@ -100,7 +100,7 @@ func TestHostedStewardManagerStartsAndRelaysRoomActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 3*time.Second, func() bool { return runtime.promptCount() >= 1 })
-	if first := runtime.prompt(0); !strings.Contains(first, `"/opt/crewfold" room --socket "/run/crewfold.sock" read relay`) || !strings.Contains(first, "send relay --stdin") || !strings.Contains(first, "GitHub-flavored Markdown") || !strings.Contains(first, "never by an internal document ID") {
+	if first := runtime.prompt(0); !strings.Contains(first, `'/opt/crewfold' room read relay`) || !strings.Contains(first, "send relay --stdin") || !strings.Contains(first, "GitHub-flavored Markdown") || !strings.Contains(first, "never by an internal document ID") {
 		t.Fatalf("onboarding does not target exact daemon: %s", first)
 	}
 	initialState, err := store.HostedSteward(ctx, "relay")
@@ -323,6 +323,13 @@ func TestHostedStewardDeliveryAdvancesOnlyAfterCompletedTurn(t *testing.T) {
 	}
 	if readerAfter.LastReadSequence < message.Sequence || readerAfter.UnreadCount != 0 {
 		t.Fatalf("completed turn did not acknowledge its delta: %#v", readerAfter)
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	t.Parallel()
+	if got, want := shellQuote(`C:\Owner's Tools\crewfold.exe`), `'C:\Owner'"'"'s Tools\crewfold.exe'`; got != want {
+		t.Fatalf("shellQuote() = %q, want %q", got, want)
 	}
 }
 
