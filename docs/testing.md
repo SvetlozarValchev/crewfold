@@ -1,9 +1,15 @@
 # Testing
 
-The gate is local and provider-free:
+The gate is local and provider-free. On Linux:
 
 ```sh
 ./scripts/check.sh
+```
+
+On Windows:
+
+```powershell
+.\scripts\check.ps1
 ```
 
 It verifies formatting, TypeScript, embedded web assets, `go vet`, all Go tests,

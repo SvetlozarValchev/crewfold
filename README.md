@@ -21,22 +21,24 @@ only when addressed or when coordination genuinely needs intervention.
 - Immutable document uploads grouped as navigable filename revisions.
 - GitHub-flavored Markdown for messages and documents, including tables.
 - An optional, owner-visible Herdr/Codex steward session.
-- An owner-local daemon, Unix socket, SQLite store, and loopback-only web UI.
+- An owner-local daemon, native local IPC, SQLite store, and loopback-only web UI.
 
 Crewfold does **not** own external agent processes, repositories, tasks,
 checkouts, builds, or development servers. It is the shared communication layer.
 
 ## Requirements
 
-- Linux with a systemd user session.
+- Linux with a systemd user session, or Windows 10/11.
 - Go 1.26.5 (or the version recorded in [`.go-version`](.go-version)).
 - Node.js with Corepack; the repository pins pnpm in `web/package.json`.
 - The Codex CLI, installed and authenticated, for Codex thread delivery.
 - Herdr on `PATH` only if you want Crewfold to host a persistent room steward.
 
-Manual participants can use `--delivery none` without Codex or Herdr.
+Manual participants can use `--delivery none` without Codex or Herdr. Native
+Windows compatibility for Codex delivery and Herdr stewardship is still being
+validated independently of the core room service.
 
-## Install from source
+## Install from source on Linux
 
 ```sh
 git clone https://github.com/SvetlozarValchev/crewfold.git
@@ -53,12 +55,36 @@ crewfold open
 ```
 
 Make sure `$HOME/.local/bin` is on `PATH`. `service install` writes and starts a
-systemd user unit using the installed executable. `crewfold open` mints a
-one-use, owner-local browser URL; the browser never reads SQLite, Codex state, or
-runtime sockets directly.
+systemd user unit using the installed executable.
 
-To update an existing source install, pull the repository, repeat the build and
-`install` commands, then run `crewfold service install` again.
+## Install from source on Windows
+
+From PowerShell:
+
+```powershell
+git clone https://github.com/SvetlozarValchev/crewfold.git
+Set-Location crewfold
+
+corepack enable
+.\scripts\build-web.ps1
+$installDir = Join-Path $env:LOCALAPPDATA "Programs\Crewfold"
+New-Item -ItemType Directory -Force $installDir | Out-Null
+go build -o (Join-Path $installDir "crewfold.exe") .\cmd\crewfold
+
+& (Join-Path $installDir "crewfold.exe") service install
+& (Join-Path $installDir "crewfold.exe") service status
+& (Join-Path $installDir "crewfold.exe") open
+```
+
+Add the install directory to your user `PATH` to invoke `crewfold` directly.
+`service install` writes a per-user Startup launcher and starts the daemon
+without elevation. The launcher uses the exact installed executable path, so run
+`service install` again after moving it.
+
+On either platform, `crewfold open` mints a one-use, owner-local browser URL; the
+browser never reads SQLite, Codex state, or local IPC directly. To update an
+existing source install, pull the repository, repeat the build and install
+commands, then run `crewfold service install` again.
 
 ## First room
 
@@ -155,20 +181,28 @@ See the [CLI reference](docs/cli.md), [product contract](docs/product.md), and
 ./scripts/check.sh
 ```
 
-`scripts/check.sh` verifies generated web assets, TypeScript, Go formatting,
+On Windows, the native PowerShell equivalents are:
+
+```powershell
+.\scripts\build-web.ps1
+.\scripts\check.ps1
+```
+
+The check scripts verify generated web assets, TypeScript, Go formatting,
 `go vet`, unit/integration tests, the race detector when available, and a
 production binary.
 
 ## Local data
 
-By default Crewfold stores canonical room state and uploaded document bytes in:
+On Linux, Crewfold stores canonical room state under
+`~/.local/state/crewfold/` and writes its user unit beneath
+`~/.config/systemd/user/`. It respects `XDG_STATE_HOME`, `XDG_CONFIG_HOME`, and
+`XDG_RUNTIME_DIR`.
 
-```text
-~/.local/state/crewfold/
-```
-
-The user unit is written under `~/.config/systemd/user/`. Crewfold respects the
-standard `XDG_STATE_HOME`, `XDG_CONFIG_HOME`, and `XDG_RUNTIME_DIR` overrides.
+On Windows, state defaults to `%LOCALAPPDATA%\crewfold`, configuration defaults
+to `%APPDATA%\crewfold`, and the service launcher is written to the owner's
+Startup folder. Local CLI traffic uses an owner-only named pipe rather than a
+filesystem socket.
 
 ## License
 
