@@ -3,6 +3,7 @@ package roomcli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,24 @@ import (
 	"crewfold/internal/localipc"
 	"crewfold/internal/room"
 )
+
+func TestWriteWatchedMessageAsJSONLine(t *testing.T) {
+	message := room.Message{ID: "msg_test", Sequence: 7, SenderHandle: "peer", Body: "ready"}
+	var output bytes.Buffer
+	if err := writeWatchedMessage(&output, message, true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(output.String(), "\n") != 1 || !strings.HasSuffix(output.String(), "\n") {
+		t.Fatalf("output is not one JSON line: %q", output.String())
+	}
+	var decoded room.Message
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ID != message.ID || decoded.Sequence != message.Sequence || decoded.Body != message.Body {
+		t.Fatalf("decoded message = %#v", decoded)
+	}
+}
 
 type availableCodexRuntime struct{}
 

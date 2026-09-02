@@ -572,9 +572,6 @@ func (a *App) roomSteward(ctx context.Context, client room.Client, args []string
 }
 
 func (a *App) watch(ctx context.Context, client room.Client, identifier string, after int64, jsonMode bool) int {
-	if jsonMode {
-		return a.fail(errors.New("room watch is a streaming text command; use room read --output json for automation"))
-	}
 	ticker := time.NewTicker(750 * time.Millisecond)
 	defer ticker.Stop()
 	cwd, _ := os.Getwd()
@@ -584,7 +581,9 @@ func (a *App) watch(ctx context.Context, client room.Client, identifier string, 
 			return a.fail(err)
 		}
 		for _, message := range snapshot.Messages {
-			printMessage(a.stdout, message)
+			if err := writeWatchedMessage(a.stdout, message, jsonMode); err != nil {
+				return a.fail(err)
+			}
 			if message.Sequence > after {
 				after = message.Sequence
 			}
@@ -599,6 +598,14 @@ func (a *App) watch(ctx context.Context, client room.Client, identifier string, 
 		case <-ticker.C:
 		}
 	}
+}
+
+func writeWatchedMessage(output io.Writer, message room.Message, jsonMode bool) error {
+	if jsonMode {
+		return json.NewEncoder(output).Encode(message)
+	}
+	printMessage(output, message)
+	return nil
 }
 
 func printSnapshot(output io.Writer, snapshot room.Snapshot, messages bool) {
