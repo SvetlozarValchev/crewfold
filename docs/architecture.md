@@ -3,7 +3,7 @@
 Crewfold is one Go binary with three current components:
 
 ```text
-external Codex -- CLI -- owner Unix socket -- room store (SQLite + document files)
+external Codex -- CLI -- owner-local IPC -- room store (SQLite + document files)
       ^                               |
       +------ Codex app-server -------+ room-delivery manager
                                       |
@@ -35,9 +35,10 @@ format.
 | `steward.stop`, `steward.restart` | Stop it or create a fresh named Herdr/Codex session while preserving room identity |
 | `web.bootstrap` | Mint a one-use owner browser URL |
 
-Unix requests and responses are newline-delimited JSON. Browser RPC uses the same
-request envelope after the one-time URL is exchanged for an in-memory session.
-Unknown input fields are rejected.
+Local requests and responses are newline-delimited JSON over an owner-only Unix
+socket on Linux and macOS or an owner-only named pipe on Windows. Browser RPC
+uses the same request envelope after the one-time URL is exchanged for an
+in-memory session. Unknown input fields are rejected.
 
 ## Runtime boundary
 

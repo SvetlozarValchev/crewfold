@@ -9,7 +9,7 @@ crewfold status
 ```
 
 `service install` writes and starts the owner systemd user service. `open` mints a
-one-time browser URL from the private Unix socket.
+one-time browser URL from the private owner-local endpoint.
 
 ## Rooms
 
@@ -74,7 +74,7 @@ crewfold room steward restart ROOM
 ```
 
 With no `--cwd`, Crewfold creates a private room workspace and runs the hosted
-steward non-interactively with local access to Crewfold's Unix socket. A custom
+steward non-interactively with local access to Crewfold's owner-local endpoint. A custom
 directory retains Codex's normal trust and approval prompts. `status --output
 json` includes bounded real terminal scrollback. `restart` starts a fresh
 Herdr/Codex session while preserving the room participant and shared history.
