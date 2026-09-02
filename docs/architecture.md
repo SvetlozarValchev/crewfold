@@ -56,12 +56,14 @@ facts.
 
 The optional hosted steward uses a concrete Herdr CLI adapter. Crewfold creates a
 private room workspace, starts Codex with preserved terminal scrollback, and
-polls its native status and terminal output. New room events are batched into its
-same persistent session only when it is idle. Delivery explicitly defines a quiet
-facilitator policy: direct participant exchanges default to no room action, while
-explicit mentions, synthesis requests, material contradictions, unresolvable
-blockers, and consequential owner decisions may trigger one public action. The
-steward publishes with an exact Crewfold binary and socket command, so another
+polls its native status and terminal output. Onboarding establishes the quiet
+facilitator policy once. New room events are then batched into the same persistent
+session only when it is idle using a compact delta containing the room, explicit-
+address flag, exact events, and a reference to the standing policy. Direct
+participant exchanges default to no room action, while explicit mentions,
+synthesis requests, material contradictions, unresolvable blockers, and
+consequential owner decisions may trigger one public action. The steward
+publishes with an exact Crewfold binary and socket command, so another
 installed daemon cannot receive it accidentally. Stop and restart delete the
 named Herdr session; the room participant and shared history remain canonical.
 Restarting only the Crewfold daemon preserves the initialized steward session

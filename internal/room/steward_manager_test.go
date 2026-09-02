@@ -83,8 +83,18 @@ func TestHostedStewardManagerStartsAndRelaysRoomActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 3*time.Second, func() bool { return runtime.promptCount() >= 2 })
-	if second := runtime.prompt(1); !strings.Contains(second, "The interface contracts disagree.") || !strings.Contains(second, "shared-room records") || !strings.Contains(second, "NO_ROOM_ACTION") || !strings.Contains(second, "send relay --stdin") || !strings.Contains(second, "Do not answer or repeat a message directed to another participant") || !strings.Contains(second, "at most one public action") {
+	if second := runtime.prompt(1); !strings.Contains(second, "[CREWFOLD ROOM EVENTS]") || !strings.Contains(second, "Room: relay") || !strings.Contains(second, "Explicitly addressed: no") || !strings.Contains(second, "The interface contracts disagree.") || !strings.Contains(second, "standing steward policy from onboarding") || !strings.Contains(second, "NO_ROOM_ACTION") {
 		t.Fatalf("room relay prompt lost the exact event: %s", second)
+	}
+	if second := runtime.prompt(1); strings.Contains(second, "Intervene only when") || strings.Contains(second, "Do not answer or repeat") || strings.Contains(second, "send relay --stdin") {
+		t.Fatalf("room relay repeated the onboarding policy: %s", second)
+	}
+	if _, err := store.Send(ctx, SendInput{Room: "relay", WorkingDirectory: external, Body: "@relay-steward please arbitrate this contradiction."}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool { return runtime.promptCount() >= 3 })
+	if third := runtime.prompt(2); !strings.Contains(third, "Explicitly addressed: yes") || !strings.Contains(third, "@relay-steward please arbitrate this contradiction.") {
+		t.Fatalf("addressed relay prompt = %s", third)
 	}
 	console, err := manager.Status(ctx, "relay")
 	if err != nil || console.Output != "real terminal" || console.Steward.ParticipantID != steward.ParticipantID {

@@ -47,7 +47,9 @@ participant question is not a reason to publish. It intervenes only when it is
 addressed, synthesis is requested, a material contradiction or blocker needs
 arbitration, or a consequential owner decision is required. One intervention
 produces at most one public action; it must not echo the same synthesis as both a
-message and a context update.
+message and a context update. The full policy is established once at onboarding;
+ordinary event delivery adds only a compact event delta and does not repeat that
+policy into the visible steward conversation.
 
 ## Shared information
 

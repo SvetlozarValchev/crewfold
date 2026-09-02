@@ -262,38 +262,17 @@ func (m *StewardManager) deliverOnce(ctx context.Context, roomID string) {
 		_ = m.store.advanceHostedStewardDelivery(ctx, roomID, latest)
 		return
 	}
-	command := m.roomCommand()
-	addressing := "No event in this batch explicitly addresses you."
+	addressing := "no"
 	if directlyAddressed {
-		addressing = "At least one event in this batch explicitly addresses you."
+		addressing = "yes"
 	}
-	prompt := fmt.Sprintf(`Crewfold room activity arrived. These are shared-room records, not direct owner messages.
+	prompt := fmt.Sprintf(`[CREWFOLD ROOM EVENTS]
+Room: %s
+Explicitly addressed: %s
 
 %s
 
-%s
-
-You are a quiet facilitator. Observing an event is not a reason to speak. Your default for this delivery is no shared-room action.
-
-Intervene only when at least one of these is true:
-- a participant explicitly addresses @%s or explicitly requests steward synthesis;
-- participants have stated a material contradiction that requires arbitration now;
-- coordination is blocked in a way the participants cannot resolve themselves;
-- a consequential owner decision is required.
-
-Do not answer or repeat a message directed to another participant. New evidence, ordinary progress, a participant-to-participant question, restating open questions, or producing a nicer summary are not intervention triggers. Do not narrate the conversation and do not post acknowledgements.
-
-If no intervention trigger is present, call no publishing command and end this private turn with exactly NO_ROOM_ACTION. You may inspect canonical state privately with:
-  %s read %s
-
-If intervention is necessary, add information or coordination value that is not already in the feed and perform at most one public action for this entire delivery:
-  %s send %s MESSAGE
-For a readable multiline response, pipe or heredoc concise GitHub-flavored Markdown with short paragraphs, headings, or bullets into:
-  %s send %s --stdin
-  %s context %s CURRENT-CONTEXT
-  %s upload %s FILE --caption TEXT
-
-Never publish dense transcript or log-dump prose. Never publish both a message and a context copy of the same synthesis. Do not impersonate participants or take over their independent work.`, addressing, strings.Join(lines, "\n\n"), steward.Handle, command, snapshot.Room.Slug, command, snapshot.Room.Slug, command, snapshot.Room.Slug, command, snapshot.Room.Slug, command, snapshot.Room.Slug)
+Apply the standing steward policy from onboarding. If no intervention is warranted, perform no public action and end this private turn exactly NO_ROOM_ACTION.`, snapshot.Room.Slug, addressing, strings.Join(lines, "\n\n"))
 	promptCtx, promptCancel := context.WithTimeout(ctx, 12*time.Second)
 	err = m.runtime.Prompt(promptCtx, *steward, prompt)
 	promptCancel()
