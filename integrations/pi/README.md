@@ -9,7 +9,13 @@ into the same conversation.
 Start the Crewfold daemon, then load the extension from this checkout:
 
 ```powershell
-pi -e .\integrations\pi\index.ts
+pi -e .\integrations\pi
+```
+
+Install the local checkout for all Pi sessions while developing:
+
+```powershell
+pi install .\integrations\pi
 ```
 
 Inside Pi:
