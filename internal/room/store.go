@@ -44,7 +44,8 @@ func Open(ctx context.Context, dataDir string) (*Store, error) {
 	if err := os.Chmod(root, 0o700); err != nil {
 		return nil, fmt.Errorf("secure data directory: %w", err)
 	}
-	location := &url.URL{Scheme: "file", Path: filepath.Join(root, databaseFilename)}
+	databasePath := filepath.ToSlash(filepath.Join(root, databaseFilename))
+	location := &url.URL{Scheme: "file", Opaque: databasePath}
 	query := location.Query()
 	query.Set("mode", "rwc")
 	query.Add("_pragma", "busy_timeout(5000)")
