@@ -19,6 +19,7 @@ import (
 
 	"crewfold/internal/appdirs"
 	"crewfold/internal/buildinfo"
+	"crewfold/internal/desktop"
 	"crewfold/internal/room"
 )
 
@@ -199,9 +200,7 @@ func (a *App) open(ctx context.Context, client room.Client, jsonMode bool) int {
 		return a.fail(errors.New("daemon returned an invalid local web URL"))
 	}
 	if !jsonMode {
-		command := exec.CommandContext(ctx, "xdg-open", bootstrap.URL)
-		command.Stdout, command.Stderr = io.Discard, io.Discard
-		if err := command.Run(); err != nil {
+		if err := desktop.OpenURL(ctx, bootstrap.URL); err != nil {
 			return a.fail(err)
 		}
 	}
