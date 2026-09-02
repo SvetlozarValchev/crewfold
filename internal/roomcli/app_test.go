@@ -16,6 +16,17 @@ import (
 	"crewfold/internal/room"
 )
 
+func TestPullFlag(t *testing.T) {
+	t.Parallel()
+	found, remaining, err := pullFlag([]string{"--after", "7", "--no-ack"}, "no-ack")
+	if err != nil || !found || len(remaining) != 2 || remaining[0] != "--after" || remaining[1] != "7" {
+		t.Fatalf("pullFlag() = %v, %#v, %v", found, remaining, err)
+	}
+	if _, _, err := pullFlag([]string{"--no-ack", "--no-ack"}, "no-ack"); err == nil {
+		t.Fatal("expected duplicate flag error")
+	}
+}
+
 func TestWriteWatchedMessageAsJSONLine(t *testing.T) {
 	message := room.Message{ID: "msg_test", Sequence: 7, SenderHandle: "peer", Body: "ready"}
 	var output bytes.Buffer

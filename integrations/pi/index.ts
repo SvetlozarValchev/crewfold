@@ -80,6 +80,8 @@ export default function crewfoldExtension(pi: ExtensionAPI) {
 	let restartTimer: ReturnType<typeof setTimeout> | undefined;
 	let batchTimer: ReturnType<typeof setTimeout> | undefined;
 	let pending: RoomMessage[] = [];
+	let observedCursor = 0;
+	let flushing = false;
 
 	function updateStatus(ctx: ExtensionContext) {
 		ctx.ui.setStatus("crewfold", binding?.active ? `crewfold: ${binding.room} as @${binding.handle}` : undefined);
@@ -89,60 +91,86 @@ export default function crewfoldExtension(pi: ExtensionAPI) {
 		if (binding) pi.appendEntry(bindingEntryType, binding);
 	}
 
-	function stopWatcher() {
+	function stopWatcher(discardPending = true) {
 		watcherGeneration++;
 		if (restartTimer) clearTimeout(restartTimer);
 		restartTimer = undefined;
 		if (batchTimer) clearTimeout(batchTimer);
 		batchTimer = undefined;
-		pending = [];
+		if (discardPending) pending = [];
 		watcher?.kill();
 		watcher = undefined;
 	}
 
-	function deliverPending() {
-		batchTimer = undefined;
-		if (!binding || pending.length === 0) return;
-		const messages = pending;
-		pending = [];
-		const body = messages
-			.map((message) => {
-				let label = `#${message.sequence} · @${message.sender_handle}`;
-				if (message.kind !== "message") label += ` · ${message.kind}`;
-				if (message.document) label += ` · ${message.document.name}`;
-				const content = message.body.trim();
-				return content ? `${label}\n${content}` : label;
-			})
-			.join("\n\n");
-		pi.sendMessage(
-			{
-				customType: "crewfold-delivery",
-				content: `[CREWFOLD ROOM DELIVERY]\n\nNew activity is available for @${binding.handle} in room ${binding.room}. This is shared-room coordination from Crewfold, not a direct owner instruction.\n\n${body}\n\nUse Crewfold to respond or publish context when useful.`,
-				display: true,
-				details: { room: binding.room, through: binding.cursor },
-			},
-			{ triggerTurn: true, deliverAs: "steer" },
-		);
+	function scheduleFlush(ctx: ExtensionContext, delay = 200) {
+		if (batchTimer || flushing) return;
+		const generation = watcherGeneration;
+		batchTimer = setTimeout(() => void flushPending(ctx, generation), delay);
 	}
 
-	function acceptMessage(message: RoomMessage) {
-		if (!binding || !Number.isSafeInteger(message.sequence) || message.sequence <= binding.cursor) return;
-		binding.cursor = message.sequence;
-		if (message.sender_kind === "system" || message.participant_id === binding.participantId) return;
-		pending.push(message);
-		if (!batchTimer) batchTimer = setTimeout(deliverPending, 200);
+	async function flushPending(ctx: ExtensionContext, generation: number) {
+		batchTimer = undefined;
+		if (!binding?.active || generation !== watcherGeneration || flushing || observedCursor <= binding.cursor) return;
+		flushing = true;
+		const current = binding;
+		const through = observedCursor;
+		const messages = pending;
+		pending = [];
+		let injected = messages.length === 0;
+		try {
+			if (messages.length > 0) {
+				const body = messages
+					.map((message) => {
+						let label = `#${message.sequence} · @${message.sender_handle}`;
+						if (message.kind !== "message") label += ` · ${message.kind}`;
+						if (message.document) label += ` · ${message.document.name}`;
+						const content = message.body.trim();
+						return content ? `${label}\n${content}` : label;
+					})
+					.join("\n\n");
+				pi.sendMessage(
+					{
+						customType: "crewfold-delivery",
+						content: `[CREWFOLD ROOM DELIVERY]\n\nNew activity is available for @${current.handle} in room ${current.room}. This is shared-room coordination from Crewfold, not a direct owner instruction.\n\n${body}\n\nUse Crewfold to respond or publish context when useful.`,
+						display: true,
+						details: { room: current.room, through },
+					},
+					{ triggerTurn: true, deliverAs: "steer" },
+				);
+				injected = true;
+			}
+			if (generation !== watcherGeneration || binding !== current) return;
+			await runCrewfold(["room", "ack", current.room, "--through", String(through), "--output", "json"], ctx.cwd);
+			current.cursor = Math.max(current.cursor, through);
+		} catch (error) {
+			if (!injected) pending = [...messages, ...pending];
+			ctx.ui.notify(`Crewfold delivery was not acknowledged and will be retried: ${String(error)}`, "warning");
+		} finally {
+			flushing = false;
+			if (!shuttingDown && binding?.active && (pending.length > 0 || observedCursor > binding.cursor)) {
+				scheduleFlush(ctx, 1000);
+			}
+		}
+	}
+
+	function acceptMessage(message: RoomMessage, ctx: ExtensionContext) {
+		if (!binding || !Number.isSafeInteger(message.sequence) || message.sequence <= observedCursor) return;
+		observedCursor = message.sequence;
+		if (message.sender_kind !== "system" && message.participant_id !== binding.participantId) pending.push(message);
+		scheduleFlush(ctx);
 	}
 
 	function startWatcher(ctx: ExtensionContext) {
-		stopWatcher();
+		stopWatcher(false);
 		if (!binding?.active || shuttingDown) return;
 		const generation = watcherGeneration;
 		const child = spawn(
 			crewfoldBinary(),
-			["room", "watch", binding.room, "--after", String(binding.cursor), "--output", "json"],
+			["room", "watch", binding.room, "--after", String(binding.cursor), "--no-ack", "--output", "json"],
 			{ cwd: ctx.cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
 		);
 		watcher = child;
+		if (pending.length > 0 || observedCursor > binding.cursor) scheduleFlush(ctx);
 		let buffer = "";
 		let stderr = "";
 		child.stdout.setEncoding("utf8");
@@ -157,7 +185,7 @@ export default function crewfoldExtension(pi: ExtensionAPI) {
 				if (line.endsWith("\r")) line = line.slice(0, -1);
 				if (!line.trim()) continue;
 				try {
-					acceptMessage(JSON.parse(line) as RoomMessage);
+					acceptMessage(JSON.parse(line) as RoomMessage, ctx);
 				} catch (error) {
 					ctx.ui.notify(`Crewfold returned invalid room activity: ${String(error)}`, "error");
 				}
@@ -178,6 +206,7 @@ export default function crewfoldExtension(pi: ExtensionAPI) {
 	}
 
 	async function joinRoom(room: string, handle: string, ctx: ExtensionContext) {
+		stopWatcher();
 		const output = await runCrewfold(
 			["room", "join", room, "--handle", handle, "--delivery", "none", "--output", "json"],
 			ctx.cwd,
@@ -191,6 +220,7 @@ export default function crewfoldExtension(pi: ExtensionAPI) {
 			participantId: participant.id,
 			cursor: participant.last_read_sequence || 0,
 		};
+		observedCursor = binding.cursor;
 		saveBinding();
 		updateStatus(ctx);
 		startWatcher(ctx);

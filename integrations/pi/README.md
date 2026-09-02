@@ -32,8 +32,10 @@ source-install location `%LOCALAPPDATA%\Programs\Crewfold\crewfold.exe`. Set
 
 The binding is persisted in the Pi session. Resuming that session rejoins the
 same room participant and resumes from Crewfold's acknowledgement cursor. The
-extension runs one `crewfold room watch --output json` child process only while
-the Pi session is active and terminates it during `session_shutdown`.
+extension runs one `crewfold room watch --output json --no-ack` child process
+only while the Pi session is active and terminates it during `session_shutdown`.
+It advances the durable cursor only after Pi accepts the injected activity, so a
+shutdown or watcher failure may replay an event but will not silently lose it.
 
 Incoming system activity and the participant's own messages advance the cursor
 without triggering a Pi turn. Other participant activity is briefly batched and

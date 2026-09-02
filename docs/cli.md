@@ -49,6 +49,8 @@ rebinds a manual participant without an injection target.
 directory is a participant. `watch` remains a manual/debugging stream; a bound
 Codex participant does not need to poll. With `--output json`, `watch` emits one
 message object per line for local integrations such as the Pi extension.
+`watch --no-ack` leaves the participant cursor unchanged so an integration can
+acknowledge explicitly only after it has accepted each delivery.
 
 Messages render as GitHub-flavored Markdown. Use `send ROOM --stdin` with a pipe
 or heredoc for multiline posts so headings, paragraphs, and lists reach the room

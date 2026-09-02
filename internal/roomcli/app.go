@@ -372,6 +372,10 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 		if err != nil {
 			return a.fail(err)
 		}
+		noAck, rest, err := pullFlag(rest, "no-ack")
+		if err != nil {
+			return a.fail(err)
+		}
 		if len(rest) != 0 {
 			return a.fail(errors.New("unexpected arguments"))
 		}
@@ -382,7 +386,7 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 				return a.fail(err)
 			}
 		}
-		return a.watch(ctx, client, identifier, after, jsonMode)
+		return a.watch(ctx, client, identifier, after, jsonMode, !noAck)
 	case "ack":
 		identifier, rest, err := leading(args[1:], "room")
 		if err != nil {
@@ -575,7 +579,7 @@ func (a *App) roomSteward(ctx context.Context, client room.Client, args []string
 	}
 }
 
-func (a *App) watch(ctx context.Context, client room.Client, identifier string, after int64, jsonMode bool) int {
+func (a *App) watch(ctx context.Context, client room.Client, identifier string, after int64, jsonMode, acknowledge bool) int {
 	ticker := time.NewTicker(750 * time.Millisecond)
 	defer ticker.Stop()
 	cwd, _ := os.Getwd()
@@ -592,7 +596,7 @@ func (a *App) watch(ctx context.Context, client room.Client, identifier string, 
 				after = message.Sequence
 			}
 		}
-		if after > 0 {
+		if acknowledge && after > 0 {
 			var ignored room.Participant
 			_ = client.Call(ctx, "participant.ack", room.AckInput{Room: identifier, WorkingDirectory: cwd, Through: after}, &ignored)
 		}
