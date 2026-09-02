@@ -9,7 +9,7 @@ boundary around the shared product rather than a fork of it.
 | Platform | Initial support target | Native integration |
 | --- | --- | --- |
 | Linux | Preserve full support | XDG directories, Unix socket, systemd user service, `xdg-open` |
-| Windows | Add full core support | Known Folders, named pipe, per-user service/startup integration, default browser |
+| Windows | Add full core support | Known Folders, named pipe, per-user Startup launcher, default browser |
 | macOS | Keep the architecture ready and compile-tested | Library directories, Unix socket, launchd user agent, `open` |
 
 Core support means the daemon, CLI, SQLite store, document storage, loopback web
@@ -77,8 +77,7 @@ the same as Crewfold IPC.
 Service commands should delegate to a platform implementation:
 
 - Linux: current systemd user unit;
-- Windows: a per-user background-start mechanism selected after validating
-  lifecycle and log behavior; elevation should not be required;
+- Windows: a per-user Startup-folder launcher that requires no elevation;
 - macOS: launchd user agent.
 
 The shared CLI owns action validation and output shape. Platform implementations
@@ -130,7 +129,8 @@ platforms before native integration tests are enabled.
 ### Phase 3: service lifecycle
 
 - Extract the existing systemd implementation.
-- Implement non-elevated Windows install/start/stop/status behavior.
+- Implement non-elevated Windows install/start/stop/status behavior with a
+  transparent Startup-folder command launcher.
 - Add isolated lifecycle tests and manual reboot/login validation.
 - Add launchd when macOS moves from compile-ready to runtime-supported.
 
@@ -165,11 +165,8 @@ lifecycle tests.
 
 ## Initial decisions still required
 
-1. Choose the non-elevated Windows background-service mechanism after a small
-   lifecycle prototype (Startup task, Task Scheduler, or another owner-local
-   mechanism).
-2. Confirm the endpoint exposed by native Codex app-server on Windows.
-3. Confirm whether Herdr supports native Windows sessions; if not, keep steward
+1. Confirm the endpoint exposed by native Codex app-server on Windows.
+2. Confirm whether Herdr supports native Windows sessions; if not, keep steward
    support explicitly optional while preserving all core features.
-4. Decide whether macOS is part of the first release gate or only guaranteed not
+3. Decide whether macOS is part of the first release gate or only guaranteed not
    to be blocked by the abstractions.

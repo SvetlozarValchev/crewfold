@@ -8,8 +8,11 @@ crewfold open
 crewfold status
 ```
 
-`service install` writes and starts the owner systemd user service. `open` mints a
-one-time browser URL from the private owner-local endpoint.
+`service install` configures and starts the owner's background daemon. Linux uses
+a systemd user service. Windows writes a transparent command launcher to the
+owner's Startup folder and starts the daemon in its own console; no elevation is
+required. `stop` stops the current daemon but retains login startup. `open` mints
+a one-time browser URL from the private owner-local endpoint.
 
 ## Rooms
 
