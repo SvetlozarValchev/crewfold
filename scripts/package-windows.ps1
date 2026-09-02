@@ -35,9 +35,14 @@ try {
     New-Item -ItemType Directory -Path $packageRoot | Out-Null
 
     $goVersion = (Get-Content -LiteralPath (Join-Path $repositoryRoot ".go-version") -TotalCount 1).Trim()
-    $goBinary = Join-Path $HOME ".local\share\crewfold-dev\toolchains\go$goVersion\bin\go.exe"
+    $goCommand = Get-Command go.exe -ErrorAction SilentlyContinue
+    if ($null -ne $goCommand) {
+        $goBinary = $goCommand.Source
+    } else {
+        $goBinary = Join-Path $HOME ".local\share\crewfold-dev\toolchains\go$goVersion\bin\go.exe"
+    }
     if (-not (Test-Path -LiteralPath $goBinary -PathType Leaf)) {
-        throw "pinned Go toolchain is unavailable: $goBinary"
+        throw "Go $goVersion is required but no Go executable was found"
     }
 
     $previousCGO = $env:CGO_ENABLED
