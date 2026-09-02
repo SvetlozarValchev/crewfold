@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS hosted_stewards (
   herdr_workspace_id TEXT NOT NULL DEFAULT '',
   herdr_pane_id TEXT NOT NULL DEFAULT '',
   agent_name TEXT NOT NULL UNIQUE,
+  agent_kind TEXT NOT NULL DEFAULT 'codex' CHECK(agent_kind IN ('codex','pi')),
   desired_state TEXT NOT NULL CHECK(desired_state IN ('running','stopped')),
   status TEXT NOT NULL CHECK(status IN ('starting','running','stopped','failed')),
   agent_status TEXT NOT NULL DEFAULT '',
@@ -167,7 +168,37 @@ CREATE INDEX IF NOT EXISTS participant_deliveries_status ON participant_deliveri
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize room database: %w", err)
 	}
+	if err := s.ensureHostedStewardAgentKind(ctx); err != nil {
+		return fmt.Errorf("migrate room database: %w", err)
+	}
 	return nil
+}
+
+func (s *Store) ensureHostedStewardAgentKind(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(hosted_stewards)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		if name == "agent_kind" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE hosted_stewards ADD COLUMN agent_kind TEXT NOT NULL DEFAULT 'codex' CHECK(agent_kind IN ('codex','pi'))`)
+	return err
 }
 
 func (s *Store) CreateRoom(ctx context.Context, input CreateRoomInput) (Snapshot, error) {
@@ -603,6 +634,13 @@ func (s *Store) ConfigureHostedSteward(ctx context.Context, input StartStewardIn
 	if role == "" {
 		role = "Quietly maintain the room's shared context and documents as material conclusions change. Speak only when addressed or when an unresolved contradiction, blocker, or consequential owner decision requires intervention."
 	}
+	agentKind := strings.ToLower(strings.TrimSpace(input.AgentKind))
+	if agentKind == "" {
+		agentKind = "codex"
+	}
+	if agentKind != "codex" && agentKind != "pi" {
+		return HostedSteward{}, errors.New("steward runtime must be codex or pi")
+	}
 	managedDirectory := strings.TrimSpace(input.WorkingDirectory) == ""
 	workingDirectory := input.WorkingDirectory
 	if managedDirectory {
@@ -670,9 +708,9 @@ func (s *Store) ConfigureHostedSteward(ctx context.Context, input StartStewardIn
 	if managedDirectory {
 		managed = 1
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO hosted_stewards(room_id,participant_id,role,working_directory,managed_working_directory,herdr_session,agent_name,desired_state,status,updated_at)
-VALUES(?,?,?,?,?,?,?,'running','starting',?)
-ON CONFLICT(room_id) DO UPDATE SET participant_id=excluded.participant_id,role=excluded.role,working_directory=excluded.working_directory,managed_working_directory=excluded.managed_working_directory,herdr_session=excluded.herdr_session,herdr_workspace_id='',herdr_pane_id='',agent_name=excluded.agent_name,desired_state='running',status='starting',agent_status='',last_delivered_sequence=0,error='',initialized_at=NULL,started_at=NULL,updated_at=excluded.updated_at`, room.ID, participantID, role, workingDirectory, managed, herdrSession, agentName, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO hosted_stewards(room_id,participant_id,role,working_directory,managed_working_directory,herdr_session,agent_name,agent_kind,desired_state,status,updated_at)
+VALUES(?,?,?,?,?,?,?,?,'running','starting',?)
+ON CONFLICT(room_id) DO UPDATE SET participant_id=excluded.participant_id,role=excluded.role,working_directory=excluded.working_directory,managed_working_directory=excluded.managed_working_directory,herdr_session=excluded.herdr_session,herdr_workspace_id='',herdr_pane_id='',agent_name=excluded.agent_name,agent_kind=excluded.agent_kind,desired_state='running',status='starting',agent_status='',last_delivered_sequence=0,error='',initialized_at=NULL,started_at=NULL,updated_at=excluded.updated_at`, room.ID, participantID, role, workingDirectory, managed, herdrSession, agentName, agentKind, now); err != nil {
 		return HostedSteward{}, fmt.Errorf("configure hosted steward: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE rooms SET steward_id=?,updated_at=? WHERE id=?`, participantID, now, room.ID); err != nil {
@@ -698,8 +736,8 @@ func (s *Store) HostedSteward(ctx context.Context, roomIdentifier string) (*Host
 	}
 	var steward HostedSteward
 	var managed int
-	err = s.db.QueryRowContext(ctx, `SELECT h.room_id,h.participant_id,p.handle,p.display_name,h.role,h.working_directory,h.managed_working_directory,h.herdr_session,h.herdr_workspace_id,h.herdr_pane_id,h.agent_name,h.desired_state,h.status,h.agent_status,h.last_delivered_sequence,h.error,COALESCE(h.initialized_at,''),COALESCE(h.started_at,''),h.updated_at
-FROM hosted_stewards h JOIN participants p ON p.id=h.participant_id WHERE h.room_id=?`, room.ID).Scan(&steward.RoomID, &steward.ParticipantID, &steward.Handle, &steward.DisplayName, &steward.Role, &steward.WorkingDirectory, &managed, &steward.HerdrSession, &steward.HerdrWorkspaceID, &steward.HerdrPaneID, &steward.AgentName, &steward.DesiredState, &steward.Status, &steward.AgentStatus, &steward.LastDeliveredSequence, &steward.Error, &steward.InitializedAt, &steward.StartedAt, &steward.UpdatedAt)
+	err = s.db.QueryRowContext(ctx, `SELECT h.room_id,h.participant_id,p.handle,p.display_name,h.role,h.working_directory,h.managed_working_directory,h.herdr_session,h.herdr_workspace_id,h.herdr_pane_id,h.agent_name,h.agent_kind,h.desired_state,h.status,h.agent_status,h.last_delivered_sequence,h.error,COALESCE(h.initialized_at,''),COALESCE(h.started_at,''),h.updated_at
+FROM hosted_stewards h JOIN participants p ON p.id=h.participant_id WHERE h.room_id=?`, room.ID).Scan(&steward.RoomID, &steward.ParticipantID, &steward.Handle, &steward.DisplayName, &steward.Role, &steward.WorkingDirectory, &managed, &steward.HerdrSession, &steward.HerdrWorkspaceID, &steward.HerdrPaneID, &steward.AgentName, &steward.AgentKind, &steward.DesiredState, &steward.Status, &steward.AgentStatus, &steward.LastDeliveredSequence, &steward.Error, &steward.InitializedAt, &steward.StartedAt, &steward.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrHostedStewardNotConfigured
 	}

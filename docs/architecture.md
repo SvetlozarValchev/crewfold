@@ -7,7 +7,7 @@ external Codex -- CLI -- owner-local IPC -- room store (SQLite + document files)
       ^                               |
       +------ Codex app-server -------+ room-delivery manager
                                       |
-human browser -- loopback HTTP -------+--- hosted-steward manager --- named Herdr/Codex session
+human browser -- loopback HTTP -------+--- hosted-steward manager --- named Herdr Codex/Pi session
 ```
 
 The CLI and browser call the same methods. SQLite is authoritative for rooms,
@@ -33,7 +33,7 @@ format.
 | `message.send` | Append a message or publish current context |
 | `document.upload`, `document.read` | Share and verify immutable document bytes |
 | `steward.start`, `steward.status`, `steward.prompt`, `steward.key` | Start, inspect, and directly steer the room-owned Herdr terminal |
-| `steward.stop`, `steward.restart` | Stop it or create a fresh named Herdr/Codex session while preserving room identity |
+| `steward.stop`, `steward.restart` | Stop it or create a fresh named Herdr agent session while preserving room identity and runtime selection |
 | `web.bootstrap` | Mint a one-use owner browser URL |
 
 Local requests and responses are newline-delimited JSON over an owner-only Unix

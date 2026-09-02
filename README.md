@@ -8,9 +8,9 @@ current context, and share versioned Markdown documents. The web console gives
 you one readable conversation instead of another orchestration harness.
 
 Crewfold can notify a joined Codex thread when room activity arrives. A room may
-also host one optional persistent Codex steward in Herdr. The steward observes
-quietly, curates material changes into shared context or documents, and speaks
-only when addressed or when coordination genuinely needs intervention.
+also host one optional persistent Codex or Pi steward in Herdr. The steward
+observes quietly, curates material changes into shared context or documents,
+and speaks only when addressed or when coordination genuinely needs intervention.
 
 ## What it provides
 
@@ -20,7 +20,7 @@ only when addressed or when coordination genuinely needs intervention.
 - Replaceable participant context shown outside the chronological conversation.
 - Immutable document uploads grouped as navigable filename revisions.
 - GitHub-flavored Markdown for messages and documents, including tables.
-- An optional, owner-visible Herdr/Codex steward session.
+- An optional, owner-visible Herdr steward using Codex or Pi.
 - An owner-local daemon, native local IPC, SQLite store, and loopback-only web UI.
 
 Crewfold does **not** own external agent processes, repositories, tasks,
@@ -150,13 +150,16 @@ Start and inspect the steward from the web console, or use:
 ```sh
 crewfold room steward start release-readiness \
   --handle release-steward \
+  --runtime pi \
   --role "Curate material contract changes; speak only when addressed or coordination is blocked."
 
 crewfold room steward status release-readiness
 crewfold room steward prompt release-readiness "Summarize only the unresolved disagreement."
 ```
 
-Crewfold owns this one named Herdr/Codex session. Direct owner prompts remain in
+Crewfold owns this one named Herdr agent session. Codex remains the default;
+pass `--runtime pi` to use Pi, including on native Windows. Direct owner prompts
+remain in
 its private terminal unless the steward deliberately publishes one useful room
 action. Normal participant-to-participant discussion does not trigger steward
 commentary, but material corrections and resolved conclusions can still replace

@@ -103,7 +103,10 @@ func (r *HerdrStewardRuntime) Ensure(ctx context.Context, steward HostedSteward,
 			case <-time.After(250 * time.Millisecond):
 			}
 		}
-		agentArguments := append([]string{"agent", "start", steward.AgentName, "--kind", "codex", "--pane", created.Result.RootPane.PaneID, "--timeout", "60000", "--"}, stewardCodexArguments(steward)...)
+		agentArguments, argumentsErr := stewardAgentStartArguments(steward, created.Result.RootPane.PaneID)
+		if argumentsErr != nil {
+			return StewardRuntimeState{}, argumentsErr
+		}
 		_, startErr = r.run(ctx, steward.HerdrSession, agentArguments...)
 		if startErr == nil {
 			break
@@ -118,17 +121,17 @@ func (r *HerdrStewardRuntime) Ensure(ctx context.Context, steward HostedSteward,
 		}
 	}
 	if startErr != nil {
-		return StewardRuntimeState{}, fmt.Errorf("start Codex in Herdr: %w", startErr)
+		return StewardRuntimeState{}, fmt.Errorf("start %s in Herdr: %w", steward.AgentKind, startErr)
 	}
 
 	state, err := r.waitForAgent(ctx, steward, 20*time.Second)
 	if err != nil {
 		return StewardRuntimeState{}, err
 	}
-	if blockedDuringStart && !(steward.ManagedWorkingDirectory && hasCodexTrustPrompt(state.Output)) {
-		return StewardRuntimeState{}, fmt.Errorf("Codex is blocked during startup: %s", boundedRuntimeError([]byte(state.Output)))
+	if blockedDuringStart && !(steward.AgentKind == "codex" && steward.ManagedWorkingDirectory && hasCodexTrustPrompt(state.Output)) {
+		return StewardRuntimeState{}, fmt.Errorf("%s is blocked during startup: %s", steward.AgentKind, boundedRuntimeError([]byte(state.Output)))
 	}
-	if steward.ManagedWorkingDirectory && hasCodexTrustPrompt(state.Output) {
+	if steward.AgentKind == "codex" && steward.ManagedWorkingDirectory && hasCodexTrustPrompt(state.Output) {
 		if err := r.SendKey(ctx, steward, "enter"); err != nil {
 			return StewardRuntimeState{}, fmt.Errorf("accept managed steward workspace: %w", err)
 		}
@@ -138,6 +141,22 @@ func (r *HerdrStewardRuntime) Ensure(ctx context.Context, steward HostedSteward,
 		return StewardRuntimeState{}, err
 	}
 	return state, nil
+}
+
+func stewardAgentStartArguments(steward HostedSteward, paneID string) ([]string, error) {
+	arguments := []string{"agent", "start", steward.AgentName, "--kind", steward.AgentKind, "--pane", paneID, "--timeout", "60000"}
+	switch steward.AgentKind {
+	case "codex":
+		arguments = append(arguments, "--")
+		arguments = append(arguments, stewardCodexArguments(steward)...)
+	case "pi":
+		if steward.ManagedWorkingDirectory {
+			arguments = append(arguments, "--", "--approve")
+		}
+	default:
+		return nil, fmt.Errorf("unsupported steward runtime %q", steward.AgentKind)
+	}
+	return arguments, nil
 }
 
 func stewardCodexArguments(steward HostedSteward) []string {
@@ -188,7 +207,7 @@ func (r *HerdrStewardRuntime) Inspect(ctx context.Context, steward HostedSteward
 
 func (r *HerdrStewardRuntime) Prompt(ctx context.Context, steward HostedSteward, text string) error {
 	_, err := r.run(ctx, steward.HerdrSession, "agent", "prompt", steward.AgentName, text, "--wait", "--until", "working", "--timeout", "8000")
-	if !needsCodexPasteRecovery() {
+	if steward.AgentKind != "codex" || !needsCodexPasteRecovery() {
 		return err
 	}
 	select {

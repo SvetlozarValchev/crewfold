@@ -515,11 +515,15 @@ func (a *App) roomSteward(ctx context.Context, client room.Client, args []string
 		if err != nil {
 			return a.fail(err)
 		}
+		runtime, rest, err := pullOption(rest, "runtime")
+		if err != nil {
+			return a.fail(err)
+		}
 		if len(rest) != 0 || handle == "" {
-			return a.fail(errors.New("usage: crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH]"))
+			return a.fail(errors.New("usage: crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH] [--runtime codex|pi]"))
 		}
 		var steward room.HostedSteward
-		if err := client.Call(ctx, "steward.start", room.StartStewardInput{Room: identifier, Handle: handle, DisplayName: name, Role: role, WorkingDirectory: cwd}, &steward); err != nil {
+		if err := client.Call(ctx, "steward.start", room.StartStewardInput{Room: identifier, Handle: handle, DisplayName: name, Role: role, WorkingDirectory: cwd, AgentKind: runtime}, &steward); err != nil {
 			return a.fail(err)
 		}
 		return a.print(steward, jsonMode, func() {
@@ -736,7 +740,7 @@ const roomHelp = `Room commands:
   crewfold room ack ROOM [--through SEQUENCE]
   crewfold room upload ROOM FILE [--caption TEXT]
   crewfold room document ROOM DOCUMENT [--to PATH]
-  crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH]
+  crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH] [--runtime codex|pi]
   crewfold room steward status ROOM
   crewfold room steward prompt ROOM MESSAGE...
   crewfold room steward key ROOM enter|esc|ctrl+c

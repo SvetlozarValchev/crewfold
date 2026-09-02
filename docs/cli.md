@@ -71,7 +71,7 @@ commands accept `--output json`.
 ## Hosted room steward
 
 ```text
-crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH]
+crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH] [--runtime codex|pi]
 crewfold room steward status ROOM
 crewfold room steward prompt ROOM MESSAGE...
 crewfold room steward key ROOM enter|esc|ctrl+c
@@ -80,10 +80,12 @@ crewfold room steward restart ROOM
 ```
 
 With no `--cwd`, Crewfold creates a private room workspace and runs the hosted
-steward non-interactively with local access to Crewfold's owner-local endpoint. A custom
-directory retains Codex's normal trust and approval prompts. `status --output
-json` includes bounded real terminal scrollback. `restart` starts a fresh
-Herdr/Codex session while preserving the room participant and shared history.
+steward non-interactively with local access to Crewfold's owner-local endpoint.
+The default runtime remains Codex; select Pi with `--runtime pi`. A custom
+directory retains the selected agent's normal trust and approval prompts.
+`status --output json` includes bounded real terminal scrollback. `restart`
+starts a fresh Herdr agent session while preserving the room participant,
+runtime selection, and shared history.
 
 `CREWFOLD_SOCKET` selects a daemon socket for any CLI command. An explicit
 `--socket` still takes precedence. `crewfold daemon shutdown [--socket PATH]`
