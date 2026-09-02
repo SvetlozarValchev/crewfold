@@ -10,7 +10,6 @@ import (
 	"mime"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,6 +20,7 @@ import (
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/desktop"
 	"crewfold/internal/room"
+	daemonservice "crewfold/internal/service"
 )
 
 type App struct {
@@ -130,60 +130,21 @@ func (a *App) service(ctx context.Context, args []string, paths appdirs.Paths, j
 	if len(args) != 1 {
 		return a.fail(errors.New("usage: crewfold service install|start|stop|status"))
 	}
-	action := args[0]
-	unit := "crewfold.service"
-	if action == "install" {
-		executable, err := os.Executable()
-		if err != nil {
-			return a.fail(err)
-		}
-		for _, directory := range []string{paths.StateDir, paths.RuntimeDir, filepath.Dir(paths.UnitPath)} {
-			if err := os.MkdirAll(directory, 0o700); err != nil {
-				return a.fail(err)
-			}
-			if err := os.Chmod(directory, 0o700); err != nil {
-				return a.fail(err)
-			}
-		}
-		content := `[Unit]
-Description=Crewfold shared AI rooms
-After=default.target
-
-[Service]
-Type=simple
-ExecStart=` + systemdQuote(executable) + ` daemon run --data-dir ` + systemdQuote(paths.DataDir) + ` --socket ` + systemdQuote(paths.SocketPath) + ` --web-address 127.0.0.1:0
-Restart=on-failure
-RestartSec=2s
-UMask=0077
-NoNewPrivileges=true
-RuntimeDirectory=crewfold
-RuntimeDirectoryMode=0700
-
-[Install]
-WantedBy=default.target
-`
-		if err := writeAtomic(paths.UnitPath, []byte(content)); err != nil {
-			return a.fail(err)
-		}
-		for _, command := range [][]string{{"daemon-reload"}, {"enable", unit}, {"restart", unit}} {
-			if output, err := exec.CommandContext(ctx, "systemctl", append([]string{"--user"}, command...)...).CombinedOutput(); err != nil {
-				return a.fail(fmt.Errorf("systemctl %s: %s: %w", strings.Join(command, " "), strings.TrimSpace(string(output)), err))
-			}
-		}
-	} else if action == "start" || action == "stop" {
-		if output, err := exec.CommandContext(ctx, "systemctl", "--user", action, unit).CombinedOutput(); err != nil {
-			return a.fail(fmt.Errorf("systemctl %s: %s: %w", action, strings.TrimSpace(string(output)), err))
-		}
-	} else if action != "status" {
-		return a.fail(errors.New("usage: crewfold service install|start|stop|status"))
-	}
-	output, err := exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=ActiveState", "--value", unit).CombinedOutput()
+	executable, err := os.Executable()
 	if err != nil {
-		return a.fail(fmt.Errorf("inspect service: %s: %w", strings.TrimSpace(string(output)), err))
+		return a.fail(err)
 	}
-	result := map[string]any{"action": action, "status": strings.TrimSpace(string(output)), "data_dir": paths.DataDir, "socket": paths.SocketPath, "unit": paths.UnitPath}
+	result, err := daemonservice.Manage(ctx, args[0], daemonservice.Config{
+		Executable:     executable,
+		DataDir:        paths.DataDir,
+		Endpoint:       paths.SocketPath,
+		DefinitionPath: paths.UnitPath,
+	})
+	if err != nil {
+		return a.fail(err)
+	}
 	return a.print(result, jsonMode, func() {
-		fmt.Fprintf(a.stdout, "Crewfold service: %s\ndata: %s\nsocket: %s\n", result["status"], paths.DataDir, paths.SocketPath)
+		fmt.Fprintf(a.stdout, "Crewfold service: %s\ndata: %s\nsocket: %s\n", result.Status, result.DataDir, result.Endpoint)
 	})
 }
 
@@ -736,15 +697,6 @@ func leading(args []string, name string) (string, []string, error) {
 	}
 	return args[0], args[1:], nil
 }
-
-func writeAtomic(path string, content []byte) error {
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, content, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temporary, path)
-}
-func systemdQuote(value string) string { return strings.ReplaceAll(strconv.Quote(value), "%", "%%") }
 
 const rootHelp = `Crewfold is a shared room for independently run AI sessions.
 
