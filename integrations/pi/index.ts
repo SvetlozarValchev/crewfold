@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 const bindingEntryType = "crewfold-binding";
 
@@ -216,6 +217,93 @@ export default function crewfoldExtension(pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
 		stopWatcher();
+	});
+
+	function activeBinding(): Binding {
+		if (!binding?.active) throw new Error("This Pi session is not connected to a Crewfold room. Use /crewfold-join ROOM HANDLE first.");
+		return binding;
+	}
+
+	pi.registerTool({
+		name: "crewfold_send",
+		label: "Send to Crewfold",
+		description: "Send a message to the Crewfold room connected to this Pi session.",
+		promptSnippet: "Send a coordination message to the connected Crewfold room",
+		promptGuidelines: ["Use crewfold_send when a useful update or answer should be shared with room participants."],
+		parameters: Type.Object({
+			message: Type.String({ description: "Message to send to the room", minLength: 1 }),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const current = activeBinding();
+			const output = await runCrewfold(["room", "send", current.room, params.message, "--output", "json"], ctx.cwd);
+			const message = JSON.parse(output) as RoomMessage;
+			return {
+				content: [{ type: "text", text: `Sent Crewfold message #${message.sequence} as @${message.sender_handle}.` }],
+				details: message,
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "crewfold_context",
+		label: "Publish Crewfold Context",
+		description: "Publish this Pi session's current work context to its connected Crewfold room.",
+		promptSnippet: "Publish current work context to the connected Crewfold room",
+		promptGuidelines: ["Use crewfold_context when the current task, files, blockers, or next step changes materially."],
+		parameters: Type.Object({
+			context: Type.String({ description: "Concise current task, files, blockers, and next step", minLength: 1 }),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const current = activeBinding();
+			const output = await runCrewfold(["room", "context", current.room, params.context, "--output", "json"], ctx.cwd);
+			const message = JSON.parse(output) as RoomMessage;
+			return {
+				content: [{ type: "text", text: `Published Crewfold context in #${message.sequence}.` }],
+				details: message,
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "crewfold_read",
+		label: "Read Crewfold Room",
+		description: "Read canonical messages, participants, documents, and room state from the connected Crewfold room.",
+		promptSnippet: "Read canonical state from the connected Crewfold room",
+		parameters: Type.Object({
+			after: Type.Optional(Type.Integer({ description: "Return messages after this sequence; defaults to zero", minimum: 0 })),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const current = activeBinding();
+			const arguments_ = ["room", "read", current.room, "--output", "json"];
+			if (params.after !== undefined) arguments_.push("--after", String(params.after));
+			const output = await runCrewfold(arguments_, ctx.cwd);
+			return {
+				content: [{ type: "text", text: output.trim() }],
+				details: { room: current.room, after: params.after ?? 0 },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "crewfold_upload",
+		label: "Upload to Crewfold",
+		description: "Upload a local file to the connected Crewfold room.",
+		promptSnippet: "Upload a local file to the connected Crewfold room",
+		parameters: Type.Object({
+			path: Type.String({ description: "Absolute path or path relative to the Pi working directory", minLength: 1 }),
+			caption: Type.Optional(Type.String({ description: "Optional document caption" })),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const current = activeBinding();
+			const arguments_ = ["room", "upload", current.room, params.path, "--output", "json"];
+			if (params.caption) arguments_.push("--caption", params.caption);
+			const output = await runCrewfold(arguments_, ctx.cwd);
+			const message = JSON.parse(output) as RoomMessage;
+			return {
+				content: [{ type: "text", text: `Uploaded ${message.document?.name ?? params.path} in Crewfold message #${message.sequence}.` }],
+				details: message,
+			};
+		},
 	});
 
 	pi.registerCommand("crewfold-join", {

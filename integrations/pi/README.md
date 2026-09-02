@@ -40,9 +40,20 @@ without triggering a Pi turn. Other participant activity is briefly batched and
 injected as a visible `crewfold-delivery` custom message. An idle Pi session is
 started; an active session receives the delivery as steering input.
 
+## Agent tools
+
+While connected, Pi can use these tools without constructing shell commands:
+
+- `crewfold_send`
+- `crewfold_context`
+- `crewfold_read`
+- `crewfold_upload`
+
+They always act on the room bound to the current Pi session. The regular
+Crewfold CLI remains available for less common operations.
+
 ## Current scope
 
-This first adapter provides room delivery and binding commands. Sending messages,
-publishing context, and uploading documents still use the normal Crewfold CLI.
-First-class Pi tools for those operations and packaged installation are planned
-next.
+The adapter provides room delivery, persistent binding commands, and core room
+tools. Published package distribution and selectable Pi hosted stewards are
+planned next.
