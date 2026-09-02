@@ -1,1 +1,0 @@
-{"id":"cli:request","result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p1","shell_pid":100,"foreground_process_group_id":101,"foreground_processes":[{"pid":101,"name":"crewfold","argv":["crewfold","__herdr-pane-supervisor"]}]}}}

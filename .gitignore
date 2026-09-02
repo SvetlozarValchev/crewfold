@@ -8,17 +8,13 @@
 *.test
 *.out
 
-# JavaScript tooling used by the future web console and SDK
+# JavaScript tooling used by the room console
 node_modules/
 .pnpm-store/
 *.tsbuildinfo
 
-# Local Crewfold runtime state
-.crewfold/runtime/
-.crewfold/cache/
-.crewfold/*.db
-.crewfold/*.db-shm
-.crewfold/*.db-wal
+# Local room state used by development commands
+.crewfold/
 
 # Local configuration and credentials
 .env

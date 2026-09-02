@@ -1,4 +1,4 @@
-// Package webui embeds the production workbench assets into the Crewfold
+// Package webui embeds the production room console assets into the Crewfold
 // binary. Node is a pinned build-time dependency only.
 package webui
 

@@ -1,6 +1,0 @@
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:crewfold:schema:mcp:acknowledge-context-delta-output:v1",
-  "title": "Crewfold acknowledge context delta structured output v1",
-  "$ref": "../../domain/v1/context-delta-acknowledgement.schema.json"
-}

@@ -1,1 +1,0 @@
-{"id":"cli:request","result":{"type":"workspace_created","workspace":{"workspace_id":"w1","label":"crewfold-run_fixture"},"tab":{"tab_id":"w1:t1","workspace_id":"w1"},"root_pane":{"pane_id":"w1:p1","terminal_id":"term-fixture","workspace_id":"w1","tab_id":"w1:t1"}}}

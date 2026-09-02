@@ -20,4 +20,4 @@ source_hash=$(
 )
 printf '%s\n' "$source_hash" >web/dist/.source-sha256
 
-printf 'Crewfold workbench assets built: %s\n' "$source_hash"
+printf 'Crewfold room console assets built: %s\n' "$source_hash"

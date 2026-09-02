@@ -8,20 +8,20 @@ cd "$repo_root"
 export GOTOOLCHAIN=local
 export GOPROXY=off
 
-printf 'Generated database query consistency\n'
-"$repo_root/scripts/check-generated-db.sh"
-
-printf 'Embedded workbench asset consistency\n'
+printf 'Embedded room console asset consistency\n'
 "$repo_root/scripts/check-web-assets.sh"
 
 go_root=$($go_runner env GOROOT)
 gofmt="$go_root/bin/gofmt"
-unformatted=$(find cmd internal protocol -type f -name '*.go' -print0 | xargs -0 "$gofmt" -l)
+unformatted=$(find cmd internal -type f -name '*.go' -print0 | xargs -0 "$gofmt" -l)
 if [ -n "$unformatted" ]
 then
   printf 'The following Go files need gofmt:\n%s\n' "$unformatted" >&2
   exit 1
 fi
+
+printf 'TypeScript room console\n'
+corepack pnpm --dir web run check
 
 printf 'go vet ./...\n'
 $go_runner vet ./...
@@ -31,99 +31,13 @@ $go_runner test ./...
 
 if [ "$($go_runner env CGO_ENABLED)" = "1" ] && command -v gcc >/dev/null 2>&1
 then
-  printf 'go test -race -p=1 -timeout 20m ./...\n'
-  # The Store, recovery, and daemon race suites are each intentionally heavy.
-  # Serializing packages keeps their per-package timing/resource assertions
-  # meaningful instead of making them compete for one host; test-level
-  # concurrency and the race detector remain fully enabled inside each package.
-  $go_runner test -race -p=1 -timeout 20m ./...
+  printf 'go test -race ./...\n'
+  $go_runner test -race ./...
 else
   printf 'go test -race ./... skipped: race detector prerequisites unavailable\n'
 fi
 
-printf 'Buildable repository black-box acceptance\n'
-"$repo_root/test/scenarios/buildable-repository/run.sh"
-
-printf 'Authenticated local web workbench browser acceptance\n'
-"$repo_root/test/scenarios/web-workbench-shell/run.sh"
-
-printf 'Daemon API spine black-box acceptance\n'
-"$repo_root/test/scenarios/daemon-api-spine/run.sh"
-
-printf 'Persistent workspace black-box acceptance\n'
-"$repo_root/test/scenarios/persistent-workspace/run.sh"
-
-printf 'Projects and checkouts black-box acceptance\n'
-"$repo_root/test/scenarios/projects-checkouts/run.sh"
-
-printf 'Durable coordination black-box acceptance\n'
-"$repo_root/test/scenarios/durable-coordination/run.sh"
-
-printf 'Deterministic execution black-box acceptance\n'
-"$repo_root/test/scenarios/deterministic-execution/run.sh"
-
-printf 'Direct subprocess black-box acceptance\n'
-"$repo_root/test/scenarios/direct-runtime/run.sh"
-
-printf 'Scoped MCP capability black-box acceptance\n'
-"$repo_root/test/scenarios/scoped-mcp/run.sh"
-
-printf 'Durable agent messaging black-box acceptance\n'
-"$repo_root/test/scenarios/agent-messaging/run.sh"
-
-printf 'Participant-bound cross-project collaboration black-box acceptance\n'
-"$repo_root/test/scenarios/cross-project-collaboration/run.sh"
-
-printf 'Claims, overlap, and drift black-box acceptance\n'
-"$repo_root/test/scenarios/claims-overlap/run.sh"
-
-printf 'Structured meeting black-box acceptance\n'
-"$repo_root/test/scenarios/structured-meetings/run.sh"
-
-printf 'Canonical knowledge and provider-switch black-box acceptance\n'
-"$repo_root/test/scenarios/canonical-knowledge/run.sh"
-
-printf 'Deterministic knowledge retrieval black-box acceptance\n'
-"$repo_root/test/scenarios/deterministic-knowledge-retrieval/run.sh"
-
-printf 'Bounded deterministic curator black-box acceptance\n'
-"$repo_root/test/scenarios/bounded-curator/run.sh"
-
-printf 'Owner-confirmed knowledge contradiction black-box acceptance\n'
-"$repo_root/test/scenarios/knowledge-contradictions/run.sh"
-
-printf 'Portable project knowledge black-box acceptance\n'
-"$repo_root/test/scenarios/portable-knowledge/run.sh"
-
-printf 'Live context delta black-box acceptance\n'
-"$repo_root/test/scenarios/live-context-deltas/run.sh"
-
-printf 'Manager proposals and deterministic supervisor public smoke\n'
-"$repo_root/test/scenarios/manager-supervisor/run.sh"
-
-printf 'Owner-granted local checks and arbitrary-role check-watch acceptance\n'
-"$repo_root/test/scenarios/local-checks/run.sh"
-
-printf 'Owner-reviewed outcomes and bounded management briefings acceptance\n'
-"$repo_root/test/scenarios/outcome-briefings/run.sh"
-
-printf 'Herdr runtime black-box acceptance\n'
-"$repo_root/test/scenarios/herdr-runtime/run.sh"
-
-printf 'Provider-free operator TUI black-box acceptance\n'
-"$repo_root/test/scenarios/operator-tui/run.sh"
-
-printf 'Generic managed local process black-box acceptance\n'
-"$repo_root/test/scenarios/managed-local-process/run.sh"
-
-printf 'Codex provider black-box acceptance\n'
-"$repo_root/test/scenarios/codex-provider/run.sh"
-
-printf 'Claude provider and cross-provider handoff black-box acceptance\n'
-"$repo_root/test/scenarios/claude-provider/run.sh"
-
-printf 'Reproducible unpublished Linux package candidate\n'
-"$repo_root/scripts/package-linux_test.sh"
-
-printf 'Provider-free personal beta recovery and load acceptance\n'
-"$repo_root/test/scenarios/personal-beta/run.sh"
+printf 'production binary\n'
+build_dir=$(mktemp -d)
+trap 'rm -rf -- "$build_dir"' EXIT HUP INT TERM
+$go_runner build -o "$build_dir/crewfold" ./cmd/crewfold

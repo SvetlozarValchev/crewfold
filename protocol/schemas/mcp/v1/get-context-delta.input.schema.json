@@ -1,8 +1,0 @@
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:crewfold:schema:mcp:get-context-delta-input:v1",
-  "title": "Crewfold fetch pending context delta input v1",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {}
-}

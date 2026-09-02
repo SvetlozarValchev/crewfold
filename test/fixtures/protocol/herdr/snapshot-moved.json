@@ -1,1 +1,0 @@
-{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":{"version":"0.8.0","protocol":19,"workspaces":[{"workspace_id":"w2","label":"moved"}],"tabs":[{"tab_id":"w2:t3","workspace_id":"w2"}],"panes":[{"pane_id":"w2:p7","terminal_id":"term-fixture","workspace_id":"w2","tab_id":"w2:t3"}],"layouts":[],"agents":[]}}}
