@@ -148,7 +148,7 @@ crewfold room watch release-readiness
 
 ## Pi session delivery
 
-Load the integration directly from a source checkout:
+Load the bundled integration from a source checkout or extracted release archive:
 
 ```powershell
 pi -e .\integrations\pi

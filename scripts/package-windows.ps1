@@ -74,6 +74,9 @@ try {
     }
 
     Copy-Item -LiteralPath (Join-Path $repositoryRoot "README.md") -Destination (Join-Path $packageRoot "README.md")
+    $integrationRoot = Join-Path $packageRoot "integrations"
+    New-Item -ItemType Directory -Path $integrationRoot | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot "integrations\pi") -Destination (Join-Path $integrationRoot "pi") -Recurse
 
     $archivePath = Join-Path $stage $archiveName
     Add-Type -AssemblyName System.IO.Compression
