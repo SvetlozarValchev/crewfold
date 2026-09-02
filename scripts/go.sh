@@ -17,6 +17,10 @@ if command -v go >/dev/null 2>&1
 then
   exec go "$@"
 fi
+if command -v go.exe >/dev/null 2>&1
+then
+  exec go.exe "$@"
+fi
 
 toolchain_version=$(sed -n '1p' "$repo_root/.go-version")
 data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}
@@ -25,6 +29,10 @@ local_go="$data_home/crewfold-dev/toolchains/go$toolchain_version/bin/go"
 if [ -x "$local_go" ]
 then
   exec "$local_go" "$@"
+fi
+if [ -x "$local_go.exe" ]
+then
+  exec "$local_go.exe" "$@"
 fi
 
 printf 'Go %s is required but no Go executable was found.\n' "$toolchain_version" >&2
