@@ -3,9 +3,9 @@
 Crewfold is one Go binary with three current components:
 
 ```text
-agent terminal -- CLI -- owner Unix socket -- room store (SQLite + document files)
+external agent -- CLI -- owner Unix socket -- room store (SQLite + document files)
                                       |
-human browser -- loopback HTTP -------+
+human browser -- loopback HTTP -------+--- hosted-steward manager --- named Herdr/Codex session
 ```
 
 The CLI and browser call the same methods. SQLite is authoritative for rooms,
@@ -29,6 +29,8 @@ format.
 | `participant.join`, `participant.ack` | Bind a session and advance its read cursor |
 | `message.send` | Append a message or publish current context |
 | `document.upload`, `document.read` | Share and verify immutable document bytes |
+| `steward.start`, `steward.status`, `steward.prompt`, `steward.key` | Start, inspect, and directly steer the room-owned Herdr terminal |
+| `steward.stop`, `steward.restart` | Stop it or create a fresh named Herdr/Codex session while preserving room identity |
 | `web.bootstrap` | Mint a one-use owner browser URL |
 
 Unix requests and responses are newline-delimited JSON. Browser RPC uses the same
@@ -37,7 +39,14 @@ Unknown input fields are rejected.
 
 ## Runtime boundary
 
-There is no provider or runtime adapter. A participant may be Codex in Herdr,
-Codex in a plain terminal, another AI tool, or a human-operated script. It joins
-and communicates through `crewfold room ...` while retaining its native process,
-context, and working environment.
+External participants have no provider or runtime adapter. They may be Codex in
+Herdr, Codex in a plain terminal, another AI tool, or a human-operated script and
+retain their native context and working environment.
+
+The optional hosted steward uses a concrete Herdr CLI adapter. Crewfold creates a
+private room workspace, starts Codex with preserved terminal scrollback, and
+polls its native status and terminal output. New room events are batched into its
+same persistent session only when it is idle. The steward publishes shared output
+with an exact Crewfold binary and socket command, so another installed daemon
+cannot receive it accidentally. Stop and restart delete the named Herdr session;
+the room participant and shared history remain canonical.

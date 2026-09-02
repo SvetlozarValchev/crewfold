@@ -1,8 +1,9 @@
 # Contributing
 
 Crewfold is intentionally small. A change should make independently running
-agents easier to connect to one room without adding task engines, provider
-harnesses, agent runtimes, or compatibility paths.
+agents easier to connect to one room without adding task engines, general
+provider harnesses, compatibility paths, or runtime ownership beyond the single
+optional hosted room steward.
 
 Before changing behavior, read [docs/product.md](docs/product.md) and
 [docs/architecture.md](docs/architecture.md). Add proportionate tests and run:

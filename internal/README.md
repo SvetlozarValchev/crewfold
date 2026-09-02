@@ -2,8 +2,9 @@
 
 - `appdirs`: owner-local XDG paths
 - `buildinfo`: embedded build identity
-- `room`: current room store, Unix client/server, and owner web boundary
+- `room`: room store, Unix/web boundary, and optional hosted-steward Herdr adapter
 - `roomcli`: the current public command surface
 
-The command binary imports no provider, runtime, scheduler, repository, or task
-subsystem.
+The command binary contains no scheduler, repository, task, or general provider
+harness. Its only runtime adapter owns the optional room steward's named Herdr
+session.

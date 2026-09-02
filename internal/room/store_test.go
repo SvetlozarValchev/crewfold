@@ -20,16 +20,15 @@ func TestRoomCollaborationLifecycle(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	snapshot, err := store.CreateRoom(ctx, CreateRoomInput{
-		Slug:          "tire-slip",
-		Title:         "Tire slip model",
-		Topic:         "Compare the new slip model across two independently run sessions.",
-		StewardHandle: "slip-steward",
+		Slug:  "tire-slip",
+		Title: "Tire slip model",
+		Topic: "Compare the new slip model across two independently run sessions.",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Participants) != 1 || snapshot.Participants[0].Status != "invited" {
-		t.Fatalf("expected one invited steward, got %#v", snapshot.Participants)
+	if len(snapshot.Participants) != 0 {
+		t.Fatalf("new room unexpectedly has participants: %#v", snapshot.Participants)
 	}
 
 	whenTheyFell := filepath.Join(root, "when-they-fell")
@@ -53,7 +52,7 @@ func TestRoomCollaborationLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if steward.Kind != "steward" || steward.Status != "joined" {
-		t.Fatalf("invited steward was not claimed: %#v", steward)
+		t.Fatalf("external steward did not join: %#v", steward)
 	}
 
 	if _, err := store.Send(ctx, SendInput{Room: "tire-slip", WorkingDirectory: whenTheyFell, Kind: "context", Body: "Testing low-speed braking on wet asphalt."}); err != nil {
@@ -120,6 +119,39 @@ func TestRoomCollaborationLifecycle(t *testing.T) {
 	}
 	if _, err := store.Upload(ctx, UploadInput{Room: "tire-slip", WorkingDirectory: whenTheyFell, Name: "late.md", ContentBase64: base64.StdEncoding.EncodeToString([]byte("late"))}); err == nil || err.Error() != "room is archived" {
 		t.Fatalf("archived upload error = %v", err)
+	}
+}
+
+func TestHostedStewardConfigurationIsCanonicalRoomState(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "hosted", Title: "Hosted", Topic: "Keep two sessions aligned."}); err != nil {
+		t.Fatal(err)
+	}
+	steward, err := store.ConfigureHostedSteward(ctx, StartStewardInput{Room: "hosted", Handle: "room-steward", Role: "Watch for incompatible conclusions."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steward.Status != "starting" || steward.DesiredState != "running" || !steward.ManagedWorkingDirectory {
+		t.Fatalf("unexpected hosted steward: %#v", steward)
+	}
+	if info, err := os.Stat(steward.WorkingDirectory); err != nil || !info.IsDir() {
+		t.Fatalf("managed steward workspace is unavailable: %v", err)
+	}
+	snapshot, err := store.Snapshot(ctx, "hosted", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Steward == nil || snapshot.Room.StewardID != steward.ParticipantID || len(snapshot.Participants) != 1 {
+		t.Fatalf("hosted steward missing from snapshot: %#v", snapshot)
+	}
+	if len(snapshot.Messages) != 2 || snapshot.Messages[1].Kind != "system" {
+		t.Fatalf("hosted lifecycle message missing: %#v", snapshot.Messages)
 	}
 }
 

@@ -61,6 +61,13 @@ func TestUnixServerExposesRoomWorkflow(t *testing.T) {
 	if err := client.Call(context.Background(), "room.create", CreateRoomInput{Slug: "shared-test", Title: "Shared test", Topic: "Exercise the current API."}, &created); err != nil {
 		t.Fatal(err)
 	}
+	var absentSteward *StewardConsole
+	if err := client.Call(context.Background(), "steward.status", map[string]any{"room": created.Room.ID}, &absentSteward); err != nil {
+		t.Fatalf("read absent hosted steward: %v", err)
+	}
+	if absentSteward != nil {
+		t.Fatalf("unexpected hosted steward: %#v", absentSteward)
+	}
 	participantDirectory := filepath.Join(root, "participant")
 	if err := os.Mkdir(participantDirectory, 0o700); err != nil {
 		t.Fatal(err)

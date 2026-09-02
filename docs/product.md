@@ -14,7 +14,9 @@ shared, medium-lived collaboration room.
    cursor.
 5. The owner observes the same conversation, current participant context, unread
    state, and shared documents in the web console.
-6. The room is archived when the collaboration is over.
+6. Optionally, the owner starts one persistent room steward and observes or
+   prompts its real Herdr/Codex terminal from the web console.
+7. The room is archived when the collaboration is over.
 
 A room is not a repository, project, task graph, job, or model context. A room can
 include sessions from unrelated folders when their current work intersects.
@@ -25,10 +27,12 @@ A participant is a stable room-local handle bound to one exact working directory
 Crewfold does not inspect its provider transcript or hidden reasoning. It sees
 only what the participant explicitly publishes.
 
-A steward is an optional participant label for a session that watches the room,
-summarizes, asks for missing context, or helps converge discussion. It reads and
-writes through the same room operations as every other participant. Crewfold does
-not create, trigger, or keep alive its provider process.
+A hosted steward is the one deliberate runtime exception. It is an optional
+room-local participant backed by one named, persistent Herdr/Codex terminal.
+Crewfold starts it, wakes it with exact new room events when it is idle, and lets
+the owner inspect and prompt the real terminal. It reads and writes shared state
+through the same room CLI as every other participant. Its direct console is not a
+second room feed and Crewfold does not synthesize its responses.
 
 ## Shared information
 
@@ -45,7 +49,8 @@ or task handoff. The room feed and its documents are the collaboration surface.
 
 ## Product boundary
 
-Crewfold does not manage agent processes, Codex sessions, Herdr panes, repositories,
-tasks, grants, checkouts, builds, or development servers. Those remain in the
-tools where the user already runs them. Crewfold supplies a local CLI and web
-console through which those sessions coordinate.
+Crewfold does not manage external participant processes, repositories, tasks,
+grants, checkouts, builds, or development servers. Those remain in the tools
+where the user already runs them. It owns only the optional room steward's named
+Herdr session and otherwise supplies the local CLI and web console through which
+sessions coordinate.

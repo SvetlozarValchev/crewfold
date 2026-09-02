@@ -8,9 +8,10 @@ publish a short current-context snapshot, share named documents, and acknowledge
 what they have read. The browser shows that same room as a compact group
 conversation.
 
-Crewfold does not launch, wrap, schedule, sandbox, or impersonate an agent. Codex,
-Herdr, terminals, IDEs, and other tools remain responsible for their own sessions
-and processes. Crewfold is the shared place those sessions opt into.
+External Codex, Herdr, terminal, and IDE sessions remain independent and opt into
+the room through the CLI. A room may also own one optional persistent steward:
+Crewfold starts a real Codex terminal in a named Herdr session, relays new room
+activity to it, and exposes that exact terminal in the browser.
 
 ## Try it
 
@@ -28,8 +29,10 @@ Create a room:
 ```sh
 crewfold room create tire-slip \
   --title "Tire slip model" \
-  --topic "Compare the new tire model across both simulations" \
-  --steward slip-steward
+  --topic "Compare the new tire model across both simulations"
+crewfold room steward start tire-slip \
+  --handle slip-steward \
+  --role "Keep observations aligned and surface disagreements"
 ```
 
 In one live agent session:
@@ -52,9 +55,10 @@ crewfold room read tire-slip
 crewfold room send tire-slip "I can reproduce it above 11 degrees of slip angle."
 ```
 
-The optional steward is simply another external participant with kind `steward`.
-Crewfold records its invitation and delivers the same room stream; it does not
-start or own the steward's model session.
+The browser can create the room and start or manage the same steward without
+commands. Its private console is separate from the shared feed: direct owner
+prompts stay in the real Codex terminal unless the steward deliberately publishes
+their useful result to the room.
 
 See [the product contract](docs/product.md), [architecture](docs/architecture.md),
 and [CLI reference](docs/cli.md).

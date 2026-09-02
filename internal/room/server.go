@@ -25,10 +25,11 @@ import (
 )
 
 type ServerConfig struct {
-	DataDir    string
-	SocketPath string
-	WebAddress string
-	Version    buildinfo.Info
+	DataDir        string
+	SocketPath     string
+	WebAddress     string
+	Version        buildinfo.Info
+	StewardRuntime StewardRuntime
 }
 
 type Request struct {
@@ -39,7 +40,7 @@ type Request struct {
 
 type Response struct {
 	ID     string `json:"id"`
-	Result any    `json:"result,omitempty"`
+	Result any    `json:"result"`
 	Error  string `json:"error,omitempty"`
 }
 
@@ -54,6 +55,8 @@ type Server struct {
 	mu         sync.Mutex
 	bootstrap  map[[32]byte]time.Time
 	sessions   map[[32]byte]time.Time
+	stewards   *StewardManager
+	closeOnce  sync.Once
 }
 
 func RunServer(ctx context.Context, config ServerConfig) error {
@@ -87,7 +90,28 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 		_ = listener.Close()
 		return err
 	}
+	runtime := config.StewardRuntime
+	if runtime == nil {
+		runtime, err = NewHerdrStewardRuntime(socketPath, dataDir)
+		if err != nil {
+			_ = listener.Close()
+			_ = os.Remove(socketPath)
+			return err
+		}
+	}
 	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, sessions: map[[32]byte]time.Time{}}
+	cliPath, err := os.Executable()
+	if err != nil {
+		server.stewards = NewStewardManager(ctx, store, runtime, "crewfold", socketPath)
+	} else {
+		server.stewards = NewStewardManager(ctx, store, runtime, cliPath, socketPath)
+	}
+	if err := server.stewards.Start(); err != nil {
+		server.stewards.Close()
+		_ = listener.Close()
+		_ = os.Remove(socketPath)
+		return err
+	}
 	if err := server.startWeb(); err != nil {
 		_ = listener.Close()
 		_ = os.Remove(socketPath)
@@ -111,18 +135,23 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 }
 
 func (s *Server) close() {
-	if s.listener != nil {
-		_ = s.listener.Close()
-	}
-	if s.http != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = s.http.Shutdown(ctx)
-		cancel()
-	}
-	if s.httpListen != nil {
-		_ = s.httpListen.Close()
-	}
-	_ = os.Remove(s.config.SocketPath)
+	s.closeOnce.Do(func() {
+		if s.stewards != nil {
+			s.stewards.Close()
+		}
+		if s.listener != nil {
+			_ = s.listener.Close()
+		}
+		if s.http != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = s.http.Shutdown(ctx)
+			cancel()
+		}
+		if s.httpListen != nil {
+			_ = s.httpListen.Close()
+		}
+		_ = os.Remove(s.config.SocketPath)
+	})
 }
 
 func (s *Server) serveConnection(ctx context.Context, connection net.Conn) {
@@ -188,7 +217,56 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		if err := decode(&input); err != nil {
 			return nil, err
 		}
+		if _, err := s.stewards.Stop(ctx, input.Room); err != nil && !errors.Is(err, ErrHostedStewardNotConfigured) {
+			return nil, err
+		}
 		return s.store.Archive(ctx, input.Room)
+	case "steward.start":
+		var input StartStewardInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		return s.stewards.ConfigureAndStart(ctx, input)
+	case "steward.status":
+		var input struct {
+			Room string `json:"room"`
+		}
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		console, err := s.stewards.Status(ctx, input.Room)
+		if errors.Is(err, ErrHostedStewardNotConfigured) {
+			return nil, nil
+		}
+		return console, err
+	case "steward.prompt":
+		var input PromptStewardInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		return map[string]any{"accepted": true}, s.stewards.Prompt(ctx, input)
+	case "steward.key":
+		var input StewardKeyInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		return map[string]any{"accepted": true}, s.stewards.SendKey(ctx, input)
+	case "steward.stop":
+		var input struct {
+			Room string `json:"room"`
+		}
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		return s.stewards.Stop(ctx, input.Room)
+	case "steward.restart":
+		var input struct {
+			Room string `json:"room"`
+		}
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		return s.stewards.Restart(ctx, input.Room)
 	case "participant.join":
 		var input JoinInput
 		if err := decode(&input); err != nil {

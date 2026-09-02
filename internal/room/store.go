@@ -25,6 +25,8 @@ const (
 	maximumDocumentBytes = 4 * 1024 * 1024
 )
 
+var ErrHostedStewardNotConfigured = errors.New("hosted steward is not configured")
+
 type Store struct {
 	db      *sql.DB
 	dataDir string
@@ -93,7 +95,7 @@ CREATE TABLE IF NOT EXISTS participants (
   display_name TEXT NOT NULL,
   kind TEXT NOT NULL CHECK(kind IN ('agent','steward')),
   working_directory TEXT,
-  status TEXT NOT NULL CHECK(status IN ('invited','joined','left')),
+  status TEXT NOT NULL CHECK(status IN ('joined','left')),
   context TEXT NOT NULL DEFAULT '',
   context_updated_at TEXT,
   last_read_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_read_sequence >= 0),
@@ -101,6 +103,25 @@ CREATE TABLE IF NOT EXISTS participants (
   last_seen_at TEXT NOT NULL,
   UNIQUE(room_id, handle),
   UNIQUE(room_id, working_directory)
+) STRICT;
+CREATE TABLE IF NOT EXISTS hosted_stewards (
+  room_id TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  participant_id TEXT NOT NULL UNIQUE REFERENCES participants(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,
+  working_directory TEXT NOT NULL,
+  managed_working_directory INTEGER NOT NULL CHECK(managed_working_directory IN (0,1)),
+  herdr_session TEXT NOT NULL UNIQUE,
+  herdr_workspace_id TEXT NOT NULL DEFAULT '',
+  herdr_pane_id TEXT NOT NULL DEFAULT '',
+  agent_name TEXT NOT NULL UNIQUE,
+  desired_state TEXT NOT NULL CHECK(desired_state IN ('running','stopped')),
+  status TEXT NOT NULL CHECK(status IN ('starting','running','stopped','failed')),
+  agent_status TEXT NOT NULL DEFAULT '',
+  last_delivered_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_delivered_sequence >= 0),
+  error TEXT NOT NULL DEFAULT '',
+  initialized_at TEXT,
+  started_at TEXT,
+  updated_at TEXT NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY,
@@ -161,21 +182,6 @@ func (s *Store) CreateRoom(ctx context.Context, input CreateRoomInput) (Snapshot
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO rooms(id,slug,title,topic,status,created_at,updated_at) VALUES(?,?,?,?, 'open',?,?)`, roomID, slug, title, topic, now, now); err != nil {
 		return Snapshot{}, fmt.Errorf("create room: %w", err)
-	}
-	if handle := strings.ToLower(strings.TrimSpace(input.StewardHandle)); handle != "" {
-		if !validHandle(handle) {
-			return Snapshot{}, errors.New("steward handle must use 1-63 lowercase letters, numbers, dots, underscores, or hyphens")
-		}
-		participantID, idErr := randomID("member_")
-		if idErr != nil {
-			return Snapshot{}, idErr
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO participants(id,room_id,handle,display_name,kind,status,joined_at,last_seen_at) VALUES(?,?,?,?, 'steward','invited',?,?)`, participantID, roomID, handle, handle, now, now); err != nil {
-			return Snapshot{}, fmt.Errorf("create room steward: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE rooms SET steward_id=? WHERE id=?`, participantID, roomID); err != nil {
-			return Snapshot{}, err
-		}
 	}
 	if _, err := insertMessage(ctx, tx, roomID, nil, "crewfold", "Crewfold", "system", "system", "Room created.", "", now); err != nil {
 		return Snapshot{}, err
@@ -481,7 +487,11 @@ func (s *Store) Snapshot(ctx context.Context, roomIdentifier string, after int64
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0) FROM messages WHERE room_id=?`, room.ID).Scan(&room.LastSequence); err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{Room: room, Participants: participants, Messages: messages, Documents: documents}, nil
+	steward, err := s.HostedSteward(ctx, room.ID)
+	if err != nil && !errors.Is(err, ErrHostedStewardNotConfigured) {
+		return Snapshot{}, err
+	}
+	return Snapshot{Room: room, Participants: participants, Messages: messages, Documents: documents, Steward: steward}, nil
 }
 
 func (s *Store) ReadDocument(ctx context.Context, roomIdentifier, documentIdentifier string) (Document, []byte, error) {
@@ -520,6 +530,208 @@ func (s *Store) Archive(ctx context.Context, roomIdentifier string) (Room, error
 		return Room{}, err
 	}
 	return s.resolveRoom(ctx, room.ID)
+}
+
+func (s *Store) ConfigureHostedSteward(ctx context.Context, input StartStewardInput) (HostedSteward, error) {
+	room, err := s.resolveRoom(ctx, input.Room)
+	if err != nil {
+		return HostedSteward{}, err
+	}
+	if room.Status != "open" {
+		return HostedSteward{}, errors.New("room is archived")
+	}
+	handle := strings.ToLower(strings.TrimSpace(input.Handle))
+	if !validHandle(handle) {
+		return HostedSteward{}, errors.New("steward handle must use 1-63 lowercase letters, numbers, dots, underscores, or hyphens")
+	}
+	display := strings.TrimSpace(input.DisplayName)
+	if display == "" {
+		display = handle
+	}
+	display, err = boundedText("steward display name", display, 1, 120)
+	if err != nil {
+		return HostedSteward{}, err
+	}
+	role, err := boundedText("steward role", input.Role, 0, 8192)
+	if err != nil {
+		return HostedSteward{}, err
+	}
+	if role == "" {
+		role = "Keep the room aligned: summarize material progress, ask for missing evidence, surface disagreements, and help participants converge without taking over their work."
+	}
+	managedDirectory := strings.TrimSpace(input.WorkingDirectory) == ""
+	workingDirectory := input.WorkingDirectory
+	if managedDirectory {
+		workingDirectory = filepath.Join(s.dataDir, "rooms", room.ID, "steward")
+		if err := os.MkdirAll(workingDirectory, 0o700); err != nil {
+			return HostedSteward{}, fmt.Errorf("create steward workspace: %w", err)
+		}
+		if err := os.Chmod(workingDirectory, 0o700); err != nil {
+			return HostedSteward{}, fmt.Errorf("secure steward workspace: %w", err)
+		}
+	} else {
+		workingDirectory, err = exactDirectory(workingDirectory)
+		if err != nil {
+			return HostedSteward{}, err
+		}
+	}
+
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return HostedSteward{}, err
+	}
+	defer tx.Rollback()
+	var existingStatus string
+	err = tx.QueryRowContext(ctx, `SELECT status FROM hosted_stewards WHERE room_id=?`, room.ID).Scan(&existingStatus)
+	if err == nil && (existingStatus == "starting" || existingStatus == "running") {
+		return HostedSteward{}, errors.New("hosted steward is already running")
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return HostedSteward{}, err
+	}
+
+	var participantID, participantKind, participantDirectory string
+	err = tx.QueryRowContext(ctx, `SELECT id,kind,COALESCE(working_directory,'') FROM participants WHERE room_id=? AND handle=?`, room.ID, handle).Scan(&participantID, &participantKind, &participantDirectory)
+	if errors.Is(err, sql.ErrNoRows) {
+		participantID, err = randomID("member_")
+		if err != nil {
+			return HostedSteward{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO participants(id,room_id,handle,display_name,kind,working_directory,status,joined_at,last_seen_at) VALUES(?,?,?,?, 'steward',?, 'joined',?,?)`, participantID, room.ID, handle, display, workingDirectory, now, now); err != nil {
+			return HostedSteward{}, fmt.Errorf("create hosted steward participant: %w", err)
+		}
+	} else if err != nil {
+		return HostedSteward{}, err
+	} else {
+		if participantKind != "steward" || (participantDirectory != "" && participantDirectory != workingDirectory) {
+			return HostedSteward{}, errors.New("steward handle already belongs to another room participant")
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE participants SET display_name=?,kind='steward',working_directory=?,status='joined',last_seen_at=? WHERE id=?`, display, workingDirectory, now, participantID); err != nil {
+			return HostedSteward{}, err
+		}
+	}
+
+	suffix := strings.TrimPrefix(room.ID, "room_")
+	if len(suffix) > 20 {
+		suffix = suffix[:20]
+	}
+	agentSuffix := strings.TrimPrefix(participantID, "member_")
+	if len(agentSuffix) > 20 {
+		agentSuffix = agentSuffix[:20]
+	}
+	herdrSession := "crewfold-" + suffix
+	agentName := "cf_" + agentSuffix
+	managed := 0
+	if managedDirectory {
+		managed = 1
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO hosted_stewards(room_id,participant_id,role,working_directory,managed_working_directory,herdr_session,agent_name,desired_state,status,updated_at)
+VALUES(?,?,?,?,?,?,?,'running','starting',?)
+ON CONFLICT(room_id) DO UPDATE SET participant_id=excluded.participant_id,role=excluded.role,working_directory=excluded.working_directory,managed_working_directory=excluded.managed_working_directory,herdr_session=excluded.herdr_session,herdr_workspace_id='',herdr_pane_id='',agent_name=excluded.agent_name,desired_state='running',status='starting',agent_status='',last_delivered_sequence=0,error='',initialized_at=NULL,started_at=NULL,updated_at=excluded.updated_at`, room.ID, participantID, role, workingDirectory, managed, herdrSession, agentName, now); err != nil {
+		return HostedSteward{}, fmt.Errorf("configure hosted steward: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE rooms SET steward_id=?,updated_at=? WHERE id=?`, participantID, now, room.ID); err != nil {
+		return HostedSteward{}, err
+	}
+	if _, err := insertMessage(ctx, tx, room.ID, &participantID, handle, display, "steward", "system", "Persistent Herdr steward @"+handle+" is starting.", "", now); err != nil {
+		return HostedSteward{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return HostedSteward{}, err
+	}
+	steward, err := s.HostedSteward(ctx, room.ID)
+	if err != nil {
+		return HostedSteward{}, err
+	}
+	return *steward, nil
+}
+
+func (s *Store) HostedSteward(ctx context.Context, roomIdentifier string) (*HostedSteward, error) {
+	room, err := s.resolveRoom(ctx, roomIdentifier)
+	if err != nil {
+		return nil, err
+	}
+	var steward HostedSteward
+	var managed int
+	err = s.db.QueryRowContext(ctx, `SELECT h.room_id,h.participant_id,p.handle,p.display_name,h.role,h.working_directory,h.managed_working_directory,h.herdr_session,h.herdr_workspace_id,h.herdr_pane_id,h.agent_name,h.desired_state,h.status,h.agent_status,h.last_delivered_sequence,h.error,COALESCE(h.initialized_at,''),COALESCE(h.started_at,''),h.updated_at
+FROM hosted_stewards h JOIN participants p ON p.id=h.participant_id WHERE h.room_id=?`, room.ID).Scan(&steward.RoomID, &steward.ParticipantID, &steward.Handle, &steward.DisplayName, &steward.Role, &steward.WorkingDirectory, &managed, &steward.HerdrSession, &steward.HerdrWorkspaceID, &steward.HerdrPaneID, &steward.AgentName, &steward.DesiredState, &steward.Status, &steward.AgentStatus, &steward.LastDeliveredSequence, &steward.Error, &steward.InitializedAt, &steward.StartedAt, &steward.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrHostedStewardNotConfigured
+	}
+	if err != nil {
+		return nil, err
+	}
+	steward.ManagedWorkingDirectory = managed == 1
+	return &steward, nil
+}
+
+func (s *Store) desiredHostedStewards(ctx context.Context) ([]HostedSteward, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT room_id FROM hosted_stewards WHERE desired_state='running' ORDER BY room_id`)
+	if err != nil {
+		return nil, err
+	}
+	var roomIDs []string
+	for rows.Next() {
+		var roomID string
+		if err := rows.Scan(&roomID); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		roomIDs = append(roomIDs, roomID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	result := make([]HostedSteward, 0, len(roomIDs))
+	for _, roomID := range roomIDs {
+		steward, err := s.HostedSteward(ctx, roomID)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *steward)
+	}
+	return result, nil
+}
+
+func (s *Store) prepareHostedStewardStart(ctx context.Context, roomID string) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET desired_state='running',status='starting',agent_status='',herdr_workspace_id='',herdr_pane_id='',error='',initialized_at=NULL,started_at=NULL,updated_at=? WHERE room_id=?`, now, roomID)
+	return err
+}
+
+func (s *Store) recordHostedStewardRunning(ctx context.Context, roomID, workspaceID, paneID, agentStatus string) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET status='running',agent_status=?,herdr_workspace_id=?,herdr_pane_id=?,error='',started_at=COALESCE(started_at,?),updated_at=? WHERE room_id=?`, agentStatus, workspaceID, paneID, now, now, roomID)
+	return err
+}
+
+func (s *Store) recordHostedStewardObservation(ctx context.Context, roomID, status, agentStatus, detail string) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET status=?,agent_status=?,error=?,updated_at=? WHERE room_id=?`, status, agentStatus, detail, now, roomID)
+	return err
+}
+
+func (s *Store) markHostedStewardInitialized(ctx context.Context, roomID string) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET initialized_at=?,updated_at=? WHERE room_id=?`, now, now, roomID)
+	return err
+}
+
+func (s *Store) advanceHostedStewardDelivery(ctx context.Context, roomID string, sequence int64) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET last_delivered_sequence=MAX(last_delivered_sequence,?),updated_at=? WHERE room_id=?`, sequence, now, roomID)
+	return err
+}
+
+func (s *Store) stopHostedSteward(ctx context.Context, roomID, detail string) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET desired_state='stopped',status='stopped',agent_status='',error=?,updated_at=? WHERE room_id=?`, detail, now, roomID)
+	return err
 }
 
 func (s *Store) resolveRoom(ctx context.Context, identifier string) (Room, error) {

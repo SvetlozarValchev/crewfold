@@ -53,6 +53,9 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.fail(err)
 	}
 	if socket == "" {
+		socket = strings.TrimSpace(os.Getenv("CREWFOLD_SOCKET"))
+	}
+	if socket == "" {
 		socket = paths.SocketPath
 	}
 	client := room.Client{SocketPath: socket}
@@ -211,17 +214,13 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 	switch args[0] {
 	case "create":
 		if len(args) < 2 {
-			return a.fail(errors.New("usage: crewfold room create SLUG [--title TITLE] [--topic TOPIC] [--steward HANDLE]"))
+			return a.fail(errors.New("usage: crewfold room create SLUG [--title TITLE] [--topic TOPIC]"))
 		}
 		title, rest, err := pullOption(args[2:], "title")
 		if err != nil {
 			return a.fail(err)
 		}
 		topic, rest, err := pullOption(rest, "topic")
-		if err != nil {
-			return a.fail(err)
-		}
-		steward, rest, err := pullOption(rest, "steward")
 		if err != nil {
 			return a.fail(err)
 		}
@@ -232,15 +231,14 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 			title = strings.ReplaceAll(args[1], "-", " ")
 		}
 		var snapshot room.Snapshot
-		if err := client.Call(ctx, "room.create", room.CreateRoomInput{Slug: args[1], Title: title, Topic: topic, StewardHandle: steward}, &snapshot); err != nil {
+		if err := client.Call(ctx, "room.create", room.CreateRoomInput{Slug: args[1], Title: title, Topic: topic}, &snapshot); err != nil {
 			return a.fail(err)
 		}
 		return a.print(snapshot, jsonMode, func() {
 			fmt.Fprintf(a.stdout, "room %s created\n", snapshot.Room.Slug)
-			if steward != "" {
-				fmt.Fprintf(a.stdout, "steward: %s (waiting to join)\n", steward)
-			}
 		})
+	case "steward":
+		return a.roomSteward(ctx, client, args[1:], jsonMode)
 	case "list":
 		var rooms []room.Room
 		if err := client.Call(ctx, "room.list", map[string]any{}, &rooms); err != nil {
@@ -481,6 +479,89 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 	}
 }
 
+func (a *App) roomSteward(ctx context.Context, client room.Client, args []string, jsonMode bool) int {
+	if len(args) == 0 {
+		return a.fail(errors.New("usage: crewfold room steward start|status|prompt|key|stop|restart ROOM"))
+	}
+	action := args[0]
+	identifier, rest, err := leading(args[1:], "room")
+	if err != nil {
+		return a.fail(err)
+	}
+	switch action {
+	case "start":
+		handle, rest, err := pullOption(rest, "handle")
+		if err != nil {
+			return a.fail(err)
+		}
+		name, rest, err := pullOption(rest, "name")
+		if err != nil {
+			return a.fail(err)
+		}
+		role, rest, err := pullOption(rest, "role")
+		if err != nil {
+			return a.fail(err)
+		}
+		cwd, rest, err := pullOption(rest, "cwd")
+		if err != nil {
+			return a.fail(err)
+		}
+		if len(rest) != 0 || handle == "" {
+			return a.fail(errors.New("usage: crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH]"))
+		}
+		var steward room.HostedSteward
+		if err := client.Call(ctx, "steward.start", room.StartStewardInput{Room: identifier, Handle: handle, DisplayName: name, Role: role, WorkingDirectory: cwd}, &steward); err != nil {
+			return a.fail(err)
+		}
+		return a.print(steward, jsonMode, func() {
+			fmt.Fprintf(a.stdout, "@%s is starting in Herdr session %s\n", steward.Handle, steward.HerdrSession)
+		})
+	case "status":
+		if len(rest) != 0 {
+			return a.fail(errors.New("unexpected arguments"))
+		}
+		var console *room.StewardConsole
+		if err := client.Call(ctx, "steward.status", map[string]any{"room": identifier}, &console); err != nil {
+			return a.fail(err)
+		}
+		if console == nil {
+			return a.print(console, jsonMode, func() { fmt.Fprintln(a.stdout, "no hosted steward") })
+		}
+		return a.print(console, jsonMode, func() {
+			fmt.Fprintf(a.stdout, "@%s\t%s\t%s\t%s\n", console.Steward.Handle, console.Steward.Status, console.Steward.AgentStatus, console.Steward.HerdrSession)
+		})
+	case "prompt":
+		if len(rest) == 0 {
+			return a.fail(errors.New("prompt text is required"))
+		}
+		var accepted map[string]any
+		if err := client.Call(ctx, "steward.prompt", room.PromptStewardInput{Room: identifier, Text: strings.Join(rest, " ")}, &accepted); err != nil {
+			return a.fail(err)
+		}
+		return a.print(accepted, jsonMode, func() { fmt.Fprintln(a.stdout, "prompt sent to hosted steward") })
+	case "key":
+		if len(rest) != 1 {
+			return a.fail(errors.New("usage: crewfold room steward key ROOM enter|esc|ctrl+c"))
+		}
+		var accepted map[string]any
+		if err := client.Call(ctx, "steward.key", room.StewardKeyInput{Room: identifier, Key: rest[0]}, &accepted); err != nil {
+			return a.fail(err)
+		}
+		return a.print(accepted, jsonMode, func() { fmt.Fprintln(a.stdout, "key sent to hosted steward") })
+	case "stop", "restart":
+		if len(rest) != 0 {
+			return a.fail(errors.New("unexpected arguments"))
+		}
+		var steward room.HostedSteward
+		if err := client.Call(ctx, "steward."+action, map[string]any{"room": identifier}, &steward); err != nil {
+			return a.fail(err)
+		}
+		return a.print(steward, jsonMode, func() { fmt.Fprintf(a.stdout, "hosted steward %s\n", steward.Status) })
+	default:
+		return a.fail(fmt.Errorf("unknown steward command %q", action))
+	}
+}
+
 func (a *App) watch(ctx context.Context, client room.Client, identifier string, after int64, jsonMode bool) int {
 	if jsonMode {
 		return a.fail(errors.New("room watch is a streaming text command; use room read --output json for automation"))
@@ -606,7 +687,7 @@ Run 'crewfold room' for room commands.
 `
 
 const roomHelp = `Room commands:
-  crewfold room create SLUG [--title TITLE] [--topic TOPIC] [--steward HANDLE]
+  crewfold room create SLUG [--title TITLE] [--topic TOPIC]
   crewfold room list
   crewfold room show ROOM
   crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward]
@@ -617,6 +698,12 @@ const roomHelp = `Room commands:
   crewfold room ack ROOM [--through SEQUENCE]
   crewfold room upload ROOM FILE [--caption TEXT]
   crewfold room document ROOM DOCUMENT [--to PATH]
+  crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH]
+  crewfold room steward status ROOM
+  crewfold room steward prompt ROOM MESSAGE...
+  crewfold room steward key ROOM enter|esc|ctrl+c
+  crewfold room steward stop ROOM
+  crewfold room steward restart ROOM
   crewfold room archive ROOM
 
 Participant commands identify the current session by its joined working directory.
