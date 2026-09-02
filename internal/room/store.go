@@ -123,6 +123,17 @@ CREATE TABLE IF NOT EXISTS hosted_stewards (
   started_at TEXT,
   updated_at TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS participant_deliveries (
+  participant_id TEXT PRIMARY KEY REFERENCES participants(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('codex')),
+  target TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('bound','queued','delivered','error')),
+  last_delivered_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_delivered_sequence >= 0),
+  last_attempt_at TEXT,
+  last_delivered_at TEXT,
+  error TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY,
   room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -150,6 +161,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_room_sequence ON messages(room_id, sequence);
 CREATE INDEX IF NOT EXISTS documents_room_created ON documents(room_id, created_at);
 CREATE INDEX IF NOT EXISTS participants_room_handle ON participants(room_id, handle);
+CREATE INDEX IF NOT EXISTS participant_deliveries_status ON participant_deliveries(kind,status,updated_at);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize room database: %w", err)
@@ -241,6 +253,18 @@ func (s *Store) Join(ctx context.Context, input JoinInput) (Participant, error) 
 	if kind != "agent" && kind != "steward" {
 		return Participant{}, errors.New("participant kind must be agent or steward")
 	}
+	delivery := strings.ToLower(strings.TrimSpace(input.Delivery))
+	threadID := strings.TrimSpace(input.ThreadID)
+	if delivery != "" && delivery != "none" && delivery != "codex" {
+		return Participant{}, errors.New("participant delivery must be codex or none")
+	}
+	if delivery == "codex" {
+		if threadID == "" || len(threadID) > 128 || strings.ContainsAny(threadID, " \t\r\n") {
+			return Participant{}, errors.New("Codex delivery requires one bounded thread ID")
+		}
+	} else if threadID != "" {
+		return Participant{}, errors.New("thread ID is only valid for Codex delivery")
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -265,6 +289,17 @@ func (s *Store) Join(ctx context.Context, input JoinInput) (Participant, error) 
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE participants SET display_name=?,kind=?,working_directory=?,status='joined',last_seen_at=? WHERE id=?`, display, kind, cwd, now, participantID); err != nil {
 			return Participant{}, fmt.Errorf("rejoin room: %w", err)
+		}
+	}
+	if delivery == "codex" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO participant_deliveries(participant_id,kind,target,status,updated_at)
+VALUES(?, 'codex',?, 'bound',?)
+ON CONFLICT(participant_id) DO UPDATE SET kind='codex',target=excluded.target,status='bound',error='',updated_at=excluded.updated_at`, participantID, threadID, now); err != nil {
+			return Participant{}, fmt.Errorf("bind Codex delivery: %w", err)
+		}
+	} else if delivery == "none" {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM participant_deliveries WHERE participant_id=?`, participantID); err != nil {
+			return Participant{}, fmt.Errorf("remove participant delivery: %w", err)
 		}
 	}
 	message := display + " joined from " + cwd + "."
@@ -746,8 +781,10 @@ func (s *Store) resolveRoom(ctx context.Context, identifier string) (Room, error
 
 func (s *Store) participants(ctx context.Context, roomID string) ([]Participant, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.room_id,p.handle,p.display_name,p.kind,COALESCE(p.working_directory,''),p.status,p.context,COALESCE(p.context_updated_at,''),p.last_read_sequence,p.joined_at,p.last_seen_at,
-(SELECT COUNT(*) FROM messages m WHERE m.room_id=p.room_id AND m.sequence>p.last_read_sequence AND (m.participant_id IS NULL OR m.participant_id<>p.id))
-FROM participants p WHERE p.room_id=? ORDER BY p.kind='steward' DESC,p.joined_at,p.handle`, roomID)
+(SELECT COUNT(*) FROM messages m WHERE m.room_id=p.room_id AND m.sequence>p.last_read_sequence AND (m.participant_id IS NULL OR m.participant_id<>p.id)),
+COALESCE(d.kind,''),COALESCE(d.target,''),COALESCE(d.status,''),COALESCE(d.last_delivered_sequence,0),COALESCE(d.last_attempt_at,''),COALESCE(d.last_delivered_at,''),COALESCE(d.error,''),COALESCE(d.updated_at,'')
+FROM participants p LEFT JOIN participant_deliveries d ON d.participant_id=p.id
+WHERE p.room_id=? ORDER BY p.kind='steward' DESC,p.joined_at,p.handle`, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -755,8 +792,12 @@ FROM participants p WHERE p.room_id=? ORDER BY p.kind='steward' DESC,p.joined_at
 	result := []Participant{}
 	for rows.Next() {
 		var participant Participant
-		if err := rows.Scan(&participant.ID, &participant.RoomID, &participant.Handle, &participant.DisplayName, &participant.Kind, &participant.WorkingDirectory, &participant.Status, &participant.Context, &participant.ContextUpdatedAt, &participant.LastReadSequence, &participant.JoinedAt, &participant.LastSeenAt, &participant.UnreadCount); err != nil {
+		var delivery ParticipantDelivery
+		if err := rows.Scan(&participant.ID, &participant.RoomID, &participant.Handle, &participant.DisplayName, &participant.Kind, &participant.WorkingDirectory, &participant.Status, &participant.Context, &participant.ContextUpdatedAt, &participant.LastReadSequence, &participant.JoinedAt, &participant.LastSeenAt, &participant.UnreadCount, &delivery.Kind, &delivery.Target, &delivery.Status, &delivery.LastDeliveredSequence, &delivery.LastAttemptAt, &delivery.LastDeliveredAt, &delivery.Error, &delivery.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if delivery.Kind != "" {
+			participant.Delivery = &delivery
 		}
 		result = append(result, participant)
 	}
@@ -774,6 +815,60 @@ func (s *Store) participant(ctx context.Context, roomID, participantID string) (
 		}
 	}
 	return Participant{}, errors.New("participant not found")
+}
+
+type codexDeliveryRoute struct {
+	Room        Room
+	Participant Participant
+	Delivery    ParticipantDelivery
+}
+
+func (s *Store) pendingCodexDeliveries(ctx context.Context) ([]codexDeliveryRoute, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,COALESCE(r.steward_id,''),r.created_at,r.updated_at,
+COALESCE((SELECT MAX(sequence) FROM messages WHERE room_id=r.id),0),
+p.id,p.room_id,p.handle,p.display_name,p.kind,COALESCE(p.working_directory,''),p.status,p.context,COALESCE(p.context_updated_at,''),p.last_read_sequence,p.joined_at,p.last_seen_at,
+d.kind,d.target,d.status,d.last_delivered_sequence,COALESCE(d.last_attempt_at,''),COALESCE(d.last_delivered_at,''),d.error,d.updated_at
+FROM participant_deliveries d
+JOIN participants p ON p.id=d.participant_id
+JOIN rooms r ON r.id=p.room_id
+WHERE d.kind='codex' AND p.status='joined' AND r.status='open'
+AND EXISTS(SELECT 1 FROM messages m WHERE m.room_id=p.room_id AND m.sequence>d.last_delivered_sequence)
+ORDER BY d.updated_at,p.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var routes []codexDeliveryRoute
+	for rows.Next() {
+		var route codexDeliveryRoute
+		if err := rows.Scan(
+			&route.Room.ID, &route.Room.Slug, &route.Room.Title, &route.Room.Topic, &route.Room.Status, &route.Room.StewardID, &route.Room.CreatedAt, &route.Room.UpdatedAt, &route.Room.LastSequence,
+			&route.Participant.ID, &route.Participant.RoomID, &route.Participant.Handle, &route.Participant.DisplayName, &route.Participant.Kind, &route.Participant.WorkingDirectory, &route.Participant.Status, &route.Participant.Context, &route.Participant.ContextUpdatedAt, &route.Participant.LastReadSequence, &route.Participant.JoinedAt, &route.Participant.LastSeenAt,
+			&route.Delivery.Kind, &route.Delivery.Target, &route.Delivery.Status, &route.Delivery.LastDeliveredSequence, &route.Delivery.LastAttemptAt, &route.Delivery.LastDeliveredAt, &route.Delivery.Error, &route.Delivery.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		route.Participant.Delivery = &route.Delivery
+		routes = append(routes, route)
+	}
+	return routes, rows.Err()
+}
+
+func (s *Store) recordDeliveryAttempt(ctx context.Context, participantID, status, detail string) error {
+	if status != "queued" && status != "error" {
+		return errors.New("delivery attempt status must be queued or error")
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `UPDATE participant_deliveries SET status=?,last_attempt_at=?,error=?,updated_at=? WHERE participant_id=?`, status, now, detail, now, participantID)
+	return err
+}
+
+func (s *Store) advanceDelivery(ctx context.Context, participantID string, sequence int64) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `UPDATE participant_deliveries
+SET status='delivered',last_delivered_sequence=MAX(last_delivered_sequence,?),last_attempt_at=?,last_delivered_at=?,error='',updated_at=?
+WHERE participant_id=?`, sequence, now, now, now, participantID)
+	return err
 }
 
 func (s *Store) messages(ctx context.Context, roomID string, after int64, limit int) ([]Message, error) {

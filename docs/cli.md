@@ -25,7 +25,7 @@ crewfold room archive ROOM
 Run participant commands from the real agent's working directory:
 
 ```text
-crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward]
+crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|none]
 crewfold room send ROOM MESSAGE...
 crewfold room context ROOM CURRENT-CONTEXT...
 crewfold room read ROOM [--after SEQUENCE]
@@ -33,9 +33,14 @@ crewfold room watch ROOM [--after SEQUENCE]
 crewfold room ack ROOM [--through SEQUENCE]
 ```
 
+Codex delivery is the default. Run `join` from inside the Codex session; Crewfold
+reads `CODEX_THREAD_ID`, validates it through Codex app-server, and binds later
+notifications to that durable thread. `--delivery none` explicitly creates or
+rebinds a manual participant without an injection target.
+
 `read` and `watch` acknowledge through the observed cursor when the current
-directory is a participant. `watch` is a polling stream suitable for a live agent
-or steward session.
+directory is a participant. `watch` remains a manual/debugging stream; a bound
+Codex participant does not need to poll.
 
 ## Documents
 

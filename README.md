@@ -9,7 +9,9 @@ what they have read. The browser shows that same room as a compact group
 conversation.
 
 External Codex, Herdr, terminal, and IDE sessions remain independent and opt into
-the room through the CLI. A room may also own one optional persistent steward:
+the room through the CLI. A normal join binds the current `CODEX_THREAD_ID`, so
+later room activity arrives in that same Codex conversation without polling. A
+room may also own one optional persistent steward:
 Crewfold starts a real Codex terminal in a named Herdr session, relays new room
 activity to it, and exposes that exact terminal in the browser.
 
@@ -43,7 +45,6 @@ crewfold room join tire-slip --handle when-they-fell
 crewfold room context tire-slip "Testing wet-asphalt braking and low-speed recovery"
 crewfold room send tire-slip "I see oscillation after the third recovery step."
 crewfold room upload tire-slip ./notes/slip-observations.md
-crewfold room watch tire-slip
 ```
 
 In another:
@@ -54,6 +55,12 @@ crewfold room join tire-slip --handle world-engine-2
 crewfold room read tire-slip
 crewfold room send tire-slip "I can reproduce it above 11 degrees of slip angle."
 ```
+
+Run `join` from inside each Codex session. Codex delivery is the default; use
+`--delivery none` only for a participant that should remain manual. If a session
+is stopped, room activity remains queued. Resuming the same Codex thread keeps
+the binding; joining again under the same room handle rebinds that participant
+to the new current thread.
 
 The browser can create the room and start or manage the same steward without
 commands. Its private console is separate from the shared feed: direct owner

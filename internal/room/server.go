@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"crewfold/internal/buildinfo"
+	"crewfold/internal/codexapp"
 	webui "crewfold/web"
 )
 
@@ -30,6 +31,7 @@ type ServerConfig struct {
 	WebAddress     string
 	Version        buildinfo.Info
 	StewardRuntime StewardRuntime
+	CodexRuntime   CodexDeliveryRuntime
 }
 
 type Request struct {
@@ -56,6 +58,7 @@ type Server struct {
 	bootstrap  map[[32]byte]time.Time
 	sessions   map[[32]byte]time.Time
 	stewards   *StewardManager
+	deliveries *DeliveryManager
 	closeOnce  sync.Once
 }
 
@@ -112,7 +115,21 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 		_ = os.Remove(socketPath)
 		return err
 	}
+	codexRuntime := config.CodexRuntime
+	if codexRuntime == nil {
+		codexSocket, socketErr := codexapp.DefaultSocketPath()
+		if socketErr != nil {
+			server.stewards.Close()
+			_ = listener.Close()
+			_ = os.Remove(socketPath)
+			return socketErr
+		}
+		codexRuntime = codexapp.Client{SocketPath: codexSocket}
+	}
+	server.deliveries = NewDeliveryManager(ctx, store, codexRuntime, cliPath, socketPath)
+	server.deliveries.Start()
 	if err := server.startWeb(); err != nil {
+		server.deliveries.Close()
 		_ = listener.Close()
 		_ = os.Remove(socketPath)
 		return err
@@ -136,6 +153,9 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 
 func (s *Server) close() {
 	s.closeOnce.Do(func() {
+		if s.deliveries != nil {
+			s.deliveries.Close()
+		}
 		if s.stewards != nil {
 			s.stewards.Close()
 		}
@@ -272,13 +292,29 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		if err := decode(&input); err != nil {
 			return nil, err
 		}
-		return s.store.Join(ctx, input)
+		if input.Delivery == "codex" {
+			validationCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			err := s.deliveries.Validate(validationCtx, input.ThreadID)
+			cancel()
+			if err != nil {
+				return nil, fmt.Errorf("bind Codex delivery: %w", err)
+			}
+		}
+		participant, err := s.store.Join(ctx, input)
+		if err == nil {
+			s.deliveries.Wake()
+		}
+		return participant, err
 	case "message.send":
 		var input SendInput
 		if err := decode(&input); err != nil {
 			return nil, err
 		}
-		return s.store.Send(ctx, input)
+		message, err := s.store.Send(ctx, input)
+		if err == nil {
+			s.deliveries.Wake()
+		}
+		return message, err
 	case "participant.ack":
 		var input AckInput
 		if err := decode(&input); err != nil {
@@ -290,7 +326,11 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		if err := decode(&input); err != nil {
 			return nil, err
 		}
-		return s.store.Upload(ctx, input)
+		message, err := s.store.Upload(ctx, input)
+		if err == nil {
+			s.deliveries.Wake()
+		}
+		return message, err
 	case "document.read":
 		var input struct {
 			Room     string `json:"room"`

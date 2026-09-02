@@ -89,6 +89,11 @@ button:disabled { cursor: default; opacity: .45; }
 .participant header em { padding: 1px 4px; color: var(--amber); border: 1px solid #5e5439; font-size: 7px; font-style: normal; text-transform: uppercase; }
 .participant header span { margin-left: auto; color: var(--faint); font-size: 9px; }
 .participant code { display: block; margin: 5px 0 0 14px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.participant-delivery { margin: 6px 0 0 14px; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 9px; }
+.participant-delivery strong { color: var(--cyan); font-weight: 400; }
+.participant-delivery.queued strong { color: var(--amber); }
+.participant-delivery.error strong { color: var(--red); }
+.participant-delivery small { color: var(--faint); }
 .participant p { margin: 7px 0 0 14px; padding-left: 8px; border-left: 2px solid #424b49; color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; line-height: 1.48; }
 .join-help { padding-bottom: 13px !important; }
 .join-help > code { margin: 2px 12px 0; padding: 8px 9px; display: block; overflow-x: auto; border: 1px solid #414141; color: var(--lime); background: #1c1c1c; font-size: 10px; white-space: nowrap; }

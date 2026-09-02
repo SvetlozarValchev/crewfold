@@ -287,18 +287,34 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 		if err != nil {
 			return a.fail(err)
 		}
+		delivery, rest, err := pullOption(rest, "delivery")
+		if err != nil {
+			return a.fail(err)
+		}
 		if len(rest) != 0 || handle == "" {
-			return a.fail(errors.New("usage: crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--cwd PATH]"))
+			return a.fail(errors.New("usage: crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--cwd PATH] [--delivery codex|none]"))
 		}
 		if cwd == "" {
 			cwd, _ = os.Getwd()
 		}
+		if delivery == "" {
+			delivery = "codex"
+		}
+		threadID := ""
+		if delivery == "codex" {
+			threadID = strings.TrimSpace(os.Getenv("CODEX_THREAD_ID"))
+			if threadID == "" {
+				return a.fail(errors.New("Codex delivery is the default, but CODEX_THREAD_ID is unavailable; run join from inside the Codex session or use --delivery none"))
+			}
+		} else if delivery != "none" {
+			return a.fail(errors.New("--delivery must be codex or none"))
+		}
 		var participant room.Participant
-		if err := client.Call(ctx, "participant.join", room.JoinInput{Room: identifier, Handle: handle, DisplayName: name, WorkingDirectory: cwd, Kind: kind}, &participant); err != nil {
+		if err := client.Call(ctx, "participant.join", room.JoinInput{Room: identifier, Handle: handle, DisplayName: name, WorkingDirectory: cwd, Kind: kind, Delivery: delivery, ThreadID: threadID}, &participant); err != nil {
 			return a.fail(err)
 		}
 		return a.print(participant, jsonMode, func() {
-			fmt.Fprintf(a.stdout, "joined %s as @%s from %s\n", identifier, participant.Handle, participant.WorkingDirectory)
+			fmt.Fprintf(a.stdout, "joined %s as @%s from %s · delivery %s\n", identifier, participant.Handle, participant.WorkingDirectory, delivery)
 		})
 	case "send", "context":
 		identifier, rest, err := leading(args[1:], "room")
@@ -690,7 +706,7 @@ const roomHelp = `Room commands:
   crewfold room create SLUG [--title TITLE] [--topic TOPIC]
   crewfold room list
   crewfold room show ROOM
-  crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward]
+  crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|none]
   crewfold room send ROOM MESSAGE...
   crewfold room context ROOM CURRENT-CONTEXT...
   crewfold room read ROOM [--after SEQUENCE]
@@ -706,5 +722,7 @@ const roomHelp = `Room commands:
   crewfold room steward restart ROOM
   crewfold room archive ROOM
 
+Codex delivery is the join default and binds the current CODEX_THREAD_ID. Use
+--delivery none only for a participant that cannot receive Codex prompts.
 Participant commands identify the current session by its joined working directory.
 `

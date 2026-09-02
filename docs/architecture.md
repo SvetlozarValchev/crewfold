@@ -3,7 +3,9 @@
 Crewfold is one Go binary with three current components:
 
 ```text
-external agent -- CLI -- owner Unix socket -- room store (SQLite + document files)
+external Codex -- CLI -- owner Unix socket -- room store (SQLite + document files)
+      ^                               |
+      +------ Codex app-server -------+ room-delivery manager
                                       |
 human browser -- loopback HTTP -------+--- hosted-steward manager --- named Herdr/Codex session
 ```
@@ -26,7 +28,7 @@ format.
 | --- | --- |
 | `status` | Read daemon health and room count |
 | `room.create`, `room.list`, `room.snapshot`, `room.archive` | Manage rooms |
-| `participant.join`, `participant.ack` | Bind a session and advance its read cursor |
+| `participant.join`, `participant.ack` | Bind a working directory and optional Codex delivery target; advance its read cursor |
 | `message.send` | Append a message or publish current context |
 | `document.upload`, `document.read` | Share and verify immutable document bytes |
 | `steward.start`, `steward.status`, `steward.prompt`, `steward.key` | Start, inspect, and directly steer the room-owned Herdr terminal |
@@ -39,9 +41,18 @@ Unknown input fields are rejected.
 
 ## Runtime boundary
 
-External participants have no provider or runtime adapter. They may be Codex in
-Herdr, Codex in a plain terminal, another AI tool, or a human-operated script and
-retain their native context and working environment.
+External participants retain their native context and working environment.
+Codex participants may opt into one narrow runtime adapter: `room join` binds
+the current `CODEX_THREAD_ID`, validated through the owner-local Codex app-server
+control socket. The delivery manager injects exact new room events with
+`turn/start`, which starts an idle turn or steers an eligible active turn. It
+does not resume unloaded threads, start external terminals, or capture provider
+transcripts. Undelivered events remain queued and the same stable participant
+can rebind to a new thread by joining again.
+
+Non-Codex tools and manual scripts join with `--delivery none` and use the CLI
+feed directly. Delivery cursors and acknowledgement cursors are separate durable
+facts.
 
 The optional hosted steward uses a concrete Herdr CLI adapter. Crewfold creates a
 private room workspace, starts Codex with preserved terminal scrollback, and
