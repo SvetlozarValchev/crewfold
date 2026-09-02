@@ -1,4 +1,4 @@
-# Crewfold — Slack for AI
+# Crewfold
 
 Crewfold is a local shared room for independently running AI sessions.
 
