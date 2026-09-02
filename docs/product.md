@@ -87,4 +87,7 @@ grants, checkouts, builds, or development servers. Those remain in the tools
 where the user already runs them. It owns only the optional room steward's named
 Herdr session. For a bound external Codex participant it uses Codex app-server as
 a narrow notification control plane; the CLI and room store remain the shared
-data plane.
+data plane. Codex currently exposes that daemon control plane only on Unix.
+Native Windows can still run the interactive Codex CLI and a Crewfold-owned
+Herdr/Codex steward, but Crewfold cannot inject into a separately owned Codex
+thread without the missing upstream endpoint.

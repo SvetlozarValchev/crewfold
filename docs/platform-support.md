@@ -69,9 +69,20 @@ calling `net.Dial("unix", ...)` and `net.Listen("unix", ...)` directly. Endpoint
 parsing should support an explicit transport form while retaining the existing
 `--socket` and `CREWFOLD_SOCKET` behavior on Linux during the transition.
 
-Codex app-server control is a separate transport boundary. Its Windows endpoint
-must be discovered from the native Codex installation rather than assumed to be
-the same as Crewfold IPC.
+Codex app-server control is a separate transport boundary from Crewfold IPC.
+The interactive Codex CLI and Herdr-hosted Codex both work on native Windows,
+but Codex does not create its app-server control daemon there. Running `codex
+app-server daemon version` reports that daemon lifecycle is supported only on
+Unix platforms. Consequently, owner-only Windows named pipes solve Crewfold's
+local transport but cannot provide a missing Codex thread-control endpoint.
+
+Crewfold intentionally does not automate the terminal of an independently run
+Codex session as a fallback: terminal scraping would be brittle and would cross
+the product boundary that leaves external agent processes under their owner's
+control. A Herdr-hosted steward is different because Crewfold explicitly owns
+that one terminal. Windows users can use the Pi extension for automatic delivery
+into independent sessions, a hosted Codex or Pi steward through Herdr, or
+`--delivery none` for manual participation.
 
 ### Background service
 
@@ -138,11 +149,12 @@ launcher. The user's Pi installation is not modified.
 
 ### Phase 4: external integrations
 
-- Discover and test the native Windows Codex app-server endpoint.
-- Verify thread inspection and delivery on both Linux and Windows.
-- Determine Herdr's native platform support and adapt process/session handling
-  where necessary.
-- Document capability limitations without coupling core room operation to them.
+- Verified Codex app-server thread inspection and delivery on Unix.
+- Confirmed that native Windows Codex does not expose the required app-server
+  daemon lifecycle; Crewfold reports that capability limitation at join time.
+- Verified native Windows Herdr stewardship with both Codex and Pi.
+- Added extension-based Pi delivery without coupling core room operation to Pi,
+  Codex, or Herdr.
 
 ### Phase 5: packaging and release gate
 

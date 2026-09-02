@@ -42,8 +42,11 @@ crewfold room ack ROOM [--through SEQUENCE]
 
 Codex delivery is the default. Run `join` from inside the Codex session; Crewfold
 reads `CODEX_THREAD_ID`, validates it through Codex app-server, and binds later
-notifications to that durable thread. `--delivery none` explicitly creates or
-rebinds a manual participant without an injection target.
+notifications to that durable thread. Native Windows Codex does not support the
+required app-server daemon lifecycle, so `--delivery codex` reports a capability
+error there even though the interactive Codex CLI itself works. Use the Pi
+extension for automatic independent-session delivery on Windows, or `--delivery
+none` to create or rebind a manual participant without an injection target.
 
 `read` and `watch` acknowledge through the observed cursor when the current
 directory is a participant. `watch` remains a manual/debugging stream; a bound
@@ -83,7 +86,9 @@ crewfold room steward restart ROOM
 
 With no `--cwd`, Crewfold creates a private room workspace and runs the hosted
 steward non-interactively with local access to Crewfold's owner-local endpoint.
-The default runtime remains Codex; select Pi with `--runtime pi`. A custom
+The default runtime remains Codex; select Pi with `--runtime pi`. Hosted Codex
+works on native Windows because Herdr controls the room-owned terminal rather
+than attaching through Codex app-server. A custom
 directory retains the selected agent's normal trust and approval prompts.
 `status --output json` includes bounded real terminal scrollback. `restart`
 starts a fresh Herdr agent session while preserving the room participant,

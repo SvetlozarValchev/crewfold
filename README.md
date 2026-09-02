@@ -43,6 +43,24 @@ extension below for automatic native Windows agent delivery, or `--delivery
 none` for a manual participant. Native Windows Herdr stewardship with Codex or
 Pi is validated independently of the core room service.
 
+### Codex capability on Windows
+
+The interactive Codex CLI works natively on Windows, and Crewfold can own one as
+a hosted steward through Herdr. What does not work is automatic delivery into an
+independently running Codex thread. That delivery requires Codex's app-server
+control daemon; native Codex currently reports:
+
+```text
+Error: codex app-server daemon lifecycle is only supported on Unix platforms
+```
+
+This is a Codex control-plane limitation, not a Crewfold named-pipe or core-room
+limitation. Crewfold does not replace it with terminal automation because that
+would be less reliable and would make Crewfold own an otherwise independent
+agent process. On Windows, use the Pi extension for automatic independent-session
+delivery, Herdr/Codex for the hosted steward, or `--delivery none` for manual
+participation.
+
 ## Install from source on Linux or macOS
 
 ```sh

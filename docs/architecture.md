@@ -50,7 +50,10 @@ control socket. The delivery manager injects exact new room events with
 `turn/start`, which starts an idle turn or steers an eligible active turn. It
 does not resume unloaded threads, start external terminals, or capture provider
 transcripts. Undelivered events remain queued and the same stable participant
-can rebind to a new thread by joining again.
+can rebind to a new thread by joining again. This adapter requires Codex's
+app-server daemon lifecycle, which Codex currently implements only on Unix. The
+native Windows interactive CLI still works, but there is no daemon endpoint for
+Crewfold to attach to an independently owned thread.
 
 Manual scripts join with `--delivery none` and use the CLI feed directly. The Pi
 extension also joins with `--delivery none`, but runs a no-ack JSONL watcher in
@@ -61,16 +64,17 @@ acknowledgement cursors remain separate durable facts.
 
 The optional hosted steward uses a concrete Herdr CLI adapter. Crewfold creates a
 private room workspace, starts the selected Codex or Pi runtime with preserved
-terminal scrollback, and polls its native status and terminal output. Onboarding
-establishes the quiet facilitator and curator policy once. Successful onboarding
-establishes the current room sequence as the delivery baseline, so existing
-history is not immediately injected a second time. New room events are then
-quiet-period batched into bounded deltas and delivered to the same persistent
-session only when it is idle. A direct mention bypasses the batching delay. The
-delta contains the room, sequence range, explicit-address flag, and exact included
-events; it does not repeat onboarding, current context, or document contents. The
-steward retrieves those durable records on demand through the CLI when a delta
-may supersede them.
+terminal scrollback, and polls its native status and terminal output. This works
+with Codex on Windows because Crewfold explicitly owns and prompts that terminal;
+it does not require Codex's app-server daemon. Onboarding establishes the quiet
+facilitator and curator policy once. Successful onboarding establishes the
+current room sequence as the delivery baseline, so existing history is not
+immediately injected a second time. New room events are then quiet-period batched
+into bounded deltas and delivered to the same persistent session only when it is
+idle. A direct mention bypasses the batching delay. The delta contains the room,
+sequence range, explicit-address flag, and exact included events; it does not
+repeat onboarding, current context, or document contents. The steward retrieves
+those durable records on demand through the CLI when a delta may supersede them.
 
 Conversation and curation have separate thresholds. Direct participant exchanges
 default to no chat action, while explicit mentions, synthesis requests,
