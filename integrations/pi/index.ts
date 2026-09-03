@@ -156,7 +156,7 @@ export default function crewfoldExtension(pi: ExtensionAPI) {
 	function acceptMessage(message: RoomMessage, ctx: ExtensionContext) {
 		if (!binding || !Number.isSafeInteger(message.sequence) || message.sequence <= observedCursor) return;
 		observedCursor = message.sequence;
-		if (message.sender_kind !== "system" && message.participant_id !== binding.participantId) pending.push(message);
+		if (message.kind !== "system" && message.sender_kind !== "system" && message.participant_id !== binding.participantId) pending.push(message);
 		scheduleFlush(ctx);
 	}
 
