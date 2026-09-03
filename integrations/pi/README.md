@@ -57,5 +57,6 @@ Crewfold CLI remains available for less common operations.
 ## Current scope
 
 The adapter provides room delivery, persistent binding commands, and core room
-tools. Published package distribution and selectable Pi hosted stewards are
-planned next.
+tools. Release archives bundle it for local installation, and Crewfold can use
+Pi as a selectable hosted steward runtime. Publishing the integration to a
+package registry remains future work.
