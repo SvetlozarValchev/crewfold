@@ -28,6 +28,7 @@ type StewardRuntime interface {
 	Ensure(context.Context, HostedSteward, Room) (StewardRuntimeState, error)
 	Inspect(context.Context, HostedSteward) (StewardRuntimeState, error)
 	Prompt(context.Context, HostedSteward, string) error
+	Deliver(context.Context, HostedSteward, string) error
 	SendKey(context.Context, HostedSteward, string) error
 	Stop(context.Context, HostedSteward) error
 	Close()
@@ -177,6 +178,11 @@ func (r *HerdrStewardRuntime) Inspect(ctx context.Context, steward HostedSteward
 
 func (r *HerdrStewardRuntime) Prompt(ctx context.Context, steward HostedSteward, text string) error {
 	_, err := r.run(ctx, steward.HerdrSession, "agent", "prompt", steward.AgentName, text, "--wait", "--until", "working", "--timeout", "8000")
+	return err
+}
+
+func (r *HerdrStewardRuntime) Deliver(ctx context.Context, steward HostedSteward, text string) error {
+	_, err := r.run(ctx, steward.HerdrSession, "agent", "prompt", steward.AgentName, text, "--wait", "--until", "idle", "--until", "done", "--timeout", "300000")
 	return err
 }
 

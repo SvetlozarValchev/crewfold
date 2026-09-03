@@ -57,14 +57,27 @@ facts.
 The optional hosted steward uses a concrete Herdr CLI adapter. Crewfold creates a
 private room workspace, starts Codex with preserved terminal scrollback, and
 polls its native status and terminal output. Onboarding establishes the quiet
-facilitator policy once. New room events are then batched into the same persistent
-session only when it is idle using a compact delta containing the room, explicit-
-address flag, exact events, and a reference to the standing policy. Direct
-participant exchanges default to no room action, while explicit mentions,
-synthesis requests, material contradictions, unresolvable blockers, and
-consequential owner decisions may trigger one public action. The steward
-publishes with an exact Crewfold binary and socket command, so another
-installed daemon cannot receive it accidentally. Stop and restart delete the
-named Herdr session; the room participant and shared history remain canonical.
-Restarting only the Crewfold daemon preserves the initialized steward session
-and must not enqueue onboarding or another public introduction.
+facilitator and curator policy once. Successful onboarding establishes the
+current room sequence as the delivery baseline, so existing history is not
+immediately injected a second time. New room events are then quiet-period batched
+into bounded deltas and delivered to the same persistent session only when it is
+idle. A direct mention bypasses the batching delay. The delta contains the room,
+sequence range, explicit-address flag, and exact included events; it does not
+repeat onboarding, current context, or document contents. The steward retrieves
+those durable records on demand through the CLI when a delta may supersede them.
+
+Conversation and curation have separate thresholds. Direct participant exchanges
+default to no chat action, while explicit mentions, synthesis requests,
+unresolved contradictions, unresolvable blockers, and consequential owner
+decisions may trigger one public response. Material corrections, invalidated
+conclusions, resolved contradictions, and completed phases can instead update the
+replaceable context or revise a same-named shared document without interrupting
+the feed. Crewfold advances the hosted steward's delivery and acknowledgement
+cursors together only after Herdr reports that the injected Codex turn settled;
+a failed or interrupted delivery remains pending for retry.
+
+The steward publishes with an exact Crewfold binary and socket command, so
+another installed daemon cannot receive it accidentally. Stop and restart delete
+the named Herdr session; the room participant and shared history remain canonical.
+Restarting only the Crewfold daemon preserves the initialized steward session and
+must not enqueue onboarding or another public introduction.

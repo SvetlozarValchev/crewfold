@@ -9,20 +9,36 @@ import (
 	"time"
 )
 
+const maximumStewardDeltaBytes = 32 * 1024
+
 type StewardManager struct {
-	store      *Store
-	runtime    StewardRuntime
-	ctx        context.Context
-	cancel     context.CancelFunc
-	cliPath    string
-	socketPath string
-	mu         sync.Mutex
-	loops      map[string]context.CancelFunc
+	store             *Store
+	runtime           StewardRuntime
+	ctx               context.Context
+	cancel            context.CancelFunc
+	cliPath           string
+	socketPath        string
+	pollInterval      time.Duration
+	batchQuietPeriod  time.Duration
+	maximumBatchDelay time.Duration
+	mu                sync.Mutex
+	loops             map[string]context.CancelFunc
 }
 
 func NewStewardManager(parent context.Context, store *Store, runtime StewardRuntime, cliPath, socketPath string) *StewardManager {
 	ctx, cancel := context.WithCancel(parent)
-	return &StewardManager{store: store, runtime: runtime, ctx: ctx, cancel: cancel, cliPath: cliPath, socketPath: socketPath, loops: map[string]context.CancelFunc{}}
+	return &StewardManager{
+		store:             store,
+		runtime:           runtime,
+		ctx:               ctx,
+		cancel:            cancel,
+		cliPath:           cliPath,
+		socketPath:        socketPath,
+		pollInterval:      500 * time.Millisecond,
+		batchQuietPeriod:  5 * time.Second,
+		maximumBatchDelay: 30 * time.Second,
+		loops:             map[string]context.CancelFunc{},
+	}
 }
 
 func (m *StewardManager) Start() error {
@@ -192,7 +208,7 @@ func (m *StewardManager) cancelLoop(roomID string) {
 }
 
 func (m *StewardManager) deliveryLoop(ctx context.Context, roomID string) {
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(m.pollInterval)
 	defer ticker.Stop()
 	for {
 		m.deliverOnce(ctx, roomID)
@@ -226,11 +242,11 @@ func (m *StewardManager) deliverOnce(ctx context.Context, roomID string) {
 			return
 		}
 		prompt := m.stewardOnboarding(room, *steward)
-		promptCtx, promptCancel := context.WithTimeout(ctx, 12*time.Second)
-		err = m.runtime.Prompt(promptCtx, *steward, prompt)
+		promptCtx, promptCancel := context.WithTimeout(ctx, 5*time.Minute)
+		err = m.runtime.Deliver(promptCtx, *steward, prompt)
 		promptCancel()
 		if err == nil {
-			_ = m.store.markHostedStewardInitialized(ctx, roomID)
+			_ = m.store.completeHostedStewardOnboarding(ctx, roomID, room.LastSequence)
 		}
 		return
 	}
@@ -241,44 +257,69 @@ func (m *StewardManager) deliverOnce(ctx context.Context, roomID string) {
 	}
 	latest := steward.LastDeliveredSequence
 	lines := []string{}
+	deltaBytes := 0
 	directlyAddressed := false
+	var firstRelevantAt, lastRelevantAt time.Time
+	firstRelevantSequence := int64(0)
 	for _, message := range snapshot.Messages {
-		if message.Sequence > latest {
-			latest = message.Sequence
-		}
 		if message.Kind == "system" || message.SenderKind == "system" || message.ParticipantID == steward.ParticipantID {
+			latest = message.Sequence
 			continue
 		}
 		body := strings.TrimSpace(message.Body)
-		if len(body) > 4000 {
-			body = body[:4000] + "…"
+		line := fmt.Sprintf("#%d · @%s · %s\n%s", message.Sequence, message.SenderHandle, message.Kind, body)
+		separatorBytes := 0
+		if len(lines) > 0 {
+			separatorBytes = 2
 		}
+		if len(lines) > 0 && deltaBytes+separatorBytes+len(line) > maximumStewardDeltaBytes {
+			break
+		}
+		createdAt, _ := time.Parse(time.RFC3339Nano, message.CreatedAt)
+		if firstRelevantSequence == 0 {
+			firstRelevantSequence = message.Sequence
+			firstRelevantAt = createdAt
+		}
+		lastRelevantAt = createdAt
+		latest = message.Sequence
 		if strings.Contains(strings.ToLower(body), "@"+strings.ToLower(steward.Handle)) {
 			directlyAddressed = true
 		}
-		lines = append(lines, fmt.Sprintf("#%d · @%s · %s\n%s", message.Sequence, message.SenderHandle, message.Kind, body))
+		lines = append(lines, line)
+		deltaBytes += separatorBytes + len(line)
 	}
 	if len(lines) == 0 {
-		_ = m.store.advanceHostedStewardDelivery(ctx, roomID, latest)
+		_ = m.store.completeHostedStewardDelivery(ctx, roomID, latest)
+		return
+	}
+	if !directlyAddressed && shouldWaitForStewardBatch(time.Now(), firstRelevantAt, lastRelevantAt, m.batchQuietPeriod, m.maximumBatchDelay) {
 		return
 	}
 	addressing := "no"
 	if directlyAddressed {
 		addressing = "yes"
 	}
-	prompt := fmt.Sprintf(`[CREWFOLD ROOM EVENTS]
+	prompt := fmt.Sprintf(`[CREWFOLD ROOM DELTA]
 Room: %s
+Sequence: #%d–#%d
 Explicitly addressed: %s
 
 %s
 
-Apply the standing steward policy from onboarding. If no intervention is warranted, perform no public action and end this private turn exactly NO_ROOM_ACTION.`, snapshot.Room.Slug, addressing, strings.Join(lines, "\n\n"))
-	promptCtx, promptCancel := context.WithTimeout(ctx, 12*time.Second)
-	err = m.runtime.Prompt(promptCtx, *steward, prompt)
+Apply your room role. Do not echo or interrupt useful participant conversation. Even when no chat reply is warranted, preserve a material correction, invalidated conclusion, resolved contradiction, or phase boundary in your replaceable context or a shared document. Retrieve existing room state only when comparison is needed. Otherwise perform no public action and end exactly NO_ROOM_ACTION.`, snapshot.Room.Slug, firstRelevantSequence, latest, addressing, strings.Join(lines, "\n\n"))
+	promptCtx, promptCancel := context.WithTimeout(ctx, 5*time.Minute)
+	err = m.runtime.Deliver(promptCtx, *steward, prompt)
 	promptCancel()
 	if err == nil {
-		_ = m.store.advanceHostedStewardDelivery(ctx, roomID, latest)
+		_ = m.store.completeHostedStewardDelivery(ctx, roomID, latest)
 	}
+}
+
+func shouldWaitForStewardBatch(now, first, last time.Time, quietPeriod, maximumDelay time.Duration) bool {
+	if first.IsZero() || last.IsZero() {
+		return false
+	}
+	return now.Sub(last) < quietPeriod && now.Sub(first) < maximumDelay
 }
 
 func (m *StewardManager) stewardOnboarding(room Room, steward HostedSteward) string {
@@ -293,16 +334,20 @@ Your room role:
 
 This real Codex terminal is your private, owner-visible steward console. Independent agent sessions participate through the Crewfold CLI; they are not your subagents and Crewfold does not own their runtimes. Shared-room messages will be delivered here as exact Crewfold events.
 
-You are a quiet facilitator. Observing an event is not a reason to speak. Do not interrupt direct participant-to-participant exchanges, narrate progress, echo evidence, or publish acknowledgements. Intervene only when explicitly addressed, when asked for synthesis, when a material contradiction needs arbitration, when coordination is blocked, or when a consequential owner decision is required. Otherwise take no shared-room action. A single intervention may perform at most one public action; never publish a message and a duplicate context update together.
+You are quiet in conversation and active in curation. Do not interrupt direct participant-to-participant exchanges, narrate routine progress, echo evidence, or publish acknowledgements. Send a room message only when explicitly addressed, when synthesis is requested, when an unresolved contradiction or coordination is blocked, or when a consequential owner decision must be surfaced.
+
+Independently maintain the room's durable shared understanding. Replace your participant context when new evidence materially corrects, invalidates, resolves, or completes the current understanding, even if the participants resolved it without your help. Revise a shared document under the same filename when its established conclusions are materially superseded or a synthesis phase closes. Do not curate every incremental observation. Prefer the smallest useful action and never copy the same synthesis into both a message and context. A document revision may be accompanied by a short context update that identifies the new current document, but not by a duplicate chat message.
 
 Use the CLI from this directory to inspect and publish shared state:
 
 - %s read %s
+- %s show %s
 - %s send %s --stdin (required for substantial posts)
 - %s context %s CURRENT-CONTEXT
 - %s upload %s FILE --caption TEXT
+- %s document %s DOCUMENT-ID
 
-Public messages should be concise GitHub-flavored Markdown with short paragraphs, headings, or bullets—not dense transcript or log-dump prose. Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then remain silent until an intervention trigger occurs.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
+Normal deliveries contain only new canonical events. Existing context and document inventories remain in Crewfold; retrieve them only when a delta may make them stale. Public messages should be concise GitHub-flavored Markdown with short paragraphs, headings, or bullets—not dense transcript or log-dump prose. Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then follow these duties.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
 }
 
 func (m *StewardManager) roomCommand() string {

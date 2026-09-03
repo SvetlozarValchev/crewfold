@@ -600,7 +600,7 @@ func (s *Store) ConfigureHostedSteward(ctx context.Context, input StartStewardIn
 		return HostedSteward{}, err
 	}
 	if role == "" {
-		role = "Keep the room aligned: summarize material progress, ask for missing evidence, surface disagreements, and help participants converge without taking over their work."
+		role = "Quietly maintain the room's shared context and documents as material conclusions change. Speak only when addressed or when an unresolved contradiction, blocker, or consequential owner decision requires intervention."
 	}
 	managedDirectory := strings.TrimSpace(input.WorkingDirectory) == ""
 	workingDirectory := input.WorkingDirectory
@@ -759,16 +759,36 @@ func (s *Store) recordHostedStewardObservation(ctx context.Context, roomID, stat
 	return err
 }
 
-func (s *Store) markHostedStewardInitialized(ctx context.Context, roomID string) error {
+func (s *Store) completeHostedStewardOnboarding(ctx context.Context, roomID string, sequence int64) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET initialized_at=?,updated_at=? WHERE room_id=?`, now, now, roomID)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE hosted_stewards SET initialized_at=?,last_delivered_sequence=MAX(last_delivered_sequence,?),updated_at=? WHERE room_id=?`, now, sequence, now, roomID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE participants SET last_read_sequence=MAX(last_read_sequence,?),last_seen_at=? WHERE id=(SELECT participant_id FROM hosted_stewards WHERE room_id=?)`, sequence, now, roomID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-func (s *Store) advanceHostedStewardDelivery(ctx context.Context, roomID string, sequence int64) error {
+func (s *Store) completeHostedStewardDelivery(ctx context.Context, roomID string, sequence int64) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET last_delivered_sequence=MAX(last_delivered_sequence,?),updated_at=? WHERE room_id=?`, sequence, now, roomID)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE hosted_stewards SET last_delivered_sequence=MAX(last_delivered_sequence,?),updated_at=? WHERE room_id=?`, sequence, now, roomID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE participants SET last_read_sequence=MAX(last_read_sequence,?),last_seen_at=? WHERE id=(SELECT participant_id FROM hosted_stewards WHERE room_id=?)`, sequence, now, roomID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) stopHostedSteward(ctx context.Context, roomID, detail string) error {

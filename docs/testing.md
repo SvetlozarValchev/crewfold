@@ -13,7 +13,9 @@ independent working directories, publish context and messages, upload and verify
 a Markdown document, observe unread state, acknowledge, reject handle spoofing,
 and archive the room. A fake-runtime test covers hosted-steward lifecycle and
 exact compact room-event relay without invoking a model. It rejects regressions
-that repeat the full onboarding policy in every steward delivery.
+that repeat the full onboarding policy in every steward delivery, deliver each
+line of a short burst as a separate turn, acknowledge a delta before its Codex
+turn settles, or redeliver the room history immediately after onboarding.
 
 Codex delivery tests cover default CLI self-binding, persistent notification
 cursors, queued delivery, and rebinding the same participant to a replacement

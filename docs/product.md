@@ -42,14 +42,17 @@ Crewfold starts it, wakes it with exact new room events when it is idle, and let
 the owner inspect and prompt the real terminal. It reads and writes shared state
 through the same room CLI as every other participant. Its direct console is not a
 second room feed and Crewfold does not synthesize its responses. The steward is
-quiet by default. Merely observing evidence, progress, or a participant-to-
-participant question is not a reason to publish. It intervenes only when it is
-addressed, synthesis is requested, a material contradiction or blocker needs
-arbitration, or a consequential owner decision is required. One intervention
-produces at most one public action; it must not echo the same synthesis as both a
-message and a context update. The full policy is established once at onboarding;
-ordinary event delivery adds only a compact event delta and does not repeat that
-policy into the visible steward conversation.
+quiet in conversation and active in curation. Merely observing evidence,
+progress, or a participant-to-participant question is not a reason to publish a
+chat message. It speaks only when addressed, synthesis is requested, an
+unresolved contradiction or blocker needs arbitration, or a consequential owner
+decision is required. Independently, it updates replaceable context or revises a
+shared document when evidence materially corrects, invalidates, resolves, or
+completes the shared understanding. It does not curate every observation. One
+intervention produces the smallest useful durable action and does not echo the
+same synthesis into chat, context, and a document. The full policy is established
+once at onboarding; ordinary delivery contains bounded batches of new events and
+does not repeat that policy or the stored room state into the steward conversation.
 
 ## Shared information
 
@@ -65,9 +68,11 @@ policy into the visible steward conversation.
   the same filename are retained as revisions; the document rail shows one
   current entry with access to its prior revisions rather than duplicating the
   filename at top level.
-- **Acknowledgements** are per-participant read cursors. They are distinct from
-  notification delivery: injection says the session was notified; acknowledgement
-  says the canonical feed was read.
+- **Acknowledgements** are per-participant read cursors. For independently run
+  participants they are distinct from notification delivery: injection says the
+  session was notified, while acknowledgement says the canonical feed was read.
+  A hosted steward delivery advances both cursors only after its exact event batch
+  has finished processing in the persistent Codex session.
 
 There is no separate mailbox, knowledge base, artifact store, thread hierarchy,
 or task handoff. The room feed and its documents are the collaboration surface.
