@@ -29,7 +29,8 @@ terminal, send a private owner prompt, relay a direct participant exchange and
 verify that the quiet steward takes no public action, explicitly address the
 steward and verify one useful response, then stop and restart fresh.
 Manager restart coverage verifies that a daemon restart resumes an initialized
-steward without repeating onboarding or publishing another introduction.
+steward's last Codex thread without repeating onboarding, forking an empty
+conversation, or publishing another introduction.
 
 Visual review uses a fresh temporary daemon and representative room data. It must
 check the empty state, populated conversation, participant context, unread labels,

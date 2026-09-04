@@ -102,10 +102,7 @@ func (r *HerdrStewardRuntime) Ensure(ctx context.Context, steward HostedSteward,
 			case <-time.After(250 * time.Millisecond):
 			}
 		}
-		agentArguments := []string{"agent", "start", steward.AgentName, "--kind", "codex", "--pane", created.Result.RootPane.PaneID, "--timeout", "60000", "--", "--no-alt-screen", "-c", "shell_environment_policy.inherit=all"}
-		if steward.ManagedWorkingDirectory {
-			agentArguments = append(agentArguments, "--dangerously-bypass-approvals-and-sandbox")
-		}
+		agentArguments := append([]string{"agent", "start", steward.AgentName, "--kind", "codex", "--pane", created.Result.RootPane.PaneID, "--timeout", "60000", "--"}, stewardCodexArguments(steward)...)
 		_, startErr = r.run(ctx, steward.HerdrSession, agentArguments...)
 		if startErr == nil {
 			break
@@ -143,6 +140,21 @@ func (r *HerdrStewardRuntime) Ensure(ctx context.Context, steward HostedSteward,
 		}
 	}
 	return state, nil
+}
+
+func stewardCodexArguments(steward HostedSteward) []string {
+	arguments := []string{"--no-alt-screen", "-c", "shell_environment_policy.inherit=all"}
+	if steward.ManagedWorkingDirectory {
+		arguments = append(arguments, "--dangerously-bypass-approvals-and-sandbox")
+	}
+	// A completed onboarding turn proves that this steward has a saved Codex
+	// thread in its room-owned working directory. Herdr panes are disposable;
+	// after a daemon restart, resume that thread instead of silently creating a
+	// second personality with an empty transcript.
+	if steward.InitializedAt != "" {
+		arguments = append(arguments, "resume", "--last")
+	}
+	return arguments
 }
 
 func hasCodexTrustPrompt(output string) bool {

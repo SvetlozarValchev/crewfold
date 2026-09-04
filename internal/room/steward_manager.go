@@ -306,7 +306,7 @@ Explicitly addressed: %s
 
 %s
 
-Apply your room role. Do not echo or interrupt useful participant conversation. Even when no chat reply is warranted, preserve a material correction, invalidated conclusion, resolved contradiction, or phase boundary in your replaceable context or a shared document. Retrieve existing room state only when comparison is needed. Otherwise perform no public action and end exactly NO_ROOM_ACTION.`, snapshot.Room.Slug, firstRelevantSequence, latest, addressing, strings.Join(lines, "\n\n"))
+Apply your room role. Do not echo or interrupt useful participant conversation. Even when no chat reply is warranted, preserve a material correction, invalidated conclusion, resolved contradiction, or phase boundary in your replaceable context or a shared document. Retrieve existing room state only when comparison is needed. In public messages, refer to documents by readable filename, never by internal document ID. Otherwise perform no public action and end exactly NO_ROOM_ACTION.`, snapshot.Room.Slug, firstRelevantSequence, latest, addressing, strings.Join(lines, "\n\n"))
 	promptCtx, promptCancel := context.WithTimeout(ctx, 5*time.Minute)
 	err = m.runtime.Deliver(promptCtx, *steward, prompt)
 	promptCancel()
@@ -347,7 +347,7 @@ Use the CLI from this directory to inspect and publish shared state:
 - %s upload %s FILE --caption TEXT
 - %s document %s DOCUMENT-ID
 
-Normal deliveries contain only new canonical events. Existing context and document inventories remain in Crewfold; retrieve them only when a delta may make them stale. Public messages should be concise GitHub-flavored Markdown with short paragraphs, headings, or bullets—not dense transcript or log-dump prose. Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then follow these duties.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
+Normal deliveries contain only new canonical events. Existing context and document inventories remain in Crewfold; retrieve them only when a delta may make them stale. Public messages should be concise GitHub-flavored Markdown with short paragraphs, headings, or bullets—not dense transcript or log-dump prose. Refer to shared documents by readable filename in public messages, never by an internal document ID. Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then follow these duties.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
 }
 
 func (m *StewardManager) roomCommand() string {

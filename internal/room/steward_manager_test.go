@@ -100,7 +100,7 @@ func TestHostedStewardManagerStartsAndRelaysRoomActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 3*time.Second, func() bool { return runtime.promptCount() >= 1 })
-	if first := runtime.prompt(0); !strings.Contains(first, `"/opt/crewfold" room --socket "/run/crewfold.sock" read relay`) || !strings.Contains(first, "send relay --stdin") || !strings.Contains(first, "GitHub-flavored Markdown") {
+	if first := runtime.prompt(0); !strings.Contains(first, `"/opt/crewfold" room --socket "/run/crewfold.sock" read relay`) || !strings.Contains(first, "send relay --stdin") || !strings.Contains(first, "GitHub-flavored Markdown") || !strings.Contains(first, "never by an internal document ID") {
 		t.Fatalf("onboarding does not target exact daemon: %s", first)
 	}
 	initialState, err := store.HostedSteward(ctx, "relay")
@@ -126,7 +126,7 @@ func TestHostedStewardManagerStartsAndRelaysRoomActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 3*time.Second, func() bool { return runtime.promptCount() >= 2 })
-	if second := runtime.prompt(1); !strings.Contains(second, "[CREWFOLD ROOM DELTA]") || !strings.Contains(second, "Room: relay") || !strings.Contains(second, "Sequence: #") || !strings.Contains(second, "Explicitly addressed: no") || !strings.Contains(second, "The interface contracts disagree.") || !strings.Contains(second, "participants resolved the contract") || !strings.Contains(second, "preserve a material correction") || !strings.Contains(second, "NO_ROOM_ACTION") {
+	if second := runtime.prompt(1); !strings.Contains(second, "[CREWFOLD ROOM DELTA]") || !strings.Contains(second, "Room: relay") || !strings.Contains(second, "Sequence: #") || !strings.Contains(second, "Explicitly addressed: no") || !strings.Contains(second, "The interface contracts disagree.") || !strings.Contains(second, "participants resolved the contract") || !strings.Contains(second, "preserve a material correction") || !strings.Contains(second, "never by internal document ID") || !strings.Contains(second, "NO_ROOM_ACTION") {
 		t.Fatalf("room relay prompt lost the exact event: %s", second)
 	}
 	if second := runtime.prompt(1); strings.Contains(second, "Use the CLI from this directory") || strings.Contains(second, "send relay --stdin") || strings.Contains(second, "document relay DOCUMENT-ID") {

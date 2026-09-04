@@ -77,7 +77,9 @@ cursors together only after Herdr reports that the injected Codex turn settled;
 a failed or interrupted delivery remains pending for retry.
 
 The steward publishes with an exact Crewfold binary and socket command, so
-another installed daemon cannot receive it accidentally. Stop and restart delete
-the named Herdr session; the room participant and shared history remain canonical.
-Restarting only the Crewfold daemon preserves the initialized steward session and
-must not enqueue onboarding or another public introduction.
+another installed daemon cannot receive it accidentally. An explicit steward
+stop or restart deletes the named Herdr session; the room participant and shared
+history remain canonical. Restarting only the Crewfold daemon recreates its
+disposable Herdr host and resumes the initialized steward's last Codex thread in
+the room-owned working directory. It must not fork an empty conversation, enqueue
+onboarding, or publish another introduction.
