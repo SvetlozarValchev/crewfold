@@ -26,6 +26,8 @@ import (
 	webui "crewfold/web"
 )
 
+const maximumLocalRPCRequestBytes = 6 * 1024 * 1024
+
 type ServerConfig struct {
 	DataDir        string
 	SocketPath     string
@@ -172,8 +174,8 @@ func (s *Server) close() {
 func (s *Server) serveConnection(ctx context.Context, connection net.Conn) {
 	defer connection.Close()
 	_ = connection.SetDeadline(time.Now().Add(2 * time.Minute))
-	scanner := bufio.NewScanner(io.LimitReader(connection, 1024*1024))
-	scanner.Buffer(make([]byte, 4096), 512*1024)
+	scanner := bufio.NewScanner(io.LimitReader(connection, maximumLocalRPCRequestBytes))
+	scanner.Buffer(make([]byte, 4096), maximumLocalRPCRequestBytes)
 	encoder := json.NewEncoder(connection)
 	for scanner.Scan() {
 		var request Request

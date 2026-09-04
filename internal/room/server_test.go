@@ -1,7 +1,9 @@
 package room
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,6 +78,20 @@ func TestLocalServerExposesRoomWorkflow(t *testing.T) {
 	}
 	if message.SenderHandle != "tester" {
 		t.Fatalf("message sender = %q", message.SenderHandle)
+	}
+	largeContent := bytes.Repeat([]byte{0xab}, 400*1024)
+	var uploaded Message
+	if err := client.Call(context.Background(), "document.upload", UploadInput{
+		Room:             "shared-test",
+		WorkingDirectory: participantDirectory,
+		Name:             "large-preview.png",
+		MediaType:        "image/png",
+		ContentBase64:    base64.StdEncoding.EncodeToString(largeContent),
+	}, &uploaded); err != nil {
+		t.Fatalf("upload document through large local RPC request: %v", err)
+	}
+	if uploaded.Document == nil || uploaded.Document.ByteSize != int64(len(largeContent)) {
+		t.Fatalf("large uploaded document = %#v", uploaded.Document)
 	}
 	var bootstrap map[string]any
 	if err := client.Call(context.Background(), "web.bootstrap", map[string]any{}, &bootstrap); err != nil {
