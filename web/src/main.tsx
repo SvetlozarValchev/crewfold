@@ -1,4 +1,4 @@
-import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { StrictMode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Archive, Bot, ChevronLeft, ChevronRight, CircleStop, FileText, Keyboard, LoaderCircle, MessageSquare, Plus, RefreshCw, RotateCcw, Send, Terminal, Users, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -19,6 +19,7 @@ type DocumentGroup = { key: string; name: string; latest: Document; revisions: D
 type OpenDocument = { document: Document; content: string; revisions: Document[]; revisionIndex: number };
 
 const tokenKey = "crewfold-room-session";
+const messagePageSize = 50;
 
 async function authenticate(): Promise<string> {
   const existing = sessionStorage.getItem(tokenKey);
@@ -78,6 +79,12 @@ function groupDocuments(documents: Document[]): DocumentGroup[] {
   return [...grouped.entries()].map(([key, revisions]) => ({ key, name: revisions[0].name, latest: revisions[0], revisions }));
 }
 
+function mergeMessages(current: Message[], incoming: Message[]) {
+  const bySequence = new Map(current.map((message) => [message.sequence, message]));
+  for (const message of incoming) bySequence.set(message.sequence, message);
+  return [...bySequence.values()].sort((left, right) => left.sequence - right.sequence);
+}
+
 function CreateRoom({ token, close, created }: { token: string; close: () => void; created: (snapshot: Snapshot, warning?: string) => void }) {
   const [slug, setSlug] = useState(""); const [title, setTitle] = useState(""); const [topic, setTopic] = useState(""); const [host, setHost] = useState(true); const [handle, setHandle] = useState(""); const [role, setRole] = useState("");
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const suggested = `${slug || "room"}-steward`.slice(0, 63);
@@ -86,7 +93,7 @@ function CreateRoom({ token, close, created }: { token: string; close: () => voi
     try {
       const snapshot = await rpc<Snapshot>(token, "room.create", { slug, title, topic }); let warning = "";
       if (host) { try { await rpc<HostedSteward>(token, "steward.start", { room: snapshot.room.id, handle: handle || suggested, role }); } catch (reason) { warning = reason instanceof Error ? `Room created, but the steward could not start: ${reason.message}` : "Room created, but the steward could not start."; } }
-      created(await rpc<Snapshot>(token, "room.snapshot", { room: snapshot.room.id, limit: 500 }), warning || undefined);
+      created(await rpc<Snapshot>(token, "room.snapshot", { room: snapshot.room.id, limit: messagePageSize }), warning || undefined);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create room."); } finally { setBusy(false); }
   };
   return <div className="modal-backdrop"><form className="modal" role="dialog" aria-modal="true" aria-labelledby="create-room-title" onSubmit={submit}>
@@ -139,8 +146,8 @@ function sameMessageGroup(previous: Message, current: Message) {
 }
 
 function MessageRow({ message, compact, documents, openDocument }: { message: Message; compact: boolean; documents: Document[]; openDocument: (document: Document) => void }) {
-  if (message.kind === "system") return <div className="system-message"><span>#{message.sequence}</span>{message.body}</div>;
-  return <article className={`message ${message.sender_kind} ${compact ? "compact" : ""}`} aria-label={`${message.sender_name} at ${formatTime(message.created_at)}`} title={`Room event #${message.sequence}`}>
+  if (message.kind === "system") return <div className="system-message" data-message-sequence={message.sequence}><span>#{message.sequence}</span>{message.body}</div>;
+  return <article className={`message ${message.sender_kind} ${compact ? "compact" : ""}`} data-message-sequence={message.sequence} aria-label={`${message.sender_name} at ${formatTime(message.created_at)}`} title={`Room event #${message.sequence}`}>
     {compact ? <div className="message-mark-placeholder" /> : <div className="message-mark">{message.sender_kind === "steward" ? <Bot size={15} /> : message.sender_handle.slice(0, 2).toUpperCase()}</div>}
     <div className="message-content">{!compact && <header><strong>{message.sender_name}</strong><span>@{message.sender_handle}</span><time>{formatTime(message.created_at)}</time></header>}<Markdown text={message.body} className="message-markdown" documents={documents} openDocument={openDocument} />{message.document && <button className="attachment" onClick={() => openDocument(message.document!)}><FileText size={17} /><span><strong>{message.document.name}</strong><small>{message.document.media_type} · {formatSize(message.document.byte_size)}</small></span><ChevronRight size={16} /></button>}</div>
   </article>;
@@ -148,25 +155,84 @@ function MessageRow({ message, compact, documents, openDocument }: { message: Me
 
 function App() {
   const [connection, setConnection] = useState<Connection>("connecting"); const [token, setToken] = useState(""); const [rooms, setRooms] = useState<Room[]>([]); const [selected, setSelected] = useState(""); const [snapshot, setSnapshot] = useState<Snapshot | null>(null); const [createOpen, setCreateOpen] = useState(false); const [startSteward, setStartSteward] = useState(false); const [consoleOpen, setConsoleOpen] = useState(false);
-  const [message, setMessage] = useState(""); const [sending, setSending] = useState(false); const [error, setError] = useState(""); const [document, setDocument] = useState<OpenDocument | null>(null); const feed = useRef<HTMLDivElement>(null);
+  const [message, setMessage] = useState(""); const [sending, setSending] = useState(false); const [error, setError] = useState(""); const [document, setDocument] = useState<OpenDocument | null>(null); const [hasOlder, setHasOlder] = useState(false); const [loadingOlder, setLoadingOlder] = useState(false); const feed = useRef<HTMLDivElement>(null);
+  const activeRoom = useRef(""); const latestSequence = useRef(0); const following = useRef(true); const loadingOlderRef = useRef(false); const scrollToBottom = useRef(false); const prependAnchor = useRef<{ sequence: string; offset: number; height: number; top: number } | null>(null);
   const selectedRoom = selected || rooms.find((room) => room.status === "open")?.slug || rooms[0]?.slug || "";
   const loadRooms = useCallback(async (auth: string) => { const result = await rpc<Room[]>(auth, "room.list", {}); setRooms(result); return result; }, []);
-  const loadSnapshot = useCallback(async (auth: string, room: string) => { if (!room) { setSnapshot(null); return; } setSnapshot(await rpc<Snapshot>(auth, "room.snapshot", { room, limit: 500 })); }, []);
+  const loadLatest = useCallback(async (auth: string, room: string, replace = false) => {
+    if (!room) { setSnapshot(null); return; }
+    const after = replace ? 0 : latestSequence.current;
+    const incoming = await rpc<Snapshot>(auth, "room.snapshot", { room, ...(after > 0 ? { after, limit: 100 } : { limit: messagePageSize }) });
+    if (activeRoom.current !== room) return;
+    const newest = incoming.messages.at(-1)?.sequence ?? 0;
+    latestSequence.current = Math.max(latestSequence.current, newest);
+    if (replace) {
+      setHasOlder((incoming.messages[0]?.sequence ?? 1) > 1);
+      scrollToBottom.current = true;
+      following.current = true;
+      setSnapshot(incoming);
+      return;
+    }
+    setSnapshot((current) => !current || current.room.id !== incoming.room.id ? incoming : { ...incoming, messages: mergeMessages(current.messages, incoming.messages) });
+  }, []);
   useEffect(() => { void authenticate().then(async (auth) => { setToken(auth); const list = await loadRooms(auth); setSelected(list.find((room) => room.status === "open")?.slug ?? list[0]?.slug ?? ""); setConnection("connected"); }).catch((reason) => { setConnection(String(reason).includes("expired") ? "unauthorized" : "failed"); setError(reason instanceof Error ? reason.message : "Could not connect."); }); }, [loadRooms]);
-  useEffect(() => { if (!token || !selectedRoom) return; void loadSnapshot(token, selectedRoom).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not read room.")); const timer = setInterval(() => void Promise.all([loadSnapshot(token, selectedRoom), loadRooms(token)]).catch(() => undefined), 1200); return () => clearInterval(timer); }, [token, selectedRoom, loadSnapshot, loadRooms]);
-  useEffect(() => { if (feed.current) feed.current.scrollTop = feed.current.scrollHeight; }, [snapshot?.room.last_sequence]);
-  const send = async (event: React.FormEvent) => { event.preventDefault(); if (!message.trim() || !snapshot) return; setSending(true); setError(""); try { await rpc(token, "message.send", { room: snapshot.room.id, owner: true, body: message.trim() }); setMessage(""); await loadSnapshot(token, snapshot.room.id); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not send."); } finally { setSending(false); } };
+  useEffect(() => {
+    if (!token || !selectedRoom) return;
+    activeRoom.current = selectedRoom; latestSequence.current = 0; loadingOlderRef.current = false; setLoadingOlder(false); setHasOlder(false); setSnapshot(null);
+    void loadLatest(token, selectedRoom, true).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not read room."));
+    const timer = setInterval(() => void Promise.all([loadLatest(token, selectedRoom), loadRooms(token)]).catch(() => undefined), 1200);
+    return () => clearInterval(timer);
+  }, [token, selectedRoom, loadLatest, loadRooms]);
+  const loadOlder = useCallback(async () => {
+    const before = snapshot?.messages[0]?.sequence ?? 0;
+    if (!snapshot || before <= 1 || loadingOlderRef.current || !hasOlder) return;
+    loadingOlderRef.current = true; setLoadingOlder(true); setError("");
+    try {
+      const incoming = await rpc<Snapshot>(token, "room.snapshot", { room: snapshot.room.id, before, limit: messagePageSize });
+      if (activeRoom.current !== snapshot.room.slug) return;
+      const viewport = feed.current;
+      const anchor = viewport?.querySelector<HTMLElement>("[data-message-sequence]");
+      prependAnchor.current = viewport ? { sequence: anchor?.dataset.messageSequence ?? "", offset: anchor ? anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top : 0, height: viewport.scrollHeight, top: viewport.scrollTop } : null;
+      setHasOlder(incoming.messages.length > 0 && (incoming.messages[0]?.sequence ?? 1) > 1);
+      setSnapshot((current) => !current || current.room.id !== incoming.room.id ? incoming : { ...current, messages: mergeMessages(current.messages, incoming.messages) });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load earlier messages.");
+    } finally {
+      loadingOlderRef.current = false; setLoadingOlder(false);
+    }
+  }, [snapshot, hasOlder, token]);
+  useLayoutEffect(() => {
+    const viewport = feed.current;
+    if (!viewport) return;
+    const pending = prependAnchor.current;
+    if (pending) {
+      const anchor = pending.sequence ? viewport.querySelector<HTMLElement>(`[data-message-sequence="${pending.sequence}"]`) : null;
+      if (anchor) viewport.scrollTop += anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top - pending.offset;
+      else viewport.scrollTop = pending.top + viewport.scrollHeight - pending.height;
+      prependAnchor.current = null;
+      return;
+    }
+    if (scrollToBottom.current || following.current) viewport.scrollTop = viewport.scrollHeight;
+    scrollToBottom.current = false;
+  }, [snapshot?.messages.length, snapshot?.messages[0]?.id, snapshot?.messages.at(-1)?.id]);
+  const onFeedScroll = () => {
+    const viewport = feed.current;
+    if (!viewport) return;
+    following.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80;
+    if (viewport.scrollTop < 120) void loadOlder();
+  };
+  const send = async (event: React.FormEvent) => { event.preventDefault(); if (!message.trim() || !snapshot) return; setSending(true); setError(""); try { await rpc(token, "message.send", { room: snapshot.room.id, owner: true, body: message.trim() }); setMessage(""); scrollToBottom.current = true; following.current = true; await loadLatest(token, snapshot.room.slug); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not send."); } finally { setSending(false); } };
   const openDocument = async (item: Document) => { setError(""); try { const result = await rpc<{ document: Document; content_base64: string }>(token, "document.read", { room: item.room_id, document: item.id }); const revisions = snapshot?.documents.filter((candidate) => candidate.name === item.name && (candidate.participant_id ?? "") === (item.participant_id ?? "")) ?? [item]; const revisionIndex = Math.max(0, revisions.findIndex((candidate) => candidate.id === item.id)); setDocument({ document: result.document, content: decodeBase64(result.content_base64), revisions, revisionIndex }); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not open document."); } };
   const participantByID = useMemo(() => new Map(snapshot?.participants.map((participant) => [participant.id, participant]) ?? []), [snapshot?.participants]);
   const visibleMessages = useMemo(() => snapshot?.messages.filter((item) => item.kind !== "context") ?? [], [snapshot?.messages]);
   const documentGroups = useMemo(() => groupDocuments(snapshot?.documents ?? []), [snapshot?.documents]);
-  const refresh = () => { if (snapshot) void loadSnapshot(token, snapshot.room.id); void loadRooms(token); };
+  const refresh = () => { if (snapshot) void loadLatest(token, snapshot.room.slug); void loadRooms(token); };
 
   if (connection !== "connected") return <main className="gate"><div className="brand-mark">CF</div><h1>{connection === "connecting" ? "Connecting to Crewfold…" : "Crewfold is not available"}</h1>{error && <p>{error}</p>}</main>;
   return <div className={`app ${snapshot ? "" : "no-room"}`}>
     <header className="topbar"><div className="brand"><span>CF</span><strong>Crewfold</strong><small>shared rooms</small></div><div className="current-room">{snapshot ? `# ${snapshot.room.slug}` : "No room selected"}</div><div className="online"><i />local</div></header>
     <aside className="room-rail"><div className="rail-heading"><span>ROOMS</span><button onClick={() => setCreateOpen(true)} aria-label="Create room"><Plus size={16} /></button></div>{rooms.map((room) => <button key={room.id} className={selectedRoom === room.slug ? "selected" : ""} onClick={() => setSelected(room.slug)}><MessageSquare size={15} /><span><strong>{room.title}</strong><small>#{room.slug} · {room.last_sequence} messages</small></span>{room.status === "archived" && <Archive size={13} />}</button>)}{!rooms.length && <p>No rooms yet. Create one to connect independent agent sessions.</p>}</aside>
-    <main className={`room-main ${snapshot ? "" : "room-empty"}`}>{snapshot ? <><header className="room-header"><div><span>SHARED ROOM</span><h1>{snapshot.room.title}</h1><p>{snapshot.room.topic}</p></div><div><strong>{snapshot.participants.filter((item) => item.status === "joined").length}</strong><span>joined</span></div><div><strong>{documentGroups.length}</strong><span>documents</span></div></header><div className="feed" ref={feed}>{visibleMessages.map((item, index) => <MessageRow key={item.id} message={item} compact={index > 0 && sameMessageGroup(visibleMessages[index - 1], item)} documents={snapshot.documents} openDocument={openDocument} />)}</div><form className="composer" onSubmit={send}><span>›</span><textarea rows={1} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message #${snapshot.room.slug}`} /><button aria-label="Send message" disabled={sending || !message.trim()}>{sending ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}</button></form>{error && <div className="toast error">{error}</div>}</> : <div className="empty"><MessageSquare size={25} /><h1>Create a shared room</h1><p>Independent agent sessions join through the Crewfold CLI. A room may also host one persistent Herdr steward.</p><button className="primary" onClick={() => setCreateOpen(true)}><Plus size={15} /> new room</button></div>}</main>
+    <main className={`room-main ${snapshot ? "" : "room-empty"}`}>{snapshot ? <><header className="room-header"><div><span>SHARED ROOM</span><h1>{snapshot.room.title}</h1><p>{snapshot.room.topic}</p></div><div><strong>{snapshot.participants.filter((item) => item.status === "joined").length}</strong><span>joined</span></div><div><strong>{documentGroups.length}</strong><span>documents</span></div></header><div className="feed" ref={feed} onScroll={onFeedScroll}>{hasOlder && <button className="history-loader" onClick={() => void loadOlder()} disabled={loadingOlder}>{loadingOlder ? <><LoaderCircle className="spin" size={13} /> loading earlier messages</> : "load earlier messages"}</button>}{visibleMessages.map((item, index) => <MessageRow key={item.id} message={item} compact={index > 0 && sameMessageGroup(visibleMessages[index - 1], item)} documents={snapshot.documents} openDocument={openDocument} />)}</div><form className="composer" onSubmit={send}><span>›</span><textarea rows={1} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message #${snapshot.room.slug}`} /><button aria-label="Send message" disabled={sending || !message.trim()}>{sending ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}</button></form>{error && <div className="toast error">{error}</div>}</> : <div className="empty"><MessageSquare size={25} /><h1>Create a shared room</h1><p>Independent agent sessions join through the Crewfold CLI. A room may also host one persistent Herdr steward.</p><button className="primary" onClick={() => setCreateOpen(true)}><Plus size={15} /> new room</button></div>}</main>
     {snapshot && <aside className="room-context"><section><h2><Bot size={14} /> HOSTED STEWARD</h2>{snapshot.steward ? <button className="steward-card" onClick={() => setConsoleOpen(true)}><span><strong>@{snapshot.steward.handle}</strong><small>{snapshot.steward.status} · {snapshot.steward.agent_status || "Herdr"}</small></span><Terminal size={16} /></button> : <div className="start-steward"><p>Optional: one real, persistent Codex terminal can watch and help this room.</p><button onClick={() => setStartSteward(true)}><Terminal size={14} /> start steward</button></div>}</section>
       <section><h2><Users size={14} /> PARTICIPANTS <span>{snapshot.participants.length}</span></h2>{snapshot.participants.map((participant) => <article className="participant" key={participant.id}><header><i className={participant.status} /><strong>@{participant.handle}</strong>{participant.kind === "steward" && <em>hosted</em>}<span>{participant.unread_count ? `${participant.unread_count} unread` : participant.status}</span></header>{participant.working_directory && <code title={participant.working_directory}>{participant.working_directory}</code>}{participant.delivery && <div className={`participant-delivery ${participant.delivery.status}`} title={participant.delivery.error}><span>Codex delivery</span><strong>{participant.delivery.status}</strong>{participant.delivery.last_delivered_sequence > 0 && <small>through #{participant.delivery.last_delivered_sequence}</small>}</div>}{participant.context && <details className="participant-context"><summary><strong>Current context</strong>{participant.context_updated_at && <time>{formatTime(participant.context_updated_at)}</time>}</summary><Markdown text={participant.context} className="participant-context-body" /></details>}</article>)}</section>
       <section className="join-help"><h2><MessageSquare size={14} /> CONNECT A CODEX SESSION</h2><code>crewfold room join {snapshot.room.slug} --handle &lt;name&gt;</code><p>Run this inside that Codex session's working folder. Crewfold binds its current thread and injects later room activity into the same conversation. Use <code>--delivery none</code> only when injection is unwanted.</p></section>

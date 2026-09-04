@@ -508,6 +508,17 @@ func (s *Store) Ack(ctx context.Context, input AckInput) (Participant, error) {
 }
 
 func (s *Store) Snapshot(ctx context.Context, roomIdentifier string, after int64, limit int) (Snapshot, error) {
+	return s.snapshot(ctx, roomIdentifier, after, 0, limit)
+}
+
+func (s *Store) SnapshotBefore(ctx context.Context, roomIdentifier string, before int64, limit int) (Snapshot, error) {
+	if before <= 0 {
+		return Snapshot{}, errors.New("before must be greater than zero")
+	}
+	return s.snapshot(ctx, roomIdentifier, 0, before, limit)
+}
+
+func (s *Store) snapshot(ctx context.Context, roomIdentifier string, after, before int64, limit int) (Snapshot, error) {
 	room, err := s.resolveRoom(ctx, roomIdentifier)
 	if err != nil {
 		return Snapshot{}, err
@@ -519,7 +530,12 @@ func (s *Store) Snapshot(ctx context.Context, roomIdentifier string, after int64
 	if err != nil {
 		return Snapshot{}, err
 	}
-	messages, err := s.messages(ctx, room.ID, after, limit)
+	var messages []Message
+	if before > 0 {
+		messages, err = s.messagesBefore(ctx, room.ID, before, limit)
+	} else {
+		messages, err = s.messages(ctx, room.ID, after, limit)
+	}
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -928,6 +944,18 @@ COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d
 		FROM selected m LEFT JOIN documents d ON d.id=m.document_id ORDER BY m.sequence`
 		arguments = []any{roomID, limit}
 	}
+	return s.queryMessages(ctx, query, arguments...)
+}
+
+func (s *Store) messagesBefore(ctx context.Context, roomID string, before int64, limit int) ([]Message, error) {
+	query := `WITH selected AS (SELECT * FROM messages WHERE room_id=? AND sequence<? ORDER BY sequence DESC LIMIT ?)
+		SELECT m.sequence,m.id,m.room_id,COALESCE(m.participant_id,''),m.sender_handle,m.sender_name,m.sender_kind,m.kind,m.body,COALESCE(m.document_id,''),m.created_at,
+		COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d.sha256,''),COALESCE(d.created_at,'')
+		FROM selected m LEFT JOIN documents d ON d.id=m.document_id ORDER BY m.sequence`
+	return s.queryMessages(ctx, query, roomID, before, limit)
+}
+
+func (s *Store) queryMessages(ctx context.Context, query string, arguments ...any) ([]Message, error) {
 	rows, err := s.db.QueryContext(ctx, query, arguments...)
 	if err != nil {
 		return nil, err
@@ -942,7 +970,7 @@ COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d
 			return nil, err
 		}
 		if documentID != "" {
-			message.Document = &Document{ID: documentID, RoomID: roomID, ParticipantID: message.ParticipantID, Name: documentName, MediaType: documentMedia, ByteSize: documentBytes, SHA256: documentSHA, CreatedAt: documentCreated}
+			message.Document = &Document{ID: documentID, RoomID: message.RoomID, ParticipantID: message.ParticipantID, Name: documentName, MediaType: documentMedia, ByteSize: documentBytes, SHA256: documentSHA, CreatedAt: documentCreated}
 		}
 		result = append(result, message)
 	}

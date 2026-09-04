@@ -37,6 +37,12 @@ format.
 
 Unix requests and responses are newline-delimited JSON. Browser RPC uses the same
 request envelope after the one-time URL is exchanged for an in-memory session.
+
+`room.snapshot` returns the newest bounded message window when no cursor is
+provided. `after` reads newer events for live updates; `before` reads the
+preceding bounded window for upward history pagination. The web console starts
+with 50 messages and prepends older windows as the feed reaches the top.
+
 Unknown input fields are rejected.
 
 ## Runtime boundary

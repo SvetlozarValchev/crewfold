@@ -52,7 +52,9 @@ button:disabled { cursor: default; opacity: .45; }
 .room-header > div:not(:first-child) strong, .room-header > div:not(:first-child) span { display: block; }
 .room-header > div:not(:first-child) strong { color: #ededed; font-size: 18px; }
 .room-header > div:not(:first-child) span { color: var(--muted); font-size: 9px; text-transform: uppercase; }
-.feed { min-height: 0; padding: 15px 22px 28px; overflow-y: auto; scroll-behavior: smooth; }
+.feed { min-height: 0; padding: 15px 22px 28px; overflow-y: auto; }
+.history-loader { min-height: 30px; margin: 0 auto 10px; padding: 6px 10px; display: flex; align-items: center; gap: 7px; border: 1px solid #454545; color: var(--cyan); background: #242424; font-size: 10px; }
+.history-loader:hover { border-color: var(--cyan); background: #292d2d; }
 .system-message { margin: 8px 0; display: flex; gap: 10px; color: var(--faint); font-size: 10px; }
 .system-message span { width: 36px; text-align: right; }
 .message { padding: 12px 0; display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 11px; border-bottom: 1px solid var(--line-soft); }

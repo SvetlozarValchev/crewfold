@@ -171,7 +171,8 @@ type AckInput struct {
 }
 
 type ListMessagesInput struct {
-	Room  string `json:"room"`
-	After int64  `json:"after,omitempty"`
-	Limit int    `json:"limit,omitempty"`
+	Room   string `json:"room"`
+	After  int64  `json:"after,omitempty"`
+	Before int64  `json:"before,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 }

@@ -276,4 +276,18 @@ func TestInitialSnapshotUsesNewestBoundedWindow(t *testing.T) {
 	if len(incremental.Messages) != 3 || incremental.Messages[0].Sequence != 4 || incremental.Messages[2].Sequence != 6 {
 		t.Fatalf("incremental window = %#v", incremental.Messages)
 	}
+	older, err := store.SnapshotBefore(ctx, "bounded", snapshot.Messages[0].Sequence, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(older.Messages) != 3 || older.Messages[0].Sequence != 4 || older.Messages[2].Sequence != 6 {
+		t.Fatalf("older window = %#v", older.Messages)
+	}
+	oldest, err := store.SnapshotBefore(ctx, "bounded", older.Messages[0].Sequence, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oldest.Messages) != 3 || oldest.Messages[0].Sequence != 1 || oldest.Messages[2].Sequence != 3 {
+		t.Fatalf("oldest window = %#v", oldest.Messages)
+	}
 }

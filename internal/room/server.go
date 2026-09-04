@@ -229,6 +229,12 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		if err := decode(&input); err != nil {
 			return nil, err
 		}
+		if input.After > 0 && input.Before > 0 {
+			return nil, errors.New("after and before cannot be used together")
+		}
+		if input.Before > 0 {
+			return s.store.SnapshotBefore(ctx, input.Room, input.Before, input.Limit)
+		}
 		return s.store.Snapshot(ctx, input.Room, input.After, input.Limit)
 	case "room.archive":
 		var input struct {

@@ -83,6 +83,16 @@ func TestUnixServerExposesRoomWorkflow(t *testing.T) {
 	if message.SenderHandle != "tester" {
 		t.Fatalf("message sender = %q", message.SenderHandle)
 	}
+	var older Snapshot
+	if err := client.Call(context.Background(), "room.snapshot", ListMessagesInput{Room: "shared-test", Before: message.Sequence, Limit: 1}, &older); err != nil {
+		t.Fatal(err)
+	}
+	if len(older.Messages) != 1 || older.Messages[0].Sequence >= message.Sequence {
+		t.Fatalf("older message window = %#v", older.Messages)
+	}
+	if err := client.Call(context.Background(), "room.snapshot", ListMessagesInput{Room: "shared-test", After: 1, Before: message.Sequence, Limit: 1}, &older); err == nil || !strings.Contains(err.Error(), "cannot be used together") {
+		t.Fatalf("conflicting message cursors were not rejected: %v", err)
+	}
 	var bootstrap map[string]any
 	if err := client.Call(context.Background(), "web.bootstrap", map[string]any{}, &bootstrap); err != nil {
 		t.Fatal(err)
