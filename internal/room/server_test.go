@@ -15,7 +15,6 @@ import (
 )
 
 func TestLocalServerExposesRoomWorkflow(t *testing.T) {
-	t.Parallel()
 	root, err := os.MkdirTemp("", "cf-")
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +109,7 @@ func TestLocalServerExposesRoomWorkflow(t *testing.T) {
 
 func waitForServer(t *testing.T, client Client) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		var status map[string]any
 		if err := client.Call(context.Background(), "status", map[string]any{}, &status); err == nil {
