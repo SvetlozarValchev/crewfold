@@ -643,7 +643,11 @@ func printSnapshot(output io.Writer, snapshot room.Snapshot, messages bool) {
 		}
 		fmt.Fprintf(output, "@%s\t%s\t%s\t%s\t%d unread%s\n", participant.Handle, participant.Kind, participant.Status, participant.WorkingDirectory, participant.UnreadCount, context)
 	}
-	fmt.Fprintf(output, "\n%d documents · %d messages\n", len(snapshot.Documents), snapshot.Room.LastSequence)
+	documentNames := make(map[string]struct{}, len(snapshot.Documents))
+	for _, document := range snapshot.Documents {
+		documentNames[document.Name] = struct{}{}
+	}
+	fmt.Fprintf(output, "\n%d documents · %d revisions · %d messages\n", len(documentNames), len(snapshot.Documents), snapshot.Room.LastSequence)
 	if messages {
 		for _, message := range snapshot.Messages {
 			printMessage(output, message)

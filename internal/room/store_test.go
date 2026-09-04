@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCanonicalFeedRejectsUnstructuredSubstantialContent(t *testing.T) {
@@ -116,11 +117,39 @@ func TestRoomCollaborationLifecycle(t *testing.T) {
 		t.Fatalf("unexpected document: %#v %q", document, content)
 	}
 
+	store.now = func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) }
+	revisedText := "# Compatibility findings\n\nThe response now matches every **required field**.\n"
+	revised, err := store.Upload(ctx, UploadInput{
+		Room:             "compatibility-review",
+		WorkingDirectory: clientDirectory,
+		Name:             "compatibility-findings.md",
+		MediaType:        "text/markdown",
+		ContentBase64:    base64.StdEncoding.EncodeToString([]byte(revisedText)),
+		Caption:          "Revised the cross-session comparison.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, currentContent, err := store.ReadDocument(ctx, "compatibility-review", "compatibility-findings.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revised.Document == nil || current.ID != revised.Document.ID || string(currentContent) != revisedText {
+		t.Fatalf("current filename revision = %#v %q, want %#v %q", current, currentContent, revised.Document, revisedText)
+	}
+	historical, historicalContent, err := store.ReadDocument(ctx, "compatibility-review", uploaded.Document.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if historical.ID != uploaded.Document.ID || string(historicalContent) != documentText {
+		t.Fatalf("historical document revision = %#v %q", historical, historicalContent)
+	}
+
 	snapshot, err = store.Snapshot(ctx, "compatibility-review", 0, 500)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Participants) != 3 || len(snapshot.Documents) != 1 {
+	if len(snapshot.Participants) != 3 || len(snapshot.Documents) != 2 {
 		t.Fatalf("unexpected room projection: %d participants, %d documents", len(snapshot.Participants), len(snapshot.Documents))
 	}
 	if got := participantNamed(snapshot.Participants, first.Handle).Context; got != "Checking the client against the proposed response schema." {

@@ -544,7 +544,14 @@ func (s *Store) ReadDocument(ctx context.Context, roomIdentifier, documentIdenti
 	}
 	var document Document
 	var relative string
-	err = s.db.QueryRowContext(ctx, `SELECT id,room_id,COALESCE(participant_id,''),name,media_type,byte_size,sha256,relative_path,created_at FROM documents WHERE room_id=? AND (id=? OR name=?)`, room.ID, documentIdentifier, documentIdentifier).Scan(&document.ID, &document.RoomID, &document.ParticipantID, &document.Name, &document.MediaType, &document.ByteSize, &document.SHA256, &relative, &document.CreatedAt)
+	// An exact document ID addresses one immutable historical revision. A
+	// filename addresses the current logical document, so repeated uploads of
+	// that filename must resolve to its newest revision.
+	err = s.db.QueryRowContext(ctx, `SELECT id,room_id,COALESCE(participant_id,''),name,media_type,byte_size,sha256,relative_path,created_at
+FROM documents
+WHERE room_id=? AND (id=? OR name=?)
+ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,created_at DESC,id DESC
+LIMIT 1`, room.ID, documentIdentifier, documentIdentifier, documentIdentifier).Scan(&document.ID, &document.RoomID, &document.ParticipantID, &document.Name, &document.MediaType, &document.ByteSize, &document.SHA256, &relative, &document.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Document{}, nil, errors.New("document not found")
 	}

@@ -124,6 +124,21 @@ func TestMessageReadabilityRequiresStructuredStdinForSubstantialPosts(t *testing
 	}
 }
 
+func TestSnapshotCountsLogicalDocumentsSeparatelyFromRevisions(t *testing.T) {
+	var output bytes.Buffer
+	printSnapshot(&output, room.Snapshot{
+		Room: room.Room{Title: "Shared", Status: "open", LastSequence: 12},
+		Documents: []room.Document{
+			{Name: "requirements.md"},
+			{Name: "requirements.md"},
+			{Name: "architecture.md"},
+		},
+	}, false)
+	if !strings.Contains(output.String(), "2 documents · 3 revisions · 12 messages") {
+		t.Fatalf("snapshot summary = %q", output.String())
+	}
+}
+
 func waitForSocket(t *testing.T, socket string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
