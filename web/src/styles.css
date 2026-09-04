@@ -147,7 +147,7 @@ button:disabled { cursor: default; opacity: .45; }
 .modal header { display: flex; justify-content: space-between; margin-bottom: 18px; }
 .modal header span, .modal label { color: var(--cyan); font-size: 9px; font-weight: 700; letter-spacing: .07em; }
 .modal h1 { margin: 4px 0 0; color: #ededed; font-size: 22px; }
-.modal header button, .document-panel > header button { padding: 5px; border: 0; color: var(--muted); background: transparent; }
+.modal header button, .document-panel > header button, .document-panel > header a { padding: 5px; border: 0; color: var(--muted); background: transparent; }
 .modal label { margin-top: 13px; display: block; }
 .modal input, .modal textarea { width: 100%; margin-top: 6px; padding: 10px; border: 1px solid #505050; outline: 0; color: #ededed; background: #1e1e1e; font-size: 12px; }
 .modal textarea { min-height: 92px; resize: vertical; line-height: 1.5; }
@@ -171,6 +171,10 @@ button:disabled { cursor: default; opacity: .45; }
 .document-actions, .document-actions > div { display: flex; align-items: flex-start; gap: 3px; }
 .document-actions > div { padding-right: 7px; border-right: 1px solid var(--line); }
 .document-actions button:disabled { opacity: .25; }
+.document-actions a { display: grid; place-items: center; }
+.document-actions a:hover, .document-actions button:hover { color: #ddd; }
+.document-image-preview { min-width: 0; min-height: 0; padding: 18px; display: grid; place-items: center; overflow: auto; background: #171717; }
+.document-image-preview img { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 4px 24px rgba(0,0,0,.35); }
 .document-panel > footer { padding: 8px 18px; overflow-wrap: anywhere; border-top: 1px solid var(--line); color: var(--faint); font-size: 8px; }
 .markdown { padding: 22px 28px 60px; overflow: auto; color: #ddd; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 14px; line-height: 1.65; }
 .markdown h2 { margin: 18px 0 8px; color: #f0f0f0; font-size: 21px; }

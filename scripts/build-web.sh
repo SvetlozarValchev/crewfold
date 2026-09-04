@@ -4,9 +4,12 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
-corepack pnpm --dir web install --frozen-lockfile
-corepack pnpm --dir web run check
-corepack pnpm --dir web run build
+(
+  cd web
+  corepack pnpm install --frozen-lockfile
+  corepack pnpm run check
+  corepack pnpm run build
+)
 
 source_hash=$(
   {
@@ -15,6 +18,7 @@ source_hash=$(
   } |
     LC_ALL=C sort |
     xargs sha256sum |
+    awk '{ print $1 }' |
     sha256sum |
     cut -d ' ' -f 1
 )

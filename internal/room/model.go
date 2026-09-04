@@ -61,6 +61,7 @@ type HostedSteward struct {
 	HerdrWorkspaceID        string `json:"herdr_workspace_id,omitempty"`
 	HerdrPaneID             string `json:"herdr_pane_id,omitempty"`
 	AgentName               string `json:"agent_name"`
+	AgentKind               string `json:"agent_kind"`
 	DesiredState            string `json:"desired_state"`
 	Status                  string `json:"status"`
 	AgentStatus             string `json:"agent_status,omitempty"`
@@ -121,6 +122,7 @@ type StartStewardInput struct {
 	DisplayName      string `json:"display_name,omitempty"`
 	Role             string `json:"role,omitempty"`
 	WorkingDirectory string `json:"working_directory,omitempty"`
+	AgentKind        string `json:"agent_kind,omitempty"`
 }
 
 type PromptStewardInput struct {

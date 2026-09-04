@@ -3,11 +3,11 @@
 Crewfold is one Go binary with three current components:
 
 ```text
-external Codex -- CLI -- owner Unix socket -- room store (SQLite + document files)
+external Codex -- CLI -- owner-local IPC -- room store (SQLite + document files)
       ^                               |
       +------ Codex app-server -------+ room-delivery manager
                                       |
-human browser -- loopback HTTP -------+--- hosted-steward manager --- named Herdr/Codex session
+human browser -- loopback HTTP -------+--- hosted-steward manager --- named Herdr Codex/Pi session
 ```
 
 The CLI and browser call the same methods. SQLite is authoritative for rooms,
@@ -27,17 +27,19 @@ format.
 | Method | Effect |
 | --- | --- |
 | `status` | Read daemon health and room count |
+| `daemon.shutdown` | Request an owner-local graceful shutdown for service lifecycle management |
 | `room.create`, `room.list`, `room.snapshot`, `room.archive` | Manage rooms |
 | `participant.join`, `participant.ack` | Bind a working directory and optional Codex delivery target; advance its read cursor |
 | `message.send` | Append a message or publish current context |
 | `document.upload`, `document.read` | Share and verify immutable document bytes |
 | `steward.start`, `steward.status`, `steward.prompt`, `steward.key` | Start, inspect, and directly steer the room-owned Herdr terminal |
-| `steward.stop`, `steward.restart` | Stop it or create a fresh named Herdr/Codex session while preserving room identity |
+| `steward.stop`, `steward.restart` | Stop it or create a fresh named Herdr agent session while preserving room identity and runtime selection |
 | `web.bootstrap` | Mint a one-use owner browser URL |
 
-Unix requests and responses are newline-delimited JSON. Browser RPC uses the same
-request envelope after the one-time URL is exchanged for an in-memory session.
-Unknown input fields are rejected.
+Local requests and responses are newline-delimited JSON over an owner-only Unix
+socket on Linux and macOS or an owner-only named pipe on Windows. Browser RPC
+uses the same request envelope after the one-time URL is exchanged for an
+in-memory session. Unknown input fields are rejected.
 
 ## Runtime boundary
 
@@ -48,15 +50,23 @@ control socket. The delivery manager injects exact new room events with
 `turn/start`, which starts an idle turn or steers an eligible active turn. It
 does not resume unloaded threads, start external terminals, or capture provider
 transcripts. Undelivered events remain queued and the same stable participant
-can rebind to a new thread by joining again.
+can rebind to a new thread by joining again. This adapter requires Codex's
+app-server daemon lifecycle, which Codex currently implements only on Unix. The
+native Windows interactive CLI still works, but there is no daemon endpoint for
+Crewfold to attach to an independently owned thread.
 
-Non-Codex tools and manual scripts join with `--delivery none` and use the CLI
-feed directly. Delivery cursors and acknowledgement cursors are separate durable
-facts.
+Manual scripts join with `--delivery none` and use the CLI feed directly. The Pi
+extension also joins with `--delivery none`, but runs a no-ack JSONL watcher in
+the existing Pi process and acknowledges only after injecting activity through
+Pi's extension API. This provides at-least-once delivery without making the
+Crewfold daemon own the external agent. Codex delivery cursors and participant
+acknowledgement cursors remain separate durable facts.
 
 The optional hosted steward uses a concrete Herdr CLI adapter. Crewfold creates a
-private room workspace, starts Codex with preserved terminal scrollback, and
-polls its native status and terminal output. Onboarding establishes the quiet
+private room workspace, starts the selected Codex or Pi runtime with preserved
+terminal scrollback, and polls its native status and terminal output. This works
+with Codex on Windows because Crewfold explicitly owns and prompts that terminal;
+it does not require Codex's app-server daemon. Onboarding establishes the quiet
 facilitator and curator policy once. Successful onboarding establishes the
 current room sequence as the delivery baseline, so existing history is not
 immediately injected a second time. New room events are then quiet-period batched
@@ -73,13 +83,14 @@ decisions may trigger one public response. Material corrections, invalidated
 conclusions, resolved contradictions, and completed phases can instead update the
 replaceable context or revise a same-named shared document without interrupting
 the feed. Crewfold advances the hosted steward's delivery and acknowledgement
-cursors together only after Herdr reports that the injected Codex turn settled;
-a failed or interrupted delivery remains pending for retry.
+cursors together only after Herdr reports that the injected agent turn settled; a
+failed or interrupted delivery remains pending for retry.
 
-The steward publishes with an exact Crewfold binary and socket command, so
-another installed daemon cannot receive it accidentally. An explicit steward
-stop or restart deletes the named Herdr session; the room participant and shared
-history remain canonical. Restarting only the Crewfold daemon recreates its
-disposable Herdr host and resumes the initialized steward's last Codex thread in
-the room-owned working directory. It must not fork an empty conversation, enqueue
-onboarding, or publish another introduction.
+The steward publishes with an exact Crewfold binary while its Herdr workspace
+inherits the exact owner-local endpoint, so another installed daemon cannot
+receive it accidentally. An explicit steward stop or restart deletes the named
+Herdr session; the room participant and shared history remain canonical.
+Restarting only the Crewfold daemon recreates its disposable Herdr host and
+resumes the initialized steward's prior agent session in the room-owned working
+directory. It must not fork an empty conversation, enqueue onboarding, or publish
+another introduction.

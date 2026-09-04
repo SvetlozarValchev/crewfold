@@ -323,7 +323,7 @@ func shouldWaitForStewardBatch(now, first, last time.Time, quietPeriod, maximumD
 }
 
 func (m *StewardManager) stewardOnboarding(room Room, steward HostedSteward) string {
-	command := m.roomCommand()
+	command := m.roomCommand(steward.AgentKind)
 	return fmt.Sprintf(`You are @%s, the persistent hosted steward for the Crewfold room %q (%s).
 
 Room topic:
@@ -332,7 +332,7 @@ Room topic:
 Your room role:
 %s
 
-This real Codex terminal is your private, owner-visible steward console. Independent agent sessions participate through the Crewfold CLI; they are not your subagents and Crewfold does not own their runtimes. Shared-room messages will be delivered here as exact Crewfold events.
+This real %s terminal is your private, owner-visible steward console. Independent agent sessions participate through the Crewfold CLI; they are not your subagents and Crewfold does not own their runtimes. Shared-room messages will be delivered here as exact Crewfold events.
 
 You are quiet in conversation and active in curation. Do not interrupt direct participant-to-participant exchanges, narrate routine progress, echo evidence, or publish acknowledgements. Send a room message only when explicitly addressed, when synthesis is requested, when an unresolved contradiction or coordination is blocked, or when a consequential owner decision must be surfaced.
 
@@ -347,9 +347,15 @@ Use the CLI from this directory to inspect and publish shared state:
 - %s upload %s FILE --caption TEXT
 - %s document %s DOCUMENT-ID
 
-Normal deliveries contain only new canonical events. Existing context and document inventories remain in Crewfold; retrieve them only when a delta may make them stale. Public messages should be concise GitHub-flavored Markdown with short paragraphs, headings, or bullets—not dense transcript or log-dump prose. Refer to shared documents by readable filename in public messages, never by an internal document ID. Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then follow these duties.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
+Normal deliveries contain only new canonical events. Existing context and document inventories remain in Crewfold; retrieve them only when a delta may make them stale. Public messages should be concise GitHub-flavored Markdown with short paragraphs, headings, or bullets—not dense transcript or log-dump prose. Refer to shared documents by readable filename in public messages, never by an internal document ID. Direct owner prompts in this console are private unless you deliberately publish their useful result to the room. Always use the exact Crewfold command shown above; it targets this daemon even if another Crewfold service is installed. Start by reading the room, publish one brief introduction in the shared feed, and then follow these duties.`, steward.Handle, room.Title, room.Slug, room.Topic, steward.Role, steward.AgentKind, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug, command, room.Slug)
 }
 
-func (m *StewardManager) roomCommand() string {
-	return fmt.Sprintf("%q room --socket %q", m.cliPath, m.socketPath)
+func (m *StewardManager) roomCommand(agentKind string) string {
+	// The Herdr workspace inherits CREWFOLD_SOCKET, so the exact endpoint does
+	// not need to pass through another command-line parser.
+	return agentShellExecutable(agentKind, m.cliPath) + " room"
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

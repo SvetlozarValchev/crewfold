@@ -14,6 +14,7 @@ expected=$(
   } |
     LC_ALL=C sort |
     xargs sha256sum |
+    awk '{ print $1 }' |
     sha256sum |
     cut -d ' ' -f 1
 )

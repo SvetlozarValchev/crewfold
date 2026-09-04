@@ -52,6 +52,10 @@ fi
 chmod 0755 "$stage/$root_name/crewfold"
 cp "$repo_root/README.md" "$stage/$root_name/README.md"
 chmod 0644 "$stage/$root_name/README.md"
+mkdir -m 0755 "$stage/$root_name/integrations"
+cp -R "$repo_root/integrations/pi" "$stage/$root_name/integrations/pi"
+find "$stage/$root_name/integrations/pi" -type d -exec chmod 0755 {} +
+find "$stage/$root_name/integrations/pi" -type f -exec chmod 0644 {} +
 
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
   --pax-option=delete=atime,delete=ctime \

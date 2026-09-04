@@ -3,6 +3,7 @@ package roomcli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,8 +12,38 @@ import (
 
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/codexapp"
+	"crewfold/internal/localipc"
 	"crewfold/internal/room"
 )
+
+func TestPullFlag(t *testing.T) {
+	t.Parallel()
+	found, remaining, err := pullFlag([]string{"--after", "7", "--no-ack"}, "no-ack")
+	if err != nil || !found || len(remaining) != 2 || remaining[0] != "--after" || remaining[1] != "7" {
+		t.Fatalf("pullFlag() = %v, %#v, %v", found, remaining, err)
+	}
+	if _, _, err := pullFlag([]string{"--no-ack", "--no-ack"}, "no-ack"); err == nil {
+		t.Fatal("expected duplicate flag error")
+	}
+}
+
+func TestWriteWatchedMessageAsJSONLine(t *testing.T) {
+	message := room.Message{ID: "msg_test", Sequence: 7, SenderHandle: "peer", Body: "ready"}
+	var output bytes.Buffer
+	if err := writeWatchedMessage(&output, message, true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(output.String(), "\n") != 1 || !strings.HasSuffix(output.String(), "\n") {
+		t.Fatalf("output is not one JSON line: %q", output.String())
+	}
+	var decoded room.Message
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ID != message.ID || decoded.Sequence != message.Sequence || decoded.Body != message.Body {
+		t.Fatalf("decoded message = %#v", decoded)
+	}
+}
 
 type availableCodexRuntime struct{}
 
@@ -24,8 +55,12 @@ func (availableCodexRuntime) Inspect(_ context.Context, threadID string) (codexa
 func (availableCodexRuntime) Deliver(context.Context, string, string, string) error { return nil }
 
 func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
-	root := t.TempDir()
-	socket := filepath.Join(root, "runtime", "crewfold.sock")
+	root, err := os.MkdirTemp("", "cf-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	socket := localipc.Endpoint(filepath.Join(root, "runtime"))
 	serverContext, stopServer := context.WithCancel(context.Background())
 	serverDone := make(chan error, 1)
 	go func() {
@@ -126,13 +161,15 @@ func TestMessageReadabilityRequiresStructuredStdinForSubstantialPosts(t *testing
 
 func waitForSocket(t *testing.T, socket string) {
 	t.Helper()
+	client := room.Client{SocketPath: socket}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		if _, err := os.Stat(socket); err == nil {
+		var status map[string]any
+		if err := client.Call(context.Background(), "status", map[string]any{}, &status); err == nil {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("server socket was not created")
+			t.Fatal("local server did not become ready")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

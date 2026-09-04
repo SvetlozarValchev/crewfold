@@ -1,13 +1,31 @@
 # Testing
 
-The gate is local and provider-free:
+The gate is local and provider-free. On Linux:
 
 ```sh
 ./scripts/check.sh
 ```
 
+On Windows:
+
+```powershell
+.\scripts\check.ps1
+```
+
 It verifies formatting, TypeScript, embedded web assets, `go vet`, all Go tests,
-the race detector when supported, and a production build. The room store test
+the race detector when supported, and a production build. Native Windows also
+has a disposable provider-free workflow:
+
+```powershell
+.\scripts\test-windows-workflow.ps1
+```
+
+That script builds a fresh binary and uses isolated state and a unique named
+pipe. It covers two participant directories, special characters, Unicode paths,
+messaging, context, document round-trip, acknowledgement, graceful daemon
+restart persistence, and archive, then removes its state.
+
+The room store test
 exercises the representative workflow: create a room, join two
 independent working directories, publish context and messages, upload and verify
 a Markdown document, observe unread state, acknowledge, reject handle spoofing,
@@ -23,11 +41,13 @@ thread. A gated real-runtime probe uses a disposable Codex thread to validate th
 owner-local app-server WebSocket and turn injection without touching an existing
 conversation.
 
-The release gate also performs a manual real-runtime probe with a temporary
-daemon and named Herdr session: start Codex, observe onboarding in the actual
-terminal, send a private owner prompt, relay a direct participant exchange and
-verify that the quiet steward takes no public action, explicitly address the
-steward and verify one useful response, then stop and restart fresh.
+The release gate performs manual real-runtime probes with temporary daemons and
+named Herdr sessions. Codex is exercised on Unix and Windows; native Windows
+additionally uses `--runtime pi`. The probes verify startup gates, onboarding,
+room publication, status, stop, named-session deletion, and temporary
+integration cleanup. External Pi delivery is checked in both directions: room
+activity triggers the bound conversation, and the model publishes through the
+`crewfold_send` tool.
 Manager restart coverage verifies that a daemon restart resumes an initialized
 steward's last Codex thread without repeating onboarding, forking an empty
 conversation, or publishing another introduction.

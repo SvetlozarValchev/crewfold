@@ -149,6 +149,38 @@ func TestRoomCollaborationLifecycle(t *testing.T) {
 	}
 }
 
+func TestOpenMigratesHostedStewardAgentKind(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, err := Open(ctx, dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `ALTER TABLE hosted_stewards DROP COLUMN agent_kind`); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(ctx, dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "migration", Title: "Migration"}); err != nil {
+		t.Fatal(err)
+	}
+	steward, err := store.ConfigureHostedSteward(ctx, StartStewardInput{Room: "migration", Handle: "steward"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steward.AgentKind != "codex" {
+		t.Fatalf("migrated default agent kind = %q", steward.AgentKind)
+	}
+}
+
 func TestHostedStewardConfigurationIsCanonicalRoomState(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -160,11 +192,11 @@ func TestHostedStewardConfigurationIsCanonicalRoomState(t *testing.T) {
 	if _, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "hosted", Title: "Hosted", Topic: "Keep two sessions aligned."}); err != nil {
 		t.Fatal(err)
 	}
-	steward, err := store.ConfigureHostedSteward(ctx, StartStewardInput{Room: "hosted", Handle: "room-steward", Role: "Watch for incompatible conclusions."})
+	steward, err := store.ConfigureHostedSteward(ctx, StartStewardInput{Room: "hosted", Handle: "room-steward", Role: "Watch for incompatible conclusions.", AgentKind: "pi"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if steward.Status != "starting" || steward.DesiredState != "running" || !steward.ManagedWorkingDirectory {
+	if steward.Status != "starting" || steward.DesiredState != "running" || steward.AgentKind != "pi" || !steward.ManagedWorkingDirectory {
 		t.Fatalf("unexpected hosted steward: %#v", steward)
 	}
 	if info, err := os.Stat(steward.WorkingDirectory); err != nil || !info.IsDir() {

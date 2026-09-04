@@ -1,6 +1,6 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Archive, Bot, ChevronLeft, ChevronRight, CircleStop, FileText, Keyboard, LoaderCircle, MessageSquare, Plus, RefreshCw, RotateCcw, Send, Terminal, Users, X } from "lucide-react";
+import { Archive, Bot, ChevronLeft, ChevronRight, CircleStop, Download, FileText, Keyboard, LoaderCircle, MessageSquare, Plus, RefreshCw, RotateCcw, Send, Terminal, Users, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./styles.css";
@@ -16,9 +16,10 @@ type Message = { sequence: number; id: string; room_id: string; participant_id?:
 type Snapshot = { room: Room; participants: Participant[]; messages: Message[]; documents: Document[]; steward?: HostedSteward };
 type RPCResponse<T> = { id: string; result?: T; error?: string };
 type DocumentGroup = { name: string; latest: Document; revisions: Document[] };
-type OpenDocument = { document: Document; content: string; revisions: Document[]; revisionIndex: number };
+type OpenDocument = { document: Document; contentBase64: string; textContent: string; revisions: Document[]; revisionIndex: number };
 
 const tokenKey = "crewfold-room-session";
+const previewableImageTypes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"]);
 
 async function authenticate(): Promise<string> {
   const existing = sessionStorage.getItem(tokenKey);
@@ -43,6 +44,8 @@ async function rpc<T>(token: string, method: string, params: unknown): Promise<T
 }
 
 function decodeBase64(value: string) { return new TextDecoder().decode(Uint8Array.from(atob(value), (character) => character.charCodeAt(0))); }
+function normalizedMediaType(value: string) { return value.split(";", 1)[0].trim().toLowerCase(); }
+function documentDataURL(document: OpenDocument, mediaType = "application/octet-stream") { return `data:${mediaType};base64,${document.contentBase64}`; }
 function formatTime(value: string) { return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 function formatSize(bytes: number) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KB`; return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
 
@@ -155,7 +158,7 @@ function App() {
   useEffect(() => { if (!token || !selectedRoom) return; void loadSnapshot(token, selectedRoom).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not read room.")); const timer = setInterval(() => void Promise.all([loadSnapshot(token, selectedRoom), loadRooms(token)]).catch(() => undefined), 1200); return () => clearInterval(timer); }, [token, selectedRoom, loadSnapshot, loadRooms]);
   useEffect(() => { if (feed.current) feed.current.scrollTop = feed.current.scrollHeight; }, [snapshot?.room.last_sequence]);
   const send = async (event: React.FormEvent) => { event.preventDefault(); if (!message.trim() || !snapshot) return; setSending(true); setError(""); try { await rpc(token, "message.send", { room: snapshot.room.id, owner: true, body: message.trim() }); setMessage(""); await loadSnapshot(token, snapshot.room.id); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not send."); } finally { setSending(false); } };
-  const openDocument = async (item: Document) => { setError(""); try { const result = await rpc<{ document: Document; content_base64: string }>(token, "document.read", { room: item.room_id, document: item.id }); const revisions = snapshot?.documents.filter((candidate) => candidate.name === item.name) ?? [item]; const revisionIndex = Math.max(0, revisions.findIndex((candidate) => candidate.id === item.id)); setDocument({ document: result.document, content: decodeBase64(result.content_base64), revisions, revisionIndex }); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not open document."); } };
+  const openDocument = async (item: Document) => { setError(""); try { const result = await rpc<{ document: Document; content_base64: string }>(token, "document.read", { room: item.room_id, document: item.id }); const revisions = snapshot?.documents.filter((candidate) => candidate.name === item.name) ?? [item]; const revisionIndex = Math.max(0, revisions.findIndex((candidate) => candidate.id === item.id)); setDocument({ document: result.document, contentBase64: result.content_base64, textContent: previewableImageTypes.has(normalizedMediaType(result.document.media_type)) ? "" : decodeBase64(result.content_base64), revisions, revisionIndex }); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not open document."); } };
   const participantByID = useMemo(() => new Map(snapshot?.participants.map((participant) => [participant.id, participant]) ?? []), [snapshot?.participants]);
   const visibleMessages = useMemo(() => snapshot?.messages.filter((item) => item.kind !== "context") ?? [], [snapshot?.messages]);
   const documentGroups = useMemo(() => groupDocuments(snapshot?.documents ?? []), [snapshot?.documents]);
@@ -173,7 +176,7 @@ function App() {
     {createOpen && <CreateRoom token={token} close={() => setCreateOpen(false)} created={(created, warning) => { setCreateOpen(false); setSelected(created.room.slug); setSnapshot(created); if (warning) setError(warning); void loadRooms(token); }} />}
     {startSteward && snapshot && <StartSteward token={token} room={snapshot.room} close={() => setStartSteward(false)} started={() => { setStartSteward(false); setConsoleOpen(true); refresh(); }} />}
     {consoleOpen && snapshot && <StewardConsolePanel token={token} room={snapshot.room} close={() => setConsoleOpen(false)} changed={refresh} />}
-    {document && <div className="document-panel"><header><div><span>SHARED DOCUMENT</span><h1>{document.document.name}</h1><p>{document.document.media_type} · {formatSize(document.document.byte_size)}{document.revisions.length > 1 ? ` · revision ${document.revisions.length - document.revisionIndex} of ${document.revisions.length}` : ""}</p></div><div className="document-actions">{document.revisions.length > 1 && <div><button disabled={document.revisionIndex >= document.revisions.length - 1} onClick={() => void openDocument(document.revisions[document.revisionIndex + 1])} aria-label="Older revision"><ChevronLeft size={17} /></button><button disabled={document.revisionIndex <= 0} onClick={() => void openDocument(document.revisions[document.revisionIndex - 1])} aria-label="Newer revision"><ChevronRight size={17} /></button></div>}<button onClick={() => setDocument(null)} aria-label="Close document"><X size={18} /></button></div></header><Markdown text={document.content} /><footer>sha256:{document.document.sha256}</footer></div>}
+    {document && <div className="document-panel"><header><div><span>SHARED DOCUMENT</span><h1>{document.document.name}</h1><p>{document.document.media_type} · {formatSize(document.document.byte_size)}{document.revisions.length > 1 ? ` · revision ${document.revisions.length - document.revisionIndex} of ${document.revisions.length}` : ""}</p></div><div className="document-actions">{document.revisions.length > 1 && <div><button disabled={document.revisionIndex >= document.revisions.length - 1} onClick={() => void openDocument(document.revisions[document.revisionIndex + 1])} aria-label="Older revision"><ChevronLeft size={17} /></button><button disabled={document.revisionIndex <= 0} onClick={() => void openDocument(document.revisions[document.revisionIndex - 1])} aria-label="Newer revision"><ChevronRight size={17} /></button></div>}<a href={documentDataURL(document)} download={document.document.name} aria-label="Download document" title="Download"><Download size={18} /></a><button onClick={() => setDocument(null)} aria-label="Close document"><X size={18} /></button></div></header>{previewableImageTypes.has(normalizedMediaType(document.document.media_type)) ? <div className="document-image-preview"><img src={documentDataURL(document, normalizedMediaType(document.document.media_type))} alt={document.document.name} /></div> : <Markdown text={document.textContent} />}<footer>sha256:{document.document.sha256}</footer></div>}
   </div>;
 }
 

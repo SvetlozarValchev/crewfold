@@ -27,8 +27,9 @@ const (
 )
 
 var (
-	ErrThreadNotLoaded        = errors.New("Codex thread is not currently loaded")
-	ErrDirectInputUnavailable = errors.New("Codex thread cannot accept direct input")
+	ErrThreadNotLoaded            = errors.New("Codex thread is not currently loaded")
+	ErrDirectInputUnavailable     = errors.New("Codex thread cannot accept direct input")
+	ErrDaemonLifecycleUnsupported = errors.New("native Windows Codex does not provide app-server daemon lifecycle; use the Pi integration or --delivery none")
 )
 
 type Thread struct {
@@ -141,7 +142,7 @@ func (c Client) connect(ctx context.Context) (*rpcConnection, error) {
 	dialer := net.Dialer{Timeout: timeout}
 	raw, err := dialer.DialContext(ctx, "unix", path)
 	if err != nil {
-		return nil, fmt.Errorf("connect to Codex app-server control socket: %w", err)
+		return nil, codexConnectError(path, err)
 	}
 	deadline := time.Now().Add(timeout)
 	if value, ok := ctx.Deadline(); ok && value.Before(deadline) {

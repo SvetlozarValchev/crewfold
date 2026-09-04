@@ -10,7 +10,6 @@ import (
 	"mime"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,7 +18,9 @@ import (
 
 	"crewfold/internal/appdirs"
 	"crewfold/internal/buildinfo"
+	"crewfold/internal/desktop"
 	"crewfold/internal/room"
+	daemonservice "crewfold/internal/service"
 )
 
 type App struct {
@@ -65,6 +66,13 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	case "version":
 		return a.print(a.info, jsonMode, func() { fmt.Fprintf(a.stdout, "Crewfold %s (%s)\n", a.info.Version, a.info.Commit) })
 	case "daemon":
+		if len(remaining) == 1 && remaining[0] == "shutdown" {
+			var result map[string]string
+			if err := client.Call(ctx, "daemon.shutdown", map[string]any{}, &result); err != nil {
+				return a.fail(err)
+			}
+			return a.print(result, jsonMode, func() { fmt.Fprintln(a.stdout, "Crewfold daemon is stopping") })
+		}
 		return a.daemon(ctx, append([]string{}, args[1:]...), paths)
 	case "service":
 		return a.service(ctx, remaining, paths, jsonMode)
@@ -93,7 +101,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 
 func (a *App) daemon(ctx context.Context, args []string, paths appdirs.Paths) int {
 	if len(args) == 0 || args[0] != "run" {
-		return a.fail(errors.New("usage: crewfold daemon run [--data-dir PATH] [--socket PATH] [--web-address 127.0.0.1:PORT]"))
+		return a.fail(errors.New("usage: crewfold daemon run [--data-dir PATH] [--socket PATH] [--web-address 127.0.0.1:PORT] | crewfold daemon shutdown [--socket PATH]"))
 	}
 	dataDir, args, err := pullOption(args[1:], "data-dir")
 	if err != nil {
@@ -127,62 +135,23 @@ func (a *App) daemon(ctx context.Context, args []string, paths appdirs.Paths) in
 
 func (a *App) service(ctx context.Context, args []string, paths appdirs.Paths, jsonMode bool) int {
 	if len(args) != 1 {
-		return a.fail(errors.New("usage: crewfold service install|start|stop|status"))
+		return a.fail(errors.New("usage: crewfold service install|uninstall|start|stop|status"))
 	}
-	action := args[0]
-	unit := "crewfold.service"
-	if action == "install" {
-		executable, err := os.Executable()
-		if err != nil {
-			return a.fail(err)
-		}
-		for _, directory := range []string{paths.StateDir, paths.RuntimeDir, filepath.Dir(paths.UnitPath)} {
-			if err := os.MkdirAll(directory, 0o700); err != nil {
-				return a.fail(err)
-			}
-			if err := os.Chmod(directory, 0o700); err != nil {
-				return a.fail(err)
-			}
-		}
-		content := `[Unit]
-Description=Crewfold shared AI rooms
-After=default.target
-
-[Service]
-Type=simple
-ExecStart=` + systemdQuote(executable) + ` daemon run --data-dir ` + systemdQuote(paths.DataDir) + ` --socket ` + systemdQuote(paths.SocketPath) + ` --web-address 127.0.0.1:0
-Restart=on-failure
-RestartSec=2s
-UMask=0077
-NoNewPrivileges=true
-RuntimeDirectory=crewfold
-RuntimeDirectoryMode=0700
-
-[Install]
-WantedBy=default.target
-`
-		if err := writeAtomic(paths.UnitPath, []byte(content)); err != nil {
-			return a.fail(err)
-		}
-		for _, command := range [][]string{{"daemon-reload"}, {"enable", unit}, {"restart", unit}} {
-			if output, err := exec.CommandContext(ctx, "systemctl", append([]string{"--user"}, command...)...).CombinedOutput(); err != nil {
-				return a.fail(fmt.Errorf("systemctl %s: %s: %w", strings.Join(command, " "), strings.TrimSpace(string(output)), err))
-			}
-		}
-	} else if action == "start" || action == "stop" {
-		if output, err := exec.CommandContext(ctx, "systemctl", "--user", action, unit).CombinedOutput(); err != nil {
-			return a.fail(fmt.Errorf("systemctl %s: %s: %w", action, strings.TrimSpace(string(output)), err))
-		}
-	} else if action != "status" {
-		return a.fail(errors.New("usage: crewfold service install|start|stop|status"))
-	}
-	output, err := exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=ActiveState", "--value", unit).CombinedOutput()
+	executable, err := os.Executable()
 	if err != nil {
-		return a.fail(fmt.Errorf("inspect service: %s: %w", strings.TrimSpace(string(output)), err))
+		return a.fail(err)
 	}
-	result := map[string]any{"action": action, "status": strings.TrimSpace(string(output)), "data_dir": paths.DataDir, "socket": paths.SocketPath, "unit": paths.UnitPath}
+	result, err := daemonservice.Manage(ctx, args[0], daemonservice.Config{
+		Executable:     executable,
+		DataDir:        paths.DataDir,
+		Endpoint:       paths.SocketPath,
+		DefinitionPath: paths.UnitPath,
+	})
+	if err != nil {
+		return a.fail(err)
+	}
 	return a.print(result, jsonMode, func() {
-		fmt.Fprintf(a.stdout, "Crewfold service: %s\ndata: %s\nsocket: %s\n", result["status"], paths.DataDir, paths.SocketPath)
+		fmt.Fprintf(a.stdout, "Crewfold service: %s\ndata: %s\nsocket: %s\n", result.Status, result.DataDir, result.Endpoint)
 	})
 }
 
@@ -199,9 +168,7 @@ func (a *App) open(ctx context.Context, client room.Client, jsonMode bool) int {
 		return a.fail(errors.New("daemon returned an invalid local web URL"))
 	}
 	if !jsonMode {
-		command := exec.CommandContext(ctx, "xdg-open", bootstrap.URL)
-		command.Stdout, command.Stderr = io.Discard, io.Discard
-		if err := command.Run(); err != nil {
+		if err := desktop.OpenURL(ctx, bootstrap.URL); err != nil {
 			return a.fail(err)
 		}
 	}
@@ -405,6 +372,10 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 		if err != nil {
 			return a.fail(err)
 		}
+		noAck, rest, err := pullFlag(rest, "no-ack")
+		if err != nil {
+			return a.fail(err)
+		}
 		if len(rest) != 0 {
 			return a.fail(errors.New("unexpected arguments"))
 		}
@@ -415,7 +386,7 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 				return a.fail(err)
 			}
 		}
-		return a.watch(ctx, client, identifier, after, jsonMode)
+		return a.watch(ctx, client, identifier, after, jsonMode, !noAck)
 	case "ack":
 		identifier, rest, err := leading(args[1:], "room")
 		if err != nil {
@@ -548,11 +519,15 @@ func (a *App) roomSteward(ctx context.Context, client room.Client, args []string
 		if err != nil {
 			return a.fail(err)
 		}
+		runtime, rest, err := pullOption(rest, "runtime")
+		if err != nil {
+			return a.fail(err)
+		}
 		if len(rest) != 0 || handle == "" {
-			return a.fail(errors.New("usage: crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH]"))
+			return a.fail(errors.New("usage: crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH] [--runtime codex|pi]"))
 		}
 		var steward room.HostedSteward
-		if err := client.Call(ctx, "steward.start", room.StartStewardInput{Room: identifier, Handle: handle, DisplayName: name, Role: role, WorkingDirectory: cwd}, &steward); err != nil {
+		if err := client.Call(ctx, "steward.start", room.StartStewardInput{Room: identifier, Handle: handle, DisplayName: name, Role: role, WorkingDirectory: cwd, AgentKind: runtime}, &steward); err != nil {
 			return a.fail(err)
 		}
 		return a.print(steward, jsonMode, func() {
@@ -604,10 +579,7 @@ func (a *App) roomSteward(ctx context.Context, client room.Client, args []string
 	}
 }
 
-func (a *App) watch(ctx context.Context, client room.Client, identifier string, after int64, jsonMode bool) int {
-	if jsonMode {
-		return a.fail(errors.New("room watch is a streaming text command; use room read --output json for automation"))
-	}
+func (a *App) watch(ctx context.Context, client room.Client, identifier string, after int64, jsonMode, acknowledge bool) int {
 	ticker := time.NewTicker(750 * time.Millisecond)
 	defer ticker.Stop()
 	cwd, _ := os.Getwd()
@@ -617,12 +589,14 @@ func (a *App) watch(ctx context.Context, client room.Client, identifier string, 
 			return a.fail(err)
 		}
 		for _, message := range snapshot.Messages {
-			printMessage(a.stdout, message)
+			if err := writeWatchedMessage(a.stdout, message, jsonMode); err != nil {
+				return a.fail(err)
+			}
 			if message.Sequence > after {
 				after = message.Sequence
 			}
 		}
-		if after > 0 {
+		if acknowledge && after > 0 {
 			var ignored room.Participant
 			_ = client.Call(ctx, "participant.ack", room.AckInput{Room: identifier, WorkingDirectory: cwd, Through: after}, &ignored)
 		}
@@ -632,6 +606,14 @@ func (a *App) watch(ctx context.Context, client room.Client, identifier string, 
 		case <-ticker.C:
 		}
 	}
+}
+
+func writeWatchedMessage(output io.Writer, message room.Message, jsonMode bool) error {
+	if jsonMode {
+		return json.NewEncoder(output).Encode(message)
+	}
+	printMessage(output, message)
+	return nil
 }
 
 func printSnapshot(output io.Writer, snapshot room.Snapshot, messages bool) {
@@ -738,23 +720,14 @@ func leading(args []string, name string) (string, []string, error) {
 	return args[0], args[1:], nil
 }
 
-func writeAtomic(path string, content []byte) error {
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, content, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temporary, path)
-}
-func systemdQuote(value string) string { return strings.ReplaceAll(strconv.Quote(value), "%", "%%") }
-
 const rootHelp = `Crewfold is a shared room for independently run AI sessions.
 
 Usage:
-  crewfold service install|start|stop|status
+  crewfold service install|uninstall|start|stop|status
   crewfold open
   crewfold status
   crewfold room COMMAND
-  crewfold daemon run
+  crewfold daemon run|shutdown
 
 Run 'crewfold room' for room commands.
 `
@@ -767,11 +740,11 @@ const roomHelp = `Room commands:
   crewfold room send ROOM MESSAGE... | --stdin
   crewfold room context ROOM CURRENT-CONTEXT... | --stdin
   crewfold room read ROOM [--after SEQUENCE]
-  crewfold room watch ROOM [--after SEQUENCE]
+  crewfold room watch ROOM [--after SEQUENCE] [--no-ack]
   crewfold room ack ROOM [--through SEQUENCE]
   crewfold room upload ROOM FILE [--caption TEXT]
   crewfold room document ROOM DOCUMENT [--to PATH]
-  crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH]
+  crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH] [--runtime codex|pi]
   crewfold room steward status ROOM
   crewfold room steward prompt ROOM MESSAGE...
   crewfold room steward key ROOM enter|esc|ctrl+c

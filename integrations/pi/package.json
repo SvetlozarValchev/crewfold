@@ -1,0 +1,14 @@
+{
+  "name": "@crewfold/pi-integration",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deliver Crewfold room activity into an existing Pi session",
+  "keywords": ["pi-package"],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

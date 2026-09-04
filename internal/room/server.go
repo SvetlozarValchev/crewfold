@@ -22,6 +22,7 @@ import (
 
 	"crewfold/internal/buildinfo"
 	"crewfold/internal/codexapp"
+	"crewfold/internal/localipc"
 	webui "crewfold/web"
 )
 
@@ -60,9 +61,12 @@ type Server struct {
 	stewards   *StewardManager
 	deliveries *DeliveryManager
 	closeOnce  sync.Once
+	shutdown   context.CancelFunc
 }
 
 func RunServer(ctx context.Context, config ServerConfig) error {
+	ctx, shutdown := context.WithCancel(ctx)
+	defer shutdown()
 	if strings.TrimSpace(config.DataDir) == "" || strings.TrimSpace(config.SocketPath) == "" {
 		return errors.New("daemon requires --data-dir and --socket")
 	}
@@ -70,39 +74,30 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 	if err != nil {
 		return err
 	}
-	socketPath, err := filepath.Abs(config.SocketPath)
+	socketPath, err := localipc.Normalize(config.SocketPath)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
-		return err
-	}
-	if err := prepareSocket(socketPath); err != nil {
-		return err
-	}
+	config.SocketPath = socketPath
 	store, err := Open(ctx, dataDir)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := localipc.Listen(socketPath)
 	if err != nil {
-		return fmt.Errorf("listen on owner socket: %w", err)
-	}
-	if err := os.Chmod(socketPath, 0o600); err != nil {
-		_ = listener.Close()
-		return err
+		return fmt.Errorf("listen on owner endpoint: %w", err)
 	}
 	runtime := config.StewardRuntime
 	if runtime == nil {
 		runtime, err = NewHerdrStewardRuntime(socketPath, dataDir)
 		if err != nil {
 			_ = listener.Close()
-			_ = os.Remove(socketPath)
+			_ = localipc.Remove(socketPath)
 			return err
 		}
 	}
-	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, sessions: map[[32]byte]time.Time{}}
+	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, sessions: map[[32]byte]time.Time{}, shutdown: shutdown}
 	cliPath, err := os.Executable()
 	if err != nil {
 		server.stewards = NewStewardManager(ctx, store, runtime, "crewfold", socketPath)
@@ -112,7 +107,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 	if err := server.stewards.Start(); err != nil {
 		server.stewards.Close()
 		_ = listener.Close()
-		_ = os.Remove(socketPath)
+		_ = localipc.Remove(socketPath)
 		return err
 	}
 	codexRuntime := config.CodexRuntime
@@ -121,7 +116,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 		if socketErr != nil {
 			server.stewards.Close()
 			_ = listener.Close()
-			_ = os.Remove(socketPath)
+			_ = localipc.Remove(socketPath)
 			return socketErr
 		}
 		codexRuntime = codexapp.Client{SocketPath: codexSocket}
@@ -131,7 +126,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 	if err := server.startWeb(); err != nil {
 		server.deliveries.Close()
 		_ = listener.Close()
-		_ = os.Remove(socketPath)
+		_ = localipc.Remove(socketPath)
 		return err
 	}
 	defer server.close()
@@ -170,7 +165,7 @@ func (s *Server) close() {
 		if s.httpListen != nil {
 			_ = s.httpListen.Close()
 		}
-		_ = os.Remove(s.config.SocketPath)
+		_ = localipc.Remove(s.config.SocketPath)
 	})
 }
 
@@ -214,6 +209,13 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 	case "status":
 		rooms, err := s.store.ListRooms(ctx)
 		return map[string]any{"status": "ok", "pid": os.Getpid(), "started_at": s.startedAt.Format(time.RFC3339Nano), "rooms": len(rooms), "version": s.config.Version}, err
+	case "daemon.shutdown":
+		var input struct{}
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		time.AfterFunc(10*time.Millisecond, s.shutdown)
+		return map[string]string{"status": "stopping"}, nil
 	case "web.bootstrap":
 		return s.mintBootstrap()
 	case "room.create":
@@ -521,23 +523,4 @@ func secret() (string, [32]byte, error) {
 		return "", zero, err
 	}
 	return hex.EncodeToString(buffer), sha256.Sum256(buffer), nil
-}
-
-func prepareSocket(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSocket == 0 {
-		return errors.New("socket path is occupied by a non-socket file")
-	}
-	connection, dialErr := net.DialTimeout("unix", path, 200*time.Millisecond)
-	if dialErr == nil {
-		_ = connection.Close()
-		return errors.New("Crewfold daemon is already running")
-	}
-	return os.Remove(path)
 }

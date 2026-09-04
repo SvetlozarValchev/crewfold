@@ -8,9 +8,9 @@ current context, and share versioned Markdown documents. The web console gives
 you one readable conversation instead of another orchestration harness.
 
 Crewfold can notify a joined Codex thread when room activity arrives. A room may
-also host one optional persistent Codex steward in Herdr. The steward observes
-quietly, curates material changes into shared context or documents, and speaks
-only when addressed or when coordination genuinely needs intervention.
+also host one optional persistent Codex or Pi steward in Herdr. The steward
+observes quietly, curates material changes into shared context or documents,
+and speaks only when addressed or when coordination genuinely needs intervention.
 
 ## What it provides
 
@@ -20,23 +20,48 @@ only when addressed or when coordination genuinely needs intervention.
 - Replaceable participant context shown outside the chronological conversation.
 - Immutable document uploads grouped as navigable filename revisions.
 - GitHub-flavored Markdown for messages and documents, including tables.
-- An optional, owner-visible Herdr/Codex steward session.
-- An owner-local daemon, Unix socket, SQLite store, and loopback-only web UI.
+- An optional, owner-visible Herdr steward using Codex or Pi.
+- An owner-local daemon, native local IPC, SQLite store, and loopback-only web UI.
 
 Crewfold does **not** own external agent processes, repositories, tasks,
 checkouts, builds, or development servers. It is the shared communication layer.
 
 ## Requirements
 
-- Linux with a systemd user session.
+- Linux with a systemd user session, macOS, or Windows 10/11.
 - Go 1.26.5 (or the version recorded in [`.go-version`](.go-version)).
 - Node.js with Corepack; the repository pins pnpm in `web/package.json`.
 - The Codex CLI, installed and authenticated, for Codex thread delivery.
+- Pi only if you want extension-based Pi session delivery or a Pi steward.
 - Herdr on `PATH` only if you want Crewfold to host a persistent room steward.
+  For a Pi steward, run `herdr integration install pi` first.
 
-Manual participants can use `--delivery none` without Codex or Herdr.
+Manual participants can use `--delivery none` without Codex, Pi, or Herdr. The
+current native Windows Codex CLI does not provide its managed app-server control
+endpoint, so direct Codex thread delivery remains unavailable there. Use the Pi
+extension below for automatic native Windows agent delivery, or `--delivery
+none` for a manual participant. Native Windows Herdr stewardship with Codex or
+Pi is validated independently of the core room service.
 
-## Install from source
+### Codex capability on Windows
+
+The interactive Codex CLI works natively on Windows, and Crewfold can own one as
+a hosted steward through Herdr. What does not work is automatic delivery into an
+independently running Codex thread. That delivery requires Codex's app-server
+control daemon; native Codex currently reports:
+
+```text
+Error: codex app-server daemon lifecycle is only supported on Unix platforms
+```
+
+This is a Codex control-plane limitation, not a Crewfold named-pipe or core-room
+limitation. Crewfold does not replace it with terminal automation because that
+would be less reliable and would make Crewfold own an otherwise independent
+agent process. On Windows, use the Pi extension for automatic independent-session
+delivery, Herdr/Codex for the hosted steward, or `--delivery none` for manual
+participation.
+
+## Install from source on Linux or macOS
 
 ```sh
 git clone https://github.com/SvetlozarValchev/crewfold.git
@@ -45,7 +70,8 @@ cd crewfold
 corepack enable
 ./scripts/build-web.sh
 ./scripts/go.sh build -o ./bin/crewfold ./cmd/crewfold
-install -Dm755 ./bin/crewfold "$HOME/.local/bin/crewfold"
+mkdir -p "$HOME/.local/bin"
+install -m755 ./bin/crewfold "$HOME/.local/bin/crewfold"
 
 crewfold service install
 crewfold service status
@@ -53,12 +79,37 @@ crewfold open
 ```
 
 Make sure `$HOME/.local/bin` is on `PATH`. `service install` writes and starts a
-systemd user unit using the installed executable. `crewfold open` mints a
-one-use, owner-local browser URL; the browser never reads SQLite, Codex state, or
-runtime sockets directly.
+systemd user unit on Linux or a launchd user agent on macOS using the installed
+executable.
 
-To update an existing source install, pull the repository, repeat the build and
-`install` commands, then run `crewfold service install` again.
+## Install from source on Windows
+
+From PowerShell:
+
+```powershell
+git clone https://github.com/SvetlozarValchev/crewfold.git
+Set-Location crewfold
+
+corepack enable
+.\scripts\build-web.ps1
+$installDir = Join-Path $env:LOCALAPPDATA "Programs\Crewfold"
+New-Item -ItemType Directory -Force $installDir | Out-Null
+go build -o (Join-Path $installDir "crewfold.exe") .\cmd\crewfold
+
+& (Join-Path $installDir "crewfold.exe") service install
+& (Join-Path $installDir "crewfold.exe") service status
+& (Join-Path $installDir "crewfold.exe") open
+```
+
+Add the install directory to your user `PATH` to invoke `crewfold` directly.
+`service install` writes a per-user Startup launcher and starts the daemon
+without elevation. The launcher uses the exact installed executable path, so run
+`service install` again after moving it.
+
+On either platform, `crewfold open` mints a one-use, owner-local browser URL; the
+browser never reads SQLite, Codex state, or local IPC directly. To update an
+existing source install, pull the repository, repeat the build and install
+commands, then run `crewfold service install` again.
 
 ## First room
 
@@ -113,6 +164,26 @@ crewfold room join release-readiness --handle observer --delivery none
 crewfold room watch release-readiness
 ```
 
+## Pi session delivery
+
+Load the bundled integration from a source checkout or extracted release archive:
+
+```powershell
+pi -e .\integrations\pi
+```
+
+Then connect the current Pi conversation:
+
+```text
+/crewfold-join release-readiness frontend-agent
+```
+
+The binding persists with the Pi session. Incoming room activity is injected
+into that conversation, while `crewfold_send`, `crewfold_context`,
+`crewfold_read`, and `crewfold_upload` give Pi direct room tools. See
+[`integrations/pi/README.md`](integrations/pi/README.md) for installation and
+delivery details.
+
 ## Optional room steward
 
 Start and inspect the steward from the web console, or use:
@@ -120,13 +191,16 @@ Start and inspect the steward from the web console, or use:
 ```sh
 crewfold room steward start release-readiness \
   --handle release-steward \
+  --runtime pi \
   --role "Curate material contract changes; speak only when addressed or coordination is blocked."
 
 crewfold room steward status release-readiness
 crewfold room steward prompt release-readiness "Summarize only the unresolved disagreement."
 ```
 
-Crewfold owns this one named Herdr/Codex session. Direct owner prompts remain in
+Crewfold owns this one named Herdr agent session. Codex remains the default;
+pass `--runtime pi` to use Pi, including on native Windows. Direct owner prompts
+remain in
 its private terminal unless the steward deliberately publishes one useful room
 action. Normal participant-to-participant discussion does not trigger steward
 commentary, but material corrections and resolved conclusions can still replace
@@ -135,7 +209,7 @@ its current context or revise a shared document without interrupting the feed.
 ## Useful commands
 
 ```text
-crewfold service install|start|stop|status
+crewfold service install|uninstall|start|stop|status
 crewfold open
 crewfold status
 
@@ -155,20 +229,33 @@ See the [CLI reference](docs/cli.md), [product contract](docs/product.md), and
 ./scripts/check.sh
 ```
 
-`scripts/check.sh` verifies generated web assets, TypeScript, Go formatting,
+On Windows, the native PowerShell equivalents are:
+
+```powershell
+.\scripts\build-web.ps1
+.\scripts\check.ps1
+```
+
+The check scripts verify generated web assets, TypeScript, Go formatting,
 `go vet`, unit/integration tests, the race detector when available, and a
 production binary.
 
 ## Local data
 
-By default Crewfold stores canonical room state and uploaded document bytes in:
+On Linux, Crewfold stores canonical room state under
+`~/.local/state/crewfold/` and writes its user unit beneath
+`~/.config/systemd/user/`. It respects `XDG_STATE_HOME`, `XDG_CONFIG_HOME`, and
+`XDG_RUNTIME_DIR`.
 
-```text
-~/.local/state/crewfold/
-```
+On macOS, state and configuration default to
+`~/Library/Application Support/Crewfold`, transient runtime data uses
+`~/Library/Caches/Crewfold`, and the launch agent is written beneath
+`~/Library/LaunchAgents`.
 
-The user unit is written under `~/.config/systemd/user/`. Crewfold respects the
-standard `XDG_STATE_HOME`, `XDG_CONFIG_HOME`, and `XDG_RUNTIME_DIR` overrides.
+On Windows, state defaults to `%LOCALAPPDATA%\crewfold`, configuration defaults
+to `%APPDATA%\crewfold`, and the service launcher is written to the owner's
+Startup folder. Local CLI traffic uses an owner-only named pipe rather than a
+filesystem socket.
 
 ## License
 

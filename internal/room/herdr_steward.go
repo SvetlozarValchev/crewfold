@@ -68,9 +68,9 @@ func (r *HerdrStewardRuntime) Ensure(ctx context.Context, steward HostedSteward,
 		return StewardRuntimeState{}, err
 	}
 
-	pathValue := filepath.Dir(r.crewfoldPath)
-	if inherited := os.Getenv("PATH"); inherited != "" {
-		pathValue += string(os.PathListSeparator) + inherited
+	pathValue, err := r.herdrEnvironmentPath(steward.AgentKind)
+	if err != nil {
+		return StewardRuntimeState{}, err
 	}
 	output, err := r.run(ctx, steward.HerdrSession, "workspace", "create",
 		"--cwd", steward.WorkingDirectory,
@@ -94,6 +94,7 @@ func (r *HerdrStewardRuntime) Ensure(ctx context.Context, steward HostedSteward,
 	}
 
 	var startErr error
+	blockedDuringStart := false
 	for attempt := 0; attempt < 12; attempt++ {
 		if attempt > 0 {
 			select {
@@ -102,9 +103,17 @@ func (r *HerdrStewardRuntime) Ensure(ctx context.Context, steward HostedSteward,
 			case <-time.After(250 * time.Millisecond):
 			}
 		}
-		agentArguments := append([]string{"agent", "start", steward.AgentName, "--kind", "codex", "--pane", created.Result.RootPane.PaneID, "--timeout", "60000", "--"}, stewardCodexArguments(steward)...)
+		agentArguments, argumentsErr := stewardAgentStartArguments(steward, created.Result.RootPane.PaneID)
+		if argumentsErr != nil {
+			return StewardRuntimeState{}, argumentsErr
+		}
 		_, startErr = r.run(ctx, steward.HerdrSession, agentArguments...)
 		if startErr == nil {
+			break
+		}
+		if strings.Contains(startErr.Error(), "agent_not_ready") {
+			blockedDuringStart = true
+			startErr = nil
 			break
 		}
 		if !strings.Contains(startErr.Error(), "agent_pane_busy") {
@@ -112,40 +121,56 @@ func (r *HerdrStewardRuntime) Ensure(ctx context.Context, steward HostedSteward,
 		}
 	}
 	if startErr != nil {
-		return StewardRuntimeState{}, fmt.Errorf("start Codex in Herdr: %w", startErr)
+		return StewardRuntimeState{}, fmt.Errorf("start %s in Herdr: %w", steward.AgentKind, startErr)
 	}
 
 	state, err := r.waitForAgent(ctx, steward, 20*time.Second)
 	if err != nil {
 		return StewardRuntimeState{}, err
 	}
-	if steward.ManagedWorkingDirectory && hasCodexTrustPrompt(state.Output) {
+	if blockedDuringStart && !(steward.AgentKind == "codex" && steward.ManagedWorkingDirectory && hasCodexTrustPrompt(state.Output)) {
+		return StewardRuntimeState{}, fmt.Errorf("%s is blocked during startup: %s", steward.AgentKind, boundedRuntimeError([]byte(state.Output)))
+	}
+	if steward.AgentKind == "codex" && steward.ManagedWorkingDirectory && hasCodexTrustPrompt(state.Output) {
 		if err := r.SendKey(ctx, steward, "enter"); err != nil {
 			return StewardRuntimeState{}, fmt.Errorf("accept managed steward workspace: %w", err)
 		}
-		deadline := time.Now().Add(20 * time.Second)
-		for time.Now().Before(deadline) {
-			state, err = r.Inspect(ctx, steward)
-			if err == nil && !hasCodexTrustPrompt(state.Output) {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return StewardRuntimeState{}, ctx.Err()
-			case <-time.After(200 * time.Millisecond):
-			}
-		}
-		if err != nil || hasCodexTrustPrompt(state.Output) {
-			return StewardRuntimeState{}, errors.New("Codex did not leave its managed-workspace trust prompt")
-		}
+	}
+	state, err = r.waitForAgentReady(ctx, steward, 20*time.Second)
+	if err != nil {
+		return StewardRuntimeState{}, err
 	}
 	return state, nil
 }
 
+func stewardAgentStartArguments(steward HostedSteward, paneID string) ([]string, error) {
+	arguments := []string{"agent", "start", steward.AgentName, "--kind", steward.AgentKind, "--pane", paneID, "--timeout", "60000"}
+	switch steward.AgentKind {
+	case "codex":
+		arguments = append(arguments, "--")
+		arguments = append(arguments, stewardCodexArguments(steward)...)
+	case "pi":
+		agentOptions := []string{}
+		if steward.ManagedWorkingDirectory {
+			agentOptions = append(agentOptions, "--approve")
+		}
+		if steward.InitializedAt != "" {
+			agentOptions = append(agentOptions, "--continue")
+		}
+		if len(agentOptions) > 0 {
+			arguments = append(arguments, "--")
+			arguments = append(arguments, agentOptions...)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported steward runtime %q", steward.AgentKind)
+	}
+	return arguments, nil
+}
+
 func stewardCodexArguments(steward HostedSteward) []string {
-	arguments := []string{"--no-alt-screen", "-c", "shell_environment_policy.inherit=all"}
+	arguments := []string{"--no-alt-screen", "-c", "shell_environment_policy.inherit=all", "-c", "check_for_update_on_startup=false"}
 	if steward.ManagedWorkingDirectory {
-		arguments = append(arguments, "--dangerously-bypass-approvals-and-sandbox")
+		arguments = append(arguments, "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust")
 	}
 	// A completed onboarding turn proves that this steward has a saved Codex
 	// thread in its room-owned working directory. Herdr panes are disposable;
@@ -190,12 +215,35 @@ func (r *HerdrStewardRuntime) Inspect(ctx context.Context, steward HostedSteward
 
 func (r *HerdrStewardRuntime) Prompt(ctx context.Context, steward HostedSteward, text string) error {
 	_, err := r.run(ctx, steward.HerdrSession, "agent", "prompt", steward.AgentName, text, "--wait", "--until", "working", "--timeout", "8000")
+	if steward.AgentKind != "codex" || !needsCodexPasteRecovery() {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(300 * time.Millisecond):
+	}
+	state, inspectErr := r.Inspect(ctx, steward)
+	if inspectErr != nil || (state.AgentStatus != "idle" && state.AgentStatus != "done") || !hasPendingCodexPaste(state.Output) {
+		return err
+	}
+	if err := r.SendKey(ctx, steward, "enter"); err != nil {
+		return fmt.Errorf("submit pasted Codex prompt: %w", err)
+	}
+	_, err = r.run(ctx, steward.HerdrSession, "agent", "wait", steward.AgentName, "--until", "working", "--timeout", "8000")
 	return err
 }
 
 func (r *HerdrStewardRuntime) Deliver(ctx context.Context, steward HostedSteward, text string) error {
 	_, err := r.run(ctx, steward.HerdrSession, "agent", "prompt", steward.AgentName, text, "--wait", "--until", "idle", "--until", "done", "--timeout", "300000")
 	return err
+}
+
+func hasPendingCodexPaste(output string) bool {
+	if len(output) > 4096 {
+		output = output[len(output)-4096:]
+	}
+	return strings.Contains(output, "[Pasted Content")
 }
 
 func (r *HerdrStewardRuntime) SendKey(ctx context.Context, steward HostedSteward, key string) error {
@@ -311,6 +359,34 @@ func (r *HerdrStewardRuntime) waitForAgent(ctx context.Context, steward HostedSt
 		}
 	}
 	return StewardRuntimeState{}, fmt.Errorf("Codex did not become inspectable: %w", lastErr)
+}
+
+func (r *HerdrStewardRuntime) waitForAgentReady(ctx context.Context, steward HostedSteward, timeout time.Duration) (StewardRuntimeState, error) {
+	deadline := time.Now().Add(timeout)
+	var state StewardRuntimeState
+	var lastErr error
+	var readySince time.Time
+	for time.Now().Before(deadline) {
+		state, lastErr = r.Inspect(ctx, steward)
+		if lastErr == nil && (state.AgentStatus == "idle" || state.AgentStatus == "done") {
+			if readySince.IsZero() {
+				readySince = time.Now()
+			} else if time.Since(readySince) >= 3*time.Second {
+				return state, nil
+			}
+		} else {
+			readySince = time.Time{}
+		}
+		select {
+		case <-ctx.Done():
+			return StewardRuntimeState{}, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	if lastErr != nil {
+		return StewardRuntimeState{}, fmt.Errorf("Codex did not become ready: %w", lastErr)
+	}
+	return StewardRuntimeState{}, fmt.Errorf("Codex did not become ready; last status was %q", state.AgentStatus)
 }
 
 func (r *HerdrStewardRuntime) run(ctx context.Context, session string, arguments ...string) ([]byte, error) {

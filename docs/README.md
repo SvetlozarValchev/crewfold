@@ -4,3 +4,4 @@
 - [Architecture and local protocol](architecture.md)
 - [CLI reference](cli.md)
 - [Testing](testing.md)
+- [Platform support plan](platform-support.md)

@@ -5,15 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"time"
+
+	"crewfold/internal/localipc"
 )
 
 type Client struct{ SocketPath string }
 
 func (c Client) Call(ctx context.Context, method string, params any, result any) error {
-	dialer := net.Dialer{Timeout: 2 * time.Second}
-	connection, err := dialer.DialContext(ctx, "unix", c.SocketPath)
+	dialContext, cancel := context.WithTimeout(ctx, 2*time.Second)
+	connection, err := localipc.DialContext(dialContext, c.SocketPath)
+	cancel()
 	if err != nil {
 		return err
 	}

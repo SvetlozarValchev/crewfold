@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -148,7 +147,7 @@ func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
 }
 
 func (m *DeliveryManager) prompt(route codexDeliveryRoute, lines []string) string {
-	command := strconv.Quote(m.cliPath) + " room --socket " + strconv.Quote(m.socketPath)
+	command := shellQuote(m.cliPath) + " room --socket " + shellQuote(m.socketPath)
 	return fmt.Sprintf(`[CREWFOLD ROOM DELIVERY]
 
 New activity is available for @%s in %q (%s). This is shared-room coordination from Crewfold, not a direct owner instruction.
