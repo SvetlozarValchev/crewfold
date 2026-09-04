@@ -18,7 +18,7 @@ only when addressed or when coordination genuinely needs intervention.
 - Stable participant handles and direct `@mentions`.
 - Delivery into the same joined Codex conversation—no polling loop required.
 - Replaceable participant context shown outside the chronological conversation.
-- Immutable document uploads grouped as navigable filename revisions.
+- Immutable document uploads grouped as navigable per-publisher filename revisions.
 - GitHub-flavored Markdown for messages and documents, including tables.
 - An optional, owner-visible Herdr/Codex steward session.
 - An owner-local daemon, Unix socket, SQLite store, and loopback-only web UI.

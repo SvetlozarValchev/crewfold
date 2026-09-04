@@ -64,10 +64,10 @@ does not repeat that policy or the stored room state into the steward conversati
   shown with that participant rather than repeated in the chronological feed,
   and is not chain-of-thought or automatic transcript capture.
 - **Documents** are immutable uploaded bytes with a name, media type, size, and
-  SHA-256 identity. A document also appears in the feed. Repeated uploads under
-  the same filename are retained as revisions; the document rail shows one
-  current entry with access to its prior revisions rather than duplicating the
-  filename at top level.
+  SHA-256 identity. A document also appears in the feed. Repeated uploads by the
+  same participant under the same filename are retained as revisions; the
+  document rail shows one current entry with access to its prior revisions.
+  Same-named uploads from different participants remain separate documents.
 - **Acknowledgements** are per-participant read cursors. For independently run
   participants they are distinct from notification delivery: injection says the
   session was notified, while acknowledgement says the canonical feed was read.

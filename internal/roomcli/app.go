@@ -645,7 +645,7 @@ func printSnapshot(output io.Writer, snapshot room.Snapshot, messages bool) {
 	}
 	documentNames := make(map[string]struct{}, len(snapshot.Documents))
 	for _, document := range snapshot.Documents {
-		documentNames[document.Name] = struct{}{}
+		documentNames[document.ParticipantID+"\x00"+document.Name] = struct{}{}
 	}
 	fmt.Fprintf(output, "\n%d documents · %d revisions · %d messages\n", len(documentNames), len(snapshot.Documents), snapshot.Room.LastSequence)
 	if messages {

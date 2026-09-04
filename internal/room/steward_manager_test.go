@@ -100,7 +100,7 @@ func TestHostedStewardManagerStartsAndRelaysRoomActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 3*time.Second, func() bool { return runtime.promptCount() >= 1 })
-	if first := runtime.prompt(0); !strings.Contains(first, `"/opt/crewfold" room --socket "/run/crewfold.sock" read relay`) || !strings.Contains(first, "send relay --stdin") || !strings.Contains(first, "GitHub-flavored Markdown") || !strings.Contains(first, "never by an internal document ID") || !strings.Contains(first, "one logical document") || !strings.Contains(first, "Never inspect, edit, delete, or consolidate Crewfold's private SQLite rows") {
+	if first := runtime.prompt(0); !strings.Contains(first, `"/opt/crewfold" room --socket "/run/crewfold.sock" read relay`) || !strings.Contains(first, "send relay --stdin") || !strings.Contains(first, "GitHub-flavored Markdown") || !strings.Contains(first, "never by an internal document ID") || !strings.Contains(first, "same participant") || !strings.Contains(first, "Never inspect, edit, delete, or consolidate Crewfold's private SQLite rows") {
 		t.Fatalf("onboarding does not target exact daemon: %s", first)
 	}
 	initialState, err := store.HostedSteward(ctx, "relay")

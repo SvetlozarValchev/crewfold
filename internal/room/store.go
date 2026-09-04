@@ -544,14 +544,24 @@ func (s *Store) ReadDocument(ctx context.Context, roomIdentifier, documentIdenti
 	}
 	var document Document
 	var relative string
-	// An exact document ID addresses one immutable historical revision. A
-	// filename addresses the current logical document, so repeated uploads of
-	// that filename must resolve to its newest revision.
-	err = s.db.QueryRowContext(ctx, `SELECT id,room_id,COALESCE(participant_id,''),name,media_type,byte_size,sha256,relative_path,created_at
-FROM documents
-WHERE room_id=? AND (id=? OR name=?)
-ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,created_at DESC,id DESC
-LIMIT 1`, room.ID, documentIdentifier, documentIdentifier, documentIdentifier).Scan(&document.ID, &document.RoomID, &document.ParticipantID, &document.Name, &document.MediaType, &document.ByteSize, &document.SHA256, &relative, &document.CreatedAt)
+	scan := func(row *sql.Row) error {
+		return row.Scan(&document.ID, &document.RoomID, &document.ParticipantID, &document.Name, &document.MediaType, &document.ByteSize, &document.SHA256, &relative, &document.CreatedAt)
+	}
+	columns := `SELECT id,room_id,COALESCE(participant_id,''),name,media_type,byte_size,sha256,relative_path,created_at FROM documents`
+	// An exact document ID addresses one immutable historical revision.
+	err = scan(s.db.QueryRowContext(ctx, columns+` WHERE room_id=? AND id=?`, room.ID, documentIdentifier))
+	if errors.Is(err, sql.ErrNoRows) {
+		var publishers int
+		if countErr := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT COALESCE(participant_id,'')) FROM documents WHERE room_id=? AND name=?`, room.ID, documentIdentifier).Scan(&publishers); countErr != nil {
+			return Document{}, nil, countErr
+		}
+		if publishers > 1 {
+			return Document{}, nil, errors.New("document filename is ambiguous across participants; use an exact document ID")
+		}
+		// Within one publisher, a filename addresses the newest revision of the
+		// same logical document.
+		err = scan(s.db.QueryRowContext(ctx, columns+` WHERE room_id=? AND name=? ORDER BY created_at DESC,id DESC LIMIT 1`, room.ID, documentIdentifier))
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return Document{}, nil, errors.New("document not found")
 	}

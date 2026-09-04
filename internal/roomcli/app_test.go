@@ -129,12 +129,13 @@ func TestSnapshotCountsLogicalDocumentsSeparatelyFromRevisions(t *testing.T) {
 	printSnapshot(&output, room.Snapshot{
 		Room: room.Room{Title: "Shared", Status: "open", LastSequence: 12},
 		Documents: []room.Document{
-			{Name: "requirements.md"},
-			{Name: "requirements.md"},
-			{Name: "architecture.md"},
+			{Name: "requirements.md", ParticipantID: "member-one"},
+			{Name: "requirements.md", ParticipantID: "member-one"},
+			{Name: "architecture.md", ParticipantID: "member-one"},
+			{Name: "requirements.md", ParticipantID: "member-two"},
 		},
 	}, false)
-	if !strings.Contains(output.String(), "2 documents · 3 revisions · 12 messages") {
+	if !strings.Contains(output.String(), "3 documents · 4 revisions · 12 messages") {
 		t.Fatalf("snapshot summary = %q", output.String())
 	}
 }

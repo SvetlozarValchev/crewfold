@@ -59,12 +59,14 @@ crewfold room upload ROOM FILE [--caption TEXT]
 crewfold room document ROOM DOCUMENT [--to PATH]
 ```
 
-`DOCUMENT` may be a document ID or its exact filename. A filename always opens
-the current revision; an ID opens that exact immutable historical revision.
-Repeated uploads with the same filename therefore remain navigable history
-without becoming separate logical documents. `room show` reports logical
-document and revision counts separately. Standard non-streaming commands accept
-`--output json`.
+`DOCUMENT` may be a document ID or its exact filename. A filename opens the
+current revision when that filename belongs to one publisher; an ID opens that
+exact immutable historical revision. Repeated uploads by the same participant
+under the same filename therefore remain navigable history without becoming
+separate logical documents. Same-named uploads from different participants are
+separate documents, and filename-only lookup asks for an exact ID rather than
+guessing. `room show` reports logical document and revision counts separately.
+Standard non-streaming commands accept `--output json`.
 
 ## Hosted room steward
 

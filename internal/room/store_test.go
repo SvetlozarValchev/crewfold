@@ -144,12 +144,37 @@ func TestRoomCollaborationLifecycle(t *testing.T) {
 	if historical.ID != uploaded.Document.ID || string(historicalContent) != documentText {
 		t.Fatalf("historical document revision = %#v %q", historical, historicalContent)
 	}
+	otherPublisherText := "# Compatibility findings\n\nService-side evidence for the same filename.\n"
+	otherPublisher, err := store.Upload(ctx, UploadInput{
+		Room:             "compatibility-review",
+		WorkingDirectory: serviceDirectory,
+		Name:             "compatibility-findings.md",
+		MediaType:        "text/markdown",
+		ContentBase64:    base64.StdEncoding.EncodeToString([]byte(otherPublisherText)),
+		Caption:          "Uploaded the service-side comparison.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.ReadDocument(ctx, "compatibility-review", "compatibility-findings.md"); err == nil || !strings.Contains(err.Error(), "ambiguous across participants") {
+		t.Fatalf("same filename from different publishers error = %v", err)
+	}
+	if otherPublisher.Document == nil {
+		t.Fatal("other publisher upload did not return document metadata")
+	}
+	otherDocument, otherContent, err := store.ReadDocument(ctx, "compatibility-review", otherPublisher.Document.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherDocument.ID != otherPublisher.Document.ID || string(otherContent) != otherPublisherText {
+		t.Fatalf("other publisher document = %#v %q", otherDocument, otherContent)
+	}
 
 	snapshot, err = store.Snapshot(ctx, "compatibility-review", 0, 500)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Participants) != 3 || len(snapshot.Documents) != 2 {
+	if len(snapshot.Participants) != 3 || len(snapshot.Documents) != 3 {
 		t.Fatalf("unexpected room projection: %d participants, %d documents", len(snapshot.Participants), len(snapshot.Documents))
 	}
 	if got := participantNamed(snapshot.Participants, first.Handle).Context; got != "Checking the client against the proposed response schema." {
