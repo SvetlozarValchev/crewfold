@@ -20,7 +20,9 @@ bytes are stored beneath:
 
 The database is `<state>/rooms.db`. The schema is initialized directly by the
 current binary because this is a pre-release greenfield prototype with one current
-format.
+format. The stable loopback address and owner-browser credential live in
+mode-`0600` files in the same owner-private state directory. The one-use
+bootstrap never appears in the durable browser URL.
 
 ## Local method surface
 

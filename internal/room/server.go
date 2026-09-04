@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -56,7 +57,8 @@ type Server struct {
 	origin     string
 	mu         sync.Mutex
 	bootstrap  map[[32]byte]time.Time
-	sessions   map[[32]byte]time.Time
+	ownerToken string
+	ownerHash  [32]byte
 	stewards   *StewardManager
 	deliveries *DeliveryManager
 	closeOnce  sync.Once
@@ -85,6 +87,10 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 		return err
 	}
 	defer store.Close()
+	ownerToken, ownerHash, err := loadOwnerWebSession(dataDir)
+	if err != nil {
+		return err
+	}
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("listen on owner socket: %w", err)
@@ -102,7 +108,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 			return err
 		}
 	}
-	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, sessions: map[[32]byte]time.Time{}}
+	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, ownerToken: ownerToken, ownerHash: ownerHash}
 	cliPath, err := os.Executable()
 	if err != nil {
 		server.stewards = NewStewardManager(ctx, store, runtime, "crewfold", socketPath)
@@ -360,11 +366,7 @@ func (s *Server) startWeb() error {
 	if address == "" {
 		address = "127.0.0.1:0"
 	}
-	host, _, err := net.SplitHostPort(address)
-	if err != nil || host != "127.0.0.1" {
-		return errors.New("web address must use 127.0.0.1")
-	}
-	listener, err := net.Listen("tcp4", address)
+	listener, err := listenOwnerWeb(s.store.dataDir, address)
 	if err != nil {
 		return err
 	}
@@ -452,15 +454,7 @@ func (s *Server) handleWebSession(response http.ResponseWriter, request *http.Re
 		http.Error(response, "expired bootstrap", http.StatusUnauthorized)
 		return
 	}
-	token, sessionDigest, err := secret()
-	if err != nil {
-		http.Error(response, "session unavailable", http.StatusInternalServerError)
-		return
-	}
-	s.mu.Lock()
-	s.sessions[sessionDigest] = now.Add(8 * time.Hour)
-	s.mu.Unlock()
-	s.writeWebJSON(response, map[string]any{"token": token, "expires_at": now.Add(8 * time.Hour).Format(time.RFC3339Nano)})
+	s.writeWebJSON(response, map[string]any{"token": s.ownerToken})
 }
 
 func (s *Server) handleWebRPC(response http.ResponseWriter, request *http.Request) {
@@ -486,11 +480,7 @@ func (s *Server) authorizeWeb(header string) bool {
 		return false
 	}
 	digest := sha256.Sum256(bytes)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pruneSecretsLocked()
-	expires, exists := s.sessions[digest]
-	return exists && time.Now().UTC().Before(expires)
+	return subtle.ConstantTimeCompare(digest[:], s.ownerHash[:]) == 1
 }
 
 func (s *Server) pruneSecretsLocked() {
@@ -498,11 +488,6 @@ func (s *Server) pruneSecretsLocked() {
 	for key, expiry := range s.bootstrap {
 		if !now.Before(expiry) {
 			delete(s.bootstrap, key)
-		}
-	}
-	for key, expiry := range s.sessions {
-		if !now.Before(expiry) {
-			delete(s.sessions, key)
 		}
 	}
 }
@@ -527,6 +512,94 @@ func secret() (string, [32]byte, error) {
 		return "", zero, err
 	}
 	return hex.EncodeToString(buffer), sha256.Sum256(buffer), nil
+}
+
+func loadOwnerWebSession(dataDir string) (string, [32]byte, error) {
+	path := filepath.Join(dataDir, "web-owner-token")
+	content, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		token, digest, secretErr := secret()
+		if secretErr != nil {
+			return "", [32]byte{}, secretErr
+		}
+		if writeErr := writePrivateState(path, token+"\n"); writeErr != nil {
+			return "", [32]byte{}, writeErr
+		}
+		return token, digest, nil
+	}
+	if err != nil {
+		return "", [32]byte{}, err
+	}
+	token := strings.TrimSpace(string(content))
+	decoded, err := hex.DecodeString(token)
+	if err != nil || len(decoded) != 32 {
+		return "", [32]byte{}, errors.New("stored web owner token is invalid")
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return "", [32]byte{}, err
+	}
+	return token, sha256.Sum256(decoded), nil
+}
+
+func listenOwnerWeb(dataDir, address string) (net.Listener, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || host != "127.0.0.1" {
+		return nil, errors.New("web address must use 127.0.0.1")
+	}
+	if port != "0" {
+		return net.Listen("tcp4", address)
+	}
+	path := filepath.Join(dataDir, "web-address")
+	content, readErr := os.ReadFile(path)
+	if readErr == nil {
+		persisted := strings.TrimSpace(string(content))
+		persistedHost, persistedPort, splitErr := net.SplitHostPort(persisted)
+		if splitErr != nil || persistedHost != "127.0.0.1" || persistedPort == "0" || persistedPort == "" {
+			return nil, errors.New("stored web address is invalid")
+		}
+		listener, listenErr := net.Listen("tcp4", persisted)
+		if listenErr != nil {
+			return nil, fmt.Errorf("listen on stored web address %s: %w", persisted, listenErr)
+		}
+		return listener, nil
+	}
+	if !errors.Is(readErr, os.ErrNotExist) {
+		return nil, readErr
+	}
+	listener, err := net.Listen("tcp4", address)
+	if err != nil {
+		return nil, err
+	}
+	if err := writePrivateState(path, listener.Addr().String()+"\n"); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	return listener, nil
+}
+
+func writePrivateState(path, value string) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := io.WriteString(temporary, value); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }
 
 func prepareSocket(path string) error {

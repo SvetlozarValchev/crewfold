@@ -22,20 +22,20 @@ const tokenKey = "crewfold-room-session";
 const messagePageSize = 50;
 
 async function authenticate(): Promise<string> {
-  const existing = sessionStorage.getItem(tokenKey);
-  if (existing) return existing;
+  const existing = localStorage.getItem(tokenKey) ?? sessionStorage.getItem(tokenKey);
+  if (existing) { localStorage.setItem(tokenKey, existing); sessionStorage.removeItem(tokenKey); return existing; }
   const bootstrap = new URLSearchParams(location.hash.slice(1)).get("bootstrap");
   if (!bootstrap) throw new Error("Open Crewfold with `crewfold open` to create an owner-local browser session.");
   const response = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bootstrap }) });
   if (!response.ok) throw new Error(await response.text());
   const result = await response.json() as { token: string };
-  sessionStorage.setItem(tokenKey, result.token); history.replaceState(null, "", "/"); return result.token;
+  localStorage.setItem(tokenKey, result.token); history.replaceState(null, "", "/"); return result.token;
 }
 
 async function rpc<T>(token: string, method: string, params: unknown): Promise<T> {
   const id = crypto.randomUUID();
   const response = await fetch("/api/rpc", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ id, method, params }) });
-  if (response.status === 401) { sessionStorage.removeItem(tokenKey); throw new Error("Owner session expired. Run `crewfold open` again."); }
+  if (response.status === 401) { localStorage.removeItem(tokenKey); sessionStorage.removeItem(tokenKey); throw new Error("Owner session is no longer valid. Run `crewfold open` once to reconnect."); }
   if (!response.ok) throw new Error(await response.text());
   const envelope = await response.json() as RPCResponse<T>;
   if (envelope.error) throw new Error(envelope.error);

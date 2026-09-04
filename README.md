@@ -54,8 +54,10 @@ crewfold open
 
 Make sure `$HOME/.local/bin` is on `PATH`. `service install` writes and starts a
 systemd user unit using the installed executable. `crewfold open` mints a
-one-use, owner-local browser URL; the browser never reads SQLite, Codex state, or
-runtime sockets directly.
+one-use, owner-local browser URL. After that bootstrap, the private localhost
+address and browser credential survive Crewfold restarts, so the same URL can be
+reopened directly. The browser never reads SQLite, Codex state, or runtime
+sockets directly.
 
 To update an existing source install, pull the repository, repeat the build and
 `install` commands, then run `crewfold service install` again.

@@ -120,3 +120,49 @@ func TestServerRejectsSecondDaemonOnSocket(t *testing.T) {
 		t.Fatalf("unexpected occupied socket error: %v", err)
 	}
 }
+
+func TestOwnerWebStatePersistsAcrossRestarts(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	token, digest, err := loadOwnerWebSession(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadedToken, reloadedDigest, err := loadOwnerWebSession(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != reloadedToken || digest != reloadedDigest {
+		t.Fatal("owner web credential changed across reload")
+	}
+	server := Server{ownerHash: reloadedDigest}
+	if !server.authorizeWeb("Bearer "+reloadedToken) || server.authorizeWeb("Bearer "+strings.Repeat("0", 64)) {
+		t.Fatal("persisted owner credential was not enforced")
+	}
+
+	first, err := listenOwnerWeb(dataDir, "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := first.Addr().String()
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := listenOwnerWeb(dataDir, "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+	if second.Addr().String() != address {
+		t.Fatalf("web address changed from %s to %s", address, second.Addr())
+	}
+	for _, name := range []string{"web-owner-token", "web-address"} {
+		info, err := os.Stat(filepath.Join(dataDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s mode = %o", name, info.Mode().Perm())
+		}
+	}
+}
