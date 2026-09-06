@@ -503,6 +503,22 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 			}
 		}
 		return 0
+	case "archive-document", "restore-document":
+		if len(args) != 3 {
+			return a.fail(fmt.Errorf("usage: crewfold room %s ROOM DOCUMENT", args[0]))
+		}
+		cwd, _ := os.Getwd()
+		method := "document.archive"
+		action := "archived"
+		if args[0] == "restore-document" {
+			method = "document.restore"
+			action = "restored"
+		}
+		var document room.Document
+		if err := client.Call(ctx, method, room.ArchiveDocumentInput{Room: args[1], Document: args[2], WorkingDirectory: cwd}, &document); err != nil {
+			return a.fail(err)
+		}
+		return a.print(document, jsonMode, func() { fmt.Fprintf(a.stdout, "%s %s\n", action, document.Name) })
 	case "archive":
 		identifier, rest, err := leading(args[1:], "room")
 		if err != nil {
@@ -636,18 +652,55 @@ func (a *App) watch(ctx context.Context, client room.Client, identifier string, 
 
 func printSnapshot(output io.Writer, snapshot room.Snapshot, messages bool) {
 	fmt.Fprintf(output, "%s · %s\n%s\n\nparticipants\n", snapshot.Room.Title, snapshot.Room.Status, snapshot.Room.Topic)
+	participantHandles := make(map[string]string, len(snapshot.Participants))
 	for _, participant := range snapshot.Participants {
+		participantHandles[participant.ID] = participant.Handle
 		context := ""
 		if participant.Context != "" {
 			context = " · " + participant.Context
 		}
 		fmt.Fprintf(output, "@%s\t%s\t%s\t%s\t%d unread%s\n", participant.Handle, participant.Kind, participant.Status, participant.WorkingDirectory, participant.UnreadCount, context)
 	}
-	documentNames := make(map[string]struct{}, len(snapshot.Documents))
-	for _, document := range snapshot.Documents {
-		documentNames[document.ParticipantID+"\x00"+document.Name] = struct{}{}
+	type logicalDocument struct {
+		latest    room.Document
+		revisions int
 	}
-	fmt.Fprintf(output, "\n%d documents · %d revisions · %d messages\n", len(documentNames), len(snapshot.Documents), snapshot.Room.LastSequence)
+	documentIndexes := make(map[string]int, len(snapshot.Documents))
+	documents := make([]logicalDocument, 0, len(snapshot.Documents))
+	for _, document := range snapshot.Documents {
+		key := document.ParticipantID + "\x00" + document.Name
+		if index, exists := documentIndexes[key]; exists {
+			documents[index].revisions++
+			continue
+		}
+		documentIndexes[key] = len(documents)
+		documents = append(documents, logicalDocument{latest: document, revisions: 1})
+	}
+	archived := 0
+	for _, document := range documents {
+		if document.latest.ArchivedAt != "" {
+			archived++
+		}
+	}
+	fmt.Fprintf(output, "\n%d documents · %d revisions · %d messages · %d archived\n", len(documents), len(snapshot.Documents), snapshot.Room.LastSequence, archived)
+	if len(documents) > 0 {
+		fmt.Fprintln(output, "\ndocuments")
+	}
+	for _, document := range documents {
+		state := "active"
+		if document.latest.ArchivedAt != "" {
+			state = "archived"
+		}
+		publisher := participantHandles[document.latest.ParticipantID]
+		if publisher == "" {
+			publisher = "owner"
+		}
+		revisionWord := "revisions"
+		if document.revisions == 1 {
+			revisionWord = "revision"
+		}
+		fmt.Fprintf(output, "%s\t@%s\t%s\t%d %s\t%s\n", state, publisher, document.latest.Name, document.revisions, revisionWord, document.latest.ID)
+	}
 	if messages {
 		for _, message := range snapshot.Messages {
 			printMessage(output, message)
@@ -775,6 +828,8 @@ const roomHelp = `Room commands:
   crewfold room ack ROOM [--through SEQUENCE]
   crewfold room upload ROOM FILE [--caption TEXT]
   crewfold room document ROOM DOCUMENT [--to PATH]
+  crewfold room archive-document ROOM DOCUMENT
+  crewfold room restore-document ROOM DOCUMENT
   crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH]
   crewfold room steward status ROOM
   crewfold room steward prompt ROOM MESSAGE...

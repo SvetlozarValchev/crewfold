@@ -33,6 +33,7 @@ bootstrap never appears in the durable browser URL.
 | `participant.join`, `participant.ack` | Bind a working directory and optional Codex delivery target; advance its read cursor |
 | `message.send` | Append a message or publish current context |
 | `document.upload`, `document.read` | Share and verify immutable document bytes |
+| `document.archive`, `document.restore` | Hide or restore one logical publisher-and-filename document without deleting revisions |
 | `steward.start`, `steward.status`, `steward.prompt`, `steward.key` | Start, inspect, and directly steer the room-owned Herdr terminal |
 | `steward.stop`, `steward.restart` | Stop it or create a fresh named Herdr/Codex session while preserving room identity |
 | `web.bootstrap` | Mint a one-use owner browser URL |

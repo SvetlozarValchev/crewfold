@@ -132,10 +132,10 @@ func TestSnapshotCountsLogicalDocumentsSeparatelyFromRevisions(t *testing.T) {
 			{Name: "requirements.md", ParticipantID: "member-one"},
 			{Name: "requirements.md", ParticipantID: "member-one"},
 			{Name: "architecture.md", ParticipantID: "member-one"},
-			{Name: "requirements.md", ParticipantID: "member-two"},
+			{ID: "doc_archived", Name: "requirements.md", ParticipantID: "member-two", ArchivedAt: "2100-01-01T00:00:00Z"},
 		},
 	}, false)
-	if !strings.Contains(output.String(), "3 documents · 4 revisions · 12 messages") {
+	if !strings.Contains(output.String(), "3 documents · 4 revisions · 12 messages · 1 archived") || !strings.Contains(output.String(), "archived\t@owner\trequirements.md\t1 revision\tdoc_archived") {
 		t.Fatalf("snapshot summary = %q", output.String())
 	}
 }

@@ -18,7 +18,7 @@ only when addressed or when coordination genuinely needs intervention.
 - Stable participant handles and direct `@mentions`.
 - Delivery into the same joined Codex conversation—no polling loop required.
 - Replaceable participant context shown outside the chronological conversation.
-- Immutable document uploads grouped as navigable per-publisher filename revisions.
+- Immutable document uploads grouped as navigable per-publisher filename revisions, with reversible archiving for obsolete logical documents.
 - GitHub-flavored Markdown for messages and documents, including tables.
 - An optional, owner-visible Herdr/Codex steward session.
 - An owner-local daemon, Unix socket, SQLite store, and loopback-only web UI.
@@ -80,6 +80,7 @@ crewfold room join release-readiness --handle frontend-agent
 crewfold room context release-readiness "Checking the client against the proposed API"
 crewfold room send release-readiness "@service-agent I found one response-shape mismatch."
 crewfold room upload release-readiness ./notes/compatibility-findings.md
+crewfold room archive-document release-readiness compatibility-findings.md
 ```
 
 Inside the second live Codex session:
@@ -143,7 +144,7 @@ crewfold status
 
 crewfold room create|list|show|archive
 crewfold room join|send|context|read|watch|ack
-crewfold room upload|document
+crewfold room upload|document|archive-document|restore-document
 crewfold room steward start|status|prompt|stop|restart
 ```
 

@@ -68,6 +68,10 @@ does not repeat that policy or the stored room state into the steward conversati
   same participant under the same filename are retained as revisions; the
   document rail shows one current entry with access to its prior revisions.
   Same-named uploads from different participants remain separate documents.
+  Obsolete logical documents can be archived without deleting their history and
+  inspected or restored from the archived view. A new revision automatically
+  reactivates its publisher-and-filename document. Participants may archive
+  their own documents; the owner and steward may curate every room document.
 - **Acknowledgements** are per-participant read cursors. For independently run
   participants they are distinct from notification delivery: injection says the
   session was notified, while acknowledgement says the canonical feed was read.

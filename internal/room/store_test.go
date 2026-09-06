@@ -3,12 +3,56 @@ package room
 import (
 	"context"
 	"encoding/base64"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ncruces/go-sqlite3/driver"
 )
+
+func TestOpenAddsDocumentArchiveStateToExistingStore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := t.TempDir()
+	location := &url.URL{Scheme: "file", Path: filepath.Join(root, databaseFilename)}
+	database, err := driver.Open(location.String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `CREATE TABLE documents (
+id TEXT PRIMARY KEY,
+room_id TEXT NOT NULL,
+participant_id TEXT,
+name TEXT NOT NULL,
+media_type TEXT NOT NULL,
+byte_size INTEGER NOT NULL,
+sha256 TEXT NOT NULL,
+relative_path TEXT NOT NULL UNIQUE,
+created_at TEXT NOT NULL
+) STRICT`); err != nil {
+		_ = database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	var archiveColumns int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='archived_at'`).Scan(&archiveColumns); err != nil {
+		t.Fatal(err)
+	}
+	if archiveColumns != 1 {
+		t.Fatalf("archived_at columns = %d", archiveColumns)
+	}
+}
 
 func TestCanonicalFeedRejectsUnstructuredSubstantialContent(t *testing.T) {
 	t.Parallel()
@@ -200,6 +244,91 @@ func TestRoomCollaborationLifecycle(t *testing.T) {
 	}
 	if _, err := store.Upload(ctx, UploadInput{Room: "compatibility-review", WorkingDirectory: clientDirectory, Name: "late.md", ContentBase64: base64.StdEncoding.EncodeToString([]byte("late"))}); err == nil || err.Error() != "room is archived" {
 		t.Fatalf("archived upload error = %v", err)
+	}
+}
+
+func TestDocumentArchivingCuratesLogicalDocumentsWithoutHidingNewRevisions(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := Open(ctx, filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "curation", Title: "Curation", Topic: "Keep canonical documentation visible."}); err != nil {
+		t.Fatal(err)
+	}
+	writerDirectory := filepath.Join(root, "writer")
+	otherDirectory := filepath.Join(root, "other")
+	stewardDirectory := filepath.Join(root, "steward")
+	for _, directory := range []string{writerDirectory, otherDirectory, stewardDirectory} {
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.Join(ctx, JoinInput{Room: "curation", Handle: "writer", WorkingDirectory: writerDirectory}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Join(ctx, JoinInput{Room: "curation", Handle: "other", WorkingDirectory: otherDirectory}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Join(ctx, JoinInput{Room: "curation", Handle: "curator", WorkingDirectory: stewardDirectory, Kind: "steward"}); err != nil {
+		t.Fatal(err)
+	}
+
+	upload := func(body string) Message {
+		message, uploadErr := store.Upload(ctx, UploadInput{Room: "curation", WorkingDirectory: writerDirectory, Name: "README.md", ContentBase64: base64.StdEncoding.EncodeToString([]byte(body))})
+		if uploadErr != nil {
+			t.Fatal(uploadErr)
+		}
+		return message
+	}
+	first := upload("first")
+	store.now = func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) }
+	second := upload("second")
+	archived, err := store.SetDocumentArchived(ctx, ArchiveDocumentInput{Room: "curation", Document: second.Document.ID, WorkingDirectory: writerDirectory}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archived.ArchivedAt == "" {
+		t.Fatal("archive did not return archive state")
+	}
+	for _, documentID := range []string{first.Document.ID, second.Document.ID} {
+		document, _, readErr := store.ReadDocument(ctx, "curation", documentID)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if document.ArchivedAt == "" {
+			t.Fatalf("logical revision %s remained active", documentID)
+		}
+	}
+
+	store.now = func() time.Time { return time.Date(2100, 1, 2, 0, 0, 0, 0, time.UTC) }
+	third := upload("third")
+	if third.Document.ArchivedAt != "" {
+		t.Fatalf("new revision remained archived: %#v", third.Document)
+	}
+	current, _, err := store.ReadDocument(ctx, "curation", "README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.ID != third.Document.ID || current.ArchivedAt != "" {
+		t.Fatalf("new revision did not reactivate logical document: %#v", current)
+	}
+
+	if _, err := store.SetDocumentArchived(ctx, ArchiveDocumentInput{Room: "curation", Document: third.Document.ID, WorkingDirectory: otherDirectory}, true); err == nil || !strings.Contains(err.Error(), "only their own") {
+		t.Fatalf("cross-participant archive error = %v", err)
+	}
+	if _, err := store.SetDocumentArchived(ctx, ArchiveDocumentInput{Room: "curation", Document: third.Document.ID, WorkingDirectory: stewardDirectory}, true); err != nil {
+		t.Fatalf("steward archive: %v", err)
+	}
+	restored, err := store.SetDocumentArchived(ctx, ArchiveDocumentInput{Room: "curation", Document: third.Document.ID, Owner: true}, false)
+	if err != nil {
+		t.Fatalf("owner restore: %v", err)
+	}
+	if restored.ArchivedAt != "" {
+		t.Fatalf("restored document is still archived: %#v", restored)
 	}
 }
 

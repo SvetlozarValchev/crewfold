@@ -84,6 +84,7 @@ type Document struct {
 	MediaType     string `json:"media_type"`
 	ByteSize      int64  `json:"byte_size"`
 	SHA256        string `json:"sha256"`
+	ArchivedAt    string `json:"archived_at,omitempty"`
 	CreatedAt     string `json:"created_at"`
 }
 
@@ -161,6 +162,14 @@ type UploadInput struct {
 	MediaType        string `json:"media_type"`
 	ContentBase64    string `json:"content_base64"`
 	Caption          string `json:"caption,omitempty"`
+}
+
+type ArchiveDocumentInput struct {
+	Room             string `json:"room"`
+	Document         string `json:"document"`
+	WorkingDirectory string `json:"working_directory,omitempty"`
+	Handle           string `json:"handle,omitempty"`
+	Owner            bool   `json:"owner,omitempty"`
 }
 
 type AckInput struct {

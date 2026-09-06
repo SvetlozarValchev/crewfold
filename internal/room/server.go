@@ -356,6 +356,12 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 			return nil, err
 		}
 		return map[string]any{"document": document, "content_base64": base64.StdEncoding.EncodeToString(content)}, nil
+	case "document.archive", "document.restore":
+		var input ArchiveDocumentInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		return s.store.SetDocumentArchived(ctx, input, method == "document.archive")
 	default:
 		return nil, fmt.Errorf("unknown method %q", method)
 	}

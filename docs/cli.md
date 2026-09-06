@@ -57,6 +57,8 @@ messages remain valid.
 ```text
 crewfold room upload ROOM FILE [--caption TEXT]
 crewfold room document ROOM DOCUMENT [--to PATH]
+crewfold room archive-document ROOM DOCUMENT
+crewfold room restore-document ROOM DOCUMENT
 ```
 
 `DOCUMENT` may be a document ID or its exact filename. A filename opens the
@@ -66,7 +68,11 @@ under the same filename therefore remain navigable history without becoming
 separate logical documents. Same-named uploads from different participants are
 separate documents, and filename-only lookup asks for an exact ID rather than
 guessing. `room show` reports logical document and revision counts separately.
-Standard non-streaming commands accept `--output json`.
+Archiving applies to the complete publisher-and-filename revision history and
+does not delete any bytes. Uploading another revision under that same identity
+automatically makes it active again. A regular participant may archive only its
+own documents; the hosted steward can curate any document in its room. Standard
+non-streaming commands accept `--output json`.
 
 ## Hosted room steward
 

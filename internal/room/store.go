@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS documents (
   byte_size INTEGER NOT NULL CHECK(byte_size >= 0 AND byte_size <= 4194304),
   sha256 TEXT NOT NULL,
   relative_path TEXT NOT NULL UNIQUE,
+	archived_at TEXT,
   created_at TEXT NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS messages (
@@ -165,6 +166,15 @@ CREATE INDEX IF NOT EXISTS participant_deliveries_status ON participant_deliveri
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize room database: %w", err)
+	}
+	var archivedColumn int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='archived_at'`).Scan(&archivedColumn); err != nil {
+		return fmt.Errorf("inspect room database: %w", err)
+	}
+	if archivedColumn == 0 {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE documents ADD COLUMN archived_at TEXT`); err != nil {
+			return fmt.Errorf("add document archive state: %w", err)
+		}
 	}
 	return nil
 }
@@ -561,9 +571,9 @@ func (s *Store) ReadDocument(ctx context.Context, roomIdentifier, documentIdenti
 	var document Document
 	var relative string
 	scan := func(row *sql.Row) error {
-		return row.Scan(&document.ID, &document.RoomID, &document.ParticipantID, &document.Name, &document.MediaType, &document.ByteSize, &document.SHA256, &relative, &document.CreatedAt)
+		return row.Scan(&document.ID, &document.RoomID, &document.ParticipantID, &document.Name, &document.MediaType, &document.ByteSize, &document.SHA256, &relative, &document.ArchivedAt, &document.CreatedAt)
 	}
-	columns := `SELECT id,room_id,COALESCE(participant_id,''),name,media_type,byte_size,sha256,relative_path,created_at FROM documents`
+	columns := `SELECT id,room_id,COALESCE(participant_id,''),name,media_type,byte_size,sha256,relative_path,COALESCE(archived_at,''),created_at FROM documents`
 	// An exact document ID addresses one immutable historical revision.
 	err = scan(s.db.QueryRowContext(ctx, columns+` WHERE room_id=? AND id=?`, room.ID, documentIdentifier))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -594,6 +604,55 @@ func (s *Store) ReadDocument(ctx context.Context, roomIdentifier, documentIdenti
 		return Document{}, nil, errors.New("document content does not match its recorded identity")
 	}
 	return document, content, nil
+}
+
+func (s *Store) SetDocumentArchived(ctx context.Context, input ArchiveDocumentInput, archived bool) (Document, error) {
+	room, err := s.resolveRoom(ctx, input.Room)
+	if err != nil {
+		return Document{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Document{}, err
+	}
+	defer tx.Rollback()
+
+	var actor Participant
+	if !input.Owner {
+		actor, err = resolveParticipantTx(ctx, tx, room.ID, input.WorkingDirectory, input.Handle)
+		if err != nil {
+			return Document{}, err
+		}
+	}
+
+	document, err := resolveDocumentTx(ctx, tx, room.ID, input.Document)
+	if err != nil {
+		return Document{}, err
+	}
+	if !input.Owner && actor.Kind != "steward" && document.ParticipantID != actor.ID {
+		return Document{}, errors.New("participants may archive only their own documents")
+	}
+
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	var archivedAt any
+	if archived {
+		archivedAt = now
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE documents SET archived_at=? WHERE room_id=? AND name=? AND COALESCE(participant_id,'')=?`, archivedAt, room.ID, document.Name, document.ParticipantID); err != nil {
+		return Document{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE rooms SET updated_at=? WHERE id=?`, now, room.ID); err != nil {
+		return Document{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Document{}, err
+	}
+	if archived {
+		document.ArchivedAt = now
+	} else {
+		document.ArchivedAt = ""
+	}
+	return document, nil
 }
 
 func (s *Store) Archive(ctx context.Context, roomIdentifier string) (Room, error) {
@@ -934,13 +993,13 @@ WHERE participant_id=?`, sequence, now, now, now, participantID)
 
 func (s *Store) messages(ctx context.Context, roomID string, after int64, limit int) ([]Message, error) {
 	query := `SELECT m.sequence,m.id,m.room_id,COALESCE(m.participant_id,''),m.sender_handle,m.sender_name,m.sender_kind,m.kind,m.body,COALESCE(m.document_id,''),m.created_at,
-COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d.sha256,''),COALESCE(d.created_at,'')
+COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d.sha256,''),COALESCE(d.archived_at,''),COALESCE(d.created_at,'')
 	FROM messages m LEFT JOIN documents d ON d.id=m.document_id WHERE m.room_id=? AND m.sequence>? ORDER BY m.sequence LIMIT ?`
 	arguments := []any{roomID, after, limit}
 	if after == 0 {
 		query = `WITH selected AS (SELECT * FROM messages WHERE room_id=? ORDER BY sequence DESC LIMIT ?)
 		SELECT m.sequence,m.id,m.room_id,COALESCE(m.participant_id,''),m.sender_handle,m.sender_name,m.sender_kind,m.kind,m.body,COALESCE(m.document_id,''),m.created_at,
-		COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d.sha256,''),COALESCE(d.created_at,'')
+		COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d.sha256,''),COALESCE(d.archived_at,''),COALESCE(d.created_at,'')
 		FROM selected m LEFT JOIN documents d ON d.id=m.document_id ORDER BY m.sequence`
 		arguments = []any{roomID, limit}
 	}
@@ -950,7 +1009,7 @@ COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d
 func (s *Store) messagesBefore(ctx context.Context, roomID string, before int64, limit int) ([]Message, error) {
 	query := `WITH selected AS (SELECT * FROM messages WHERE room_id=? AND sequence<? ORDER BY sequence DESC LIMIT ?)
 		SELECT m.sequence,m.id,m.room_id,COALESCE(m.participant_id,''),m.sender_handle,m.sender_name,m.sender_kind,m.kind,m.body,COALESCE(m.document_id,''),m.created_at,
-		COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d.sha256,''),COALESCE(d.created_at,'')
+		COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d.sha256,''),COALESCE(d.archived_at,''),COALESCE(d.created_at,'')
 		FROM selected m LEFT JOIN documents d ON d.id=m.document_id ORDER BY m.sequence`
 	return s.queryMessages(ctx, query, roomID, before, limit)
 }
@@ -964,13 +1023,13 @@ func (s *Store) queryMessages(ctx context.Context, query string, arguments ...an
 	result := []Message{}
 	for rows.Next() {
 		var message Message
-		var documentID, documentName, documentMedia, documentSHA, documentCreated string
+		var documentID, documentName, documentMedia, documentSHA, documentArchived, documentCreated string
 		var documentBytes int64
-		if err := rows.Scan(&message.Sequence, &message.ID, &message.RoomID, &message.ParticipantID, &message.SenderHandle, &message.SenderName, &message.SenderKind, &message.Kind, &message.Body, &documentID, &message.CreatedAt, &documentName, &documentMedia, &documentBytes, &documentSHA, &documentCreated); err != nil {
+		if err := rows.Scan(&message.Sequence, &message.ID, &message.RoomID, &message.ParticipantID, &message.SenderHandle, &message.SenderName, &message.SenderKind, &message.Kind, &message.Body, &documentID, &message.CreatedAt, &documentName, &documentMedia, &documentBytes, &documentSHA, &documentArchived, &documentCreated); err != nil {
 			return nil, err
 		}
 		if documentID != "" {
-			message.Document = &Document{ID: documentID, RoomID: message.RoomID, ParticipantID: message.ParticipantID, Name: documentName, MediaType: documentMedia, ByteSize: documentBytes, SHA256: documentSHA, CreatedAt: documentCreated}
+			message.Document = &Document{ID: documentID, RoomID: message.RoomID, ParticipantID: message.ParticipantID, Name: documentName, MediaType: documentMedia, ByteSize: documentBytes, SHA256: documentSHA, ArchivedAt: documentArchived, CreatedAt: documentCreated}
 		}
 		result = append(result, message)
 	}
@@ -978,7 +1037,7 @@ func (s *Store) queryMessages(ctx context.Context, query string, arguments ...an
 }
 
 func (s *Store) documents(ctx context.Context, roomID string) ([]Document, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,room_id,COALESCE(participant_id,''),name,media_type,byte_size,sha256,created_at FROM documents WHERE room_id=? ORDER BY created_at DESC,id DESC`, roomID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,room_id,COALESCE(participant_id,''),name,media_type,byte_size,sha256,COALESCE(archived_at,''),created_at FROM documents WHERE room_id=? ORDER BY created_at DESC,id DESC`, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -986,12 +1045,35 @@ func (s *Store) documents(ctx context.Context, roomID string) ([]Document, error
 	result := []Document{}
 	for rows.Next() {
 		var document Document
-		if err := rows.Scan(&document.ID, &document.RoomID, &document.ParticipantID, &document.Name, &document.MediaType, &document.ByteSize, &document.SHA256, &document.CreatedAt); err != nil {
+		if err := rows.Scan(&document.ID, &document.RoomID, &document.ParticipantID, &document.Name, &document.MediaType, &document.ByteSize, &document.SHA256, &document.ArchivedAt, &document.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, document)
 	}
 	return result, rows.Err()
+}
+
+func resolveDocumentTx(ctx context.Context, tx *sql.Tx, roomID, identifier string) (Document, error) {
+	var document Document
+	scan := func(row *sql.Row) error {
+		return row.Scan(&document.ID, &document.RoomID, &document.ParticipantID, &document.Name, &document.MediaType, &document.ByteSize, &document.SHA256, &document.ArchivedAt, &document.CreatedAt)
+	}
+	columns := `SELECT id,room_id,COALESCE(participant_id,''),name,media_type,byte_size,sha256,COALESCE(archived_at,''),created_at FROM documents`
+	err := scan(tx.QueryRowContext(ctx, columns+` WHERE room_id=? AND id=?`, roomID, identifier))
+	if errors.Is(err, sql.ErrNoRows) {
+		var publishers int
+		if countErr := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT COALESCE(participant_id,'')) FROM documents WHERE room_id=? AND name=?`, roomID, identifier).Scan(&publishers); countErr != nil {
+			return Document{}, countErr
+		}
+		if publishers > 1 {
+			return Document{}, errors.New("document filename is ambiguous across participants; use an exact document ID")
+		}
+		err = scan(tx.QueryRowContext(ctx, columns+` WHERE room_id=? AND name=? ORDER BY created_at DESC,id DESC LIMIT 1`, roomID, identifier))
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return Document{}, errors.New("document not found")
+	}
+	return document, err
 }
 
 func resolveParticipantTx(ctx context.Context, tx *sql.Tx, roomID, cwd, handle string) (Participant, error) {

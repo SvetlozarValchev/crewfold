@@ -124,12 +124,21 @@ button:disabled { cursor: default; opacity: .45; }
 .join-help { padding-bottom: 13px !important; }
 .join-help > code { margin: 2px 12px 0; padding: 8px 9px; display: block; overflow-x: auto; border: 1px solid #414141; color: var(--lime); background: #1c1c1c; font-size: 10px; white-space: nowrap; }
 .join-help > p { margin: 7px 12px 0; color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11px; line-height: 1.45; }
-.document-row { width: 100%; padding: 9px 12px; display: flex; align-items: center; gap: 9px; border: 0; border-top: 1px solid var(--line-soft); color: var(--text); background: transparent; text-align: left; }
+.document-switch { margin: 0 12px 8px; display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #454545; }
+.document-switch button { padding: 6px 8px; border: 0; color: var(--muted); background: transparent; font-size: 9px; text-transform: uppercase; }
+.document-switch button + button { border-left: 1px solid #454545; }
+.document-switch button.selected { color: #ededed; background: #343434; }
+.document-switch span { margin-left: 4px; color: var(--faint); }
+.document-row { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) 34px; align-items: stretch; border-top: 1px solid var(--line-soft); color: var(--text); background: transparent; }
 .document-row:hover { background: #303030; }
-.document-row > span { min-width: 0; }
+.document-open { min-width: 0; padding: 9px 4px 9px 12px; display: flex; align-items: center; gap: 9px; border: 0; color: var(--text); background: transparent; text-align: left; }
+.document-open > span { min-width: 0; }
 .document-row strong, .document-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .document-row strong { color: #ddd; font-size: 11px; }
 .document-row small { margin-top: 3px; color: var(--faint); font-size: 9px; }
+.document-state { padding: 0; display: grid; place-items: center; border: 0; color: var(--faint); background: transparent; opacity: .45; }
+.document-row:hover .document-state, .document-state:focus-visible { opacity: 1; }
+.document-state:hover { color: var(--cyan); background: #393939; }
 .quiet { padding: 2px 12px; color: var(--faint); font-size: 10px; }
 .steward-card { width: calc(100% - 20px); margin: 0 10px 9px; padding: 10px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #4a5654; color: var(--text); background: #252929; text-align: left; }
 .steward-card:hover { border-color: var(--cyan); }
