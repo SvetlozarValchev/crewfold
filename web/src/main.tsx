@@ -47,6 +47,20 @@ function decodeBase64(value: string) { return new TextDecoder().decode(Uint8Arra
 function formatTime(value: string) { return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 function formatSize(bytes: number) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KB`; return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
 
+function participantInitials(handle: string) {
+  const parts = handle.split(/[^a-z0-9]+/i).filter(Boolean);
+  if (parts.length > 1) return `${parts[0][0]}${parts.at(-1)![0]}`.toUpperCase();
+  return (parts[0] || "AI").slice(0, 2).toUpperCase();
+}
+
+function participantMarkStyle(handle: string): React.CSSProperties {
+  const palette = ["#8abeb7", "#b5bd68", "#de935f", "#81a2be", "#b294bb", "#cc6666", "#f0c674", "#6fa89b"];
+  let hash = 0;
+  for (const character of handle) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  const accent = palette[hash % palette.length];
+  return { color: accent, borderColor: `${accent}88`, backgroundColor: `${accent}12` };
+}
+
 function linkedDocumentText(text: string, documents: Document[]) {
   if (!documents.length) return text;
   const byID = new Map(documents.map((document) => [document.id, document]));
@@ -148,7 +162,7 @@ function sameMessageGroup(previous: Message, current: Message) {
 function MessageRow({ message, compact, documents, openDocument }: { message: Message; compact: boolean; documents: Document[]; openDocument: (document: Document) => void }) {
   if (message.kind === "system") return <div className="system-message" data-message-sequence={message.sequence}><span>#{message.sequence}</span>{message.body}</div>;
   return <article className={`message ${message.sender_kind} ${compact ? "compact" : ""}`} data-message-sequence={message.sequence} aria-label={`${message.sender_name} at ${formatTime(message.created_at)}`} title={`Room event #${message.sequence}`}>
-    {compact ? <div className="message-mark-placeholder" /> : <div className="message-mark">{message.sender_kind === "steward" ? <Bot size={15} /> : message.sender_handle.slice(0, 2).toUpperCase()}</div>}
+    {compact ? <div className="message-mark-placeholder" /> : <div className="message-mark" style={message.sender_kind === "agent" ? participantMarkStyle(message.sender_handle) : undefined}>{message.sender_kind === "steward" ? <Bot size={15} /> : participantInitials(message.sender_handle)}</div>}
     <div className="message-content">{!compact && <header><strong>{message.sender_name}</strong><span>@{message.sender_handle}</span><time>{formatTime(message.created_at)}</time></header>}<Markdown text={message.body} className="message-markdown" documents={documents} openDocument={openDocument} />{message.document && <button className="attachment" onClick={() => openDocument(message.document!)}><FileText size={17} /><span><strong>{message.document.name}</strong><small>{message.document.media_type} · {formatSize(message.document.byte_size)}</small></span><ChevronRight size={16} /></button>}</div>
   </article>;
 }
