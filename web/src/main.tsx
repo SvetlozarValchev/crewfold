@@ -16,7 +16,7 @@ type Message = { sequence: number; id: string; room_id: string; participant_id?:
 type Snapshot = { room: Room; participants: Participant[]; messages: Message[]; documents: Document[]; steward?: HostedSteward };
 type RPCResponse<T> = { id: string; result?: T; error?: string };
 type DocumentGroup = { key: string; name: string; latest: Document; revisions: Document[]; archived: boolean };
-type OpenDocument = { document: Document; content: string; revisions: Document[]; revisionIndex: number };
+type OpenDocument = { document: Document; contentBase64: string; revisions: Document[]; revisionIndex: number };
 
 const tokenKey = "crewfold-room-session";
 const messagePageSize = 50;
@@ -80,6 +80,13 @@ function Markdown({ text, className = "markdown", documents = [], openDocument }
     if (document && openDocument) return <a href={href} onClick={(event) => { event.preventDefault(); openDocument(document); }}>{children}</a>;
     return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
   } }}>{rendered}</ReactMarkdown></div>;
+}
+
+function SharedDocumentBody({ document, contentBase64 }: { document: Document; contentBase64: string }) {
+  if (document.media_type.toLowerCase().startsWith("image/")) {
+    return <div className="document-image"><img src={`data:${document.media_type};base64,${contentBase64}`} alt={document.name} /></div>;
+  }
+  return <Markdown text={decodeBase64(contentBase64)} />;
 }
 
 function groupDocuments(documents: Document[]): DocumentGroup[] {
@@ -236,7 +243,7 @@ function App() {
     if (viewport.scrollTop < 120) void loadOlder();
   };
   const send = async (event: React.FormEvent) => { event.preventDefault(); if (!message.trim() || !snapshot) return; setSending(true); setError(""); try { await rpc(token, "message.send", { room: snapshot.room.id, owner: true, body: message.trim() }); setMessage(""); scrollToBottom.current = true; following.current = true; await loadLatest(token, snapshot.room.slug); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not send."); } finally { setSending(false); } };
-  const openDocument = async (item: Document) => { setError(""); try { const result = await rpc<{ document: Document; content_base64: string }>(token, "document.read", { room: item.room_id, document: item.id }); const revisions = snapshot?.documents.filter((candidate) => candidate.name === item.name && (candidate.participant_id ?? "") === (item.participant_id ?? "")) ?? [item]; const revisionIndex = Math.max(0, revisions.findIndex((candidate) => candidate.id === item.id)); setDocument({ document: result.document, content: decodeBase64(result.content_base64), revisions, revisionIndex }); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not open document."); } };
+  const openDocument = async (item: Document) => { setError(""); try { const result = await rpc<{ document: Document; content_base64: string }>(token, "document.read", { room: item.room_id, document: item.id }); const revisions = snapshot?.documents.filter((candidate) => candidate.name === item.name && (candidate.participant_id ?? "") === (item.participant_id ?? "")) ?? [item]; const revisionIndex = Math.max(0, revisions.findIndex((candidate) => candidate.id === item.id)); setDocument({ document: result.document, contentBase64: result.content_base64, revisions, revisionIndex }); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not open document."); } };
   const setArchived = async (group: DocumentGroup, archived: boolean) => { if (!snapshot || documentBusy) return; setDocumentBusy(group.key); setError(""); try { await rpc<Document>(token, archived ? "document.archive" : "document.restore", { room: snapshot.room.id, document: group.latest.id, owner: true }); await loadLatest(token, snapshot.room.slug); } catch (reason) { setError(reason instanceof Error ? reason.message : `Could not ${archived ? "archive" : "restore"} document.`); } finally { setDocumentBusy(""); } };
   const participantByID = useMemo(() => new Map(snapshot?.participants.map((participant) => [participant.id, participant]) ?? []), [snapshot?.participants]);
   const visibleMessages = useMemo(() => snapshot?.messages.filter((item) => item.kind !== "context") ?? [], [snapshot?.messages]);
@@ -258,7 +265,7 @@ function App() {
     {createOpen && <CreateRoom token={token} close={() => setCreateOpen(false)} created={(created, warning) => { setCreateOpen(false); setSelected(created.room.slug); setSnapshot(created); if (warning) setError(warning); void loadRooms(token); }} />}
     {startSteward && snapshot && <StartSteward token={token} room={snapshot.room} close={() => setStartSteward(false)} started={() => { setStartSteward(false); setConsoleOpen(true); refresh(); }} />}
     {consoleOpen && snapshot && <StewardConsolePanel token={token} room={snapshot.room} close={() => setConsoleOpen(false)} changed={refresh} />}
-    {document && <div className="document-panel"><header><div><span>SHARED DOCUMENT</span><h1>{document.document.name}</h1><p>{document.document.media_type} · {formatSize(document.document.byte_size)}{document.revisions.length > 1 ? ` · revision ${document.revisions.length - document.revisionIndex} of ${document.revisions.length}` : ""}</p></div><div className="document-actions">{document.revisions.length > 1 && <div><button disabled={document.revisionIndex >= document.revisions.length - 1} onClick={() => void openDocument(document.revisions[document.revisionIndex + 1])} aria-label="Older revision"><ChevronLeft size={17} /></button><button disabled={document.revisionIndex <= 0} onClick={() => void openDocument(document.revisions[document.revisionIndex - 1])} aria-label="Newer revision"><ChevronRight size={17} /></button></div>}<button onClick={() => setDocument(null)} aria-label="Close document"><X size={18} /></button></div></header><Markdown text={document.content} /><footer>sha256:{document.document.sha256}</footer></div>}
+    {document && <div className="document-panel"><header><div><span>SHARED DOCUMENT</span><h1>{document.document.name}</h1><p>{document.document.media_type} · {formatSize(document.document.byte_size)}{document.revisions.length > 1 ? ` · revision ${document.revisions.length - document.revisionIndex} of ${document.revisions.length}` : ""}</p></div><div className="document-actions">{document.revisions.length > 1 && <div><button disabled={document.revisionIndex >= document.revisions.length - 1} onClick={() => void openDocument(document.revisions[document.revisionIndex + 1])} aria-label="Older revision"><ChevronLeft size={17} /></button><button disabled={document.revisionIndex <= 0} onClick={() => void openDocument(document.revisions[document.revisionIndex - 1])} aria-label="Newer revision"><ChevronRight size={17} /></button></div>}<button onClick={() => setDocument(null)} aria-label="Close document"><X size={18} /></button></div></header><SharedDocumentBody document={document.document} contentBase64={document.contentBase64} /><footer>sha256:{document.document.sha256}</footer></div>}
   </div>;
 }
 
