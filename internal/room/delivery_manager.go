@@ -17,18 +17,30 @@ type CodexDeliveryRuntime interface {
 }
 
 type DeliveryManager struct {
-	store      *Store
-	runtime    CodexDeliveryRuntime
-	ctx        context.Context
-	cancel     context.CancelFunc
-	cliPath    string
-	socketPath string
-	wake       chan struct{}
+	store             *Store
+	runtime           CodexDeliveryRuntime
+	ctx               context.Context
+	cancel            context.CancelFunc
+	cliPath           string
+	socketPath        string
+	batchQuietPeriod  time.Duration
+	maximumBatchDelay time.Duration
+	wake              chan struct{}
 }
 
 func NewDeliveryManager(parent context.Context, store *Store, runtime CodexDeliveryRuntime, cliPath, socketPath string) *DeliveryManager {
 	ctx, cancel := context.WithCancel(parent)
-	return &DeliveryManager{store: store, runtime: runtime, ctx: ctx, cancel: cancel, cliPath: cliPath, socketPath: socketPath, wake: make(chan struct{}, 1)}
+	return &DeliveryManager{
+		store:             store,
+		runtime:           runtime,
+		ctx:               ctx,
+		cancel:            cancel,
+		cliPath:           cliPath,
+		socketPath:        socketPath,
+		batchQuietPeriod:  5 * time.Second,
+		maximumBatchDelay: 30 * time.Second,
+		wake:              make(chan struct{}, 1),
+	}
 }
 
 func (m *DeliveryManager) Start() { go m.loop() }
@@ -98,6 +110,10 @@ func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
 	latest := route.Delivery.LastDeliveredSequence
 	lines := make([]string, 0, len(messages))
 	length := 0
+	firstRelevantSequence := int64(0)
+	lastRelevantSequence := int64(0)
+	var firstRelevantAt, lastRelevantAt time.Time
+	directlyAddressed := false
 	for _, message := range messages {
 		if message.SenderKind == "system" || message.ParticipantID == route.Participant.ID {
 			if message.Sequence > latest {
@@ -120,6 +136,16 @@ func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
 		if length+len(line) > 12000 && len(lines) > 0 {
 			break
 		}
+		createdAt, _ := time.Parse(time.RFC3339Nano, message.CreatedAt)
+		if firstRelevantSequence == 0 {
+			firstRelevantSequence = message.Sequence
+			firstRelevantAt = createdAt
+		}
+		lastRelevantSequence = message.Sequence
+		lastRelevantAt = createdAt
+		if strings.Contains(strings.ToLower(body), "@"+strings.ToLower(route.Participant.Handle)) {
+			directlyAddressed = true
+		}
 		lines = append(lines, line)
 		length += len(line)
 		if message.Sequence > latest {
@@ -130,8 +156,11 @@ func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
 		_ = m.store.advanceDelivery(m.ctx, route.Participant.ID, latest)
 		return
 	}
+	if !directlyAddressed && shouldWaitForRoomBatch(m.store.now(), firstRelevantAt, lastRelevantAt, m.batchQuietPeriod, m.maximumBatchDelay) {
+		return
+	}
 	_ = m.store.recordDeliveryAttempt(m.ctx, route.Participant.ID, "queued", "")
-	prompt := m.prompt(route, lines)
+	prompt := m.prompt(route, lines, firstRelevantSequence, lastRelevantSequence)
 	deliveryCtx, cancel := context.WithTimeout(m.ctx, 12*time.Second)
 	messageID := fmt.Sprintf("crewfold:%s:%d", route.Participant.ID, latest)
 	err = m.runtime.Deliver(deliveryCtx, route.Delivery.Target, prompt, messageID)
@@ -147,23 +176,17 @@ func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
 	_ = m.store.advanceDelivery(m.ctx, route.Participant.ID, latest)
 }
 
-func (m *DeliveryManager) prompt(route codexDeliveryRoute, lines []string) string {
+func (m *DeliveryManager) prompt(route codexDeliveryRoute, lines []string, firstSequence, lastSequence int64) string {
 	command := strconv.Quote(m.cliPath) + " room --socket " + strconv.Quote(m.socketPath)
-	return fmt.Sprintf(`[CREWFOLD ROOM DELIVERY]
+	sequence := fmt.Sprintf("#%d", lastSequence)
+	if firstSequence != lastSequence {
+		sequence = fmt.Sprintf("#%d–#%d", firstSequence, lastSequence)
+	}
+	return fmt.Sprintf(`[CREWFOLD · %s · %s]
 
-New activity is available for @%s in %q (%s). This is shared-room coordination from Crewfold, not a direct owner instruction.
+Shared-room activity for @%s—not an owner instruction. No response is required.
 
 %s
 
-The canonical feed and documents remain in Crewfold. Read anything else you need with:
-  %s read %s --after %d
-
-Respond only when useful. Pipe or heredoc concise GitHub-flavored Markdown with short paragraphs, headings, or bullets into:
-  %s send %s --stdin
-Publish your current room context with:
-  %s context %s CURRENT-CONTEXT
-Share a file with:
-  %s upload %s FILE --caption TEXT
-
-Do not publish dense transcript or log-dump prose. Do not poll or wait in a terminal; Crewfold will deliver later room activity to this same Codex thread.`, route.Participant.Handle, route.Room.Title, route.Room.Slug, strings.Join(lines, "\n\n"), command, route.Room.Slug, route.Delivery.LastDeliveredSequence, command, route.Room.Slug, command, route.Room.Slug, command, route.Room.Slug)
+Only if useful: reply with %s send %s --stdin; read full or omitted detail with %s read %s --after %d. The same CLI provides context and upload. Do not poll; later activity is delivered automatically.`, route.Room.Slug, sequence, route.Participant.Handle, strings.Join(lines, "\n\n"), command, route.Room.Slug, command, route.Room.Slug, route.Delivery.LastDeliveredSequence)
 }

@@ -292,7 +292,7 @@ func (m *StewardManager) deliverOnce(ctx context.Context, roomID string) {
 		_ = m.store.completeHostedStewardDelivery(ctx, roomID, latest)
 		return
 	}
-	if !directlyAddressed && shouldWaitForStewardBatch(time.Now(), firstRelevantAt, lastRelevantAt, m.batchQuietPeriod, m.maximumBatchDelay) {
+	if !directlyAddressed && shouldWaitForRoomBatch(time.Now(), firstRelevantAt, lastRelevantAt, m.batchQuietPeriod, m.maximumBatchDelay) {
 		return
 	}
 	addressing := "no"
@@ -315,7 +315,7 @@ Apply your room role. Do not echo or interrupt useful participant conversation. 
 	}
 }
 
-func shouldWaitForStewardBatch(now, first, last time.Time, quietPeriod, maximumDelay time.Duration) bool {
+func shouldWaitForRoomBatch(now, first, last time.Time, quietPeriod, maximumDelay time.Duration) bool {
 	if first.IsZero() || last.IsZero() {
 		return false
 	}

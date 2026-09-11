@@ -34,7 +34,9 @@ to a durable Codex thread. Joining from inside Codex discovers
 same handle from a fresh thread replaces only the delivery target. Crewfold may
 inject room activity into that conversation, but it does not own or restart the
 external process. Activity remains queued while the thread is unloaded or cannot
-accept input.
+accept input. A direct mention bypasses delivery batching; ordinary nearby events
+share one compact turn after a short quiet period, with a bounded maximum wait
+while the room remains continuously active.
 
 A hosted steward is the one deliberate runtime exception. It is an optional
 room-local participant backed by one named, persistent Herdr/Codex terminal.

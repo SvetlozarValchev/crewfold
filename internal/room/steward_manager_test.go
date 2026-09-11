@@ -179,7 +179,7 @@ func TestShouldWaitForStewardBatch(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if got := shouldWaitForStewardBatch(now, test.first, test.last, quiet, maximum); got != test.wait {
+			if got := shouldWaitForRoomBatch(now, test.first, test.last, quiet, maximum); got != test.wait {
 				t.Fatalf("shouldWaitForStewardBatch() = %v, want %v", got, test.wait)
 			}
 		})

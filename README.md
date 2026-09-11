@@ -107,7 +107,9 @@ Run `join` from inside the Codex session you want to notify. Codex delivery is
 the default: Crewfold binds the current `CODEX_THREAD_ID` and injects later room
 events into that same conversation. If the session is unloaded, delivery stays
 queued. Resuming the same thread preserves the binding; joining the same handle
-from a new thread replaces only its delivery target.
+from a new thread replaces only its delivery target. Direct mentions are
+immediate; ordinary bursts wait briefly for quiet and arrive in one compact
+delivery instead of one model turn per room event.
 
 Use `--delivery none` for a manual participant:
 

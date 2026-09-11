@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"crewfold/internal/codexapp"
 )
@@ -63,6 +64,7 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 		"thread-two": {ID: "thread-two", Status: codexapp.ThreadStatus{Type: "idle"}, CanAcceptDirectInput: &available},
 	}}
 	manager := NewDeliveryManager(ctx, store, runtime, "/usr/bin/crewfold", "/run/crewfold.sock")
+	manager.batchQuietPeriod = 0
 	first, err := store.Join(ctx, JoinInput{Room: "shared", Handle: "first", WorkingDirectory: firstDirectory, Delivery: "codex", ThreadID: "thread-one"})
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +77,7 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.deliverPending()
-	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], "compare the interface contract") || !strings.Contains(runtime.prompts[0], "send shared --stdin") || !strings.Contains(runtime.prompts[0], "GitHub-flavored Markdown") || !strings.Contains(runtime.prompts[0], "Do not poll") {
+	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], "compare the interface contract") || !strings.Contains(runtime.prompts[0], "send shared --stdin") || !strings.Contains(runtime.prompts[0], "No response is required") || !strings.Contains(runtime.prompts[0], "Do not poll") || strings.Contains(runtime.prompts[0], "Share a file with") {
 		t.Fatalf("unexpected delivery: targets=%#v prompts=%#v", runtime.targets, runtime.prompts)
 	}
 	if runtime.messageIDs[0] != "crewfold:"+first.ID+":"+fmt.Sprint(message.Sequence) {
@@ -122,6 +124,7 @@ func TestUnavailableCodexThreadLeavesDeliveryQueued(t *testing.T) {
 	}
 	runtime := &fakeCodexDelivery{threads: map[string]codexapp.Thread{}, deliverErr: codexapp.ErrThreadNotLoaded}
 	manager := NewDeliveryManager(ctx, store, runtime, "crewfold", "/tmp/crewfold.sock")
+	manager.batchQuietPeriod = 0
 	// Validation is deliberately separate from delivery. Simulate a route that
 	// was valid when it joined but whose terminal is now unloaded.
 	runtime.threads["offline"] = codexapp.Thread{ID: "offline", Status: codexapp.ThreadStatus{Type: "notLoaded"}}
@@ -133,5 +136,72 @@ func TestUnavailableCodexThreadLeavesDeliveryQueued(t *testing.T) {
 	delivery := participantNamed(snapshot.Participants, "agent").Delivery
 	if delivery == nil || delivery.Status != "queued" || delivery.LastDeliveredSequence != 0 || !strings.Contains(delivery.Error, "not currently loaded") {
 		t.Fatalf("queued delivery = %#v", delivery)
+	}
+}
+
+func TestCodexDeliveryBatchesBurstsAndBypassesDelayForMentions(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	current := time.Now().UTC().Add(-time.Hour)
+	store.now = func() time.Time { return current }
+	if _, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "batched", Title: "Batched", Topic: "Group nearby events."}); err != nil {
+		t.Fatal(err)
+	}
+	agentDirectory := filepath.Join(t.TempDir(), "agent")
+	senderDirectory := filepath.Join(t.TempDir(), "sender")
+	for _, directory := range []string{agentDirectory, senderDirectory} {
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.Join(ctx, JoinInput{Room: "batched", Handle: "agent", WorkingDirectory: agentDirectory, Delivery: "codex", ThreadID: "thread"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Join(ctx, JoinInput{Room: "batched", Handle: "sender", WorkingDirectory: senderDirectory}); err != nil {
+		t.Fatal(err)
+	}
+	available := true
+	runtime := &fakeCodexDelivery{threads: map[string]codexapp.Thread{
+		"thread": {ID: "thread", Status: codexapp.ThreadStatus{Type: "idle"}, CanAcceptDirectInput: &available},
+	}}
+	manager := NewDeliveryManager(ctx, store, runtime, "crewfold", "/tmp/crewfold.sock")
+	manager.batchQuietPeriod = 5 * time.Second
+	manager.maximumBatchDelay = 30 * time.Second
+
+	if _, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "first nearby update"}); err != nil {
+		t.Fatal(err)
+	}
+	manager.deliverPending()
+	if len(runtime.prompts) != 0 {
+		t.Fatalf("first event bypassed quiet-period batching: %#v", runtime.prompts)
+	}
+
+	current = current.Add(2 * time.Second)
+	if _, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "second nearby update"}); err != nil {
+		t.Fatal(err)
+	}
+	manager.deliverPending()
+	if len(runtime.prompts) != 0 {
+		t.Fatalf("burst delivered before becoming quiet: %#v", runtime.prompts)
+	}
+
+	current = current.Add(5 * time.Second)
+	manager.deliverPending()
+	if len(runtime.prompts) != 1 || !strings.Contains(runtime.prompts[0], "first nearby update") || !strings.Contains(runtime.prompts[0], "second nearby update") {
+		t.Fatalf("quiet burst was not delivered as one prompt: %#v", runtime.prompts)
+	}
+
+	current = current.Add(time.Second)
+	if _, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "@agent check this now"}); err != nil {
+		t.Fatal(err)
+	}
+	manager.deliverPending()
+	if len(runtime.prompts) != 2 || !strings.Contains(runtime.prompts[1], "@agent check this now") {
+		t.Fatalf("direct mention did not bypass batching: %#v", runtime.prompts)
 	}
 }

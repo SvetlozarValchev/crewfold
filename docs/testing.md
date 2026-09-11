@@ -19,9 +19,10 @@ turn settles, or redeliver the room history immediately after onboarding.
 
 Codex delivery tests cover default CLI self-binding, persistent notification
 cursors, queued delivery, and rebinding the same participant to a replacement
-thread. A gated real-runtime probe uses a disposable Codex thread to validate the
-owner-local app-server WebSocket and turn injection without touching an existing
-conversation.
+thread. They also reject one-turn-per-event regressions for ordinary bursts while
+requiring direct mentions to bypass the batching delay. A gated real-runtime
+probe uses a disposable Codex thread to validate the owner-local app-server
+WebSocket and turn injection without touching an existing conversation.
 
 The release gate also performs a manual real-runtime probe with a temporary
 daemon and named Herdr session: start Codex, observe onboarding in the actual
