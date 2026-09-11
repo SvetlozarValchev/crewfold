@@ -91,4 +91,6 @@ stop or restart deletes the named Herdr session; the room participant and shared
 history remain canonical. Restarting only the Crewfold daemon recreates its
 disposable Herdr host and resumes the initialized steward's last Codex thread in
 the room-owned working directory. It must not fork an empty conversation, enqueue
-onboarding, or publish another introduction.
+onboarding, or publish another introduction. If a manually resumed Codex process
+loses Herdr's friendly agent name, Crewfold verifies the recorded pane, agent kind,
+and working directory before restoring that name automatically.

@@ -48,6 +48,15 @@ type stewardServerProcess struct {
 	input   io.WriteCloser
 }
 
+type herdrAgentIdentity struct {
+	Agent         string `json:"agent"`
+	AgentStatus   string `json:"agent_status"`
+	CWD           string `json:"cwd"`
+	ForegroundCWD string `json:"foreground_cwd"`
+	PaneID        string `json:"pane_id"`
+	WorkspaceID   string `json:"workspace_id"`
+}
+
 func NewHerdrStewardRuntime(socketPath, dataDir string) (*HerdrStewardRuntime, error) {
 	herdrPath, err := exec.LookPath("herdr")
 	if err != nil {
@@ -162,39 +171,31 @@ func hasCodexTrustPrompt(output string) bool {
 }
 
 func (r *HerdrStewardRuntime) Inspect(ctx context.Context, steward HostedSteward) (StewardRuntimeState, error) {
-	output, err := r.run(ctx, steward.HerdrSession, "agent", "get", steward.AgentName)
+	output, err := r.runForStewardAgent(ctx, steward, "get")
 	if err != nil {
 		return StewardRuntimeState{}, err
 	}
-	var result struct {
-		Result struct {
-			Agent struct {
-				WorkspaceID string `json:"workspace_id"`
-				PaneID      string `json:"pane_id"`
-				AgentStatus string `json:"agent_status"`
-			} `json:"agent"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(output, &result); err != nil || result.Result.Agent.PaneID == "" {
+	agent, err := decodeHerdrAgent(output)
+	if err != nil {
 		return StewardRuntimeState{}, fmt.Errorf("Herdr returned an invalid agent response: %s", boundedRuntimeError(output))
 	}
-	transcript, readErr := r.run(ctx, steward.HerdrSession, "agent", "read", steward.AgentName, "--source", "recent-unwrapped", "--lines", "500", "--format", "text")
+	transcript, readErr := r.runForStewardAgent(ctx, steward, "read", "--source", "recent-unwrapped", "--lines", "500", "--format", "text")
 	if readErr != nil {
 		return StewardRuntimeState{}, fmt.Errorf("read steward terminal: %w", readErr)
 	}
 	if len(transcript) > maximumStewardConsoleBytes {
 		transcript = transcript[len(transcript)-maximumStewardConsoleBytes:]
 	}
-	return StewardRuntimeState{WorkspaceID: result.Result.Agent.WorkspaceID, PaneID: result.Result.Agent.PaneID, AgentStatus: result.Result.Agent.AgentStatus, Output: string(transcript)}, nil
+	return StewardRuntimeState{WorkspaceID: agent.WorkspaceID, PaneID: agent.PaneID, AgentStatus: agent.AgentStatus, Output: string(transcript)}, nil
 }
 
 func (r *HerdrStewardRuntime) Prompt(ctx context.Context, steward HostedSteward, text string) error {
-	_, err := r.run(ctx, steward.HerdrSession, "agent", "prompt", steward.AgentName, text, "--wait", "--until", "working", "--timeout", "8000")
+	_, err := r.runForStewardAgent(ctx, steward, "prompt", text, "--wait", "--until", "working", "--timeout", "8000")
 	return err
 }
 
 func (r *HerdrStewardRuntime) Deliver(ctx context.Context, steward HostedSteward, text string) error {
-	_, err := r.run(ctx, steward.HerdrSession, "agent", "prompt", steward.AgentName, text, "--wait", "--until", "idle", "--until", "done", "--timeout", "300000")
+	_, err := r.runForStewardAgent(ctx, steward, "prompt", text, "--wait", "--until", "idle", "--until", "done", "--timeout", "300000")
 	return err
 }
 
@@ -205,8 +206,59 @@ func (r *HerdrStewardRuntime) SendKey(ctx context.Context, steward HostedSteward
 	default:
 		return errors.New("steward key must be enter, esc, or ctrl+c")
 	}
-	_, err := r.run(ctx, steward.HerdrSession, "agent", "send-keys", steward.AgentName, key)
+	_, err := r.runForStewardAgent(ctx, steward, "send-keys", key)
 	return err
+}
+
+func (r *HerdrStewardRuntime) runForStewardAgent(ctx context.Context, steward HostedSteward, action string, arguments ...string) ([]byte, error) {
+	command := append([]string{"agent", action, steward.AgentName}, arguments...)
+	output, err := r.run(ctx, steward.HerdrSession, command...)
+	if err == nil || !strings.Contains(err.Error(), "agent_not_found") || steward.HerdrPaneID == "" {
+		return output, err
+	}
+	if repairErr := r.repairStewardAgentName(ctx, steward); repairErr != nil {
+		return nil, fmt.Errorf("%w; repair steward agent name: %v", err, repairErr)
+	}
+	return r.run(ctx, steward.HerdrSession, command...)
+}
+
+func (r *HerdrStewardRuntime) repairStewardAgentName(ctx context.Context, steward HostedSteward) error {
+	output, err := r.run(ctx, steward.HerdrSession, "agent", "get", steward.HerdrPaneID)
+	if err != nil {
+		return fmt.Errorf("inspect recorded pane %s: %w", steward.HerdrPaneID, err)
+	}
+	agent, err := decodeHerdrAgent(output)
+	if err != nil {
+		return fmt.Errorf("Herdr returned an invalid recorded-pane response: %s", boundedRuntimeError(output))
+	}
+	if agent.Agent != "codex" || agent.PaneID != steward.HerdrPaneID || !sameStewardDirectory(agent, steward.WorkingDirectory) {
+		return fmt.Errorf("recorded pane %s is not the expected Codex steward in %s", steward.HerdrPaneID, steward.WorkingDirectory)
+	}
+	if _, err := r.run(ctx, steward.HerdrSession, "agent", "rename", steward.HerdrPaneID, steward.AgentName); err != nil {
+		// Another concurrent inspection may have repaired the name first.
+		if _, getErr := r.run(ctx, steward.HerdrSession, "agent", "get", steward.AgentName); getErr == nil {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func decodeHerdrAgent(output []byte) (herdrAgentIdentity, error) {
+	var result struct {
+		Result struct {
+			Agent herdrAgentIdentity `json:"agent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil || result.Result.Agent.PaneID == "" {
+		return herdrAgentIdentity{}, errors.New("missing agent identity")
+	}
+	return result.Result.Agent, nil
+}
+
+func sameStewardDirectory(agent herdrAgentIdentity, workingDirectory string) bool {
+	expected := filepath.Clean(workingDirectory)
+	return filepath.Clean(agent.CWD) == expected || filepath.Clean(agent.ForegroundCWD) == expected
 }
 
 func (r *HerdrStewardRuntime) Stop(ctx context.Context, steward HostedSteward) error {
