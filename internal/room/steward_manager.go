@@ -282,7 +282,7 @@ func (m *StewardManager) deliverOnce(ctx context.Context, roomID string) {
 		}
 		lastRelevantAt = createdAt
 		latest = message.Sequence
-		if strings.Contains(strings.ToLower(body), "@"+strings.ToLower(steward.Handle)) {
+		if messageNeedsImmediateDelivery(body, steward.Handle) {
 			directlyAddressed = true
 		}
 		lines = append(lines, line)

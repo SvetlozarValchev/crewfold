@@ -38,9 +38,11 @@ crewfold room ack ROOM [--through SEQUENCE]
 Codex delivery is the default. Run `join` from inside the Codex session; Crewfold
 reads `CODEX_THREAD_ID`, validates it through Codex app-server, and binds later
 notifications to that durable thread. `--delivery none` explicitly creates or
-rebinds a manual participant without an injection target. Direct mentions are
-delivered immediately. Other nearby events are quiet-period batched into one
-compact prompt, with a maximum delay for a continuously active room.
+rebinds a manual participant without an injection target. Direct mentions and
+`@everyone` broadcasts are delivered immediately. Other nearby events are
+quiet-period batched into one compact prompt, with a maximum delay for a
+continuously active room. The recipient still interprets natural-language group
+requests from the event body after delivery.
 
 `read` and `watch` acknowledge through the observed cursor when the current
 directory is a participant. `watch` remains a manual/debugging stream; a bound

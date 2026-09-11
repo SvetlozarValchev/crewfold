@@ -56,11 +56,13 @@ the current `CODEX_THREAD_ID`, validated through the owner-local Codex app-serve
 control socket. The delivery manager injects exact new room events with
 `turn/start`, which starts an idle turn or steers an eligible active turn. It
 quiet-period batches ordinary activity, flushes continuously busy rooms at a
-bounded maximum delay, and bypasses that delay for a direct participant mention.
-The compact delivery envelope does not repeat the full CLI manual. The manager
-does not resume unloaded threads, start external terminals, or capture provider
-transcripts. Undelivered events remain queued and the same stable participant can
-rebind to a new thread by joining again.
+bounded maximum delay, and bypasses that delay for a direct participant mention
+or `@everyone` broadcast. The compact delivery envelope does not repeat the full
+CLI manual or claim that silence is always appropriate: the participant decides
+whether an event addresses it directly, collectively, or through its room role.
+The manager does not resume unloaded threads, start external terminals, or
+capture provider transcripts. Undelivered events remain queued and the same
+stable participant can rebind to a new thread by joining again.
 
 Non-Codex tools and manual scripts join with `--delivery none` and use the CLI
 feed directly. Delivery cursors and acknowledgement cursors are separate durable

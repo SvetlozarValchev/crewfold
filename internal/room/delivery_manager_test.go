@@ -77,7 +77,7 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.deliverPending()
-	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], "compare the interface contract") || !strings.Contains(runtime.prompts[0], "send shared --stdin") || !strings.Contains(runtime.prompts[0], "No response is required") || !strings.Contains(runtime.prompts[0], "Do not poll") || strings.Contains(runtime.prompts[0], "Share a file with") {
+	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], "compare the interface contract") || !strings.Contains(runtime.prompts[0], "send shared --stdin") || !strings.Contains(runtime.prompts[0], "directly, collectively, or through your room role") || !strings.Contains(runtime.prompts[0], "Do not poll") || strings.Contains(runtime.prompts[0], "No response is required") || strings.Contains(runtime.prompts[0], "Share a file with") {
 		t.Fatalf("unexpected delivery: targets=%#v prompts=%#v", runtime.targets, runtime.prompts)
 	}
 	if runtime.messageIDs[0] != "crewfold:"+first.ID+":"+fmt.Sprint(message.Sequence) {
@@ -182,7 +182,7 @@ func TestCodexDeliveryBatchesBurstsAndBypassesDelayForMentions(t *testing.T) {
 	}
 
 	current = current.Add(2 * time.Second)
-	if _, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "second nearby update"}); err != nil {
+	if _, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "All agents need to report their current state."}); err != nil {
 		t.Fatal(err)
 	}
 	manager.deliverPending()
@@ -192,7 +192,7 @@ func TestCodexDeliveryBatchesBurstsAndBypassesDelayForMentions(t *testing.T) {
 
 	current = current.Add(5 * time.Second)
 	manager.deliverPending()
-	if len(runtime.prompts) != 1 || !strings.Contains(runtime.prompts[0], "first nearby update") || !strings.Contains(runtime.prompts[0], "second nearby update") {
+	if len(runtime.prompts) != 1 || !strings.Contains(runtime.prompts[0], "first nearby update") || !strings.Contains(runtime.prompts[0], "All agents need to report their current state.") || !strings.Contains(runtime.prompts[0], "directly, collectively, or through your room role") {
 		t.Fatalf("quiet burst was not delivered as one prompt: %#v", runtime.prompts)
 	}
 
@@ -203,5 +203,34 @@ func TestCodexDeliveryBatchesBurstsAndBypassesDelayForMentions(t *testing.T) {
 	manager.deliverPending()
 	if len(runtime.prompts) != 2 || !strings.Contains(runtime.prompts[1], "@agent check this now") {
 		t.Fatalf("direct mention did not bypass batching: %#v", runtime.prompts)
+	}
+
+	current = current.Add(time.Second)
+	if _, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "@everyone report current state"}); err != nil {
+		t.Fatal(err)
+	}
+	manager.deliverPending()
+	if len(runtime.prompts) != 3 || !strings.Contains(runtime.prompts[2], "@everyone report current state") {
+		t.Fatalf("broadcast mention did not bypass batching: %#v", runtime.prompts)
+	}
+}
+
+func TestMessageNeedsImmediateDeliveryUsesMentionBoundaries(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		body string
+		want bool
+	}{
+		{body: "@agent report", want: true},
+		{body: "Please ask @Agent.", want: true},
+		{body: "@everyone report", want: true},
+		{body: "All agents need to report", want: false},
+		{body: "@agent-helper report", want: false},
+		{body: "mail@agent report", want: false},
+	}
+	for _, test := range cases {
+		if got := messageNeedsImmediateDelivery(test.body, "agent"); got != test.want {
+			t.Errorf("messageNeedsImmediateDelivery(%q) = %v, want %v", test.body, got, test.want)
+		}
 	}
 }

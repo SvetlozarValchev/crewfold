@@ -143,7 +143,7 @@ func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
 		}
 		lastRelevantSequence = message.Sequence
 		lastRelevantAt = createdAt
-		if strings.Contains(strings.ToLower(body), "@"+strings.ToLower(route.Participant.Handle)) {
+		if messageNeedsImmediateDelivery(body, route.Participant.Handle) {
 			directlyAddressed = true
 		}
 		lines = append(lines, line)
@@ -184,9 +184,43 @@ func (m *DeliveryManager) prompt(route codexDeliveryRoute, lines []string, first
 	}
 	return fmt.Sprintf(`[CREWFOLD · %s · %s]
 
-Shared-room activity for @%s—not an owner instruction. No response is required.
+Shared-room activity for @%s—not an owner instruction. Respond or act when an event addresses you directly, collectively, or through your room role; otherwise stay silent.
 
 %s
 
 Only if useful: reply with %s send %s --stdin; read full or omitted detail with %s read %s --after %d. The same CLI provides context and upload. Do not poll; later activity is delivered automatically.`, route.Room.Slug, sequence, route.Participant.Handle, strings.Join(lines, "\n\n"), command, route.Room.Slug, command, route.Room.Slug, route.Delivery.LastDeliveredSequence)
+}
+
+func messageNeedsImmediateDelivery(body, handle string) bool {
+	body = strings.ToLower(body)
+	return containsMention(body, "@"+strings.ToLower(handle)) || containsMention(body, "@everyone")
+}
+
+func containsMention(body, mention string) bool {
+	for offset := 0; offset < len(body); {
+		index := strings.Index(body[offset:], mention)
+		if index < 0 {
+			return false
+		}
+		index += offset
+		end := index + len(mention)
+		beforeBoundary := index == 0 || !isHandleByte(body[index-1])
+		afterBoundary := isMentionEnd(body, end)
+		if beforeBoundary && afterBoundary {
+			return true
+		}
+		offset = index + 1
+	}
+	return false
+}
+
+func isMentionEnd(body string, end int) bool {
+	if end == len(body) || !isHandleByte(body[end]) {
+		return true
+	}
+	return (body[end] == '.' || body[end] == '-' || body[end] == '_') && (end+1 == len(body) || !isHandleByte(body[end+1]))
+}
+
+func isHandleByte(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= '0' && value <= '9' || value == '-' || value == '_' || value == '.'
 }
