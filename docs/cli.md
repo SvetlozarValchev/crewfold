@@ -26,6 +26,7 @@ Run participant commands from the real agent's working directory:
 
 ```text
 crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|none]
+crewfold room leave ROOM [--handle HANDLE] [--cwd PATH]
 crewfold room send ROOM MESSAGE...
 crewfold room send ROOM --stdin
 crewfold room context ROOM CURRENT-CONTEXT...
@@ -43,6 +44,13 @@ rebinds a manual participant without an injection target. Direct mentions and
 quiet-period batched into one compact prompt, with a maximum delay for a
 continuously active room. The recipient still interprets natural-language group
 requests from the event body after delivery.
+
+`leave` identifies the joined participant by the current working directory (and
+optional handle), marks it as left, and immediately disables its Codex delivery.
+Messages, context, documents, acknowledgement state, and the delivery cursor are
+preserved. Joining that handle again reactivates the same participant and
+delivers only activity missed while it was away. Hosted stewards use `room
+steward stop` instead.
 
 `read` and `watch` acknowledge through the observed cursor when the current
 directory is a participant. `watch` remains a manual/debugging stream; a bound

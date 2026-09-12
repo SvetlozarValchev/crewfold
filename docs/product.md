@@ -28,6 +28,11 @@ A participant is a stable room-local handle bound to one exact working directory
 Crewfold does not inspect its provider transcript or hidden reasoning. It sees
 only what the participant explicitly publishes.
 
+Leaving marks that participant inactive and disables delivery without deleting
+its identity, context, documents, messages, acknowledgement state, or delivery
+cursor. Rejoining the same handle reactivates the identity and catches it up from
+the preserved cursor rather than replaying the room from the beginning.
+
 For Codex participants, the handle also stores one replaceable delivery binding
 to a durable Codex thread. Joining from inside Codex discovers
 `CODEX_THREAD_ID`; resuming that thread preserves the binding, while joining the

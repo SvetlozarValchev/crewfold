@@ -319,6 +319,32 @@ func (a *App) room(ctx context.Context, client room.Client, args []string, jsonM
 			fmt.Fprintf(a.stdout, "joined %s as @%s from %s · delivery %s\n", identifier, participant.Handle, participant.WorkingDirectory, delivery)
 			fmt.Fprintf(a.stdout, "room messages render GitHub-flavored Markdown; use `crewfold room send %s --stdin` for readable multiline posts\n", identifier)
 		})
+	case "leave":
+		identifier, rest, err := leading(args[1:], "room")
+		if err != nil {
+			return a.fail(err)
+		}
+		handle, rest, err := pullOption(rest, "handle")
+		if err != nil {
+			return a.fail(err)
+		}
+		cwd, rest, err := pullOption(rest, "cwd")
+		if err != nil {
+			return a.fail(err)
+		}
+		if len(rest) != 0 {
+			return a.fail(errors.New("usage: crewfold room leave ROOM [--handle HANDLE] [--cwd PATH]"))
+		}
+		if cwd == "" {
+			cwd, _ = os.Getwd()
+		}
+		var participant room.Participant
+		if err := client.Call(ctx, "participant.leave", room.LeaveInput{Room: identifier, WorkingDirectory: cwd, Handle: handle}, &participant); err != nil {
+			return a.fail(err)
+		}
+		return a.print(participant, jsonMode, func() {
+			fmt.Fprintf(a.stdout, "left %s as @%s · history preserved\n", identifier, participant.Handle)
+		})
 	case "send", "context":
 		identifier, rest, err := leading(args[1:], "room")
 		if err != nil {
@@ -821,6 +847,7 @@ const roomHelp = `Room commands:
   crewfold room list
   crewfold room show ROOM
   crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|none]
+  crewfold room leave ROOM [--handle HANDLE] [--cwd PATH]
   crewfold room send ROOM MESSAGE... | --stdin
   crewfold room context ROOM CURRENT-CONTEXT... | --stdin
   crewfold room read ROOM [--after SEQUENCE]

@@ -144,6 +144,12 @@ type JoinInput struct {
 	ThreadID         string `json:"thread_id,omitempty"`
 }
 
+type LeaveInput struct {
+	Room             string `json:"room"`
+	WorkingDirectory string `json:"working_directory"`
+	Handle           string `json:"handle,omitempty"`
+}
+
 type SendInput struct {
 	Room             string `json:"room"`
 	WorkingDirectory string `json:"working_directory,omitempty"`

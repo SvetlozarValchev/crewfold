@@ -81,6 +81,7 @@ func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 	if delivery.Kind != "codex" || delivery.Target != "01a0626f-7a48-70d2-b540-112ccf94e5bf" || (delivery.Status != "bound" && delivery.Status != "delivered") {
 		t.Fatalf("delivery = %#v", delivery)
 	}
+	participantID := snapshot.Participants[0].ID
 
 	previousDirectory, err := os.Getwd()
 	if err != nil {
@@ -102,6 +103,34 @@ func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 	wantBody := "## Finding\n\n- client and service differ\n- owner review needed"
 	if got := snapshot.Messages[len(snapshot.Messages)-1].Body; got != wantBody {
 		t.Fatalf("multiline message body = %q, want %q", got, wantBody)
+	}
+
+	stdout.Reset()
+	if code := app.Run(context.Background(), []string{"room", "--socket", socket, "leave", "shared"}); code != 0 {
+		t.Fatalf("leave exit %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "left shared as @service-agent") || !strings.Contains(stdout.String(), "history preserved") {
+		t.Fatalf("leave output = %q", stdout.String())
+	}
+	snapshot, err = readSnapshot(client, created.Room.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Participants[0].Status != "left" || snapshot.Participants[0].Delivery == nil {
+		t.Fatalf("participant after leave = %#v", snapshot.Participants[0])
+	}
+
+	t.Setenv("CODEX_THREAD_ID", "01a09999-7a48-70d2-b540-112ccf94e5bf")
+	stdout.Reset()
+	if code := app.Run(context.Background(), []string{"room", "--socket", socket, "join", "shared", "--handle", "service-agent"}); code != 0 {
+		t.Fatalf("rejoin exit %d: %s", code, stderr.String())
+	}
+	snapshot, err = readSnapshot(client, created.Room.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Participants[0].ID != participantID || snapshot.Participants[0].Status != "joined" || snapshot.Participants[0].Delivery == nil || snapshot.Participants[0].Delivery.Target != "01a09999-7a48-70d2-b540-112ccf94e5bf" {
+		t.Fatalf("participant after rejoin = %#v", snapshot.Participants[0])
 	}
 }
 

@@ -325,6 +325,44 @@ ON CONFLICT(participant_id) DO UPDATE SET kind='codex',target=excluded.target,st
 	return s.participant(ctx, room.ID, participantID)
 }
 
+func (s *Store) Leave(ctx context.Context, input LeaveInput) (Participant, error) {
+	room, err := s.resolveRoom(ctx, input.Room)
+	if err != nil {
+		return Participant{}, err
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Participant{}, err
+	}
+	defer tx.Rollback()
+	participant, err := resolveParticipantTx(ctx, tx, room.ID, input.WorkingDirectory, input.Handle)
+	if err != nil {
+		return Participant{}, err
+	}
+	var hosted bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM hosted_stewards WHERE participant_id=?)`, participant.ID).Scan(&hosted); err != nil {
+		return Participant{}, err
+	}
+	if hosted {
+		return Participant{}, errors.New("hosted steward lifecycle is managed with crewfold room steward stop")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE participants SET status='left',last_seen_at=? WHERE id=?`, now, participant.ID); err != nil {
+		return Participant{}, fmt.Errorf("leave room: %w", err)
+	}
+	message := participant.DisplayName + " left the room."
+	if _, err := insertMessage(ctx, tx, room.ID, &participant.ID, participant.Handle, participant.DisplayName, participant.Kind, "system", message, "", now); err != nil {
+		return Participant{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE rooms SET updated_at=? WHERE id=?`, now, room.ID); err != nil {
+		return Participant{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Participant{}, err
+	}
+	return s.participant(ctx, room.ID, participant.ID)
+}
+
 func (s *Store) Send(ctx context.Context, input SendInput) (Message, error) {
 	room, err := s.resolveRoom(ctx, input.Room)
 	if err != nil {

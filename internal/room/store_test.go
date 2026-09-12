@@ -81,6 +81,108 @@ func TestCanonicalFeedRejectsUnstructuredSubstantialContent(t *testing.T) {
 	}
 }
 
+func TestLeaveDisablesDeliveryAndRejoinPreservesParticipantState(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := Open(ctx, filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	created, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "handoff", Title: "Handoff", Topic: "Exercise participant leave and rejoin."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(root, "agent")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	joined, err := store.Join(ctx, JoinInput{Room: created.Room.ID, Handle: "worker", WorkingDirectory: directory, Delivery: "codex", ThreadID: "thread-old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Send(ctx, SendInput{Room: created.Room.ID, WorkingDirectory: directory, Kind: "context", Body: "Current durable finding."}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upload(ctx, UploadInput{Room: created.Room.ID, WorkingDirectory: directory, Name: "finding.md", ContentBase64: base64.StdEncoding.EncodeToString([]byte("# Finding\n"))}); err != nil {
+		t.Fatal(err)
+	}
+	beforeLeave, err := store.Snapshot(ctx, created.Room.ID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.advanceDelivery(ctx, joined.ID, beforeLeave.Room.LastSequence); err != nil {
+		t.Fatal(err)
+	}
+
+	left, err := store.Leave(ctx, LeaveInput{Room: created.Room.ID, WorkingDirectory: directory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left.ID != joined.ID || left.Status != "left" || left.Context != "Current durable finding." || left.Delivery == nil || left.Delivery.LastDeliveredSequence != beforeLeave.Room.LastSequence {
+		t.Fatalf("left participant = %#v", left)
+	}
+	if _, err := store.Send(ctx, SendInput{Room: created.Room.ID, WorkingDirectory: directory, Body: "should fail"}); err == nil || !strings.Contains(err.Error(), "has not joined") {
+		t.Fatalf("left participant could still send: %v", err)
+	}
+	if _, err := store.Send(ctx, SendInput{Room: created.Room.ID, Owner: true, Body: "Update while worker is away."}); err != nil {
+		t.Fatal(err)
+	}
+	routes, err := store.pendingCodexDeliveries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 0 {
+		t.Fatalf("left participant still had an active delivery route: %#v", routes)
+	}
+
+	rejoined, err := store.Join(ctx, JoinInput{Room: created.Room.ID, Handle: "worker", WorkingDirectory: directory, Delivery: "codex", ThreadID: "thread-new"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejoined.ID != joined.ID || rejoined.Status != "joined" || rejoined.Context != left.Context || rejoined.Delivery == nil || rejoined.Delivery.Target != "thread-new" || rejoined.Delivery.LastDeliveredSequence != beforeLeave.Room.LastSequence {
+		t.Fatalf("rejoined participant = %#v", rejoined)
+	}
+	afterRejoin, err := store.Snapshot(ctx, created.Room.ID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterRejoin.Documents) != 1 {
+		t.Fatalf("documents after rejoin = %#v", afterRejoin.Documents)
+	}
+	var sawLeave bool
+	for _, message := range afterRejoin.Messages {
+		if message.Kind == "system" && message.Body == "worker left the room." {
+			sawLeave = true
+		}
+	}
+	if !sawLeave {
+		t.Fatalf("leave event missing from history: %#v", afterRejoin.Messages)
+	}
+}
+
+func TestHostedStewardCannotUseParticipantLeave(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	created, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "hosted-leave", Title: "Hosted leave", Topic: "Keep lifecycle controls distinct."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	steward, err := store.ConfigureHostedSteward(ctx, StartStewardInput{Room: created.Room.ID, Handle: "hosted-steward"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Leave(ctx, LeaveInput{Room: created.Room.ID, WorkingDirectory: steward.WorkingDirectory}); err == nil || !strings.Contains(err.Error(), "room steward stop") {
+		t.Fatalf("hosted steward leave error = %v", err)
+	}
+}
+
 func TestRoomCollaborationLifecycle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

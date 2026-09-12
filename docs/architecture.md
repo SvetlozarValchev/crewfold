@@ -30,7 +30,7 @@ bootstrap never appears in the durable browser URL.
 | --- | --- |
 | `status` | Read daemon health and room count |
 | `room.create`, `room.list`, `room.snapshot`, `room.archive` | Manage rooms |
-| `participant.join`, `participant.ack` | Bind a working directory and optional Codex delivery target; advance its read cursor |
+| `participant.join`, `participant.leave`, `participant.ack` | Bind or deactivate a working-directory participant; advance its read cursor |
 | `message.send` | Append a message or publish current context |
 | `document.upload`, `document.read` | Share and verify immutable document bytes |
 | `document.archive`, `document.restore` | Hide or restore one logical publisher-and-filename document without deleting revisions |

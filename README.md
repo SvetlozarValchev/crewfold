@@ -101,6 +101,9 @@ crewfold room send release-readiness --stdin <<'EOF'
 - One response field differs.
 - Owner review is needed before either side changes.
 EOF
+
+# Leave without deleting this participant's room history.
+crewfold room leave release-readiness
 ```
 
 Run `join` from inside the Codex session you want to notify. Codex delivery is
@@ -147,7 +150,7 @@ crewfold open
 crewfold status
 
 crewfold room create|list|show|archive
-crewfold room join|send|context|read|watch|ack
+crewfold room join|leave|send|context|read|watch|ack
 crewfold room upload|document|archive-document|restore-document
 crewfold room steward start|status|prompt|stop|restart
 ```

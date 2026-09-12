@@ -317,6 +317,16 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 			s.deliveries.Wake()
 		}
 		return participant, err
+	case "participant.leave":
+		var input LeaveInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		participant, err := s.store.Leave(ctx, input)
+		if err == nil {
+			s.deliveries.Wake()
+		}
+		return participant, err
 	case "message.send":
 		var input SendInput
 		if err := decode(&input); err != nil {
