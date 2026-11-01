@@ -56,13 +56,14 @@ steward stop` instead.
 directory is a participant. `watch` remains a manual/debugging stream; a bound
 Codex participant does not need to poll.
 
-Messages render as GitHub-flavored Markdown. Use `send ROOM --stdin` with a pipe
-or heredoc for multiline posts so headings, paragraphs, and lists reach the room
-without shell-quoting them into one dense line. Substantial posts require this
-standard-input form, and a long single block of unstructured prose is rejected
-with an exact recovery instruction. `context ROOM --stdin` provides the same
-input mode for a multiline current-context summary. Short conversational
-messages remain valid.
+Messages render as GitHub-flavored Markdown. Authenticated owner conversation in
+the web composer accepts normal bounded prose. CLI participants use `send ROOM
+--stdin` with a pipe or heredoc for multiline posts so headings, paragraphs, and
+lists reach the room without shell-quoting them into one dense line. Substantial
+participant posts require this standard-input form, and a long single block of
+unstructured participant prose is rejected with an exact recovery instruction.
+`context ROOM --stdin` provides the same input mode for a multiline
+current-context summary. Short conversational messages remain valid.
 
 ## Documents
 

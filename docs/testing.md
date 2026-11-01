@@ -42,6 +42,7 @@ filename must appear as one document with navigable revisions. Archived logical
 documents must move to the archived view, remain restorable, and become active
 automatically when their publisher uploads a new revision.
 
-Canonical store coverage must reject substantial unstructured messages and
-document captions even when a caller bypasses the CLI, while retaining long
-replaceable participant context outside the chronological feed.
+Canonical store coverage must reject substantial unstructured participant
+messages and document captions even when a caller bypasses the CLI, while
+allowing bounded authenticated owner conversation and retaining long replaceable
+participant context outside the chronological feed.

@@ -65,13 +65,27 @@ func TestCanonicalFeedRejectsUnstructuredSubstantialContent(t *testing.T) {
 	if _, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "readable", Title: "Readable", Topic: "Keep the shared feed readable."}); err != nil {
 		t.Fatal(err)
 	}
+	participantDirectory := filepath.Join(t.TempDir(), "participant")
+	if err := os.Mkdir(participantDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Join(ctx, JoinInput{Room: "readable", Handle: "participant", WorkingDirectory: participantDirectory}); err != nil {
+		t.Fatal(err)
+	}
 	dense := strings.Repeat("Substantial verified status without any block structure. ", 10)
-	if _, err := store.Send(ctx, SendInput{Room: "readable", Owner: true, Body: dense}); err == nil || !strings.Contains(err.Error(), "unstructured prose") {
+	if _, err := store.Send(ctx, SendInput{Room: "readable", WorkingDirectory: participantDirectory, Body: dense}); err == nil || !strings.Contains(err.Error(), "unstructured prose") {
 		t.Fatalf("canonical message validation error = %v", err)
 	}
 	structured := "## Findings\n\n- " + dense
-	if _, err := store.Send(ctx, SendInput{Room: "readable", Owner: true, Body: structured}); err != nil {
+	if _, err := store.Send(ctx, SendInput{Room: "readable", WorkingDirectory: participantDirectory, Body: structured}); err != nil {
 		t.Fatalf("structured message rejected: %v", err)
+	}
+	ownerMessage, err := store.Send(ctx, SendInput{Room: "readable", Owner: true, Body: dense})
+	if err != nil {
+		t.Fatalf("owner conversation was subjected to participant anti-dump validation: %v", err)
+	}
+	if ownerMessage.SenderKind != "owner" || ownerMessage.Body != strings.TrimSpace(dense) {
+		t.Fatalf("owner message = %#v", ownerMessage)
 	}
 	if _, err := store.Send(ctx, SendInput{Room: "readable", Owner: true, Kind: "context", Body: dense}); err != nil {
 		t.Fatalf("replaceable context rejected: %v", err)

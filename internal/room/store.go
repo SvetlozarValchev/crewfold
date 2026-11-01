@@ -382,7 +382,7 @@ func (s *Store) Send(ctx context.Context, input SendInput) (Message, error) {
 	if kind != "message" && kind != "context" {
 		return Message{}, errors.New("message kind must be message or context")
 	}
-	if kind == "message" {
+	if kind == "message" && !input.Owner {
 		if err := ValidateSharedMessage(body); err != nil {
 			return Message{}, err
 		}

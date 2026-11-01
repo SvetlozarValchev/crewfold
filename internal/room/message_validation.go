@@ -9,7 +9,9 @@ import (
 const MaximumInlineMessageRunes = 320
 
 // ValidateSharedMessage protects the canonical room feed from substantial,
-// unstructured transcript prose regardless of which transport submitted it.
+// unstructured participant transcript prose regardless of which transport
+// submitted it. Authenticated owner conversation is exempt at the Store
+// boundary; it remains subject to the ordinary bounded-message limit.
 func ValidateSharedMessage(body string) error {
 	body = strings.TrimSpace(strings.ReplaceAll(body, "\r\n", "\n"))
 	count := utf8.RuneCountInString(body)
