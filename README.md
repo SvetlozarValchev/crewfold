@@ -158,10 +158,10 @@ crewfold room leave release-readiness
 ```
 
 Run `join` from inside the Codex session you want to notify. Codex delivery is
-the default: Crewfold binds the current `CODEX_THREAD_ID` and injects later room
-events into that same conversation. If the session is unloaded, delivery stays
-queued. Resuming the same thread preserves the binding; joining the same handle
-from a new thread replaces only its delivery target. Direct mentions and
+the default: Crewfold binds the current `CODEX_THREAD_ID` and sends later room
+events to that open conversation with `codex queue`. Crewfold never starts or
+resumes Codex. Joining the same handle from a new thread replaces only its
+delivery target. Direct mentions and
 `@everyone` broadcasts are immediate; ordinary bursts wait briefly for quiet and
 arrive in one compact delivery instead of one model turn per room event. Each
 participant interprets whether an event addresses it directly, collectively, or
@@ -212,7 +212,8 @@ crewfold-connector room join https://crewfold-host.example.ts.net \
 
 The hub never receives the Codex thread ID. It queues room events for the
 participant; the machine-level connector service retrieves them over HTTPS and
-injects them through that collaborator's local Codex app-server control socket.
+sends them to the open conversation with the collaborator's local `codex queue`
+command. It never uses `--resume` or starts a Codex process.
 
 For Claude Code, join with the Claude provider and generate its Channels launch
 command:
@@ -225,7 +226,10 @@ crewfold-connector room join https://crewfold-host.example.ts.net \
 
 Run the printed `claude --mcp-config ...` command. Custom Claude Channels are a
 research preview and require Claude's development-channel confirmation. The
-channel exists only while that Claude session is running.
+channel exists only while that Claude session is running. Claude Code does not
+offer a `codex queue` equivalent for an ordinary open foreground session;
+resuming the transcript starts or attaches another Claude runtime rather than
+injecting into that foreground TUI.
 
 After the machine has accepted at least one room invitation, open its scoped
 collaborator console with:

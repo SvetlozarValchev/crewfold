@@ -2,18 +2,15 @@ package room
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
-
-	"crewfold/internal/codexapp"
 )
 
 type CodexDeliveryRuntime interface {
-	Inspect(context.Context, string) (codexapp.Thread, error)
-	Deliver(context.Context, string, string, string) error
+	Validate(context.Context, string) error
+	Deliver(context.Context, string, string) error
 }
 
 type DeliveryManager struct {
@@ -54,17 +51,7 @@ func (m *DeliveryManager) Wake() {
 }
 
 func (m *DeliveryManager) Validate(ctx context.Context, threadID string) error {
-	thread, err := m.runtime.Inspect(ctx, threadID)
-	if err != nil {
-		return err
-	}
-	if thread.Status.Type == "systemError" {
-		return errors.New("Codex thread is in a system-error state")
-	}
-	if thread.CanAcceptDirectInput != nil && !*thread.CanAcceptDirectInput {
-		return codexapp.ErrDirectInputUnavailable
-	}
-	return nil
+	return m.runtime.Validate(ctx, threadID)
 }
 
 func (m *DeliveryManager) loop() {
@@ -166,15 +153,10 @@ func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
 	_ = m.store.recordDeliveryAttempt(m.ctx, route.Participant.ID, "queued", "")
 	prompt := m.prompt(route, lines, firstRelevantSequence, lastRelevantSequence)
 	deliveryCtx, cancel := context.WithTimeout(m.ctx, 12*time.Second)
-	messageID := fmt.Sprintf("crewfold:%s:%d", route.Participant.ID, latest)
-	err = m.runtime.Deliver(deliveryCtx, route.Delivery.Target, prompt, messageID)
+	err = m.runtime.Deliver(deliveryCtx, route.Delivery.Target, prompt)
 	cancel()
 	if err != nil {
-		status := "error"
-		if errors.Is(err, codexapp.ErrThreadNotLoaded) || errors.Is(err, codexapp.ErrDirectInputUnavailable) || strings.Contains(err.Error(), "activeTurnNotSteerable") {
-			status = "queued"
-		}
-		_ = m.store.recordDeliveryAttempt(context.Background(), route.Participant.ID, status, err.Error())
+		_ = m.store.recordDeliveryAttempt(context.Background(), route.Participant.ID, "error", err.Error())
 		return
 	}
 	_ = m.store.advanceDelivery(m.ctx, route.Participant.ID, latest)

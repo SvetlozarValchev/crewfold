@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"crewfold/internal/codexapp"
+	"crewfold/internal/codexqueue"
 	"crewfold/internal/room"
 )
 
@@ -47,6 +47,7 @@ type remoteBinding struct {
 	Directory     string `json:"directory"`
 	Provider      string `json:"provider"`
 	Target        string `json:"target,omitempty"`
+	Executable    string `json:"executable,omitempty"`
 }
 
 func loadRemoteConfig(path string) (*remoteConfig, error) {
@@ -104,6 +105,9 @@ func validateRemoteConfig(config remoteConfig) error {
 			}
 			if binding.Provider == "codex" && binding.Target == "" {
 				return errors.New("connector configuration contains a Codex binding without a local thread")
+			}
+			if binding.Executable != "" && !filepath.IsAbs(binding.Executable) {
+				return errors.New("connector configuration contains a non-absolute provider executable")
 			}
 			if _, exists := seenParticipants[binding.ParticipantID]; exists {
 				return errors.New("connector configuration contains a duplicate participant binding")
@@ -200,6 +204,7 @@ func (c *routedCaller) Call(ctx context.Context, method string, params any, resu
 	client := room.NetworkClient{BaseURL: route.hub.URL, Token: route.hub.Token, ParticipantID: participantID}
 	remoteParams := params
 	var joinInput room.JoinInput
+	codexExecutable := ""
 	joining := method == "participant.join"
 	leaving := method == "participant.leave"
 	if joining {
@@ -209,8 +214,10 @@ func (c *routedCaller) Call(ctx context.Context, method string, params any, resu
 			return errors.New("remote join input is invalid")
 		}
 		if joinInput.Delivery == "codex" {
-			if err := validateLocalCodexThread(ctx, joinInput.ThreadID); err != nil {
-				return fmt.Errorf("bind local Codex delivery: %w", err)
+			var validationErr error
+			codexExecutable, validationErr = validateLocalCodexThread(ctx, joinInput.ThreadID)
+			if validationErr != nil {
+				return fmt.Errorf("bind local Codex delivery: %w", validationErr)
 			}
 		}
 		joinInput.ThreadID = ""
@@ -250,6 +257,7 @@ func (c *routedCaller) Call(ctx context.Context, method string, params any, resu
 		}
 		if updated.Provider == "codex" {
 			updated.Target = params.(room.JoinInput).ThreadID
+			updated.Executable = codexExecutable
 		}
 		return updateRemoteConfig(c.configPath, func(latest *remoteConfig) error {
 			hub := findRemoteHub(latest, route.hub.URL)
@@ -351,11 +359,6 @@ func (c *routedCaller) joinInvitation(ctx context.Context, address, invite, devi
 	if strings.TrimSpace(invite) == "" {
 		return room.Room{}, room.Participant{}, errors.New("room invitation secret is required")
 	}
-	if input.Delivery == "codex" {
-		if err := validateLocalCodexThread(ctx, input.ThreadID); err != nil {
-			return room.Room{}, room.Participant{}, fmt.Errorf("bind local Codex delivery: %w", err)
-		}
-	}
 	if strings.TrimSpace(deviceName) == "" {
 		deviceName, _ = os.Hostname()
 		if strings.TrimSpace(deviceName) == "" {
@@ -423,27 +426,14 @@ func upsertRemoteBinding(hub *remoteHub, updated remoteBinding) {
 	hub.Bindings = append(hub.Bindings, updated)
 }
 
-func validateLocalCodexThread(ctx context.Context, threadID string) error {
-	if strings.TrimSpace(threadID) == "" {
-		return errors.New("CODEX_THREAD_ID is unavailable")
-	}
-	socket, err := codexapp.DefaultSocketPath()
-	if err != nil {
-		return err
-	}
+func validateLocalCodexThread(ctx context.Context, threadID string) (string, error) {
 	validationCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	thread, err := (codexapp.Client{SocketPath: socket}).Inspect(validationCtx, threadID)
-	if err != nil {
-		return err
+	client := codexqueue.Client{}
+	if err := client.Validate(validationCtx, threadID); err != nil {
+		return "", err
 	}
-	if thread.Status.Type == "systemError" {
-		return errors.New("Codex thread is in a system-error state")
-	}
-	if thread.CanAcceptDirectInput != nil && !*thread.CanAcceptDirectInput {
-		return codexapp.ErrDirectInputUnavailable
-	}
-	return nil
+	return client.ResolveExecutable()
 }
 
 func roomIdentifierFromParams(params any) string {

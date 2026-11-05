@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"crewfold/internal/appdirs"
-	"crewfold/internal/codexapp"
+	"crewfold/internal/codexqueue"
 	"crewfold/internal/room"
 )
 
@@ -235,16 +235,11 @@ func runConnectorService(ctx context.Context, configPath string, stderr interfac
 }
 
 func relayBindingFingerprint(hub remoteHub, binding remoteBinding) string {
-	return strings.Join([]string{hub.URL, hub.DeviceID, hub.Token, binding.ParticipantID, binding.Provider, binding.Target}, "\x00")
+	return strings.Join([]string{hub.URL, hub.DeviceID, hub.Token, binding.ParticipantID, binding.Provider, binding.Target, binding.Executable}, "\x00")
 }
 
 func codexRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding, stderr interface{ Write([]byte) (int, error) }) {
-	socket, err := codexapp.DefaultSocketPath()
-	if err != nil {
-		fmt.Fprintf(stderr, "crewfold connector @%s: %v\n", binding.Handle, err)
-		return
-	}
-	runtime := codexapp.Client{SocketPath: socket}
+	runtime := codexqueue.Client{Executable: binding.Executable}
 	client := room.NetworkClient{BaseURL: hub.URL, Token: hub.Token, ParticipantID: binding.ParticipantID}
 	for ctx.Err() == nil {
 		var batch room.NetworkDeliveryBatch
@@ -267,15 +262,11 @@ func codexRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding, s
 		}
 		prompt, deliveredThrough := networkDeliveryPrompt(batch)
 		deliveryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		messageID := fmt.Sprintf("crewfold-network:%s:%d", binding.ParticipantID, deliveredThrough)
-		err = runtime.Deliver(deliveryCtx, binding.Target, prompt, messageID)
+		err = runtime.Deliver(deliveryCtx, binding.Target, prompt)
 		cancel()
 		status, detail := "delivered", ""
 		if err != nil {
 			status, detail = "error", err.Error()
-			if errors.Is(err, codexapp.ErrThreadNotLoaded) || errors.Is(err, codexapp.ErrDirectInputUnavailable) || strings.Contains(err.Error(), "activeTurnNotSteerable") {
-				status = "queued"
-			}
 		}
 		var ignored room.NetworkBinding
 		reportErr := client.Call(ctx, "delivery.report", room.NetworkDeliveryResultInput{ParticipantID: binding.ParticipantID, Through: deliveredThrough, Status: status, Error: detail}, &ignored)

@@ -6,13 +6,13 @@ connector built from the same provider-adapter implementation:
 ```text
 external Codex -- CLI -- owner Unix socket -- room store (SQLite + document files)
       ^                               |
-      +------ Codex app-server -------+ room-delivery manager
+      +-------- codex queue ----------+ room-delivery manager
                                       |
 human browser -- loopback HTTP -------+--- hosted-steward manager --- named Herdr/Codex session
                                       |
 remote connector -- tailnet HTTPS -- Tailscale Serve -- authenticated network API
       |                                                        |
-      +-- connector service -- local Codex app-server           |
+      +-- connector service -- local codex queue                |
       +-- local Claude Channel MCP -----------------------------+
       +-- scoped human browser session -------------------------+
 ```
@@ -81,10 +81,11 @@ its network participant bindings; local participants are associated with
 Each remote participant binding records its provider and a durable hub delivery
 cursor. Provider targets remain in mode-`0600` configuration on the remote
 machine. One connector service long-polls every enrolled hub with bounded
-requests and injects each Codex binding through the remote machine's app-server
-socket. It is installed before any room is selected and remains healthy with no
-bindings. Hub credentials and agent bindings are independent, so one OS user can
-participate across multiple Crewfold servers. The Claude adapter is an MCP stdio server
+requests and sends each Codex binding's room batches through the remote
+machine's `codex queue` command. It is installed before any room is selected and
+remains healthy with no bindings. Hub credentials and agent bindings are
+independent, so one OS user can participate across multiple Crewfold servers.
+The Claude adapter is an MCP stdio server
 with the experimental `claude/channel` capability. Both acknowledge only the
 portion of a bounded batch actually emitted, so compact prompt limits cannot
 skip canonical room events.
@@ -93,17 +94,17 @@ skip canonical room events.
 
 External participants retain their native context and working environment.
 Codex participants may opt into one narrow runtime adapter: `room join` binds
-the current `CODEX_THREAD_ID`, validated through the owner-local Codex app-server
-control socket. The delivery manager injects exact new room events with
-`turn/start`, which starts an idle turn or steers an eligible active turn. It
-quiet-period batches ordinary activity, flushes continuously busy rooms at a
+the current `CODEX_THREAD_ID` and verifies that the local CLI supports
+`codex queue`. The delivery manager sends exact new room events to that open
+conversation with `codex queue --thread ... --message ...`. It batches ordinary
+activity after a short quiet period, flushes continuously busy rooms at a
 bounded maximum delay, and bypasses that delay for a direct participant mention
 or `@everyone` broadcast. The compact delivery envelope does not repeat the full
 CLI manual or claim that silence is always appropriate: the participant decides
 whether an event addresses it directly, collectively, or through its room role.
-The manager does not resume unloaded threads, start external terminals, or
-capture provider transcripts. Undelivered events remain queued and the same
-stable participant can rebind to a new thread by joining again.
+The manager never passes `--resume`, starts external terminals, or captures
+provider transcripts. The same stable participant can rebind to a new open
+thread by joining again.
 
 Non-Codex tools and manual scripts join with `--delivery none` and use the CLI
 feed directly. Delivery cursors and acknowledgement cursors are separate durable

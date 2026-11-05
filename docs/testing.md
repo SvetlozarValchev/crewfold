@@ -18,11 +18,11 @@ line of a short burst as a separate turn, acknowledge a delta before its Codex
 turn settles, or redeliver the room history immediately after onboarding.
 
 Codex delivery tests cover default CLI self-binding, persistent notification
-cursors, queued delivery, and rebinding the same participant to a replacement
+cursors, CLI queue failures, and rebinding the same participant to a replacement
 thread. They also reject one-turn-per-event regressions for ordinary bursts while
 requiring direct mentions to bypass the batching delay. A gated real-runtime
-probe uses a disposable Codex thread to validate the owner-local app-server
-WebSocket and turn injection without touching an existing conversation.
+probe uses a disposable open Codex thread to validate `codex queue` delivery
+without touching an existing conversation.
 
 Tailnet coverage runs against temporary loopback servers only. It exercises
 network enablement, one-use enrollment, replay rejection, room membership

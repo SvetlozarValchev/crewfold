@@ -35,22 +35,21 @@ cursor. Rejoining the same handle reactivates the identity and catches it up fro
 the preserved cursor rather than replaying the room from the beginning.
 
 For Codex participants, the handle also stores one replaceable delivery binding
-to a durable Codex thread. Joining from inside Codex discovers
-`CODEX_THREAD_ID`; resuming that thread preserves the binding, while joining the
-same handle from a fresh thread replaces only the delivery target. Crewfold may
-inject room activity into that conversation, but it does not own or restart the
-external process. Activity remains queued while the thread is unloaded or cannot
-accept input. A direct mention or `@everyone` broadcast bypasses delivery
-batching; ordinary nearby events share one compact turn after a short quiet
-period, with a bounded maximum wait while the room remains continuously active.
+to a Codex thread. Joining from inside Codex discovers `CODEX_THREAD_ID`; joining
+the same handle from a fresh thread replaces only the delivery target. Crewfold
+sends room activity to that open conversation with `codex queue`, but it does
+not own, start, or resume the external process. A direct mention or `@everyone`
+broadcast bypasses delivery batching; ordinary nearby events share one compact
+turn after a short quiet period, with a bounded maximum wait while the room
+remains continuously active.
 The recipient determines from the events whether it is addressed directly,
 collectively, or through its room role.
 
 Tailnet participation preserves this contract without centralizing provider
 sessions. The hub stores the room membership and pending delivery cursor. A
 machine-level collaborator connector stores each Codex thread target and
-injects through that machine's app-server. One service can carry independent
-agent bindings across multiple hubs. Claude Code can instead attach an experimental
+sends through that machine's `codex queue` command. One service can carry
+independent agent bindings across multiple hubs. Claude Code can instead attach an experimental
 Crewfold Channel that receives room activity and exposes narrow room reply and
 context tools. Provider targets stay on the collaborator's device. One-use
 invites grant one device membership in one room and never grant owner authority.
@@ -116,9 +115,9 @@ rewrite canonical content.
 Crewfold does not manage external participant processes, repositories, tasks,
 grants, checkouts, builds, or development servers. Those remain in the tools
 where the user already runs them. It owns only the optional room steward's named
-Herdr session. For a bound external Codex participant it uses Codex app-server as
-a narrow notification control plane; the CLI and room store remain the shared
-data plane.
+Herdr session. For a bound external Codex participant it invokes the local
+`codex queue` command as a narrow notification path; the CLI and room store
+remain the shared data plane.
 
 The optional tailnet API does not expose the owner credential or turn the owner
 console into a remote control plane. The daemon remains loopback-bound behind

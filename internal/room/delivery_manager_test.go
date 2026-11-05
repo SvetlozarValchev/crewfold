@@ -3,40 +3,31 @@ package room
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"crewfold/internal/codexapp"
 )
 
 type fakeCodexDelivery struct {
-	mu         sync.Mutex
-	threads    map[string]codexapp.Thread
-	prompts    []string
-	targets    []string
-	messageIDs []string
-	deliverErr error
+	mu          sync.Mutex
+	prompts     []string
+	targets     []string
+	validateErr error
+	deliverErr  error
 }
 
-func (f *fakeCodexDelivery) Inspect(_ context.Context, threadID string) (codexapp.Thread, error) {
-	thread, ok := f.threads[threadID]
-	if !ok {
-		return codexapp.Thread{}, errors.New("thread not found")
-	}
-	return thread, nil
+func (f *fakeCodexDelivery) Validate(context.Context, string) error {
+	return f.validateErr
 }
 
-func (f *fakeCodexDelivery) Deliver(_ context.Context, threadID, prompt, messageID string) error {
+func (f *fakeCodexDelivery) Deliver(_ context.Context, threadID, prompt string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.targets = append(f.targets, threadID)
 	f.prompts = append(f.prompts, prompt)
-	f.messageIDs = append(f.messageIDs, messageID)
 	return f.deliverErr
 }
 
@@ -58,11 +49,7 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	available := true
-	runtime := &fakeCodexDelivery{threads: map[string]codexapp.Thread{
-		"thread-one": {ID: "thread-one", Status: codexapp.ThreadStatus{Type: "idle"}, CanAcceptDirectInput: &available},
-		"thread-two": {ID: "thread-two", Status: codexapp.ThreadStatus{Type: "idle"}, CanAcceptDirectInput: &available},
-	}}
+	runtime := &fakeCodexDelivery{}
 	manager := NewDeliveryManager(ctx, store, runtime, "/usr/bin/crewfold", "/run/crewfold.sock")
 	manager.batchQuietPeriod = 0
 	first, err := store.Join(ctx, JoinInput{Room: "shared", Handle: "first", WorkingDirectory: firstDirectory, Delivery: "codex", ThreadID: "thread-one"})
@@ -79,9 +66,6 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 	manager.deliverPending()
 	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], "compare the interface contract") || !strings.Contains(runtime.prompts[0], "agent of human @owner") || !strings.Contains(runtime.prompts[0], "@second · agent of @owner") || !strings.Contains(runtime.prompts[0], "send shared --stdin") || !strings.Contains(runtime.prompts[0], "directly, collectively, or through your room role") || !strings.Contains(runtime.prompts[0], "Do not poll") || strings.Contains(runtime.prompts[0], "No response is required") || strings.Contains(runtime.prompts[0], "Share a file with") {
 		t.Fatalf("unexpected delivery: targets=%#v prompts=%#v", runtime.targets, runtime.prompts)
-	}
-	if runtime.messageIDs[0] != "crewfold:"+first.ID+":"+fmt.Sprint(message.Sequence) {
-		t.Fatalf("delivery id = %q", runtime.messageIDs[0])
 	}
 	snapshot, err := store.Snapshot(ctx, "shared", 0, 50)
 	if err != nil {
@@ -101,7 +85,7 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 	}
 }
 
-func TestUnavailableCodexThreadLeavesDeliveryQueued(t *testing.T) {
+func TestFailedCodexQueueLeavesDeliveryPending(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	store, err := Open(ctx, t.TempDir())
@@ -122,20 +106,17 @@ func TestUnavailableCodexThreadLeavesDeliveryQueued(t *testing.T) {
 	if _, err := store.Send(ctx, SendInput{Room: "queued", Owner: true, Body: "new evidence"}); err != nil {
 		t.Fatal(err)
 	}
-	runtime := &fakeCodexDelivery{threads: map[string]codexapp.Thread{}, deliverErr: codexapp.ErrThreadNotLoaded}
+	runtime := &fakeCodexDelivery{deliverErr: errors.New("queue Codex message: session unavailable")}
 	manager := NewDeliveryManager(ctx, store, runtime, "crewfold", "/tmp/crewfold.sock")
 	manager.batchQuietPeriod = 0
-	// Validation is deliberately separate from delivery. Simulate a route that
-	// was valid when it joined but whose terminal is now unloaded.
-	runtime.threads["offline"] = codexapp.Thread{ID: "offline", Status: codexapp.ThreadStatus{Type: "notLoaded"}}
 	manager.deliverPending()
 	snapshot, err := store.Snapshot(ctx, "queued", 0, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
 	delivery := participantNamed(snapshot.Participants, "agent").Delivery
-	if delivery == nil || delivery.Status != "queued" || delivery.LastDeliveredSequence != 0 || !strings.Contains(delivery.Error, "not currently loaded") {
-		t.Fatalf("queued delivery = %#v", delivery)
+	if delivery == nil || delivery.Status != "error" || delivery.LastDeliveredSequence != 0 || !strings.Contains(delivery.Error, "session unavailable") {
+		t.Fatalf("failed delivery = %#v", delivery)
 	}
 }
 
@@ -165,10 +146,7 @@ func TestCodexDeliveryBatchesBurstsAndBypassesDelayForMentions(t *testing.T) {
 	if _, err := store.Join(ctx, JoinInput{Room: "batched", Handle: "sender", WorkingDirectory: senderDirectory}); err != nil {
 		t.Fatal(err)
 	}
-	available := true
-	runtime := &fakeCodexDelivery{threads: map[string]codexapp.Thread{
-		"thread": {ID: "thread", Status: codexapp.ThreadStatus{Type: "idle"}, CanAcceptDirectInput: &available},
-	}}
+	runtime := &fakeCodexDelivery{}
 	manager := NewDeliveryManager(ctx, store, runtime, "crewfold", "/tmp/crewfold.sock")
 	manager.batchQuietPeriod = 5 * time.Second
 	manager.maximumBatchDelay = 30 * time.Second

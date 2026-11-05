@@ -13,18 +13,13 @@ import (
 
 	"crewfold/internal/appdirs"
 	"crewfold/internal/buildinfo"
-	"crewfold/internal/codexapp"
 	"crewfold/internal/room"
 )
 
 type availableCodexRuntime struct{}
 
-func (availableCodexRuntime) Inspect(_ context.Context, threadID string) (codexapp.Thread, error) {
-	available := true
-	return codexapp.Thread{ID: threadID, Status: codexapp.ThreadStatus{Type: "idle"}, CanAcceptDirectInput: &available}, nil
-}
-
-func (availableCodexRuntime) Deliver(context.Context, string, string, string) error { return nil }
+func (availableCodexRuntime) Validate(context.Context, string) error        { return nil }
+func (availableCodexRuntime) Deliver(context.Context, string, string) error { return nil }
 
 func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 	root := t.TempDir()

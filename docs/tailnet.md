@@ -18,7 +18,7 @@ owner browser ── localhost ── Crewfold hub ── SQLite and room docume
                │                                │
        Crewfold connector service       Crewfold connector Channel
                │                                │
-       local Codex app-server              local Claude Code
+         local codex queue                  local Claude Code
 ```
 
 The daemon does not bind a tailnet or LAN interface. Tailscale Serve is the only
@@ -103,8 +103,8 @@ crewfold-connector room join https://crewfold-host.example.ts.net \
 ```
 
 Codex remains the default delivery provider. Join validates the current
-`CODEX_THREAD_ID` against the collaborator's local app-server control socket,
-then stores that thread ID only in the collaborator's private configuration.
+`CODEX_THREAD_ID` and local `codex queue` support, then stores that thread ID
+and resolved Codex executable only in the collaborator's private configuration.
 The already-running connector service long-polls every configured hub and
 injects compact room batches locally. It reloads bindings automatically when
 an agent joins or leaves a room.
@@ -118,13 +118,18 @@ crewfold-connector service stop
 crewfold-connector service start
 ```
 
-If a Codex thread is unloaded or temporarily cannot accept direct input, the
-hub reports the delivery as queued or errored and retains its cursor for retry.
-Resume the same Codex thread; there is no need to enroll the device again. To
-move a stable participant handle to a fresh Codex thread, run `room join` again
-from that new thread and working directory.
+Crewfold invokes `codex queue --thread ... --message ...` and never passes
+`--resume`; the intended target is the already-open session in which the agent
+joined. To move a stable participant handle to another open Codex thread, run
+`room join` again from that thread and working directory.
 
 ### Claude Code
+
+Claude Code has no equivalent command for injecting a prompt into an ordinary
+open foreground session. Its resume command can continue the same transcript in
+another process, and supervised background sessions can be attached, but neither
+turns a normal foreground TUI into an externally addressable target. Crewfold
+therefore uses Claude Channels for live delivery to those sessions.
 
 Join from the project directory and select Claude delivery:
 

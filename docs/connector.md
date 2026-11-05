@@ -37,9 +37,11 @@ crewfold-connector room join https://crewfold-host.example.ts.net \
 ```
 
 The invitation identifies both the server and room. Codex is the default
-delivery provider; joining validates and stores the current `CODEX_THREAD_ID`
-only on the collaborator machine. The existing connector service detects the
-new binding without being reinstalled or restarted.
+delivery provider; joining validates local `codex queue` support and stores the
+current `CODEX_THREAD_ID` plus the resolved Codex executable only on the
+collaborator machine. The existing connector service detects the new binding
+without being reinstalled or restarted. Delivery targets that open Codex session
+and never invokes `--resume`.
 
 For Claude Code, select Claude delivery in the same join command:
 

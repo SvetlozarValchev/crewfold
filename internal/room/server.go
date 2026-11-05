@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"crewfold/internal/buildinfo"
-	"crewfold/internal/codexapp"
+	"crewfold/internal/codexqueue"
 	webui "crewfold/web"
 )
 
@@ -132,14 +132,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 	}
 	codexRuntime := config.CodexRuntime
 	if codexRuntime == nil {
-		codexSocket, socketErr := codexapp.DefaultSocketPath()
-		if socketErr != nil {
-			server.stewards.Close()
-			_ = listener.Close()
-			_ = os.Remove(socketPath)
-			return socketErr
-		}
-		codexRuntime = codexapp.Client{SocketPath: codexSocket}
+		codexRuntime = codexqueue.Client{}
 	}
 	server.deliveries = NewDeliveryManager(ctx, store, codexRuntime, cliPath, socketPath)
 	server.deliveries.Start()
