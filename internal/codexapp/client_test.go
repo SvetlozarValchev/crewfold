@@ -30,6 +30,9 @@ func TestClientInspectsAndDeliversToExistingThread(t *testing.T) {
 
 	var mutex sync.Mutex
 	var deliveredText string
+	var deliveredName string
+	var deliveredNamespace string
+	var deliveredInputCount int
 	serverErrors := make(chan error, 2)
 	go func() {
 		for connectionIndex := 0; connectionIndex < 2; connectionIndex++ {
@@ -43,12 +46,13 @@ func TestClientInspectsAndDeliversToExistingThread(t *testing.T) {
 				method, params, serveErr := serveAppServerConnection(connection)
 				if serveErr == nil && method == "turn/start" {
 					input, _ := params["input"].([]any)
-					if len(input) > 0 {
-						item, _ := input[0].(map[string]any)
-						mutex.Lock()
-						deliveredText, _ = item["text"].(string)
-						mutex.Unlock()
-					}
+					toolOutput, _ := params["toolOutput"].(map[string]any)
+					mutex.Lock()
+					deliveredInputCount = len(input)
+					deliveredText, _ = toolOutput["output"].(string)
+					deliveredName, _ = toolOutput["name"].(string)
+					deliveredNamespace, _ = toolOutput["namespace"].(string)
+					mutex.Unlock()
 				}
 				serverErrors <- serveErr
 			}(connection)
@@ -68,6 +72,9 @@ func TestClientInspectsAndDeliversToExistingThread(t *testing.T) {
 	defer mutex.Unlock()
 	if deliveredText != "room message #7" {
 		t.Fatalf("delivered text = %q", deliveredText)
+	}
+	if deliveredInputCount != 0 || deliveredName != "room_activity" || deliveredNamespace != "crewfold" {
+		t.Fatalf("delivery envelope = input:%d name:%q namespace:%q", deliveredInputCount, deliveredName, deliveredNamespace)
 	}
 }
 

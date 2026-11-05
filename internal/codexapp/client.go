@@ -83,9 +83,9 @@ func (c Client) Inspect(ctx context.Context, threadID string) (Thread, error) {
 	return response.Thread, nil
 }
 
-// Deliver adds one visible room notification to the same Codex thread. The
-// app-server starts a turn when the thread is idle and steers a steerable active
-// turn when one is already running.
+// Deliver adds room activity to the same Codex thread as an external tool
+// message. This keeps Crewfold distinct from owner input and lets Codex render
+// the delivery as a compact tool event instead of a full user-message card.
 func (c Client) Deliver(ctx context.Context, threadID, text, messageID string) error {
 	thread, err := c.Inspect(ctx, threadID)
 	if err != nil {
@@ -110,7 +110,14 @@ func (c Client) Deliver(ctx context.Context, threadID, text, messageID string) e
 	defer connection.Close()
 	params := map[string]any{
 		"threadId": threadID,
-		"input":    []map[string]string{{"type": "text", "text": text}},
+		"input":    []map[string]string{},
+		"toolOutput": map[string]any{
+			"name":      "room_activity",
+			"namespace": "crewfold",
+			"output":    text,
+			"retain":    true,
+		},
+		"turnTrigger": "crewfold_room_activity",
 	}
 	if strings.TrimSpace(messageID) != "" {
 		params["clientUserMessageId"] = messageID
