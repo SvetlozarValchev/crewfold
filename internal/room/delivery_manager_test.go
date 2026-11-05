@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -64,7 +65,7 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.deliverPending()
-	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], "compare the interface contract") || !strings.Contains(runtime.prompts[0], "agent of human @owner") || !strings.Contains(runtime.prompts[0], "@second · agent of @owner") || !strings.Contains(runtime.prompts[0], "send shared --stdin") || !strings.Contains(runtime.prompts[0], "directly, collectively, or through your room role") || !strings.Contains(runtime.prompts[0], "Do not poll") || strings.Contains(runtime.prompts[0], "No response is required") || strings.Contains(runtime.prompts[0], "Share a file with") {
+	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], `receive "shared" --after 0 --through `+strconv.FormatInt(message.Sequence, 10)) || strings.Contains(runtime.prompts[0], "compare the interface contract") || strings.Contains(runtime.prompts[0], "directly, collectively") || len(runtime.prompts[0]) > 240 {
 		t.Fatalf("unexpected delivery: targets=%#v prompts=%#v", runtime.targets, runtime.prompts)
 	}
 	snapshot, err := store.Snapshot(ctx, "shared", 0, 50)
@@ -160,7 +161,8 @@ func TestCodexDeliveryBatchesBurstsAndBypassesDelayForMentions(t *testing.T) {
 	}
 
 	current = current.Add(2 * time.Second)
-	if _, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "All agents need to report their current state."}); err != nil {
+	second, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "All agents need to report their current state."})
+	if err != nil {
 		t.Fatal(err)
 	}
 	manager.deliverPending()
@@ -170,25 +172,27 @@ func TestCodexDeliveryBatchesBurstsAndBypassesDelayForMentions(t *testing.T) {
 
 	current = current.Add(5 * time.Second)
 	manager.deliverPending()
-	if len(runtime.prompts) != 1 || !strings.Contains(runtime.prompts[0], "first nearby update") || !strings.Contains(runtime.prompts[0], "All agents need to report their current state.") || !strings.Contains(runtime.prompts[0], "directly, collectively, or through your room role") {
+	if len(runtime.prompts) != 1 || !strings.Contains(runtime.prompts[0], `receive "batched" --after 0 --through `+strconv.FormatInt(second.Sequence, 10)) || strings.Contains(runtime.prompts[0], "first nearby update") || strings.Contains(runtime.prompts[0], "All agents need") || len(runtime.prompts[0]) > 240 {
 		t.Fatalf("quiet burst was not delivered as one prompt: %#v", runtime.prompts)
 	}
 
 	current = current.Add(time.Second)
-	if _, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "@agent check this now"}); err != nil {
+	direct, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "@agent check this now"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	manager.deliverPending()
-	if len(runtime.prompts) != 2 || !strings.Contains(runtime.prompts[1], "@agent check this now") {
+	if len(runtime.prompts) != 2 || !strings.Contains(runtime.prompts[1], `--after `+strconv.FormatInt(second.Sequence, 10)+` --through `+strconv.FormatInt(direct.Sequence, 10)) || strings.Contains(runtime.prompts[1], "check this now") {
 		t.Fatalf("direct mention did not bypass batching: %#v", runtime.prompts)
 	}
 
 	current = current.Add(time.Second)
-	if _, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "@everyone report current state"}); err != nil {
+	broadcast, err := store.Send(ctx, SendInput{Room: "batched", WorkingDirectory: senderDirectory, Body: "@everyone report current state"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	manager.deliverPending()
-	if len(runtime.prompts) != 3 || !strings.Contains(runtime.prompts[2], "@everyone report current state") {
+	if len(runtime.prompts) != 3 || !strings.Contains(runtime.prompts[2], `--after `+strconv.FormatInt(direct.Sequence, 10)+` --through `+strconv.FormatInt(broadcast.Sequence, 10)) || strings.Contains(runtime.prompts[2], "report current state") {
 		t.Fatalf("broadcast mention did not bypass batching: %#v", runtime.prompts)
 	}
 }

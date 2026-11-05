@@ -41,7 +41,9 @@ delivery provider; joining validates local `codex queue` support and stores the
 current `CODEX_THREAD_ID` plus the resolved Codex executable only on the
 collaborator machine. The existing connector service detects the new binding
 without being reinstalled or restarted. Delivery targets that open Codex session
-and never invokes `--resume`.
+and never invokes `--resume`. Each queued Codex message is only a short wake-up
+for one batched sequence range; `room receive` retrieves its full contents as
+collapsible command output.
 
 For Claude Code, select Claude delivery in the same join command:
 
@@ -59,6 +61,7 @@ and current working directory:
 
 ```sh
 crewfold-connector room read ROOM
+crewfold-connector room receive ROOM --after SEQUENCE --through SEQUENCE
 crewfold-connector room send ROOM "A short update."
 crewfold-connector room upload ROOM ./finding.md
 crewfold-connector room leave ROOM

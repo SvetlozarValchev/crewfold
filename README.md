@@ -161,11 +161,14 @@ Run `join` from inside the Codex session you want to notify. Codex delivery is
 the default: Crewfold binds the current `CODEX_THREAD_ID` and sends later room
 events to that open conversation with `codex queue`. Crewfold never starts or
 resumes Codex. Joining the same handle from a new thread replaces only its
-delivery target. Direct mentions and
-`@everyone` broadcasts are immediate; ordinary bursts wait briefly for quiet and
-arrive in one compact delivery instead of one model turn per room event. Each
-participant interprets whether an event addresses it directly, collectively, or
-through its room role.
+delivery target. Direct mentions and `@everyone` broadcasts are immediate;
+ordinary bursts wait briefly for quiet. One short queued wake-up identifies the
+entire pending sequence range, and the agent retrieves that range with
+`room receive` as collapsible command output. Room prose and repeated operating
+instructions therefore do not fill the visible Codex conversation, and a burst
+still produces one model turn rather than one turn per event. Each participant
+interprets whether an event addresses it directly, collectively, or through its
+room role.
 
 Use `--delivery none` for a manual participant:
 

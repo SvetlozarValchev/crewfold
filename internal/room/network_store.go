@@ -612,7 +612,7 @@ func (s *Store) NetworkDeliveryBatch(ctx context.Context, deviceID, participantI
 		}
 		filtered = append(filtered, message)
 	}
-	return NetworkDeliveryBatch{Room: room, Participant: participant, Participants: participants, Messages: filtered, Through: through}, nil
+	return NetworkDeliveryBatch{Room: room, Participant: participant, Participants: participants, Messages: filtered, After: binding.LastDeliveredSequence, Through: through}, nil
 }
 
 func (s *Store) RecordNetworkDelivery(ctx context.Context, deviceID string, input NetworkDeliveryResultInput) (NetworkBinding, error) {

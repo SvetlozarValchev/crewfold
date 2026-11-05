@@ -485,7 +485,7 @@ func localClaudeChannelDeliveryLoop(ctx context.Context, bindingPath string, bin
 			emittedThrough := through
 			if len(messages) > 0 {
 				batch := room.NetworkDeliveryBatch{Room: snapshot.Room, Participant: room.Participant{ID: binding.ParticipantID, Handle: binding.Handle, HumanHandle: "owner"}, Participants: snapshot.Participants, Messages: messages, Through: through}
-				content, includedThrough := networkDeliveryPrompt(batch)
+				content, includedThrough := networkDeliveryContent(batch)
 				if err := transport.write(map[string]any{
 					"jsonrpc": "2.0", "method": "notifications/claude/channel",
 					"params": map[string]any{"content": content, "meta": map[string]string{
@@ -531,7 +531,7 @@ func claudeChannelDeliveryLoop(ctx context.Context, hub remoteHub, binding remot
 			continue
 		}
 		if len(batch.Messages) > 0 {
-			content, deliveredThrough := networkDeliveryPrompt(batch)
+			content, deliveredThrough := networkDeliveryContent(batch)
 			err := transport.write(map[string]any{
 				"jsonrpc": "2.0", "method": "notifications/claude/channel",
 				"params": map[string]any{"content": content, "meta": map[string]string{

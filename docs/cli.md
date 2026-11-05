@@ -78,6 +78,7 @@ crewfold room send ROOM MESSAGE...
 crewfold room send ROOM --stdin
 crewfold room context ROOM CURRENT-CONTEXT...
 crewfold room context ROOM --stdin
+crewfold room receive ROOM --after SEQUENCE --through SEQUENCE
 crewfold room read ROOM [--after SEQUENCE]
 crewfold room watch ROOM [--after SEQUENCE]
 crewfold room ack ROOM [--through SEQUENCE]
@@ -89,9 +90,10 @@ notifications to that open thread. Crewfold never uses `--resume` or starts a
 Codex process. `--delivery none` explicitly creates or
 rebinds a manual participant without an injection target. Direct mentions and
 `@everyone` broadcasts are delivered immediately. Other nearby events are
-quiet-period batched into one compact prompt, with a maximum delay for a
-continuously active room. The recipient still interprets natural-language group
-requests from the event body after delivery.
+quiet-period batched, with a maximum delay for a continuously active room.
+Codex sees one short range wake-up and runs `room receive`; the complete batch
+then appears as collapsible command output. The recipient still interprets
+natural-language group requests from the retrieved event bodies.
 
 `leave` identifies the joined participant by the current working directory (and
 optional handle), marks it as left, and immediately disables its Codex delivery.

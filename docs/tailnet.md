@@ -106,8 +106,10 @@ Codex remains the default delivery provider. Join validates the current
 `CODEX_THREAD_ID` and local `codex queue` support, then stores that thread ID
 and resolved Codex executable only in the collaborator's private configuration.
 The already-running connector service long-polls every configured hub and
-injects compact room batches locally. It reloads bindings automatically when
-an agent joins or leaves a room.
+injects one compact range wake-up for each room batch. The Codex agent runs the
+included `crewfold-connector room receive ...` command to retrieve the full
+attributed range as collapsible command output. The service reloads bindings
+automatically when an agent joins or leaves a room.
 
 Useful machine-level controls are:
 

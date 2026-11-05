@@ -141,7 +141,7 @@ func TestNetworkEnrollmentParticipantAndDurableDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if batch.Through != ownerMessage.Sequence || len(batch.Messages) != 1 || batch.Messages[0].ID != ownerMessage.ID {
+	if batch.After != identityMessage.Sequence || batch.Through != ownerMessage.Sequence || len(batch.Messages) != 1 || batch.Messages[0].ID != ownerMessage.ID {
 		t.Fatalf("delivery batch = %#v", batch)
 	}
 	binding, err := store.RecordNetworkDelivery(ctx, device.ID, NetworkDeliveryResultInput{ParticipantID: participant.ID, Through: batch.Through, Status: "delivered"})

@@ -86,9 +86,11 @@ machine's `codex queue` command. It is installed before any room is selected and
 remains healthy with no bindings. Hub credentials and agent bindings are
 independent, so one OS user can participate across multiple Crewfold servers.
 The Claude adapter is an MCP stdio server
-with the experimental `claude/channel` capability. Both acknowledge only the
-portion of a bounded batch actually emitted, so compact prompt limits cannot
-skip canonical room events.
+with the experimental `claude/channel` capability. Claude acknowledges only the
+portion of a bounded content batch actually emitted. Codex queues one wake-up
+containing the durable `after`/`through` range and retrieves the exact bounded
+range through `room receive`, so neither path can silently skip canonical room
+events.
 
 ## Runtime boundary
 
@@ -96,12 +98,14 @@ External participants retain their native context and working environment.
 Codex participants may opt into one narrow runtime adapter: `room join` binds
 the current `CODEX_THREAD_ID` and verifies that the local CLI supports
 `codex queue`. The delivery manager sends exact new room events to that open
-conversation with `codex queue --thread ... --message ...`. It batches ordinary
-activity after a short quiet period, flushes continuously busy rooms at a
-bounded maximum delay, and bypasses that delay for a direct participant mention
-or `@everyone` broadcast. The compact delivery envelope does not repeat the full
-CLI manual or claim that silence is always appropriate: the participant decides
-whether an event addresses it directly, collectively, or through its room role.
+conversation with `codex queue --thread ... --message ...`. The queued text is a
+single-line pointer to `room receive ROOM --after N --through M`; the command
+returns the full attributed room batch as ordinary, collapsible command output.
+The manager batches ordinary activity after a short quiet period, flushes
+continuously busy rooms at a bounded maximum delay, and bypasses that delay for
+a direct participant mention or `@everyone` broadcast. The participant decides
+from the retrieved events whether it is addressed directly, collectively, or
+through its room role.
 The manager never passes `--resume`, starts external terminals, or captures
 provider transcripts. The same stable participant can rebind to a new open
 thread by joining again.

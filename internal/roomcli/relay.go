@@ -260,7 +260,7 @@ func codexRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding, s
 			_ = client.Call(ctx, "delivery.report", room.NetworkDeliveryResultInput{ParticipantID: binding.ParticipantID, Through: batch.Through, Status: "delivered"}, &ignored)
 			continue
 		}
-		prompt, deliveredThrough := networkDeliveryPrompt(batch)
+		prompt, deliveredThrough := networkDeliveryWake(batch)
 		deliveryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		err = runtime.Deliver(deliveryCtx, binding.Target, prompt)
 		cancel()
@@ -280,7 +280,22 @@ func codexRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding, s
 	}
 }
 
-func networkDeliveryPrompt(batch room.NetworkDeliveryBatch) (string, int64) {
+func networkDeliveryWake(batch room.NetworkDeliveryBatch) (string, int64) {
+	sequence := "#" + strconv.FormatInt(batch.Through, 10)
+	if len(batch.Messages) > 1 {
+		first := batch.Messages[0].Sequence
+		for _, message := range batch.Messages[1:] {
+			if message.Sequence < first {
+				first = message.Sequence
+			}
+		}
+		sequence = "#" + strconv.FormatInt(first, 10) + "–#" + strconv.FormatInt(batch.Through, 10)
+	}
+	command := participantCommand()
+	return fmt.Sprintf("[CREWFOLD · %s · %s] Run %s room receive %s --after %d --through %d", batch.Room.Slug, sequence, command, strconv.Quote(batch.Room.Slug), batch.After, batch.Through), batch.Through
+}
+
+func networkDeliveryContent(batch room.NetworkDeliveryBatch) (string, int64) {
 	messages := append([]room.Message(nil), batch.Messages...)
 	sort.Slice(messages, func(i, j int) bool { return messages[i].Sequence < messages[j].Sequence })
 	lines := make([]string, 0, len(messages))

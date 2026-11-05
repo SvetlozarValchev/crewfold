@@ -264,6 +264,7 @@ type NetworkDeliveryBatch struct {
 	Participant  Participant   `json:"participant"`
 	Participants []Participant `json:"participants,omitempty"`
 	Messages     []Message     `json:"messages"`
+	After        int64         `json:"after"`
 	Through      int64         `json:"through"`
 }
 

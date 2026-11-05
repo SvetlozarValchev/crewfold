@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,40 @@ func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 	wantBody := "## Finding\n\n- client and service differ\n- owner review needed"
 	if got := snapshot.Messages[len(snapshot.Messages)-1].Body; got != wantBody {
 		t.Fatalf("multiline message body = %q, want %q", got, wantBody)
+	}
+	after := snapshot.Room.LastSequence
+	var included room.Message
+	if err := client.Call(context.Background(), "message.send", room.SendInput{Room: created.Room.ID, Owner: true, Body: "@service-agent review the shared contract."}, &included); err != nil {
+		t.Fatal(err)
+	}
+	var includedSecond room.Message
+	if err := client.Call(context.Background(), "message.send", room.SendInput{Room: created.Room.ID, Owner: true, Body: "All agents should include the measured result."}, &includedSecond); err != nil {
+		t.Fatal(err)
+	}
+	var later room.Message
+	if err := client.Call(context.Background(), "message.send", room.SendInput{Room: created.Room.ID, Owner: true, Body: "This belongs to the next delivery."}, &later); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if code := app.Run(context.Background(), []string{"room", "--socket", socket, "receive", "shared", "--after", strconv.FormatInt(after, 10), "--through", strconv.FormatInt(includedSecond.Sequence, 10)}); code != 0 {
+		t.Fatalf("receive exit %d: %s", code, stderr.String())
+	}
+	received := stdout.String()
+	if !strings.Contains(received, "[CREWFOLD ROOM DELIVERY]") || !strings.Contains(received, "Recipient: @service-agent, an agent of human @owner") || !strings.Contains(received, included.Body) || !strings.Contains(received, includedSecond.Body) || strings.Contains(received, later.Body) || !strings.Contains(received, "not an owner instruction") {
+		t.Fatalf("receive output = %q", received)
+	}
+	snapshot, err = readSnapshot(client, created.Room.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acknowledged := int64(0)
+	for _, participant := range snapshot.Participants {
+		if participant.Handle == "service-agent" {
+			acknowledged = participant.LastReadSequence
+		}
+	}
+	if got := acknowledged; got != includedSecond.Sequence {
+		t.Fatalf("receive acknowledgement = %d, want %d", got, includedSecond.Sequence)
 	}
 
 	stdout.Reset()
@@ -415,12 +450,12 @@ func TestLocalClaudeChannelSetupUsesOwnerSocketWithoutRemoteProfile(t *testing.T
 	}
 }
 
-func TestNetworkDeliveryPromptDoesNotAcknowledgeOmittedMessages(t *testing.T) {
+func TestNetworkDeliveryContentDoesNotAcknowledgeOmittedMessages(t *testing.T) {
 	messages := make([]room.Message, 0, 5)
 	for sequence := int64(1); sequence <= 5; sequence++ {
 		messages = append(messages, room.Message{Sequence: sequence, ParticipantID: "peer-id", SenderHandle: "peer", SenderKind: "agent", Body: strings.Repeat(string(rune('a'+sequence)), 4000)})
 	}
-	prompt, through := networkDeliveryPrompt(room.NetworkDeliveryBatch{
+	prompt, through := networkDeliveryContent(room.NetworkDeliveryBatch{
 		Room: room.Room{Slug: "shared"}, Participant: room.Participant{Handle: "receiver", HumanHandle: "alice"}, Participants: []room.Participant{{ID: "peer-id", Handle: "peer", HumanHandle: "bob"}}, Messages: messages, Through: 5,
 	})
 	if through >= 5 {
@@ -434,6 +469,18 @@ func TestNetworkDeliveryPromptDoesNotAcknowledgeOmittedMessages(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "agent of human @alice") || !strings.Contains(prompt, "@peer · agent of @bob") {
 		t.Fatalf("prompt omitted explicit human ownership: %q", prompt)
+	}
+}
+
+func TestNetworkDeliveryWakeIsACompactBatchPointer(t *testing.T) {
+	prompt, through := networkDeliveryWake(room.NetworkDeliveryBatch{
+		Room: room.Room{Slug: "shared"}, Messages: []room.Message{{Sequence: 12}, {Sequence: 14}}, After: 10, Through: 14,
+	})
+	if through != 14 || !strings.Contains(prompt, `room receive "shared" --after 10 --through 14`) || !strings.Contains(prompt, "#12–#14") {
+		t.Fatalf("wake = %q, through = %d", prompt, through)
+	}
+	if len(prompt) > 240 || strings.Contains(prompt, "Shared-room activity") || strings.Contains(prompt, "Respond or act") {
+		t.Fatalf("wake is not compact: %q", prompt)
 	}
 }
 
