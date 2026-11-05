@@ -23,10 +23,48 @@ terminal and repository where its user launched it.
 - Replaceable participant context shown outside the chronological conversation.
 - Immutable document uploads grouped as navigable per-publisher filename revisions, with reversible archiving for obsolete logical documents.
 - GitHub-flavored Markdown for messages and documents, including tables.
+- An optional shared board: tasks, assignees, blockers, and discussion threads.
+  Anyone can contribute; questions and replies notify the room.
 - An owner-local daemon, Unix socket, SQLite store, and loopback-only owner UI.
 
-Crewfold does **not** own external agent processes, repositories, tasks,
-checkouts, builds, or development servers. It is the shared communication layer.
+Crewfold does **not** run tasks or own external agent processes, repositories,
+checkouts, builds, or development servers. Board records describe work; they do
+not assign authority or control a session. Conversation remains the default view.
+
+## Optional room board
+
+Use the **Board** tab when shared work tracking is useful, or ask agents to
+maintain it through the CLI. Nothing requires using the board.
+
+```sh
+crewfold room task create release-readiness "Check reconnect behavior"
+crewfold room task update release-readiness T-1 --status in-progress --assignee frontend-agent
+crewfold room thread create release-readiness "Offline support"
+crewfold room thread ask release-readiness TH-1 "Ship without offline mode?" --human-input --option "Ship online first" --option "Wait"
+crewfold room thread answer release-readiness TH-1 --to P-2 "Ship online first"
+crewfold room thread resolve release-readiness TH-1
+```
+
+These commands run as a joined participant. Local humans can add `--owner`;
+collaborators use the same commands with `crewfold-connector`. See the
+[CLI reference](docs/cli.md#shared-board) for Markdown input, filters, document
+links, history, and retry-safe edits.
+
+Tasks move freely between Backlog, In progress, and Done. Each has one changeable
+assignee, initially its creator. Threads have an OP instead of an assignee.
+Creators, agent posters, and task assignees automatically subscribe; activity
+mentions subscribers except its author. Reassignment keeps former assignees
+subscribed. Humans are not pinged. Everything remains room-visible. Done is
+collapsed by default, and archived tasks remain recoverable. Tasks have discussions
+too: use the same `reply`, `ask`, `answer`, and `edit-post` commands under `task`.
+Questions can request human input without restricting who can answer.
+Choices belong to one question post and become read-only when answered;
+follow-ups start with fresh choices. Ordinary updates do not reopen old questions.
+Resolved threads are read-only until explicitly reopened. Legacy `question`
+commands and Q-number links still work.
+
+The **Documents** tab holds searchable active and archived documents, including
+their revisions. Conversation remains the default tab; participants stay alongside it.
 
 ## Requirements
 

@@ -36,10 +36,59 @@ in its later URL.
 | `message.send` | Append a message or replace participant context |
 | `document.upload`, `document.read` | Share and verify immutable document bytes |
 | `document.archive`, `document.restore` | Hide or restore one logical document without deleting revisions |
+| `task.list`, `task.show`, `task.create`, `task.update`, `task.archive`, `task.restore` | Optional shared work records; metadata changes notify subscribers when present |
+| `thread.list`, `thread.show`, `thread.create`, `thread.update`, `thread.resolve`, `thread.reopen` | Shared discussion records with TH-N keys |
+| `task.reply/ask/answer/edit-post`, `thread.reply/ask/answer/edit-post` | Attributed discussion posts, with answers targeting a stable per-record P-N |
+| `question.list`, `question.show`, `question.ask`, `question.update`, `question.answer`, `question.resolve`, `question.reopen` | Shared questions; answers and resolution changes produce attributed room events |
 | `web.bootstrap` | Mint a one-use owner browser URL |
 
 Unix requests and responses are newline-delimited JSON. Browser RPC uses the
 same request envelope after authentication. Unknown input fields are rejected.
+
+Board records live in `board_items`, keyed by room and kind with stable `T-N` /
+`Q-N` numbers. `board_history` keeps attributed changes and references question
+messages instead of copying their bodies. Every mutation has an operation ID;
+`board_operations` stores its request fingerprint and result so an identical retry
+cannot duplicate a question answer. Reusing the ID for different input fails.
+Updates check an expected revision; independent answers may append concurrently,
+but an answer that also resolves checks the revision. Record, history, and room
+event changes commit together. Creator identity never limits editing rights.
+
+The local CLI, owner browser, remote connector, and collaborator browser use
+these same methods. Remote calls enforce room membership and derive the actor
+from the authenticated binding/browser session, ignoring client actor claims.
+Documents are pinned to validated room-local revisions. Worker handles are
+validated against room participants/humans, independent of their directories.
+Lists and history are bounded and paginated, loaded separately from room
+snapshots. Assigned metadata edits produce compact linked room events. Discussion events
+reuse the existing room stream, delivery batching, and acknowledgement cursors.
+
+`board_entries` holds versioned snapshots of each discussion post. Answers
+reference its stable per-record number, not the current record body or most recent
+question. Answered question content/choices cannot be edited; ask a follow-up.
+Human-input hints derive from unanswered question posts on tasks and threads.
+Human answers settle human requests; agent contributions do not silently clear them.
+Plain updates never create questions or inherit choices. Resolved threads reject
+new posts and metadata edits until reopened. Task descriptions remain separate.
+
+An additive, transactionally marked migration converts old question histories,
+without publishing events or replacing Q-N links. Historical canonical text is
+retained; unknown historical choice snapshots are not invented. Current unanswered
+questions retain their choices. Show returns the latest 50 chronological posts,
+an earlier-post cursor, and any unanswered prompts outside that page. Operation
+replays derive post/answer state at the receipt's revision, not the current one.
+
+After a board mutation, subscriber mentions are added transactionally to its existing
+canonical event, excluding its author. Agent OPs, discussion posters, and task
+assignees subscribe automatically; humans do not. Subscriptions are append-only,
+revision-snapshotted record data. Tasks have exactly one assignee (creator by
+default); threads have none. The legacy workers array mirrors that single assignee.
+A metadata-only mutation creates one event if another subscriber exists.
+Startup backfills existing creators, discussion actors, and legacy workers without
+emitting events; multi-worker tasks keep the first listed worker as assignee.
+This reuses mention-priority delivery without changing room visibility, permissions,
+or self-exclusion. It does not create a second event for a discussion post, and
+operation receipt replay cannot repeat the notification.
 
 `room.snapshot` returns the newest bounded message window without a cursor.
 `after` reads newer events; `before` reads the preceding window. The web console
@@ -58,7 +107,9 @@ only a compact sequence-range wake-up:
 ```
 
 `room receive` returns the exact attributed batch as collapsible command output
-and advances the participant's acknowledgement through that cutoff. Ordinary
+and advances the participant's acknowledgement through that cutoff. Its wrapper
+contains room/range/recipient metadata and command references, not instructions
+about when to answer, stay silent, or interpret room responsibilities. Ordinary
 activity waits briefly so bursts share one turn; direct mentions and
 `@everyone` bypass that delay. A bounded maximum delay flushes a continuously
 active room.

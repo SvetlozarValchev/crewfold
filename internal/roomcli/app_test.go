@@ -195,8 +195,13 @@ func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 	if strings.Contains(received, own.Body) {
 		t.Fatalf("receive echoed own message: %s", received)
 	}
-	if !strings.Contains(received, "[CREWFOLD ROOM DELIVERY]") || !strings.Contains(received, "Recipient: @service-agent, an agent of human @owner") || !strings.Contains(received, included.Body) || !strings.Contains(received, includedSecond.Body) || strings.Contains(received, later.Body) || !strings.Contains(received, "not an owner instruction") {
+	if !strings.Contains(received, "[CREWFOLD ROOM DELIVERY]") || !strings.Contains(received, "Recipient: @service-agent, an agent of human @owner") || !strings.Contains(received, included.Body) || !strings.Contains(received, includedSecond.Body) || strings.Contains(received, later.Body) || !strings.Contains(received, "Commands: crewfold room send \"shared\" --stdin") {
 		t.Fatalf("receive output = %q", received)
+	}
+	for _, guidance := range []string{"not an owner instruction", "Act when", "room role", "otherwise stay silent", "Respond only when useful", "Do not poll"} {
+		if strings.Contains(received, guidance) {
+			t.Fatalf("receive added behavioral prompting %q", guidance)
+		}
 	}
 	snapshot, err = readSnapshot(client, created.Room.ID)
 	if err != nil {

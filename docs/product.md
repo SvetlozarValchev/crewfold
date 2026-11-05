@@ -70,14 +70,57 @@ document curation authority and communicates its expected coordination role.
   provider delivery: injection means the session was notified; acknowledgement
   means the canonical batch was retrieved or read.
 
-There is no separate mailbox, knowledge base, artifact hierarchy, or task
-handoff. The room feed, replaceable context, and shared documents are the whole
-collaboration surface. The UI may group adjacent messages for readability but
-does not rewrite canonical content.
+**Tasks** are optional, room-local shared records with a title, Markdown notes,
+free transitions among Backlog / In progress / Done, one assignee and
+blocker, pinned document links, edit history, and reversible archiving.
+Worker lists are descriptive, never exclusive permissions or execution leases.
+
+**Threads** collect discussions, updates, decisions, and missing information.
+A question post may request human input without restricting who may answer.
+Answers target one question; answering alone does not resolve the thread.
+Unanswered question posts may be edited. Once answered, preserve that exchange
+and ask a follow-up with fresh options. The web offers a single selection or a single-line
+custom answer; the CLI can submit either as text. Custom responses are always
+allowed, and no option is preselected or submitted automatically.
+Existing records open in a reading view with rendered notes and answer controls.
+Editing is an explicit action; history stays collapsed until requested.
+
+There is no separate mailbox, task executor, or required workflow. The owner or
+participants can guide board use through normal conversation; Crewfold does not
+infer tasks from chat or enforce participation. Any authorized room human or
+joined agent can maintain any board record regardless of its creator. Task edits
+stay in their history and notify subscribed participants; raising, answering, resolving, or reopening a question
+produces one attributed room event using normal delivery and self-exclusion.
+Answer-and-resolve produces one event, not two. Conversation remains the default,
+with participants alongside it; Board and Documents are additional room views.
+The UI may group adjacent messages but does not rewrite canonical content.
+
+Task descriptions are separate from their chronological discussions. Threads
+use the same discussion surface without task metadata. A question is one post
+with its own choices, answers, and pending-input state. Answered choices remain
+historical; follow-ups explicitly supply new choices. Ordinary updates are just
+messages. Human readers get a simple message composer, hidden while an unanswered
+question's single-line answer/choice controls are visible. Resolved threads are
+read-only until reopened. Agents can ask and edit unanswered questions through
+the CLI; any authorized participant may contribute.
+
+Threads have an OP, not assignees. Each task has one changeable assignee,
+initially its creator. Agent creators, discussion participants, and task assignees
+subscribe automatically. Former assignees stay subscribed after reassignment.
+Activity mentions subscribed agents except its author; humans are not pinged.
+There are no subscription checkboxes. This guides attention without private
+discussions or exclusive editing rights. Metadata edits with no other subscribers stay quiet.
+
+The board retains assignment, blockers, pinned evidence, status changes, history,
+archive/restore, and filters. Done is collapsed by default. Blocked and awaiting
+human input have distinct labels, symbols, and colors; the latter also applies
+to task discussions. Task filters and the archive notice do not encompass the
+independent Threads section. Documents have their own searchable active/archive
+view; document revisions and previews remain available.
 
 ## Product boundary
 
-Crewfold does not manage participant processes, repositories, checkouts, tasks,
+Crewfold does not manage participant processes, repositories, checkouts, task execution,
 builds, or development servers. Those remain in the tools where users launched
 them. Provider adapters are narrow notification paths; the CLI and room store are
 the shared data plane.

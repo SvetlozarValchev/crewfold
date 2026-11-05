@@ -198,6 +198,13 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(target)
 	}
+	if _, _, ok := boardMethod(method); ok {
+		var input BoardInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		return s.callBoard(ctx, method, input)
+	}
 	switch method {
 	case "status":
 		rooms, err := s.store.ListRooms(ctx)

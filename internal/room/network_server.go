@@ -199,6 +199,19 @@ func (s *Server) networkBrowserCall(ctx context.Context, device NetworkDevice, m
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(target)
 	}
+	if _, _, ok := boardMethod(method); ok {
+		var input BoardInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		room, err := s.store.NetworkRoom(ctx, device.ID, input.Room)
+		if err != nil {
+			return nil, err
+		}
+		input.Room, input.Owner, input.ParticipantID, input.WorkingDirectory = room.ID, false, "", ""
+		input.BrowserDevice = device.ID
+		return s.callBoard(ctx, method, input)
+	}
 	switch method {
 	case "room.list":
 		return s.store.NetworkRooms(ctx, device.ID)
@@ -296,6 +309,23 @@ func (s *Server) networkCall(ctx context.Context, device NetworkDevice, particip
 			return binding, participant, room, errors.New("participant is not bound to this room")
 		}
 		return binding, participant, room, nil
+	}
+	if _, action, ok := boardMethod(method); ok {
+		var input BoardInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		room, err := s.store.NetworkRoom(ctx, device.ID, input.Room)
+		if err != nil {
+			return nil, err
+		}
+		if action != "list" && action != "show" {
+			if _, _, _, err := requireBinding(room.ID); err != nil {
+				return nil, err
+			}
+		}
+		input.Room, input.Owner, input.ParticipantID, input.WorkingDirectory = room.ID, false, participantID, ""
+		return s.callBoard(ctx, method, input)
 	}
 	switch method {
 	case "status":

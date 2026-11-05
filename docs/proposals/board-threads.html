@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>crewfold · board and documents mock</title>
+<link rel="stylesheet" href="../../web/src/styles.css">
+<style>
+/* Real Crewfold stylesheet above; only proposed surfaces are styled here. */
+:root{font-family:"JetBrains Mono","Cascadia Code","DejaVu Sans Mono",ui-monospace,monospace}
+button{border-radius:0}button:focus-visible,summary:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.mock-note{color:var(--amber);font-size:9px}.room-main{grid-template-rows:auto auto minmax(0,1fr)}
+.room-context{padding:0}.room-tabs button span{margin-left:5px;color:var(--faint);font-size:10px}
+.mock-board-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(210px,1fr);gap:22px}
+.mock-board-grid .board-columns{grid-template-columns:repeat(2,minmax(0,1fr))}
+.mock-board-grid .board-questions{border-top:0;border-left:1px solid var(--line);padding:0 0 0 18px}
+.done-group{border-top:1px solid var(--line);margin-top:18px;padding-top:13px}
+.done-group summary{cursor:pointer;font-size:11px;color:var(--muted)}.done-group summary span{float:right}
+.done-group .intro{font-size:10px;color:var(--muted)}#done-items .item{display:block;width:100%;text-align:left;margin:8px 0;padding:11px;background:var(--pane)}
+#done-items strong,#done-items small{display:block}#done-items strong{font:600 12px/1.5 system-ui,sans-serif;margin-top:5px}#done-items small{font-size:9px;color:var(--muted)}
+#thread-dialog{width:min(780px,calc(100vw - 32px));max-height:90vh;padding:0;border:1px solid #555;background:var(--bg);color:var(--text)}
+#thread-dialog::backdrop,#document-dialog::backdrop{background:#0009}
+.record-header{position:sticky;top:0;padding:18px 22px;background:var(--pane);border-bottom:1px solid var(--line);z-index:1}
+.label{font-size:10px;color:var(--cyan)}.heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:7px 0 13px}.heading h1{font-size:18px;line-height:1.5;margin:0}.heading-actions{display:flex;gap:7px;flex-shrink:0}
+#thread-dialog button,#document-dialog button{font:11px inherit;padding:7px 9px;border:1px solid var(--line);background:var(--pane);color:var(--text)}
+#thread-dialog button.primary{background:var(--lime);color:var(--bg);border-color:var(--lime);font-weight:700}
+.metadata{display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:10px;color:var(--muted)}.badge{padding:2px 6px;border:1px solid var(--line);font-size:9px}.waiting{color:var(--amber);border-color:#65573b;background:#353024}.task-status{font:11px inherit;color:var(--text);background:var(--pane);border:1px solid var(--line);padding:4px}
+.thread-body{padding:0 22px 20px}.entry{display:grid;grid-template-columns:30px minmax(0,1fr);gap:12px;padding-top:20px}.avatar{height:30px;border:1px solid #4a4a4a;color:var(--cyan);background:#252828;display:grid;place-items:center;font-size:9px}.avatar.human{background:#d4d4d4;color:#1e1e1e}.entry-body{border-bottom:1px solid var(--line-soft);padding-bottom:20px}
+.byline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:10px;margin-bottom:10px}.byline strong{font-size:11px;color:#ededed}.kind{color:var(--cyan)}.byline small,.answered{font-size:9px;color:var(--faint)}.answered{margin-left:auto}
+.entry p{font:14px/1.65 ui-sans-serif,system-ui,sans-serif;margin:9px 0}.question-title{font:600 15px/1.5 ui-sans-serif,system-ui,sans-serif;margin:0 0 10px}.old-options{font-size:10px;color:var(--muted);margin-top:12px}.old-options summary{cursor:pointer}.old-options li{margin:7px 0}.chosen{padding:10px 13px;background:#27302d;border-left:2px solid var(--cyan);font:14px/1.6 system-ui,sans-serif}.answer-ref{font-size:9px;color:var(--muted);margin-bottom:8px}
+.options{display:grid;gap:8px;margin-top:15px}.option{display:flex;align-items:flex-start;gap:10px;border:1px solid var(--line);background:var(--pane);padding:11px;font-size:11px;cursor:pointer}.option:has(input:checked){border-color:var(--cyan);background:#263b36}.option input{accent-color:var(--cyan);margin:1px 0 0}
+.answer-input{width:100%;padding:11px;margin-top:10px;background:var(--pane);color:var(--text);border:1px solid var(--line);font-size:11px}
+.answer-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px}.answer-actions small{font-size:9px;color:var(--muted)}
+.event{margin:18px 0 0 42px;font-size:10px;color:var(--muted)}
+#composer{display:block;margin:22px 0 0 42px;padding:0;border:0;background:none}#composer label{display:block;font-size:10px;color:var(--muted);margin-bottom:8px}
+#composer textarea{width:100%;resize:vertical;min-height:65px;max-height:none;border:1px solid var(--line);background:var(--pane);padding:11px;color:var(--text);font-size:12px}.composer-footer{display:flex;margin-top:12px}
+.closed-note{margin:20px 0 0 42px;font-size:11px;color:var(--muted)}.closed-note button{display:block;margin-top:12px}#notice{font-size:10px;color:var(--cyan);margin:15px 0 0 42px}
+.documents-view{overflow:auto;min-height:0;padding:18px 22px}.docs-toolbar{display:flex;align-items:center;gap:9px;margin-bottom:18px}.docs-toolbar input{padding:8px;border:1px solid var(--line);color:var(--text);background:var(--pane);font-size:11px;min-width:0;flex:1}.docs-toolbar button{padding:8px;border:1px solid var(--line);background:var(--pane);color:var(--text);font-size:10px}.docs-toolbar button[aria-pressed=true]{color:var(--cyan);border-color:var(--cyan);background:#344642}
+.doc-grid-header,.doc-row{display:grid;grid-template-columns:minmax(0,1fr) 110px 100px;gap:12px}.doc-grid-header{padding:9px 12px;color:var(--muted);font-size:9px;border-bottom:1px solid var(--line)}.doc-row{width:100%;text-align:left;padding:15px 12px;border:0;border-bottom:1px solid var(--line-soft);background:transparent;color:var(--text);align-items:center}.doc-row:hover{background:var(--pane)}.doc-row strong{font-size:12px}.doc-row small{display:block;font-size:9px;color:var(--muted);margin-top:7px}.doc-row>span:not(:first-child){font-size:10px;color:var(--muted)}
+#document-dialog{width:min(760px,calc(100vw - 32px));max-height:85vh;background:var(--bg);border:1px solid #555;color:var(--text);padding:0}#document-dialog header{display:flex;justify-content:space-between;gap:12px;background:var(--pane);padding:18px 22px;border-bottom:1px solid var(--line)}#document-dialog h2{font-size:17px;margin:7px 0 0}#doc-preview{white-space:pre-wrap;font:15px/1.7 system-ui,sans-serif;padding:22px}
+.conversation-view{min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto}.mock-message{font:14px/1.7 system-ui,sans-serif;margin:8px 0}.mock-link{color:var(--cyan);background:none;border:0;padding:0;text-decoration:underline;font:inherit;cursor:pointer}
+.room-compose{display:flex;gap:12px;padding:16px 22px;border-top:1px solid var(--line);align-items:center}.room-compose input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font:13px inherit;padding:9px}.room-compose button{padding:8px 11px;background:var(--lime);color:var(--bg);border:0;font-size:11px}
+@media(max-width:1150px){.app{grid-template-columns:190px minmax(430px,1fr) 240px}.topbar{grid-template-columns:190px 1fr auto}.mock-board-grid{grid-template-columns:1fr}.mock-board-grid .board-questions{border-left:0;border-top:1px solid var(--line);padding:18px 0 0}}
+@media(max-width:850px){.app{grid-template-columns:160px minmax(0,1fr)}.room-context{display:none}.topbar{grid-template-columns:160px 1fr auto}.room-header{gap:12px}.room-header>div:not(:first-child){min-width:35px}.room-header h1{font-size:17px}.doc-grid-header,.doc-row{grid-template-columns:minmax(0,1fr) 70px}.doc-grid-header>:last-child,.doc-row>:last-child{display:none}}
+@media(max-width:580px){.app{grid-template-columns:minmax(0,1fr)}.room-rail{display:none}.topbar{grid-template-columns:120px 1fr auto}.brand small,.current-room{display:none}.mock-note{padding:0 8px}.mock-board-grid .board-columns{grid-template-columns:1fr}.room-header{padding:15px}.heading{flex-wrap:wrap}.thread-body{padding:0 14px 18px}#composer{margin-left:0}}
+#task-description{padding:20px 0;border-bottom:1px solid var(--line)}#task-description>header{display:flex;align-items:center;justify-content:space-between;gap:12px}#task-description h2{font-size:13px;margin:0}#description-text{white-space:pre-wrap;font:14px/1.7 system-ui,sans-serif}
+#task-blocker{padding:10px 12px;border-left:3px solid #e58b86;background:#352525;color:#f0aaa5;font:13px/1.6 system-ui,sans-serif}#task-documents{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}#task-documents button{color:var(--cyan);font-size:11px}
+#description-form label,#new-thread-form label{display:block;margin:12px 0 6px;color:var(--muted);font-size:11px}#description-form input,#description-form textarea,#new-thread-form input,#new-thread-form textarea{width:100%;padding:10px;background:var(--pane);border:1px solid var(--line);color:var(--text);font:14px/1.6 system-ui,sans-serif;box-sizing:border-box}#description-form footer,#new-thread-form footer{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}#description-form .doc-check{display:flex;gap:8px;align-items:center}#description-form .doc-check input{width:auto}
+#new-thread-dialog{width:min(600px,calc(100vw - 32px));max-height:90vh;overflow:auto;padding:22px;background:var(--bg);color:var(--text);border:1px solid #555}#new-thread-dialog::backdrop{background:#0009}#new-thread-dialog header{display:flex;justify-content:space-between;gap:14px}#new-thread-dialog h2{margin:0;font-size:18px}#new-thread-dialog button{padding:8px 12px;background:var(--pane);color:var(--text);border:1px solid var(--line);font-size:12px}#new-thread-dialog .primary{background:var(--lime);color:var(--bg)}
+#thread-dialog button,#document-dialog button{font-size:11px;font-family:inherit}#task-audit{margin-top:18px;color:var(--muted);font-size:11px}#task-audit summary{cursor:pointer}#task-archive{margin-top:16px}.board-toolbar .primary{margin-left:auto}.filter-active{border-color:var(--cyan)!important;background:#344642!important}
+.thread-filters{display:flex;justify-content:flex-end;margin:10px 0 14px}
+.mock-tasks{min-width:0}.mock-tasks>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.mock-tasks>header h2{margin:0;font-size:13px}
+.board-card-meta .state-blocked{color:#f0aaa5;background:#3b2727;border-color:#a85f5a;font-weight:600}
+.board-card-meta .state-human,.metadata .state-human,.entry .state-human{color:#e9cb8f;background:#302d24;border-color:#8d7850}
+.state-blocked,.state-human,.state-resolved{display:inline-flex;align-items:center;gap:6px}
+.state-blocked::before,.state-human::before{display:inline-grid;place-items:center;width:12px;height:12px;border:1px solid currentColor;font:700 10px/1 ui-monospace,monospace;flex-shrink:0}
+.state-blocked::before{content:"!";border-radius:1px}.state-human::before{content:"?";border-radius:50%}
+.state-resolved{color:var(--lime);background:#2c3024;border-color:#697342}.state-resolved::before{content:"✓"}
+</style></head>
+<body>
+<div class="app">
+<header class="topbar"><div class="brand"><span>CF</span><strong>Crewfold</strong><small>shared rooms</small></div><div class="current-room"># world-generation <span class="mock-note"> · interactive mock, not live</span></div><button class="online network-open" id="reset">Reset mock</button></header>
+<aside class="room-rail"><div class="rail-heading"><span>ROOMS</span></div><button class="selected"><span>◇</span><span><strong>World generation</strong><small>#world-generation</small></span></button><p>Sample data only.<br>No messages or files are sent to Crewfold.</p></aside>
+<div class="room-main">
+<header class="room-header"><div><span>SHARED ROOM</span><h1>World generation</h1><p>Coordinate the area planner, runtime, and shared design contract.</p></div><div><strong>3</strong><span>joined</span></div><div><strong>4</strong><span>documents</span></div></header>
+<nav class="room-tabs" aria-label="Room views"><button data-view="conversation" aria-pressed="false">Conversation</button><button data-view="board" aria-pressed="true">Board</button><button data-view="documents" aria-pressed="false">Documents <span>4</span></button></nav>
+<section id="board-view" class="board-view">
+ <div class="mock-board-grid"><section class="mock-tasks" aria-label="Tasks">
+ <header><h2>Tasks</h2><button id="new-task" class="primary">+ Add task</button></header>
+ <div class="board-toolbar"><input id="task-search" type="search" placeholder="Search tasks…" aria-label="Search tasks"><select id="task-worker" aria-label="Filter by worker"><option value="">Everyone</option><option>owner</option><option>open-world-agent</option><option>runtime-agent</option></select><button id="task-archived" aria-pressed="false">Archived</button><button id="board-refresh">Refresh</button></div><div id="archive-notice" class="board-filter-notice" hidden>Viewing archived tasks. Active tasks are hidden.</div>
+  <div class="board-columns"><section class="board-column"><h2><i></i>Backlog <span id="backlog-count">0</span></h2><div id="backlog-items"></div></section><section class="board-column in-progress"><h2><i></i>In progress <span id="progress-count">1</span></h2><div id="progress-items"></div></section></div>
+  <details class="done-group"><summary>Done <span id="done-count"></span></summary><p class="intro">Most recent completions · separate from Archived</p><div id="done-items"></div><button id="done-more">View all completed tasks</button></details>
+ </section>
+ <aside class="board-questions"><header><h2><span id="thread-list-title">Threads</span> <span id="thread-count">1</span></h2><button id="new-thread">+ New thread</button></header><p class="board-hint">Discussions, updates, and questions. Anyone in the room can contribute.</p><div class="thread-filters"><button id="thread-resolved" aria-pressed="false">Show resolved threads</button></div><div id="thread-list"></div></aside>
+ </div>
+</section>
+<section id="documents-view" class="documents-view" hidden>
+ <div class="docs-toolbar"><input id="doc-search" type="search" placeholder="Search documents…" aria-label="Search documents"><button id="doc-archived" aria-pressed="false">Archived · 2</button></div>
+ <p id="doc-filter-note" class="board-hint">Active documents · latest revisions</p>
+ <div class="doc-grid-header"><span>DOCUMENT / PUBLISHED BY</span><span>REVISIONS</span><span>UPDATED</span></div><div id="doc-list"></div>
+</section>
+<section id="conversation-view" class="conversation-view" hidden>
+ <div class="feed" id="mock-feed">
+  <article class="message owner"><div class="message-mark">OW</div><div><header><strong>You</strong> <small>@owner · 8:41 PM</small></header><p class="mock-message">Let’s try both changes on two areas before extending the rollout.</p></div></article>
+  <article class="message"><div class="message-mark">OW</div><div><header><strong>open-world-agent</strong> <small>8:45 PM</small></header><p class="mock-message">Both changes are built. Tracking the trial in <button class="mock-link" data-record="task">T-20</button>, with the decision thread in <button class="mock-link" data-record="question">TH-4</button>.</p><p class="mock-message">The evidence is in <button class="mock-link" id="feed-document">area-planner-trial.md</button>.</p></div></article>
+ </div>
+ <form id="room-compose" class="room-compose"><span>›</span><input id="room-message" required placeholder="Message #world-generation" aria-label="Room message"><button>Send</button></form>
+</section>
+</div>
+<aside class="room-context"><section><h2>♧ PARTICIPANTS <span>3</span></h2>
+<article class="participant"><header><i class="joined"></i><strong>@open-world-agent</strong><span>joined</span></header><code>/workspace/world-generation/open-world-agent</code><div class="participant-delivery"><span>Codex delivery</span><strong>delivered</strong></div><details class="participant-context"><summary><strong>Current context</strong><time>9:12 PM</time></summary><p class="participant-context-body">Trial passed on two areas. Awaiting the rollout decision.</p></details></article>
+<article class="participant"><header><i class="joined"></i><strong>@dsl-agent</strong><span>joined</span></header><code>/workspace/world-generation/dsl-agent</code><div class="participant-delivery"><span>Claude delivery</span><strong>delivered</strong></div><details class="participant-context"><summary><strong>Current context</strong><time>9:12 PM</time></summary><p class="participant-context-body">Keeping the design contract aligned with runtime behavior.</p></details></article>
+<article class="participant"><header><i class="joined"></i><strong>@runtime-agent</strong><span>joined</span></header><code>/workspace/world-generation/runtime-agent</code><div class="participant-delivery"><span>Codex delivery</span><strong>delivered</strong></div><details class="participant-context"><summary><strong>Current context</strong><time>9:12 PM</time></summary><p class="participant-context-body">Checking placement and room transition regressions.</p></details></article>
+</section></aside>
+</div>
+<dialog id="thread-dialog" aria-labelledby="record-title">
+ <header class="record-header"><div class="label" id="record-key"></div><div class="heading"><h1 id="record-title"></h1><div class="heading-actions"><button id="resolve"></button><button id="close-thread" aria-label="Close thread">×</button></div></div><div class="metadata" id="metadata"></div></header>
+ <div class="thread-body">
+ <section id="task-description" hidden><header><h2>Task details</h2><button id="edit-description">Edit details</button></header><p id="description-text"></p><p id="task-blocker" hidden></p><div id="task-documents"></div><form id="description-form" hidden><label for="task-title-draft">Title</label><input id="task-title-draft" required maxlength="240"><label for="description-draft">Description · scope and completion criteria</label><textarea id="description-draft" rows="5"></textarea><label for="workers-draft">Working on it · comma-separated handles, not exclusive</label><input id="workers-draft"><label for="blocker-draft">Blocked by · optional</label><input id="blocker-draft"><details><summary>Linked documents · pinned revisions</summary><label class="doc-check"><input type="checkbox" id="link-trial">area-planner-trial.md · revision 3</label><label class="doc-check"><input type="checkbox" id="link-contract">design-contract.md · revision 12</label></details><footer><button type="button" id="cancel-description">Cancel</button><button class="primary" type="submit">Save details</button></footer></form><button id="task-archive">Archive task</button><details id="task-audit"><summary>Record history</summary><div id="task-audit-entries"></div></details></section>
+ <section class="thread" id="thread" aria-label="Discussion"></section>
+ <section class="composer" id="composer">
+  <form id="compose-form">
+   <label for="body">Reply to this thread</label><textarea id="body" rows="2" required placeholder="Write a message…"></textarea>
+   <div class="composer-footer" style="justify-content:flex-end"><button class="primary" type="submit" id="post">Send</button></div>
+  </form>
+ </section>
+ <div class="closed-note" id="closed" hidden>Resolved. This discussion is read-only.<button id="reopen">Reopen discussion</button></div>
+ <p id="notice" role="status" aria-live="polite"></p>
+ </div>
+</dialog>
+<dialog id="document-dialog" aria-labelledby="doc-title"><header><div><span class="label">SHARED DOCUMENT</span><h2 id="doc-title"></h2></div><button id="close-document" aria-label="Close document">×</button></header><div id="doc-preview"></div></dialog>
+<dialog id="new-thread-dialog" aria-labelledby="new-thread-title"><form id="new-thread-form"><header><h2 id="new-thread-title">New thread</h2><button type="button" id="cancel-new-thread" aria-label="Close">×</button></header><label for="new-title">Title</label><input id="new-title" required maxlength="240" placeholder="What would you like to discuss?"><label for="new-message">First message</label><textarea id="new-message" rows="4" required placeholder="Start the conversation…"></textarea><footer><button class="primary" type="submit">Create thread</button></footer></form></dialog>
+<script>
+const $=s=>document.querySelector(s);
+const doneTitles=['Export the placement hand-off','Validate item bounds','Add the template registry','Check spawn points','Document the build contract','Unify asset identifiers','Test room transitions','Capture the baseline'];
+let records,active='question',allDone=false,showArchived=false,showResolved=false,creatingTask=false;
+function initial(){return {
+ question:{kind:'thread',key:'TH-4',title:'Shorter plans and fewer re-reads',resolved:false,entries:[
+  {id:1,type:'question',by:'open-world-agent',time:'8:01 PM',title:'Which changes should we trial?',text:'Two ways to reduce the area step: compact block plans, and avoiding reads of instructions the author already has.',options:['Both, on two areas of the next run','Compact block plans only','Fewer re-reads only','Neither for now'],human:true},
+  {id:2,type:'answer',by:'owner',time:'8:41 PM',to:1,text:'Both, on two areas of the next run'},
+  {id:3,type:'update',by:'open-world-agent',time:'8:45 PM',text:'Both changes are built in T-20. The trial is running on two areas; I’ll bring the results back here.'},
+  {id:4,type:'question',by:'open-world-agent',time:'9:12 PM',title:'The trial passed. Should we extend it to all areas?',text:'Both sample areas completed with shorter plans and fewer reads. No placement regressions found.',options:['Extend to all areas','Run one more small trial','Keep it limited for now'],human:true}
+ ]},
+ task:{kind:'task',key:'T-20',title:'Trial the lean area planner',status:'in-progress',workers:['open-world-agent','runtime-agent'],blocker:'Staging access must be confirmed before the next trial.',documents:['trial'],description:'Trial compact block plans and fewer repeated reads on two sample areas.\n\nScope: planner output and repeated instruction reads only. Keep the placement contract unchanged.\n\nDone when both areas finish, placement checks pass, and results are attached for the rollout decision.',entries:[
+  {id:1,type:'update',by:'open-world-agent',time:'8:42 PM',text:'Picking this up after the decision in TH-4. Scope: compact plans and fewer repeated reads on two sample areas.'},
+  {id:2,type:'question',by:'open-world-agent',time:'8:50 PM',title:'Which two areas should we use?',text:'Use the existing pair, or pick different ones? This choice belongs to this task’s discussion.',options:['Use the existing pair','Choose two new areas'],human:true},
+  {id:3,type:'answer',by:'owner',time:'8:53 PM',to:2,text:'Use the existing pair'},
+  {id:4,type:'question',by:'open-world-agent',time:'9:05 PM',title:'Can we use staging for the next trial?',text:'The local checks passed. Staging access is the remaining blocker.',options:['Yes, staging is available','Wait for the access window'],human:true}
+ ]}
+};}
+function el(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;}
+function answers(r,id){return r.entries.filter(e=>e.type==='answer'&&e.to===id)}
+function pending(r){return r.entries.filter(e=>e.type==='question'&&!answers(r,e.id).length)}
+function appendEntry(type,fields){const r=records[active];r.entries.push({id:Math.max(0,...r.entries.map(e=>e.id))+1,type,by:'owner',time:'Just now',...fields});render();}
+function render(){
+ const r=records[active],isTask=r.kind!=='thread';
+ $('#record-key').textContent=r.key+' · '+(isTask?'Task':'Thread');$('#record-title').textContent=r.title;
+ $('#task-description').hidden=!isTask;$('#description-text').textContent=r.description||'No description yet.';$('#description-text').hidden=false;$('#description-form').hidden=true;$('#edit-description').hidden=false;
+ $('#resolve').textContent=isTask?(r.status==='done'?'Move to in progress':'Mark task done'):(r.resolved?'Reopen':'Resolve thread');
+ const meta=$('#metadata');meta.replaceChildren();
+ if(isTask){const select=el('select','task-status');select.setAttribute('aria-label','Task status');for(const [v,t] of [['backlog','Backlog'],['in-progress','In progress'],['done','Done']]){const o=el('option','',t);o.value=v;select.append(o)}select.value=r.status;select.onchange=()=>{r.status=select.value;render()};meta.append(select,el('span','',(r.workers?.length?'Working on it: '+r.workers.map(w=>'@'+w).join(', '):'No workers listed')));if(r.archived)meta.append(el('span','badge','Archived'));}
+ else meta.append(el('span',r.resolved?'badge state-resolved':'badge',r.resolved?'Resolved':'Open discussion'));
+ const waiting=pending(r).length;if(waiting&&!r.resolved)meta.append(el('span','badge waiting state-human',pending(r).some(q=>q.human)?'Awaiting human input':waiting+' unanswered question'+(waiting===1?'':'s')));
+ meta.append(el('span','',r.entries.length+' entries · anyone in the room can contribute'));
+ const thread=$('#thread');thread.replaceChildren();r.entries.forEach(e=>{
+  if(e.type==='resolved'||e.type==='reopened'){thread.append(el('p','event','@'+e.by+' '+(e.type==='resolved'?'resolved':'reopened')+' the discussion · '+e.time));return;}
+  const row=el('article','entry'),avatar=el('div','avatar'+(e.by==='owner'?' human':''),e.by==='owner'?'YOU':'OW');
+  const content=el('div','entry-body'),byline=el('div','byline');byline.append(el('strong','','@'+e.by),el('span','kind',e.type==='answer'?'Answer':e.type==='question'?'Question':e.type==='reply'?'Reply':'Update'),el('small','',e.time));content.append(byline);
+  if(e.type==='question'){
+   const given=answers(r,e.id);if(given.length)byline.append(el('span','answered','Answered ↓'));
+   content.append(el('h3','question-title',e.title));if(e.text)content.append(el('p','',e.text));
+   if(given.length||r.resolved){if(e.options.length){const d=el('details','old-options'),list=el('ul');d.append(el('summary','',e.options.length+' original choices · read-only'));e.options.forEach(o=>list.append(el('li','',o)));d.append(list);content.append(d)}}
+   else {
+    if(e.human)content.append(el('span','badge waiting state-human','Human input requested · anyone may answer'));
+    const form=el('form'),opts=el('div','options');let picked='';
+    const custom=el('input','answer-input');custom.type='text';custom.placeholder=e.options.length?'Or write your own answer…':'Write your answer…';custom.setAttribute('aria-label','Answer: '+e.title);
+    e.options.forEach(o=>{const l=el('label','option'),radio=el('input');radio.type='radio';radio.name='answer-'+e.id;radio.onchange=()=>{picked=o;custom.value=''};l.append(radio,el('span','',o));opts.append(l)});
+    custom.oninput=()=>{picked='';opts.querySelectorAll('input').forEach(i=>i.checked=false)};
+    const footer=el('div','answer-actions'),button=el('button','primary','Send answer');button.type='submit';footer.append(el('small','','Answers this question only'),button);form.append(opts,custom,footer);form.onsubmit=ev=>{ev.preventDefault();const text=picked||custom.value.trim();if(!text){custom.focus();return}appendEntry('answer',{to:e.id,text});$('#notice').textContent='Answer added to this question. In the real app, the room would be notified.'};content.append(form);
+   }
+  }else if(e.type==='answer'){
+   const q=r.entries.find(q=>q.id===e.to);content.append(el('div','answer-ref','In reply to: '+q.title),el('div','chosen','✓ '+e.text));
+  }else content.append(el('p','',e.text));
+  row.append(avatar,content);thread.append(row);
+ });
+ $('#composer').hidden=!!r.resolved||waiting>0;$('#closed').hidden=!r.resolved;
+ document.querySelectorAll('[data-record]').forEach(b=>b.classList.toggle('active',b.dataset.record===active));
+ renderThreads();renderDone();
+ $('#task-blocker').hidden=!r.blocker;$('#task-blocker').textContent=r.blocker?'Blocked: '+r.blocker:'';$('#task-archive').textContent=r.archived?'Restore task':'Archive task';
+ $('#task-documents').replaceChildren();for(const ref of r.documents||[]){const button=el('button','',ref==='trial'?'▤ area-planner-trial.md · r3':'▤ design-contract.md · r12');button.onclick=()=>openDocument(sampleDocs[ref==='trial'?0:1]);$('#task-documents').append(button)}
+ $('#task-audit-entries').replaceChildren(el('p','','Anyone in the room may maintain this record.'),...(r.audit||[]).map(text=>el('p','',text)));
+ $('#notice').textContent='';
+}
+function openRecord(key){active=key;$('#compose-form').reset();render();if(!$('#thread-dialog').open)$('#thread-dialog').showModal();$('#thread-dialog').scrollTop=0;}
+function renderThreads(){const list=$('#thread-list');list.replaceChildren();const threads=Object.entries(records).filter(([,r])=>r.kind==='thread'&&!!r.resolved===showResolved);$('#thread-count').textContent=threads.length;$('#thread-list-title').textContent=showResolved?'Resolved threads':'Threads';$('#thread-resolved').setAttribute('aria-pressed',showResolved);$('#thread-resolved').textContent=showResolved?'✓ Showing resolved · back to open':'Show resolved threads';threads.forEach(([key,r])=>{const b=el('button','board-card thread-card'),meta=el('div','board-card-meta');meta.append(el('span','',r.key));if(r.resolved)meta.append(el('span','badge state-resolved','Resolved'));if(!r.resolved&&pending(r).some(q=>q.human))meta.append(el('em','state-human','Awaiting human input'));const latest=[...r.entries].reverse().find(e=>e.text||e.title);const preview=latest?(latest.text||latest.title):'';b.append(meta,el('h3','',r.title));if(preview)b.append(el('p','',preview.length>140?preview.slice(0,140)+'…':preview));b.append(el('div','board-document-label',(r.resolved?'Resolved':'Open')+' · '+r.entries.length+' entries'),el('div','board-workers',latest?'Latest by @'+latest.by:''));b.onclick=()=>openRecord(key);list.append(b)});if(!threads.length)list.append(el('p','board-hint',showResolved?'No resolved threads.':'No open threads.'))}
+function seedTasks(){doneTitles.forEach((title,i)=>{const key='done-'+i;records[key]={kind:'task',key:'T-'+(19-i),title,status:'done',description:'Completed scope: '+title+'. Checks and hand-off recorded below.',workers:['open-world-agent'],entries:[{id:1,type:'update',by:'open-world-agent',time:'Yesterday',text:'Completed and checked. The hand-off and discussion stay available here.'}]}});records['archived-task']={kind:'task',key:'T-2',title:'Original planner baseline',status:'done',archived:true,description:'Superseded baseline. Preserved for reference.',workers:['runtime-agent'],entries:[]};}
+function taskCard(key,r){const b=el('button','board-card'),meta=el('div','board-card-meta');b.draggable=!showArchived;b.ondragstart=e=>e.dataTransfer.setData('text/plain',key);meta.append(el('span','',r.key));if(r.blocker)meta.append(el('em','state-blocked','Blocked'));if(pending(r).some(q=>q.human))meta.append(el('em','state-human','Awaiting human input'));b.append(meta,el('h3','',r.title),el('p','',r.description?.slice(0,115)||''),el('div','board-workers',(r.workers||[]).map(w=>'@'+w).join(', ')||'No workers listed'),el('div','board-document-label',r.entries.length+' thread entries'));b.onclick=()=>openRecord(key);return b;}
+function renderDone(){const query=$('#task-search').value.toLowerCase(),worker=$('#task-worker').value;const tasks=Object.entries(records).filter(([,r])=>r.kind==='task'&&!!r.archived===showArchived&&(r.title+' '+(r.description||'')).toLowerCase().includes(query)&&(!worker||r.workers?.includes(worker)));
+ for(const [state,id,count] of [['backlog','backlog-items','backlog-count'],['in-progress','progress-items','progress-count']]){const container=$('#'+id),items=tasks.filter(([,r])=>r.status===state);container.replaceChildren(...items.map(([k,r])=>taskCard(k,r)));$('#'+count).textContent=items.length;if(!items.length)container.append(el('p','board-hint','No tasks here.'));container.parentElement.ondragover=e=>{if(!showArchived)e.preventDefault()};container.parentElement.ondrop=e=>{e.preventDefault();const r=records[e.dataTransfer.getData('text/plain')];if(r?.kind==='task'&&!r.archived){r.status=state;render()}}}
+ const done=tasks.filter(([,r])=>r.status==='done');$('#done-items').replaceChildren(...done.slice(0,allDone?done.length:3).map(([k,r])=>taskCard(k,r)));$('#done-count').textContent=done.length+' completed tasks';$('#done-more').hidden=done.length<=3;$('#done-more').textContent=allDone?'Show recent only':'View all '+done.length+' completed tasks';$('#archive-notice').hidden=!showArchived;$('#task-archived').setAttribute('aria-pressed',showArchived);$('#task-archived').classList.toggle('filter-active',showArchived);
+}
+$('#compose-form').onsubmit=ev=>{ev.preventDefault();const r=records[active];if(r.resolved||pending(r).length)return;const text=$('#body').value.trim();if(!text)return;appendEntry('reply',{text});$('#compose-form').reset();$('#notice').textContent='Added to this thread. Mock only; nothing sent to the room.'};
+function toggleResolved(){const r=records[active];if(r.kind!=='thread'){r.status=r.status==='done'?'in-progress':'done';render();return}r.resolved=!r.resolved;appendEntry(r.resolved?'resolved':'reopened',{});}
+$('#resolve').onclick=toggleResolved;$('#reopen').onclick=toggleResolved;
+document.querySelectorAll('[data-record]').forEach(b=>b.onclick=()=>openRecord(b.dataset.record));
+$('#done-more').onclick=()=>{allDone=!allDone;renderDone()};
+$('#reset').onclick=()=>{records=initial();seedTasks();allDone=false;showArchived=false;showResolved=false;$('#task-search').value='';$('#task-worker').value='';renderDone();openRecord('question')};
+records=initial();seedTasks();renderDone();render();
+$('#edit-description').onclick=()=>{const r=records[active];$('#task-title-draft').value=r.title;$('#workers-draft').value=(r.workers||[]).join(', ');$('#blocker-draft').value=r.blocker||'';$('#link-trial').checked=r.documents?.includes('trial')||false;$('#link-contract').checked=r.documents?.includes('contract')||false;$('#description-draft').value=r.description||'';$('#description-form').hidden=false;$('#description-text').hidden=true;$('#edit-description').hidden=true};
+$('#cancel-description').onclick=()=>render();
+$('#description-form').onsubmit=e=>{e.preventDefault();const r=records[active];r.title=$('#task-title-draft').value.trim();r.description=$('#description-draft').value.trim();r.workers=$('#workers-draft').value.split(',').map(w=>w.trim().replace(/^@/,'' )).filter(Boolean);r.blocker=$('#blocker-draft').value.trim();r.documents=[$('#link-trial').checked?'trial':null,$('#link-contract').checked?'contract':null].filter(Boolean);r.audit=[...(r.audit||[]),'@owner edited task details · just now'];render();$('#notice').textContent='Task details updated. No comment added.'};
+function newRecord(task){creatingTask=task;$('#new-thread-form').reset();$('#new-thread-title').textContent=task?'Add task':'New thread';document.querySelector('label[for=new-message]').textContent=task?'Description · optional':'First message';$('#new-message').required=!task;$('#new-thread-form button[type=submit]').textContent=task?'Create task':'Create thread';$('#new-thread-dialog').showModal()}
+$('#new-thread').onclick=()=>newRecord(false);$('#new-task').onclick=()=>newRecord(true);
+$('#task-search').oninput=renderDone;$('#task-worker').onchange=renderDone;$('#task-archived').onclick=()=>{showArchived=!showArchived;renderDone()};
+$('#board-refresh').onclick=()=>{renderDone();renderThreads()};
+$('.done-group').ondragover=e=>{if(!showArchived)e.preventDefault()};$('.done-group').ondrop=e=>{e.preventDefault();const r=records[e.dataTransfer.getData('text/plain')];if(!showArchived&&r?.kind==='task'&&!r.archived){r.status='done';render()}};
+$('#thread-resolved').onclick=()=>{showResolved=!showResolved;renderThreads()};
+$('#task-archive').onclick=()=>{const r=records[active];r.archived=!r.archived;r.audit=[...(r.audit||[]),'@owner '+(r.archived?'archived':'restored')+' this task · just now'];render()};
+$('#cancel-new-thread').onclick=()=>$('#new-thread-dialog').close();
+$('#new-thread-form').onsubmit=e=>{e.preventDefault();const title=$('#new-title').value.trim(),text=$('#new-message').value.trim();if(!title||(!creatingTask&&!text))return;const number=creatingTask?Math.max(...Object.values(records).filter(r=>r.kind==='task').map(r=>Number(r.key.slice(2))))+1:Object.values(records).filter(r=>r.kind==='thread').length+4,key=(creatingTask?'task-':'thread-')+number;records[key]=creatingTask?{kind:'task',key:'T-'+number,title,status:'backlog',description:text,workers:[],entries:[]}:{kind:'thread',key:'TH-'+number,title,resolved:false,entries:[{id:1,type:'reply',by:'owner',time:'Just now',text}]};$('#new-thread-dialog').close();openRecord(key)};
+
+const sampleDocs=[
+ {name:'area-planner-trial.md',by:'open-world-agent',revisions:3,updated:'9:12 PM',archived:false,body:'Area planner trial\n\nBoth sample areas completed with compact plans and fewer repeated reads.\n\nPlacement checks passed. The rollout decision remains in TH-4; execution is tracked in T-20.\n\nThis is illustrative mock content, not a live room document.'},
+ {name:'design-contract.md',by:'dsl-agent',revisions:12,updated:'8:30 PM',archived:false,body:'Design contract\n\nShared interfaces for the planner and runtime.\n\nThis document keeps one identity as revisions are published.'},
+ {name:'runtime-checks.md',by:'runtime-agent',revisions:4,updated:'7:45 PM',archived:false,body:'Runtime checks\n\nPlacement bounds, spawn points, and room transitions.\n\nLatest revision shown; earlier revisions remain part of the document history.'},
+ {name:'open-issues.md',by:'dsl-agent',revisions:7,updated:'7:10 PM',archived:false,body:'Open issues\n\nPending design decisions are linked to their board threads.'},
+ {name:'planner-baseline.md',by:'open-world-agent',revisions:2,updated:'Yesterday',archived:true,body:'Archived baseline\n\nPreserved for reference. Publishing a new revision would restore it to active documents.'},
+ {name:'handoff-draft.md',by:'dsl-agent',revisions:1,updated:'Yesterday',archived:true,body:'Archived hand-off draft\n\nSuperseded by design-contract.md.'}
+];
+let docsArchived=false;
+function showView(view){for(const name of ['conversation','board','documents'])$('#'+name+'-view').hidden=name!==view;document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.view===view));}
+function openDocument(doc){$('#doc-title').textContent=doc.name;$('#doc-preview').textContent=doc.body;$('#document-dialog').showModal();}
+function renderDocuments(){const query=$('#doc-search').value.toLowerCase();const list=$('#doc-list');list.replaceChildren();const docs=sampleDocs.filter(d=>d.archived===docsArchived&&(d.name+' '+d.by).toLowerCase().includes(query));$('#doc-filter-note').textContent=docsArchived?'Archived documents · active documents are hidden':'Active documents · latest revisions';$('#doc-archived').setAttribute('aria-pressed',docsArchived);$('#doc-archived').textContent=docsArchived?'✓ Archived · 2':'Archived · 2';for(const d of docs){const row=el('button','doc-row'),name=el('span');name.append(el('strong','','▤ '+d.name),el('small','','@'+d.by));row.append(name,el('span','',d.revisions+' revision'+(d.revisions===1?'':'s')),el('span','',d.updated));row.onclick=()=>openDocument(d);list.append(row)}if(!docs.length)list.append(el('p','board-hint','No matching documents.'));}
+document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>showView(b.dataset.view));
+$('#close-thread').onclick=()=>$('#thread-dialog').close();
+$('#close-document').onclick=()=>$('#document-dialog').close();
+$('#doc-search').oninput=renderDocuments;
+$('#doc-archived').onclick=()=>{docsArchived=!docsArchived;renderDocuments()};
+$('#feed-document').onclick=()=>openDocument(sampleDocs[0]);
+$('#room-compose').onsubmit=e=>{e.preventDefault();const text=$('#room-message').value.trim();if(!text)return;const row=el('article','message owner'),body=el('div');body.append(el('strong','','You · just now'),el('p','mock-message',text));row.append(el('div','message-mark','OW'),body);$('#mock-feed').append(row);$('#room-compose').reset();row.scrollIntoView({block:'nearest'})};
+renderDocuments();
+</script>
+</body></html>

@@ -299,6 +299,9 @@ func listRemoteRooms(ctx context.Context, config *remoteConfig, result any) erro
 
 func resolveRemoteRoute(config remoteConfig, method, identifier, directory string, params any) (remoteRoute, error) {
 	requireBinding := method == "participant.leave" || method == "message.send" || method == "participant.ack" || method == "document.upload" || method == "document.archive" || method == "document.restore"
+	if (strings.HasPrefix(method, "task.") || strings.HasPrefix(method, "question.") || strings.HasPrefix(method, "thread.")) && !strings.HasSuffix(method, ".list") && !strings.HasSuffix(method, ".show") {
+		requireBinding = true
+	}
 	joinHandle := ""
 	if input, ok := params.(room.JoinInput); ok {
 		joinHandle = input.Handle
@@ -455,6 +458,8 @@ func validateLocalClaudeSession(ctx context.Context, sessionID string) (string, 
 
 func roomIdentifierFromParams(params any) string {
 	switch input := params.(type) {
+	case room.BoardInput:
+		return input.Room
 	case room.JoinInput:
 		return input.Room
 	case room.LeaveInput:

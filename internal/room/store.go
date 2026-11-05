@@ -194,6 +194,9 @@ CREATE INDEX IF NOT EXISTS network_bindings_device ON network_participant_bindin
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize room database: %w", err)
 	}
+	if err := s.initializeBoard(ctx); err != nil {
+		return fmt.Errorf("initialize board: %w", err)
+	}
 	if err := s.removeHostedStewardSchema(ctx); err != nil {
 		return err
 	}

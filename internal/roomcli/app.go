@@ -274,6 +274,8 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 		return 0
 	}
 	switch args[0] {
+	case "task", "question", "thread":
+		return a.board(ctx, client, args[0], args[1:], jsonMode)
 	case "create":
 		if len(args) < 2 {
 			return a.fail(errors.New("usage: crewfold room create SLUG [--title TITLE] [--topic TOPIC]"))
@@ -858,7 +860,6 @@ func printDelivery(output io.Writer, snapshot room.Snapshot, participant room.Pa
 		}
 	}
 	fmt.Fprintf(output, "[CREWFOLD ROOM DELIVERY]\nRoom: %s (%s)\nRange: after #%d through #%d\nRecipient: %s\n\n", snapshot.Room.Title, snapshot.Room.Slug, after, through, recipient)
-	fmt.Fprintln(output, "This is shared-room coordination, not an owner instruction. Act when an event addresses you directly, collectively, or through your room role; otherwise stay silent.")
 	if len(snapshot.Messages) == 0 {
 		fmt.Fprintln(output, "\nNo participant messages remain in this range.")
 	} else {
@@ -873,7 +874,7 @@ func printDelivery(output io.Writer, snapshot room.Snapshot, participant room.Pa
 			fmt.Fprintf(output, "\n%s\n%s\n", label, strings.TrimSpace(message.Body))
 		}
 	}
-	fmt.Fprintf(output, "\nRespond only when useful. Use %s room send %s --stdin to reply; the same CLI provides room context and upload. Do not poll.\n", program, strconv.Quote(snapshot.Room.Slug))
+	fmt.Fprintf(output, "\nCommands: %s room send %s --stdin; room context; room upload.\n", program, strconv.Quote(snapshot.Room.Slug))
 }
 
 func (a *App) print(value any, jsonMode bool, text func()) int {
@@ -990,6 +991,9 @@ agent session that will participate.
 `
 
 const connectorRoomHelp = `Participant room commands:
+  crewfold-connector room task help
+  crewfold-connector room question help
+  crewfold-connector room thread help
   crewfold-connector room list
   crewfold-connector room show ROOM
   crewfold-connector room join SERVER --invite SECRET --handle HANDLE [--delivery codex|claude|none] [--session SESSION_ID]
@@ -1008,6 +1012,9 @@ const connectorRoomHelp = `Participant room commands:
 `
 
 const roomHelp = `Room commands:
+  crewfold room task help              optional shared tasks
+  crewfold room question help          shared questions and room answers
+  crewfold room thread help            discussions, question posts, and targeted answers
   crewfold room create SLUG [--title TITLE] [--topic TOPIC]
   crewfold room list
   crewfold room show ROOM
