@@ -403,7 +403,7 @@ func TestNetworkDeliveryWakeIsACompactBatchPointer(t *testing.T) {
 	prompt, through := networkDeliveryWake(room.NetworkDeliveryBatch{
 		Room: room.Room{Slug: "shared"}, Messages: []room.Message{{Sequence: 12}, {Sequence: 14}}, After: 10, Through: 14,
 	})
-	if through != 14 || !strings.Contains(prompt, `room receive "shared" --after 10 --through 14`) || !strings.Contains(prompt, "#12–#14") {
+	if through != 14 || !strings.Contains(prompt, `Run crewfold-connector room receive "shared" --after 10 --through 14`) || !strings.Contains(prompt, "#12–#14") {
 		t.Fatalf("wake = %q, through = %d", prompt, through)
 	}
 	if len(prompt) > 240 || strings.Contains(prompt, "Shared-room activity") || strings.Contains(prompt, "Respond or act") {

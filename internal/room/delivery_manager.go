@@ -18,22 +18,18 @@ type DeliveryManager struct {
 	runtimes          map[string]DeliveryRuntime
 	ctx               context.Context
 	cancel            context.CancelFunc
-	cliPath           string
-	socketPath        string
 	batchQuietPeriod  time.Duration
 	maximumBatchDelay time.Duration
 	wake              chan struct{}
 }
 
-func NewDeliveryManager(parent context.Context, store *Store, codexRuntime, claudeRuntime DeliveryRuntime, cliPath, socketPath string) *DeliveryManager {
+func NewDeliveryManager(parent context.Context, store *Store, codexRuntime, claudeRuntime DeliveryRuntime) *DeliveryManager {
 	ctx, cancel := context.WithCancel(parent)
 	return &DeliveryManager{
 		store:             store,
 		runtimes:          map[string]DeliveryRuntime{"codex": codexRuntime, "claude": claudeRuntime},
 		ctx:               ctx,
 		cancel:            cancel,
-		cliPath:           cliPath,
-		socketPath:        socketPath,
 		batchQuietPeriod:  5 * time.Second,
 		maximumBatchDelay: 30 * time.Second,
 		wake:              make(chan struct{}, 1),
@@ -161,12 +157,11 @@ func (m *DeliveryManager) deliver(route deliveryRoute) {
 }
 
 func (m *DeliveryManager) prompt(route deliveryRoute, firstSequence, lastSequence, through int64) string {
-	command := strconv.Quote(m.cliPath) + " room --socket " + strconv.Quote(m.socketPath)
 	sequence := fmt.Sprintf("#%d", lastSequence)
 	if firstSequence != lastSequence {
 		sequence = fmt.Sprintf("#%d–#%d", firstSequence, lastSequence)
 	}
-	return fmt.Sprintf("[CREWFOLD · %s · %s] Run %s receive %s --after %d --through %d", route.Room.Slug, sequence, command, strconv.Quote(route.Room.Slug), route.Delivery.LastDeliveredSequence, through)
+	return fmt.Sprintf("[CREWFOLD · %s · %s] Run crewfold room receive %s --after %d --through %d", route.Room.Slug, sequence, strconv.Quote(route.Room.Slug), route.Delivery.LastDeliveredSequence, through)
 }
 
 func messageNeedsImmediateDelivery(body, handle string) bool {

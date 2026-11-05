@@ -57,7 +57,7 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 		}
 	}
 	runtime := &fakeCodexDelivery{}
-	manager := NewDeliveryManager(ctx, store, runtime, nil, "/usr/bin/crewfold", "/run/crewfold.sock")
+	manager := NewDeliveryManager(ctx, store, runtime, nil)
 	manager.batchQuietPeriod = 0
 	first, err := store.Join(ctx, JoinInput{Room: "shared", Handle: "first", WorkingDirectory: firstDirectory, Delivery: "codex", SessionID: "thread-one"})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.deliverPending()
-	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], `receive "shared" --after 0 --through `+strconv.FormatInt(message.Sequence, 10)) || strings.Contains(runtime.prompts[0], "compare the interface contract") || strings.Contains(runtime.prompts[0], "directly, collectively") || len(runtime.prompts[0]) > 240 {
+	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], `Run crewfold room receive "shared" --after 0 --through `+strconv.FormatInt(message.Sequence, 10)) || strings.Contains(runtime.prompts[0], "compare the interface contract") || strings.Contains(runtime.prompts[0], "directly, collectively") || strings.Contains(runtime.prompts[0], "--socket") || len(runtime.prompts[0]) > 160 {
 		t.Fatalf("unexpected delivery: targets=%#v prompts=%#v", runtime.targets, runtime.prompts)
 	}
 	snapshot, err := store.Snapshot(ctx, "shared", 0, 50)
@@ -114,7 +114,7 @@ func TestFailedCodexQueueLeavesDeliveryPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := &fakeCodexDelivery{deliverErr: errors.New("queue Codex message: session unavailable")}
-	manager := NewDeliveryManager(ctx, store, runtime, nil, "crewfold", "/tmp/crewfold.sock")
+	manager := NewDeliveryManager(ctx, store, runtime, nil)
 	manager.batchQuietPeriod = 0
 	manager.deliverPending()
 	snapshot, err := store.Snapshot(ctx, "queued", 0, 50)
@@ -154,7 +154,7 @@ func TestCodexDeliveryBatchesBurstsAndBypassesDelayForMentions(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := &fakeCodexDelivery{}
-	manager := NewDeliveryManager(ctx, store, runtime, nil, "crewfold", "/tmp/crewfold.sock")
+	manager := NewDeliveryManager(ctx, store, runtime, nil)
 	manager.batchQuietPeriod = 5 * time.Second
 	manager.maximumBatchDelay = 30 * time.Second
 
@@ -237,7 +237,7 @@ func TestDeliveryCutoffDoesNotConsumeMessagesArrivingDuringInjection(t *testing.
 	runtime := &fakeCodexDelivery{onDeliver: func() {
 		during, err = store.Send(ctx, SendInput{Room: "cutoff", WorkingDirectory: senderDirectory, Body: "arrived during injection"})
 	}}
-	manager := NewDeliveryManager(ctx, store, runtime, nil, "crewfold", "/tmp/crewfold.sock")
+	manager := NewDeliveryManager(ctx, store, runtime, nil)
 	manager.batchQuietPeriod = 0
 	manager.deliverPending()
 	if err != nil {

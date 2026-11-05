@@ -300,16 +300,7 @@ func networkDeliveryWake(batch room.NetworkDeliveryBatch) (string, int64) {
 		}
 		sequence = "#" + strconv.FormatInt(first, 10) + "–#" + strconv.FormatInt(batch.Through, 10)
 	}
-	command := participantCommand()
-	return fmt.Sprintf("[CREWFOLD · %s · %s] Run %s room receive %s --after %d --through %d", batch.Room.Slug, sequence, command, strconv.Quote(batch.Room.Slug), batch.After, batch.Through), batch.Through
-}
-
-func participantCommand() string {
-	executable, err := os.Executable()
-	if err != nil || !filepath.IsAbs(executable) {
-		return "crewfold"
-	}
-	return strconv.Quote(filepath.Clean(executable))
+	return fmt.Sprintf("[CREWFOLD · %s · %s] Run crewfold-connector room receive %s --after %d --through %d", batch.Room.Slug, sequence, strconv.Quote(batch.Room.Slug), batch.After, batch.Through), batch.Through
 }
 
 func waitContext(ctx context.Context, delay time.Duration) {

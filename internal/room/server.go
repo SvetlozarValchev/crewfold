@@ -109,10 +109,6 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 		return err
 	}
 	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, networkWeb: map[[32]byte]networkWebBootstrap{}, networkWake: make(chan struct{}), ownerToken: ownerToken, ownerHash: ownerHash}
-	cliPath, err := os.Executable()
-	if err != nil {
-		cliPath = "crewfold"
-	}
 	codexRuntime := config.CodexRuntime
 	if codexRuntime == nil {
 		codexRuntime = codexqueue.Client{}
@@ -121,7 +117,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 	if claudeRuntime == nil {
 		claudeRuntime = claudequeue.Client{}
 	}
-	server.deliveries = NewDeliveryManager(ctx, store, codexRuntime, claudeRuntime, cliPath, socketPath)
+	server.deliveries = NewDeliveryManager(ctx, store, codexRuntime, claudeRuntime)
 	server.deliveries.Start()
 	if err := server.startWeb(); err != nil {
 		server.deliveries.Close()
