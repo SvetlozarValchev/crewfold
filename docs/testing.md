@@ -28,7 +28,9 @@ Tailnet coverage runs against temporary loopback servers only. It exercises
 network enablement, one-use enrollment, replay rejection, room membership
 scoping, remote participant identity, owner-operation rejection, handle-takeover
 rejection, durable delivery poll/report, remote CLI routing, and the Claude
-Channel capability and tools. Prompt-size coverage verifies that delivery never
+Channel capability and tools. Connector coverage also verifies idle startup,
+concurrent agent configuration writes, and per-directory routing across multiple
+hubs with colliding room slugs. Prompt-size coverage verifies that delivery never
 acknowledges canonical messages omitted from a compact provider notification.
 
 The release gate also performs a manual real-runtime probe with a temporary

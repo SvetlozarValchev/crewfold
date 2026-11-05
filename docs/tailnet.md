@@ -16,7 +16,7 @@ owner browser ── localhost ── Crewfold hub ── SQLite and room docume
                                │ tailnet HTTPS + device token
                ┌───────────────┴────────────────┐
                │                                │
-       Crewfold connector relay         Crewfold connector Channel
+       Crewfold connector service       Crewfold connector Channel
                │                                │
        local Codex app-server              local Claude Code
 ```
@@ -67,17 +67,18 @@ configuration from that machine.
 ## Collaborator enrollment
 
 Use the separate `crewfold-connector` executable on the collaborator machine.
-It has no hub, database, owner service, or web-console commands. Use the private
-one-use command supplied by the owner:
+It has no hub, database, owner service, or web-console commands. Set up the
+machine once, before any agent joins a room:
 
 ```sh
-crewfold-connector connect https://crewfold-host.example.ts.net --invite INVITE_SECRET
+./crewfold-connector-linux-amd64/crewfold-connector setup
 ```
 
-The device token and local delivery bindings are written with owner-only
-permissions beneath `$XDG_CONFIG_HOME/crewfold/remote.json`. The current
-connector profile targets one remote hub. A later invite from the same hub adds
-another room to the existing device.
+This installs one idle-capable systemd user service. Room owners then supply a
+private, single-use agent join command containing the server address and room
+grant. Device tokens and local delivery bindings are written with owner-only
+permissions beneath `$XDG_CONFIG_HOME/crewfold/connector.json`. One connector
+installation can participate in rooms on multiple Crewfold hubs.
 
 ### Codex
 
@@ -85,23 +86,24 @@ Run the join inside the exact Codex conversation that should participate:
 
 ```sh
 cd /path/to/project
-crewfold-connector room join release-readiness --handle alice-codex
-crewfold-connector relay install
+crewfold-connector room join https://crewfold-host.example.ts.net \
+  --invite INVITE_SECRET --handle alice-codex
 ```
 
 Codex remains the default delivery provider. Join validates the current
 `CODEX_THREAD_ID` against the collaborator's local app-server control socket,
 then stores that thread ID only in the collaborator's private configuration.
-`crewfold-connector relay install` starts a user service that long-polls the hub and
+The already-running connector service long-polls every configured hub and
 injects compact room batches locally. It reloads bindings automatically when
-the collaborator joins or leaves rooms.
+an agent joins or leaves a room.
 
-Useful relay controls are:
+Useful machine-level controls are:
 
 ```sh
-crewfold-connector relay status
-crewfold-connector relay stop
-crewfold-connector relay start
+crewfold-connector service status
+crewfold-connector service restart
+crewfold-connector service stop
+crewfold-connector service start
 ```
 
 If a Codex thread is unloaded or temporarily cannot accept direct input, the
@@ -116,11 +118,11 @@ Join from the project directory and select Claude delivery:
 
 ```sh
 cd /path/to/project
-crewfold-connector room join release-readiness --handle alice-claude --delivery claude
-crewfold-connector channel setup release-readiness
+crewfold-connector room join https://crewfold-host.example.ts.net \
+  --invite INVITE_SECRET --handle alice-claude --delivery claude
 ```
 
-The setup command writes a private MCP configuration and prints a command like:
+The join writes a private MCP configuration and prints a command like:
 
 ```sh
 claude --mcp-config "/home/alice/.config/crewfold/channels/…json" \
@@ -142,7 +144,8 @@ transport.
 
 ## Room participation
 
-Normal room commands automatically use the connected hub:
+Normal room commands automatically resolve the joined hub from the current
+agent directory:
 
 ```sh
 crewfold-connector room read release-readiness

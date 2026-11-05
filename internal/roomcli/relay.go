@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,53 +18,31 @@ import (
 	"crewfold/internal/room"
 )
 
-func (a *App) relay(ctx context.Context, args []string, paths appdirs.Paths, jsonMode bool) int {
-	if len(args) == 0 {
-		return a.fail(errors.New("usage: crewfold relay install|start|stop|status|run"))
+func (a *App) connectorSetup(ctx context.Context, args []string, paths appdirs.Paths, jsonMode bool) int {
+	if len(args) != 0 {
+		return a.fail(errors.New("usage: crewfold-connector setup"))
 	}
-	action := args[0]
-	if action == "run" {
-		configPath, rest, err := pullOption(args[1:], "config")
-		if err != nil {
-			return a.fail(err)
-		}
-		if len(rest) != 0 {
-			return a.fail(errors.New("usage: crewfold relay run [--config PATH]"))
-		}
-		if configPath == "" {
-			configPath = paths.RemoteConfigPath
-		}
-		if err := runRelay(ctx, configPath, a.stderr); err != nil && !errors.Is(err, context.Canceled) {
-			return a.fail(err)
-		}
-		return 0
+	source, err := os.Executable()
+	if err != nil {
+		return a.fail(err)
 	}
-	if len(args) != 1 {
-		return a.fail(errors.New("usage: crewfold relay install|start|stop|status|run"))
+	if err := installConnectorBinary(source, paths.ConnectorBinaryPath); err != nil {
+		return a.fail(fmt.Errorf("install connector binary: %w", err))
 	}
-	unit := "crewfold-relay.service"
-	if action == "install" {
-		if config, err := loadRemoteConfig(paths.RemoteConfigPath); err != nil || config == nil {
-			if err == nil {
-				err = errors.New("connect this machine to a Crewfold hub first")
-			}
-			return a.fail(err)
-		}
-		executable, err := os.Executable()
-		if err != nil {
-			return a.fail(err)
-		}
-		if err := os.MkdirAll(filepath.Dir(paths.RelayUnitPath), 0o700); err != nil {
-			return a.fail(err)
-		}
-		content := `[Unit]
-Description=Crewfold remote delivery relay
+	if err := updateRemoteConfig(paths.ConnectorConfigPath, func(*remoteConfig) error { return nil }); err != nil {
+		return a.fail(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.ConnectorUnitPath), 0o700); err != nil {
+		return a.fail(err)
+	}
+	content := `[Unit]
+Description=Crewfold connector
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=` + systemdQuote(executable) + ` relay run --config ` + systemdQuote(paths.RemoteConfigPath) + `
+ExecStart=` + systemdQuote(paths.ConnectorBinaryPath) + ` service run --config ` + systemdQuote(paths.ConnectorConfigPath) + `
 Restart=on-failure
 RestartSec=2s
 UMask=0077
@@ -72,30 +51,119 @@ NoNewPrivileges=true
 [Install]
 WantedBy=default.target
 `
-		if err := writeAtomic(paths.RelayUnitPath, []byte(content)); err != nil {
+	if err := writeAtomic(paths.ConnectorUnitPath, []byte(content)); err != nil {
+		return a.fail(err)
+	}
+	for _, command := range [][]string{{"daemon-reload"}, {"enable", "crewfold-connector.service"}, {"restart", "crewfold-connector.service"}} {
+		if output, commandErr := exec.CommandContext(ctx, "systemctl", append([]string{"--user"}, command...)...).CombinedOutput(); commandErr != nil {
+			return a.fail(fmt.Errorf("systemctl %s: %s: %w", strings.Join(command, " "), strings.TrimSpace(string(output)), commandErr))
+		}
+	}
+	result := map[string]any{"status": "active", "binary": paths.ConnectorBinaryPath, "config": paths.ConnectorConfigPath, "unit": paths.ConnectorUnitPath}
+	return a.print(result, jsonMode, func() {
+		fmt.Fprintf(a.stdout, "Crewfold connector installed at %s and running.\n", paths.ConnectorBinaryPath)
+		if !directoryOnPath(filepath.Dir(paths.ConnectorBinaryPath)) {
+			fmt.Fprintf(a.stdout, "Add %s to PATH before opening a new shell.\n", filepath.Dir(paths.ConnectorBinaryPath))
+		}
+		fmt.Fprintln(a.stdout, "This machine can now join rooms from any Crewfold server; run each invitation inside the intended agent session.")
+	})
+}
+
+func (a *App) connectorService(ctx context.Context, args []string, paths appdirs.Paths, jsonMode bool) int {
+	if len(args) == 0 {
+		return a.fail(errors.New("usage: crewfold-connector service start|stop|restart|status"))
+	}
+	action := args[0]
+	if action == "run" {
+		configPath, rest, err := pullOption(args[1:], "config")
+		if err != nil {
 			return a.fail(err)
 		}
-		for _, command := range [][]string{{"daemon-reload"}, {"enable", unit}, {"restart", unit}} {
-			if output, err := exec.CommandContext(ctx, "systemctl", append([]string{"--user"}, command...)...).CombinedOutput(); err != nil {
-				return a.fail(fmt.Errorf("systemctl %s: %s: %w", strings.Join(command, " "), strings.TrimSpace(string(output)), err))
-			}
+		if len(rest) != 0 {
+			return a.fail(errors.New("usage: crewfold-connector service run [--config PATH]"))
 		}
-	} else if action == "start" || action == "stop" {
+		if configPath == "" {
+			configPath = paths.ConnectorConfigPath
+		}
+		if err := runConnectorService(ctx, configPath, a.stderr); err != nil && !errors.Is(err, context.Canceled) {
+			return a.fail(err)
+		}
+		return 0
+	}
+	if len(args) != 1 || (action != "start" && action != "stop" && action != "restart" && action != "status") {
+		return a.fail(errors.New("usage: crewfold-connector service start|stop|restart|status"))
+	}
+	unit := "crewfold-connector.service"
+	if action != "status" {
 		if output, err := exec.CommandContext(ctx, "systemctl", "--user", action, unit).CombinedOutput(); err != nil {
 			return a.fail(fmt.Errorf("systemctl %s: %s: %w", action, strings.TrimSpace(string(output)), err))
 		}
-	} else if action != "status" {
-		return a.fail(errors.New("usage: crewfold relay install|start|stop|status|run"))
 	}
 	output, err := exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=ActiveState", "--value", unit).CombinedOutput()
 	if err != nil {
-		return a.fail(fmt.Errorf("inspect relay: %s: %w", strings.TrimSpace(string(output)), err))
+		return a.fail(fmt.Errorf("inspect connector service: %s: %w", strings.TrimSpace(string(output)), err))
 	}
-	result := map[string]any{"action": action, "status": strings.TrimSpace(string(output)), "config": paths.RemoteConfigPath, "unit": paths.RelayUnitPath}
-	return a.print(result, jsonMode, func() { fmt.Fprintf(a.stdout, "Crewfold relay: %s\n", result["status"]) })
+	result := map[string]any{"action": action, "status": strings.TrimSpace(string(output)), "config": paths.ConnectorConfigPath, "unit": paths.ConnectorUnitPath}
+	return a.print(result, jsonMode, func() { fmt.Fprintf(a.stdout, "Crewfold connector service: %s\n", result["status"]) })
 }
 
-func runRelay(ctx context.Context, configPath string, stderr interface{ Write([]byte) (int, error) }) error {
+func installConnectorBinary(source, target string) error {
+	source, err := filepath.Abs(source)
+	if err != nil {
+		return err
+	}
+	target, err = filepath.Abs(target)
+	if err != nil {
+		return err
+	}
+	if source == target {
+		return os.Chmod(target, 0o755)
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	info, err := input.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("current connector executable is not a regular file")
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	output, err := os.CreateTemp(filepath.Dir(target), ".crewfold-connector-*")
+	if err != nil {
+		return err
+	}
+	temporary := output.Name()
+	defer os.Remove(temporary)
+	_, copyErr := io.Copy(output, input)
+	closeErr := output.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := os.Chmod(temporary, 0o755); err != nil {
+		return err
+	}
+	return os.Rename(temporary, target)
+}
+
+func directoryOnPath(directory string) bool {
+	for _, candidate := range filepath.SplitList(os.Getenv("PATH")) {
+		if filepath.Clean(candidate) == filepath.Clean(directory) {
+			return true
+		}
+	}
+	return false
+}
+
+func runConnectorService(ctx context.Context, configPath string, stderr interface{ Write([]byte) (int, error) }) error {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	type runningBinding struct {
@@ -113,34 +181,41 @@ func runRelay(ctx context.Context, configPath string, stderr interface{ Write([]
 		if err != nil {
 			return err
 		}
-		if config == nil {
-			return errors.New("remote configuration not found; run crewfold connect first")
-		}
-		desired := map[string]remoteBinding{}
-		for _, binding := range config.Bindings {
-			if binding.Provider == "codex" {
-				desired[binding.ParticipantID] = binding
+		desired := map[string]struct {
+			hub     remoteHub
+			binding remoteBinding
+		}{}
+		if config != nil {
+			for _, hub := range config.Hubs {
+				for _, binding := range hub.Bindings {
+					if binding.Provider == "codex" {
+						desired[hub.URL+"\x00"+binding.ParticipantID] = struct {
+							hub     remoteHub
+							binding remoteBinding
+						}{hub: hub, binding: binding}
+					}
+				}
 			}
 		}
 		for key, active := range running {
-			binding, exists := desired[key]
+			entry, exists := desired[key]
 			fingerprint := ""
 			if exists {
-				fingerprint = relayBindingFingerprint(*config, binding)
+				fingerprint = relayBindingFingerprint(entry.hub, entry.binding)
 			}
 			if !exists || fingerprint != active.fingerprint {
 				active.cancel()
 				delete(running, key)
 			}
 		}
-		for key, binding := range desired {
+		for key, entry := range desired {
 			if _, exists := running[key]; exists {
 				continue
 			}
 			bindingCtx, cancel := context.WithCancel(ctx)
-			fingerprint := relayBindingFingerprint(*config, binding)
+			fingerprint := relayBindingFingerprint(entry.hub, entry.binding)
 			running[key] = runningBinding{fingerprint: fingerprint, cancel: cancel}
-			go codexRelayLoop(bindingCtx, *config, binding, stderr)
+			go codexRelayLoop(bindingCtx, entry.hub, entry.binding, stderr)
 		}
 		return nil
 	}
@@ -153,24 +228,24 @@ func runRelay(ctx context.Context, configPath string, stderr interface{ Write([]
 			return ctx.Err()
 		case <-ticker.C:
 			if err := reconcile(); err != nil {
-				fmt.Fprintf(stderr, "crewfold relay: %v\n", err)
+				fmt.Fprintf(stderr, "crewfold connector: %v\n", err)
 			}
 		}
 	}
 }
 
-func relayBindingFingerprint(config remoteConfig, binding remoteBinding) string {
-	return strings.Join([]string{config.URL, config.DeviceID, config.Token, binding.ParticipantID, binding.Provider, binding.Target}, "\x00")
+func relayBindingFingerprint(hub remoteHub, binding remoteBinding) string {
+	return strings.Join([]string{hub.URL, hub.DeviceID, hub.Token, binding.ParticipantID, binding.Provider, binding.Target}, "\x00")
 }
 
-func codexRelayLoop(ctx context.Context, config remoteConfig, binding remoteBinding, stderr interface{ Write([]byte) (int, error) }) {
+func codexRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding, stderr interface{ Write([]byte) (int, error) }) {
 	socket, err := codexapp.DefaultSocketPath()
 	if err != nil {
-		fmt.Fprintf(stderr, "crewfold relay @%s: %v\n", binding.Handle, err)
+		fmt.Fprintf(stderr, "crewfold connector @%s: %v\n", binding.Handle, err)
 		return
 	}
 	runtime := codexapp.Client{SocketPath: socket}
-	client := room.NetworkClient{BaseURL: config.URL, Token: config.Token, ParticipantID: binding.ParticipantID}
+	client := room.NetworkClient{BaseURL: hub.URL, Token: hub.Token, ParticipantID: binding.ParticipantID}
 	for ctx.Err() == nil {
 		var batch room.NetworkDeliveryBatch
 		err := client.Call(ctx, "delivery.poll", room.NetworkDeliveryPollInput{ParticipantID: binding.ParticipantID, WaitSeconds: 25}, &batch)
@@ -178,7 +253,7 @@ func codexRelayLoop(ctx context.Context, config remoteConfig, binding remoteBind
 			if ctx.Err() != nil {
 				return
 			}
-			fmt.Fprintf(stderr, "crewfold relay @%s poll: %v\n", binding.Handle, err)
+			fmt.Fprintf(stderr, "crewfold connector @%s poll: %v\n", binding.Handle, err)
 			waitContext(ctx, 3*time.Second)
 			continue
 		}
@@ -205,10 +280,10 @@ func codexRelayLoop(ctx context.Context, config remoteConfig, binding remoteBind
 		var ignored room.NetworkBinding
 		reportErr := client.Call(ctx, "delivery.report", room.NetworkDeliveryResultInput{ParticipantID: binding.ParticipantID, Through: deliveredThrough, Status: status, Error: detail}, &ignored)
 		if reportErr != nil {
-			fmt.Fprintf(stderr, "crewfold relay @%s report: %v\n", binding.Handle, reportErr)
+			fmt.Fprintf(stderr, "crewfold connector @%s report: %v\n", binding.Handle, reportErr)
 		}
 		if err != nil {
-			fmt.Fprintf(stderr, "crewfold relay @%s delivery: %v\n", binding.Handle, err)
+			fmt.Fprintf(stderr, "crewfold connector @%s delivery: %v\n", binding.Handle, err)
 			waitContext(ctx, 5*time.Second)
 		}
 	}

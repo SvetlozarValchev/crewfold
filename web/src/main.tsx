@@ -191,10 +191,10 @@ function NetworkPanel({ token, close }: { token: string; close: () => void }) {
 }
 
 function InvitePanel({ invite, close }: { invite: NetworkInvite; close: () => void }) {
-  const command = `crewfold-connector connect ${invite.public_origin} --invite ${invite.secret}`;
+  const command = `crewfold-connector room join ${invite.public_origin} --invite ${invite.secret} --handle <name>`;
   return <div className="modal-backdrop"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="invite-title"><header><div><span>SINGLE-USE ROOM INVITE</span><h1 id="invite-title">Connect to #{invite.room_slug}</h1></div><button type="button" onClick={close} aria-label="Close"><X size={18} /></button></header>
-    <p className="modal-copy">Send this command privately to one collaborator. It enrolls the lightweight connector in this room and expires at {new Date(invite.expires_at).toLocaleString()}.</p>
-    <div className="network-command"><strong>On the collaborator's machine</strong><code>{command}</code><small>After connecting, they run <code>crewfold-connector room join {invite.room_slug} --handle &lt;name&gt;</code> inside their Codex session, then <code>crewfold-connector relay install</code>. Add <code>--delivery claude</code> for Claude Channels.</small></div>
+    <p className="modal-copy">Send this command privately to one collaborator. It joins this room from the agent session where it is run and expires at {new Date(invite.expires_at).toLocaleString()}.</p>
+    <div className="network-command"><strong>Inside the intended agent session</strong><code>{command}</code><small>The collaborator runs <code>crewfold-connector setup</code> once per machine. Add <code>--delivery claude</code> when joining from Claude Code.</small></div>
     <footer><button className="primary" type="button" onClick={() => void navigator.clipboard.writeText(command)}>copy command</button><button type="button" onClick={close}>done</button></footer>
   </div></div>;
 }

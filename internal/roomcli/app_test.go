@@ -222,16 +222,11 @@ func TestRemoteConnectJoinAndRoomCommandsRouteThroughHub(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(previousDirectory) })
 	var stdout, stderr bytes.Buffer
 	app := NewConnector(&stdout, &stderr, buildinfo.Info{Version: "test"})
-	if code := app.RunConnector(context.Background(), []string{"connect", baseURL, "--invite", invite.Secret, "--name", "remote-cli-test"}); code != 0 {
-		t.Fatalf("connect exit %d: %s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "next: crewfold-connector room join remote-cli") {
-		t.Fatalf("connector enrollment output = %q", stdout.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
-	if code := app.RunConnector(context.Background(), []string{"room", "join", "remote-cli", "--handle", "claude-agent", "--delivery", "claude"}); code != 0 {
+	if code := app.RunConnector(context.Background(), []string{"room", "join", baseURL, "--invite", invite.Secret, "--handle", "claude-agent", "--delivery", "claude", "--device-name", "remote-cli-test"}); code != 0 {
 		t.Fatalf("remote join exit %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "joined remote-cli as @claude-agent") {
+		t.Fatalf("connector invitation output = %q", stdout.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
@@ -265,11 +260,11 @@ func TestRemoteConnectJoinAndRoomCommandsRouteThroughHub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := loadRemoteConfig(paths.RemoteConfigPath)
+	config, err := loadRemoteConfig(paths.ConnectorConfigPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config == nil || len(config.Bindings) != 0 {
+	if config == nil || len(config.Hubs) != 1 || len(config.Hubs[0].Bindings) != 0 {
 		t.Fatalf("remote bindings after leave = %#v", config)
 	}
 }
@@ -290,12 +285,12 @@ func TestConnectorHelpAndCommandSurfaceExcludeOwnerOperations(t *testing.T) {
 			t.Fatalf("connector help exposes %q: %s", forbidden, help)
 		}
 	}
-	if !strings.Contains(help, "does not run a Crewfold hub") || !strings.Contains(help, "crewfold-connector relay") {
+	if !strings.Contains(help, "does not run a Crewfold hub") || !strings.Contains(help, "crewfold-connector setup") || !strings.Contains(help, "crewfold-connector service") {
 		t.Fatalf("connector help = %q", help)
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := app.RunConnector(context.Background(), []string{"service", "install"}); code == 0 || !strings.Contains(stderr.String(), "unknown connector command") {
+	if code := app.RunConnector(context.Background(), []string{"service", "install"}); code == 0 || !strings.Contains(stderr.String(), "service start|stop|restart|status") {
 		t.Fatalf("owner command exit %d, stderr %q", code, stderr.String())
 	}
 }

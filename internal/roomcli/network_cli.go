@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
-	"strings"
 	"time"
 
 	"crewfold/internal/room"
@@ -86,62 +83,9 @@ func (a *App) network(ctx context.Context, client room.Client, args []string, js
 		}
 		return a.print(invite, jsonMode, func() {
 			fmt.Fprintf(a.stdout, "Invite for %s expires %s\n", invite.RoomSlug, invite.ExpiresAt)
-			fmt.Fprintf(a.stdout, "crewfold-connector connect %s --invite %s\n", invite.PublicOrigin, invite.Secret)
+			fmt.Fprintf(a.stdout, "crewfold-connector room join %s --invite %s --handle HANDLE\n", invite.PublicOrigin, invite.Secret)
 		})
 	default:
 		return a.fail(fmt.Errorf("unknown network command %q", args[0]))
 	}
-}
-
-func (a *App) connect(ctx context.Context, args []string, configPath string, existing *remoteConfig, jsonMode bool) int {
-	address, rest, err := leading(args, "Crewfold URL")
-	if err != nil {
-		return a.fail(err)
-	}
-	invite, rest, err := pullOption(rest, "invite")
-	if err != nil {
-		return a.fail(err)
-	}
-	name, rest, err := pullOption(rest, "name")
-	if err != nil {
-		return a.fail(err)
-	}
-	if invite == "" || len(rest) != 0 {
-		return a.fail(errors.New("usage: crewfold connect HTTPS-URL --invite SECRET [--name DEVICE]"))
-	}
-	address, err = room.NormalizeNetworkURL(address)
-	if err != nil {
-		return a.fail(err)
-	}
-	if existing != nil {
-		if existing.URL != address {
-			return a.fail(fmt.Errorf("this installation is already connected to %s", existing.URL))
-		}
-		client := room.NetworkClient{BaseURL: existing.URL, Token: existing.Token}
-		var joinedRoom room.Room
-		if err := client.Call(ctx, "network.invite.accept", room.AcceptNetworkInviteInput{Invite: invite}, &joinedRoom); err != nil {
-			return a.fail(err)
-		}
-		return a.print(joinedRoom, jsonMode, func() { fmt.Fprintf(a.stdout, "connected existing device to room %s\n", joinedRoom.Slug) })
-	}
-	if name == "" {
-		name, _ = os.Hostname()
-		if strings.TrimSpace(name) == "" {
-			name = "Crewfold client"
-		}
-	}
-	enrollment, err := (room.NetworkClient{BaseURL: address}).Enroll(ctx, room.NetworkEnrollInput{Invite: invite, DeviceName: name})
-	if err != nil {
-		return a.fail(err)
-	}
-	config := &remoteConfig{URL: address, DeviceID: enrollment.DeviceID, DeviceName: enrollment.DeviceName, Token: enrollment.Token}
-	if err := saveRemoteConfig(configPath, config); err != nil {
-		return a.fail(err)
-	}
-	result := map[string]any{"url": address, "device_id": enrollment.DeviceID, "device_name": enrollment.DeviceName, "room": enrollment.Room}
-	return a.print(result, jsonMode, func() {
-		host, _ := url.Parse(address)
-		fmt.Fprintf(a.stdout, "connected %s to %s as %s\n", enrollment.DeviceName, host.Host, enrollment.DeviceID)
-		fmt.Fprintf(a.stdout, "next: %s room join %s --handle HANDLE\n", a.program, enrollment.Room.Slug)
-	})
 }

@@ -48,8 +48,9 @@ collectively, or through its room role.
 
 Tailnet participation preserves this contract without centralizing provider
 sessions. The hub stores the room membership and pending delivery cursor. A
-small collaborator-side relay stores the Codex thread target and injects through
-that machine's app-server. Claude Code can instead attach an experimental
+machine-level collaborator connector stores each Codex thread target and
+injects through that machine's app-server. One service can carry independent
+agent bindings across multiple hubs. Claude Code can instead attach an experimental
 Crewfold Channel that receives room activity and exposes narrow room reply and
 context tools. Provider targets stay on the collaborator's device. One-use
 invites grant one device membership in one room and never grant owner authority.

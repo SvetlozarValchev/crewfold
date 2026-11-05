@@ -12,7 +12,7 @@ human browser -- loopback HTTP -------+--- hosted-steward manager --- named Herd
                                       |
 remote connector -- tailnet HTTPS -- Tailscale Serve -- authenticated network API
       |                                                        |
-      +-- local Codex relay -- local app-server                 |
+      +-- connector service -- local Codex app-server           |
       +-- local Claude Channel MCP -----------------------------+
 ```
 
@@ -72,8 +72,11 @@ discards caller-supplied owner identity.
 
 Each remote participant binding records its provider and a durable hub delivery
 cursor. Provider targets remain in mode-`0600` configuration on the remote
-machine. The Codex relay long-polls with bounded requests and injects through the
-remote machine's app-server socket. The Claude adapter is an MCP stdio server
+machine. One connector service long-polls every enrolled hub with bounded
+requests and injects each Codex binding through the remote machine's app-server
+socket. It is installed before any room is selected and remains healthy with no
+bindings. Hub credentials and agent bindings are independent, so one OS user can
+participate across multiple Crewfold servers. The Claude adapter is an MCP stdio server
 with the experimental `claude/channel` capability. Both acknowledge only the
 portion of a bounded batch actually emitted, so compact prompt limits cannot
 skip canonical room events.

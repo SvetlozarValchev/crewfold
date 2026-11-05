@@ -25,23 +25,22 @@ crewfold network invite ROOM [--expires 24h]
 Collaborator commands:
 
 ```text
-crewfold-connector connect HTTPS-URL --invite SECRET [--name DEVICE]
-crewfold-connector relay install|start|stop|status
+crewfold-connector setup
+crewfold-connector service start|stop|restart|status
+crewfold-connector room join HTTPS-URL --invite SECRET --handle HANDLE [--delivery codex|claude|none]
 crewfold-connector channel setup ROOM
 crewfold-connector room COMMAND
 ```
 
 `network enable` does not change the daemon listener. It prints the
 `tailscale serve --bg` command that proxies the existing loopback listener.
-Invites are room-scoped and single-use. `connect` enrolls the collaborator's
-machine or, when it is already connected to the same hub, accepts a later invite
-for another room.
-
-The connector's Codex relay is optionally installed as a user service after a
-remote Codex join, or run in the foreground with `relay run`. Claude
-participants instead use `--delivery claude`, run `channel setup`, and start
-Claude Code with the printed experimental Channels command. See
-[tailnet collaboration](tailnet.md) for the complete sequence.
+Invites are room-scoped and single-use. `setup` is machine-level: it installs
+one connector service that is valid with zero rooms and can serve multiple
+agents and Crewfold servers. The invitation command is agent-level: it enrolls
+the server grant, joins the invited room, and binds the provider session from
+which it is run. Claude participants use `--delivery claude` and start Claude
+Code with the printed experimental Channels command. See [tailnet
+collaboration](tailnet.md) for the complete sequence.
 
 Claude Code on the owner machine uses the same commands without `connect`:
 
@@ -108,10 +107,11 @@ unstructured participant prose is rejected with an exact recovery instruction.
 `context ROOM --stdin` provides the same input mode for a multiline
 current-context summary. Short conversational messages remain valid.
 
-After `crewfold-connector connect`, connector room commands route to that authenticated remote hub.
-The current prototype stores one remote hub profile per OS user. Participant
-identity is still resolved by room and the current working directory; the hub
-does not trust a caller-supplied handle for an existing mutation.
+Connector room commands resolve the authenticated hub and participant from the
+room plus current working directory. One OS user may hold independent profiles
+for multiple hubs. If the same room slug exists on multiple hubs and cannot be
+resolved by the agent directory, commands require the globally unique room ID.
+The hub does not trust a caller-supplied handle for an existing mutation.
 
 ## Documents
 

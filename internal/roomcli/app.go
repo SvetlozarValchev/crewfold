@@ -54,30 +54,17 @@ func (a *App) RunConnector(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.fail(err)
 	}
-	remote, err := loadRemoteConfig(paths.RemoteConfigPath)
-	if err != nil {
-		return a.fail(err)
-	}
 	local := room.Client{SocketPath: paths.SocketPath}
 	switch args[0] {
 	case "version":
 		return a.print(a.info, jsonMode, func() { fmt.Fprintf(a.stdout, "Crewfold connector %s (%s)\n", a.info.Version, a.info.Commit) })
-	case "connect":
-		return a.connect(ctx, args[1:], paths.RemoteConfigPath, remote, jsonMode)
-	case "relay":
-		if remote == nil {
-			return a.fail(errors.New("connect this machine to a Crewfold room first"))
-		}
-		return a.relay(ctx, args[1:], paths, jsonMode)
+	case "setup":
+		return a.connectorSetup(ctx, args[1:], paths, jsonMode)
+	case "service":
+		return a.connectorService(ctx, args[1:], paths, jsonMode)
 	case "channel":
-		if remote == nil {
-			return a.fail(errors.New("connect this machine to a Crewfold room first"))
-		}
 		return a.channel(ctx, local, args[1:], paths, jsonMode)
 	case "room":
-		if remote == nil {
-			return a.fail(errors.New("connect this machine to a Crewfold room first"))
-		}
 		roomArgs := args[1:]
 		if len(roomArgs) == 0 {
 			fmt.Fprint(a.stdout, connectorRoomHelp)
@@ -87,7 +74,7 @@ func (a *App) RunConnector(ctx context.Context, args []string) int {
 		case "create", "steward", "archive":
 			return a.fail(fmt.Errorf("room %s is an owner command and is unavailable in the connector", roomArgs[0]))
 		}
-		caller := &routedCaller{local: local, configPath: paths.RemoteConfigPath, config: remote}
+		caller := &routedCaller{configPath: paths.ConnectorConfigPath}
 		return a.room(ctx, caller, roomArgs, paths, jsonMode)
 	default:
 		return a.fail(fmt.Errorf("unknown connector command %q; run crewfold-connector help", args[0]))
@@ -118,11 +105,6 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		socket = paths.SocketPath
 	}
 	client := room.Client{SocketPath: socket}
-	remote, err := loadRemoteConfig(paths.RemoteConfigPath)
-	if err != nil {
-		return a.fail(err)
-	}
-	caller := &routedCaller{local: client, configPath: paths.RemoteConfigPath, config: remote}
 	switch args[0] {
 	case "version":
 		return a.print(a.info, jsonMode, func() { fmt.Fprintf(a.stdout, "Crewfold %s (%s)\n", a.info.Version, a.info.Commit) })
@@ -148,14 +130,10 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		})
 	case "network":
 		return a.network(ctx, client, remaining, jsonMode)
-	case "connect":
-		return a.connect(ctx, remaining, paths.RemoteConfigPath, remote, jsonMode)
-	case "relay":
-		return a.relay(ctx, remaining, paths, jsonMode)
 	case "channel":
 		return a.channel(ctx, client, remaining, paths, jsonMode)
 	case "room":
-		return a.room(ctx, caller, remaining, paths, jsonMode)
+		return a.room(ctx, client, remaining, paths, jsonMode)
 	default:
 		return a.fail(fmt.Errorf("unknown command %q; run crewfold help", args[0]))
 	}
@@ -376,8 +354,16 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 		if err != nil {
 			return a.fail(err)
 		}
+		invite, rest, err := pullOption(rest, "invite")
+		if err != nil {
+			return a.fail(err)
+		}
+		deviceName, rest, err := pullOption(rest, "device-name")
+		if err != nil {
+			return a.fail(err)
+		}
 		if len(rest) != 0 || handle == "" {
-			return a.fail(errors.New("usage: crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--cwd PATH] [--delivery codex|claude|none]"))
+			return a.fail(fmt.Errorf("usage: %s room join ROOM|SERVER --handle HANDLE [--invite SECRET] [--name NAME] [--cwd PATH] [--delivery codex|claude|none]", a.program))
 		}
 		if cwd == "" {
 			cwd, _ = os.Getwd()
@@ -401,20 +387,28 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 			}
 		}
 		var participant room.Participant
-		if err := client.Call(ctx, "participant.join", room.JoinInput{Room: identifier, Handle: handle, DisplayName: name, WorkingDirectory: cwd, Kind: kind, Delivery: storeDelivery, ThreadID: threadID}, &participant); err != nil {
+		joinInput := room.JoinInput{Room: identifier, Handle: handle, DisplayName: name, WorkingDirectory: cwd, Kind: kind, Delivery: storeDelivery, ThreadID: threadID}
+		if invite != "" {
+			routed, ok := client.(*routedCaller)
+			if !ok {
+				return a.fail(errors.New("room invitations are accepted with crewfold-connector, not the owner hub CLI"))
+			}
+			joinedRoom, joinedParticipant, joinErr := routed.joinInvitation(ctx, identifier, invite, deviceName, joinInput)
+			if joinErr != nil {
+				return a.fail(joinErr)
+			}
+			identifier, participant = joinedRoom.Slug, joinedParticipant
+		} else if err := client.Call(ctx, "participant.join", joinInput, &participant); err != nil {
 			return a.fail(err)
 		}
 		var channelSetup *claudeChannelSetup
 		if delivery == "claude" {
-			local, ok := client.(*routedCaller)
-			if !ok {
-				return a.fail(errors.New("participant joined, but the Claude Channel could not access the local Crewfold client"))
+			localClient, _ := client.(room.Client)
+			configPath := ""
+			if _, remote := client.(*routedCaller); remote {
+				configPath = paths.ConnectorConfigPath
 			}
-			localClient, ok := local.local.(room.Client)
-			if !ok {
-				return a.fail(errors.New("participant joined, but the Claude Channel local client is unavailable"))
-			}
-			setup, setupErr := setupClaudeChannel(ctx, localClient, paths, paths.RemoteConfigPath, identifier, filepath.Clean(cwd))
+			setup, setupErr := setupClaudeChannel(ctx, localClient, paths, configPath, identifier, filepath.Clean(cwd))
 			if setupErr != nil {
 				return a.fail(fmt.Errorf("participant joined, but configure Claude Channel: %w", setupErr))
 			}
@@ -872,7 +866,7 @@ func (a *App) print(value any, jsonMode bool, text func()) int {
 	}
 	return 0
 }
-func (a *App) fail(err error) int { fmt.Fprintf(a.stderr, "crewfold: %v\n", err); return 1 }
+func (a *App) fail(err error) int { fmt.Fprintf(a.stderr, "%s: %v\n", a.program, err); return 1 }
 
 func pullOption(args []string, name string) (string, []string, error) {
 	result := ""
@@ -952,8 +946,6 @@ Usage:
   crewfold open
   crewfold status
   crewfold network status|enable|disable|invite
-  crewfold connect HTTPS-URL --invite SECRET
-  crewfold relay install|start|stop|status
   crewfold channel setup ROOM
   crewfold room COMMAND
   crewfold daemon run
@@ -961,23 +953,25 @@ Usage:
 Run 'crewfold room' for room commands.
 `
 
-const connectorHelp = `Crewfold connector links a collaborator's existing agent session to a remote room.
+const connectorHelp = `Crewfold connector links independently running agent sessions to remote rooms.
 
 It does not run a Crewfold hub, database, web console, or owner service.
 
 Usage:
-  crewfold-connector connect HTTPS-URL --invite SECRET
+  crewfold-connector setup
+  crewfold-connector service start|stop|restart|status
   crewfold-connector room COMMAND
-  crewfold-connector relay install|start|stop|status
   crewfold-connector channel setup ROOM
   crewfold-connector version
 
-Run 'crewfold-connector room' for participant commands.
+Setup is once per machine. Each room invitation is accepted from inside the
+agent session that will participate.
 `
 
 const connectorRoomHelp = `Participant room commands:
   crewfold-connector room list
   crewfold-connector room show ROOM
+  crewfold-connector room join SERVER --invite SECRET --handle HANDLE [--delivery codex|claude|none]
   crewfold-connector room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|claude|none]
   crewfold-connector room leave ROOM [--handle HANDLE] [--cwd PATH]
   crewfold-connector room send ROOM MESSAGE... | --stdin

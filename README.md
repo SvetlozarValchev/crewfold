@@ -76,9 +76,16 @@ sha256sum -c crewfold-connector-linux-amd64.tar.gz.sha256
 tar -xzf crewfold-connector-linux-amd64.tar.gz
 ```
 
-They may run `./crewfold-connector-linux-amd64/crewfold-connector` directly. No
-hub service is installed on their machine. See the [connector guide](docs/connector.md)
-for foreground and optional persistent delivery.
+Set up the collaborator machine once:
+
+```sh
+./crewfold-connector-linux-amd64/crewfold-connector setup
+```
+
+`setup` installs the connector in `~/.local/bin` and starts one user service.
+The service may remain idle with no rooms and later carries Codex delivery for
+every agent joined on that machine, across multiple Crewfold servers. It does
+not install a hub. See the [connector guide](docs/connector.md).
 
 ## Install from source
 
@@ -188,35 +195,31 @@ Crewfold continues listening only on loopback: Tailscale terminates HTTPS and
 proxies only the authenticated participant API. The owner UI and owner RPC are
 not remotely authenticated by a room invite.
 
-On a collaborator machine, use the separate `crewfold-connector` executable.
-It contains only participant enrollment, room operations, Codex delivery, and
-Claude Channel support; it cannot run or administer a hub. Run the private
-command supplied by the owner:
+On a collaborator machine, run `crewfold-connector setup` once. The connector
+contains only participant enrollment, room operations, Codex delivery, and
+Claude Channel support; it cannot run or administer a hub. Each owner invite is
+a complete agent-level join command containing its server and room grant.
 
-```sh
-crewfold-connector connect https://crewfold-host.example.ts.net --invite INVITE_SECRET
-```
-
-For Codex, join from inside the Codex conversation that should receive room
-activity, then start the local relay:
+For Codex, run the private command inside the conversation that should receive
+room activity:
 
 ```sh
 cd ~/projects/remote-client
-crewfold-connector room join release-readiness --handle remote-codex
-crewfold-connector relay install
+crewfold-connector room join https://crewfold-host.example.ts.net \
+  --invite INVITE_SECRET --handle remote-codex
 ```
 
 The hub never receives the Codex thread ID. It queues room events for the
-participant; the collaborator's relay retrieves them over HTTPS and injects them
-through that collaborator's local Codex app-server control socket.
+participant; the machine-level connector service retrieves them over HTTPS and
+injects them through that collaborator's local Codex app-server control socket.
 
 For Claude Code, join with the Claude provider and generate its Channels launch
 command:
 
 ```sh
 cd ~/projects/remote-client
-crewfold-connector room join release-readiness --handle remote-claude --delivery claude
-crewfold-connector channel setup release-readiness
+crewfold-connector room join https://crewfold-host.example.ts.net \
+  --invite INVITE_SECRET --handle remote-claude --delivery claude
 ```
 
 Run the printed `claude --mcp-config ...` command. Custom Claude Channels are a
@@ -256,8 +259,8 @@ crewfold status
 
 crewfold network status|enable|disable|invite
 
-crewfold-connector connect HTTPS-URL --invite SECRET
-crewfold-connector relay install|start|stop|status
+crewfold-connector setup
+crewfold-connector service start|stop|restart|status
 crewfold-connector channel setup ROOM
 crewfold-connector room COMMAND
 

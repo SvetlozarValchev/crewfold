@@ -27,8 +27,8 @@ func TestResolveUsesExactXDGLayout(t *testing.T) {
 	if paths.UnitPath != "/private/config/systemd/user/crewfold.service" {
 		t.Fatalf("UnitPath = %q", paths.UnitPath)
 	}
-	if paths.RemoteConfigPath != "/private/config/crewfold/remote.json" || paths.RelayUnitPath != "/private/config/systemd/user/crewfold-relay.service" {
-		t.Fatalf("remote paths = %#v", paths)
+	if paths.ConnectorConfigPath != "/private/config/crewfold/connector.json" || paths.ConnectorUnitPath != "/private/config/systemd/user/crewfold-connector.service" || paths.ConnectorBinaryPath != "/home/owner/.local/bin/crewfold-connector" {
+		t.Fatalf("connector paths = %#v", paths)
 	}
 }
 

@@ -53,6 +53,9 @@ func (a *App) channel(ctx context.Context, local room.Client, args []string, pat
 	if len(rest) != 0 {
 		return a.fail(errors.New("usage: crewfold channel setup|run ROOM [--config PATH] [--binding PATH]"))
 	}
+	if a.program == "crewfold-connector" && configPath == "" && bindingPath == "" {
+		configPath = paths.ConnectorConfigPath
+	}
 	if action == "run" {
 		if jsonMode {
 			return a.fail(errors.New("channel run is an MCP stdio command and cannot use --output json"))
@@ -83,6 +86,11 @@ func setupClaudeChannel(ctx context.Context, local room.Client, paths appdirs.Pa
 	executable, err := os.Executable()
 	if err != nil {
 		return claudeChannelSetup{}, err
+	}
+	if configPath != "" {
+		if info, statErr := os.Stat(paths.ConnectorBinaryPath); statErr == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
+			executable = paths.ConnectorBinaryPath
+		}
 	}
 	channelDirectory := filepath.Join(paths.ConfigDir, "channels")
 	if err := os.MkdirAll(channelDirectory, 0o700); err != nil {
@@ -116,20 +124,20 @@ func printClaudeChannelSetup(output io.Writer, setup claudeChannelSetup) {
 }
 
 func prepareClaudeChannel(ctx context.Context, local room.Client, paths appdirs.Paths, configPath, identifier, directory string) (string, string, remoteBinding, error) {
-	if configPath == "" {
-		configPath = paths.RemoteConfigPath
-	}
-	config, err := loadRemoteConfig(configPath)
-	if err != nil {
-		return "", "", remoteBinding{}, err
-	}
-	if config != nil {
-		if binding, exists := findRemoteBinding(config, identifier, directory); exists {
+	if configPath != "" {
+		config, err := loadRemoteConfig(configPath)
+		if err != nil {
+			return "", "", remoteBinding{}, err
+		}
+		if _, binding, exists, findErr := findRemoteBinding(config, identifier, directory); findErr != nil {
+			return "", "", remoteBinding{}, findErr
+		} else if exists {
 			if binding.Provider != "claude" {
 				return "", "", remoteBinding{}, errors.New("this participant did not join with --delivery claude")
 			}
 			return configPath, "", binding, nil
 		}
+		return "", "", remoteBinding{}, errors.New("this directory has no Claude delivery binding for that room")
 	}
 	var snapshot room.Snapshot
 	if err := local.Call(ctx, "room.snapshot", room.ListMessagesInput{Room: identifier, Limit: 1}, &snapshot); err != nil {
@@ -162,16 +170,6 @@ func prepareClaudeChannel(ctx context.Context, local room.Client, paths appdirs.
 		return "", "", remoteBinding{}, err
 	}
 	return "", bindingPath, remoteBinding{Room: snapshot.Room.Slug, RoomID: snapshot.Room.ID, ParticipantID: participant.ID, Handle: participant.Handle, Directory: directory, Provider: "claude"}, nil
-}
-
-func findRemoteBinding(config *remoteConfig, roomIdentifier, directory string) (remoteBinding, bool) {
-	directory = filepath.Clean(directory)
-	for _, binding := range config.Bindings {
-		if (binding.Room == roomIdentifier || binding.RoomID == roomIdentifier) && binding.Directory == directory {
-			return binding, true
-		}
-	}
-	return remoteBinding{}, false
 }
 
 func loadLocalClaudeBinding(path string) (localClaudeBinding, error) {
@@ -209,17 +207,17 @@ type claudeChannelBackend interface {
 }
 
 type remoteClaudeBackend struct {
-	config remoteConfig
+	hub    remoteHub
 	member remoteBinding
 }
 
 func (b remoteClaudeBackend) binding() remoteBinding { return b.member }
 func (b remoteClaudeBackend) callTool(ctx context.Context, raw json.RawMessage) (any, error) {
-	client := room.NetworkClient{BaseURL: b.config.URL, Token: b.config.Token, ParticipantID: b.member.ParticipantID}
+	client := room.NetworkClient{BaseURL: b.hub.URL, Token: b.hub.Token, ParticipantID: b.member.ParticipantID}
 	return callClaudeChannelTool(ctx, client, b.member, raw)
 }
 func (b remoteClaudeBackend) deliveryLoop(ctx context.Context, ready <-chan struct{}, transport *mcpStdio, stderr io.Writer) {
-	claudeChannelDeliveryLoop(ctx, b.config, b.member, ready, transport, stderr)
+	claudeChannelDeliveryLoop(ctx, b.hub, b.member, ready, transport, stderr)
 }
 
 type localClaudeBackend struct {
@@ -253,7 +251,7 @@ func loadClaudeChannelBackend(configPath, bindingPath string, paths appdirs.Path
 		return localClaudeBackend{path: bindingPath, member: binding}, nil
 	}
 	if configPath == "" {
-		configPath = paths.RemoteConfigPath
+		return nil, errors.New("Claude channel binding is missing")
 	}
 	config, err := loadRemoteConfig(configPath)
 	if err != nil || config == nil {
@@ -263,11 +261,14 @@ func loadClaudeChannelBackend(configPath, bindingPath string, paths appdirs.Path
 		return nil, err
 	}
 	directory, _ := os.Getwd()
-	binding, exists := findRemoteBinding(config, identifier, directory)
+	hub, binding, exists, err := findRemoteBinding(config, identifier, directory)
+	if err != nil {
+		return nil, err
+	}
 	if !exists || binding.Provider != "claude" {
 		return nil, errors.New("this directory has no Claude delivery binding for that room")
 	}
-	return remoteClaudeBackend{config: *config, member: binding}, nil
+	return remoteClaudeBackend{hub: hub, member: binding}, nil
 }
 
 type mcpStdio struct {
@@ -506,13 +507,13 @@ func localClaudeChannelDeliveryLoop(ctx context.Context, bindingPath string, bin
 	}
 }
 
-func claudeChannelDeliveryLoop(ctx context.Context, config remoteConfig, binding remoteBinding, ready <-chan struct{}, transport *mcpStdio, stderr io.Writer) {
+func claudeChannelDeliveryLoop(ctx context.Context, hub remoteHub, binding remoteBinding, ready <-chan struct{}, transport *mcpStdio, stderr io.Writer) {
 	select {
 	case <-ctx.Done():
 		return
 	case <-ready:
 	}
-	client := room.NetworkClient{BaseURL: config.URL, Token: config.Token, ParticipantID: binding.ParticipantID}
+	client := room.NetworkClient{BaseURL: hub.URL, Token: hub.Token, ParticipantID: binding.ParticipantID}
 	for ctx.Err() == nil {
 		var batch room.NetworkDeliveryBatch
 		if err := client.Call(ctx, "delivery.poll", room.NetworkDeliveryPollInput{ParticipantID: binding.ParticipantID, WaitSeconds: 25}, &batch); err != nil {

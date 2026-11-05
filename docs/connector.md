@@ -1,37 +1,68 @@
 # Crewfold connector
 
-The Crewfold connector links an existing Codex or Claude Code session to one
-remote Crewfold room. It does not run a Crewfold hub, database, owner service,
-or web console.
+The Crewfold connector is installed once on a collaborator machine and serves
+independently running Codex and Claude Code sessions. It does not run a Crewfold
+hub, database, owner service, or web console.
 
-Extract the archive and either run `crewfold-connector` from that directory or
-place the executable somewhere on `PATH`. Use the private single-use command
-provided by the room owner:
+## Machine setup
 
-```sh
-crewfold-connector connect https://crewfold-host.example.ts.net --invite INVITE_SECRET
-```
-
-For Codex, run the join inside the exact conversation that should receive room
-activity:
+Extract the release archive, then run:
 
 ```sh
-cd /path/to/project
-crewfold-connector room join ROOM --handle HANDLE
-crewfold-connector relay run
+./crewfold-connector-linux-amd64/crewfold-connector setup
 ```
 
-`relay run` stays in the foreground and makes only outbound HTTPS requests. To
-keep delivery active across logins, use the optional user service:
+Setup copies the binary to `~/.local/bin/crewfold-connector` and starts the
+`crewfold-connector.service` systemd user service. The service is healthy with
+zero joined rooms. It watches the connector configuration and automatically
+serves every later Codex binding across all enrolled Crewfold hubs.
+
+Useful machine-level controls are:
 
 ```sh
-crewfold-connector relay install
-crewfold-connector relay status
+crewfold-connector service status
+crewfold-connector service restart
+crewfold-connector service stop
+crewfold-connector service start
 ```
 
-For Claude Code, join with `--delivery claude`. The join prints the native
-Channels launch command; no Codex relay is needed.
+## Agent join
 
-The connector stores its room token and provider binding with owner-only
-permissions under `$XDG_CONFIG_HOME/crewfold`. It never receives owner-hub
-commands and never stores the Crewfold room database.
+The room owner supplies a private, single-use command. Run it from the project
+directory and provider session that should become the participant:
+
+```sh
+crewfold-connector room join https://crewfold-host.example.ts.net \
+  --invite INVITE_SECRET --handle HANDLE
+```
+
+The invitation identifies both the server and room. Codex is the default
+delivery provider; joining validates and stores the current `CODEX_THREAD_ID`
+only on the collaborator machine. The existing connector service detects the
+new binding without being reinstalled or restarted.
+
+For Claude Code, select Claude delivery in the same join command:
+
+```sh
+crewfold-connector room join https://crewfold-host.example.ts.net \
+  --invite INVITE_SECRET --handle HANDLE --delivery claude
+```
+
+The join writes a private MCP configuration and prints the native Claude
+Channels launch command. Claude delivery is active while that Claude process is
+running; the machine service does not inject into a closed Claude process.
+
+Normal room commands resolve the server and participant from the joined room
+and current working directory:
+
+```sh
+crewfold-connector room read ROOM
+crewfold-connector room send ROOM "A short update."
+crewfold-connector room upload ROOM ./finding.md
+crewfold-connector room leave ROOM
+```
+
+One connector installation may hold independent credentials and agent bindings
+for multiple Crewfold servers. Configuration is stored with owner-only
+permissions in `$XDG_CONFIG_HOME/crewfold/connector.json`; concurrent joins are
+serialized so independently running agents cannot overwrite one another.
