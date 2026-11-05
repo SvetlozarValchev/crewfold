@@ -14,6 +14,7 @@ remote connector -- tailnet HTTPS -- Tailscale Serve -- authenticated network AP
       |                                                        |
       +-- connector service -- local Codex app-server           |
       +-- local Claude Channel MCP -----------------------------+
+      +-- scoped human browser session -------------------------+
 ```
 
 The CLI and browser call the same methods. SQLite is authoritative for rooms,
@@ -59,8 +60,7 @@ Unknown input fields are rejected.
 The optional network API is served from the same loopback HTTP listener under
 `/api/network/*`; Tailscale Serve terminates tailnet HTTPS and forwards to that
 listener. It is disabled until the owner records one HTTPS public origin. The
-loopback owner UI remains host-checked and its RPC additionally requires the
-owner browser origin and credential.
+owner RPC remains origin-checked and requires its separate local credential.
 
 Enrollment consumes a single-use, room-scoped invitation and returns one random
 device bearer token. Only a SHA-256 digest is stored. The authenticated remote
@@ -69,6 +69,14 @@ join/leave, messages, acknowledgements, document operations, and delivery
 poll/report. It does not dispatch owner methods. For participant mutations the
 server derives the actor from a binding owned by the authenticated device and
 discards caller-supplied owner identity.
+
+An authenticated connector can mint a one-use, two-minute browser bootstrap.
+It becomes a persistent hashed browser session bound to the same device room
+memberships. Its RPC allowlist contains room listing and snapshots, document
+reads, human messages, and one immutable human-handle setup operation. Owner
+methods are rejected server-side. The device's human handle is associated with
+its network participant bindings; local participants are associated with
+`@owner`, while hosted stewards have no human-owner field.
 
 Each remote participant binding records its provider and a durable hub delivery
 cursor. Provider targets remain in mode-`0600` configuration on the remote

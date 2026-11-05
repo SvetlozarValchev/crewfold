@@ -67,8 +67,8 @@ configuration from that machine.
 ## Collaborator enrollment
 
 Use the separate `crewfold-connector` executable on the collaborator machine.
-It has no hub, database, owner service, or web-console commands. Set up the
-machine once, before any agent joins a room:
+It has no hub, database, or owner service. Set up the machine once, before any
+agent joins a room:
 
 ```sh
 ./crewfold-connector-linux-amd64/crewfold-connector setup
@@ -79,6 +79,18 @@ private, single-use agent join command containing the server address and room
 grant. Device tokens and local delivery bindings are written with owner-only
 permissions beneath `$XDG_CONFIG_HOME/crewfold/connector.json`. One connector
 installation can participate in rooms on multiple Crewfold hubs.
+
+After joining, the collaborator can open every enrolled hub with:
+
+```sh
+crewfold-connector open
+```
+
+This prints one single-use, two-minute login link per server. The browser keeps
+its own persistent session after login and asks once for a human handle. That
+human identity is distinct from the device's independently named Codex and
+Claude agents. Crewfold records and announces which agents belong to that human
+even when the agents joined before the browser identity was chosen.
 
 ### Codex
 
@@ -167,8 +179,8 @@ a second device cannot take over an existing participant handle.
 - Device tokens are random, stored only as a hash on the hub, and scoped by
   explicit room memberships.
 - Provider thread/session identifiers never cross the network.
-- The owner UI remains loopback-only. Tailnet collaborators use the CLI and
-  their provider integration, not the owner's browser credential.
+- The owner credential and owner RPC remain loopback-only. Tailnet collaborators
+  receive a separate room-scoped browser session; it cannot invoke owner RPCs.
 - Disabling network access does not delete rooms or local participants. It only
   rejects remote enrollments and calls.
 

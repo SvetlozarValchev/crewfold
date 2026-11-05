@@ -1,5 +1,7 @@
 package room
 
+import "strings"
+
 // Room is one medium-lived collaboration space shared by independently run
 // agent sessions and their human owner.
 type Room struct {
@@ -20,6 +22,7 @@ type Participant struct {
 	Handle           string               `json:"handle"`
 	DisplayName      string               `json:"display_name"`
 	Kind             string               `json:"kind"`
+	HumanHandle      string               `json:"human_handle,omitempty"`
 	WorkingDirectory string               `json:"working_directory,omitempty"`
 	Status           string               `json:"status"`
 	Context          string               `json:"context,omitempty"`
@@ -100,6 +103,33 @@ type Message struct {
 	Body          string    `json:"body"`
 	Document      *Document `json:"document,omitempty"`
 	CreatedAt     string    `json:"created_at"`
+}
+
+// MessageAttribution describes the human or hosted identity behind a room
+// message without relying on naming conventions between handles.
+func MessageAttribution(message Message, participants []Participant) string {
+	switch message.SenderKind {
+	case "owner", "member":
+		agents := make([]string, 0)
+		for _, participant := range participants {
+			if participant.Kind == "agent" && participant.HumanHandle == message.SenderHandle {
+				agents = append(agents, "@"+participant.Handle)
+			}
+		}
+		if len(agents) > 0 {
+			return "human; owns " + strings.Join(agents, ", ")
+		}
+		return "human"
+	case "steward":
+		return "hosted steward"
+	case "agent":
+		for _, participant := range participants {
+			if participant.ID == message.ParticipantID && participant.HumanHandle != "" {
+				return "agent of @" + participant.HumanHandle
+			}
+		}
+	}
+	return message.SenderKind
 }
 
 type Snapshot struct {
@@ -193,10 +223,22 @@ type AcceptNetworkInviteInput struct {
 }
 
 type NetworkDevice struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	JoinedAt string `json:"joined_at"`
-	LastSeen string `json:"last_seen"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	BrowserHandle string `json:"browser_handle,omitempty"`
+	JoinedAt      string `json:"joined_at"`
+	LastSeen      string `json:"last_seen"`
+}
+
+type NetworkBrowserIdentity struct {
+	Handle          string `json:"handle,omitempty"`
+	SuggestedHandle string `json:"suggested_handle,omitempty"`
+}
+
+type NetworkBrowserBootstrap struct {
+	URL       string `json:"url"`
+	ExpiresAt string `json:"expires_at"`
+	Rooms     int    `json:"rooms"`
 }
 
 type NetworkBinding struct {
@@ -218,10 +260,11 @@ type NetworkDeliveryPollInput struct {
 }
 
 type NetworkDeliveryBatch struct {
-	Room        Room        `json:"room"`
-	Participant Participant `json:"participant"`
-	Messages    []Message   `json:"messages"`
-	Through     int64       `json:"through"`
+	Room         Room          `json:"room"`
+	Participant  Participant   `json:"participant"`
+	Participants []Participant `json:"participants,omitempty"`
+	Messages     []Message     `json:"messages"`
+	Through      int64         `json:"through"`
 }
 
 type NetworkDeliveryResultInput struct {

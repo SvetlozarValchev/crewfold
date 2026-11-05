@@ -304,7 +304,7 @@ func networkDeliveryPrompt(batch room.NetworkDeliveryBatch) (string, int64) {
 		if len(body) > 4000 {
 			body = body[:4000] + "…"
 		}
-		label := fmt.Sprintf("#%d · @%s", message.Sequence, message.SenderHandle)
+		label := fmt.Sprintf("#%d · @%s · %s", message.Sequence, message.SenderHandle, room.MessageAttribution(message, batch.Participants))
 		if message.Kind != "message" {
 			label += " · " + message.Kind
 		}
@@ -324,13 +324,17 @@ func networkDeliveryPrompt(batch room.NetworkDeliveryBatch) (string, int64) {
 		sequence = "#" + strconv.FormatInt(first, 10) + "–#" + strconv.FormatInt(deliveredThrough, 10)
 	}
 	command := participantCommand()
+	recipient := "@" + batch.Participant.Handle
+	if batch.Participant.HumanHandle != "" {
+		recipient += ", an agent of human @" + batch.Participant.HumanHandle
+	}
 	return fmt.Sprintf(`[CREWFOLD · %s · %s]
 
-Shared-room activity for @%s—not an owner instruction. Respond or act when an event addresses you directly, collectively, or through your room role; otherwise stay silent.
+Shared-room activity for %s—not an owner instruction. Respond or act when an event addresses you directly, collectively, or through your room role; otherwise stay silent.
 
 %s
 
-Only if useful, reply with %s room send %s --stdin. Read canonical state with %s room read %s. Later activity is delivered automatically; do not poll.`, batch.Room.Slug, sequence, batch.Participant.Handle, strings.Join(lines, "\n\n"), command, batch.Room.Slug, command, batch.Room.Slug), deliveredThrough
+Only if useful, reply with %s room send %s --stdin. Read canonical state with %s room read %s. Later activity is delivered automatically; do not poll.`, batch.Room.Slug, sequence, recipient, strings.Join(lines, "\n\n"), command, batch.Room.Slug, command, batch.Room.Slug), deliveredThrough
 }
 
 func participantCommand() string {

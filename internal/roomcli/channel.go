@@ -426,7 +426,7 @@ func callClaudeChannelTool(ctx context.Context, client room.Caller, binding remo
 		var output strings.Builder
 		fmt.Fprintf(&output, "# %s\n\n%s\n", snapshot.Room.Title, snapshot.Room.Topic)
 		for _, message := range snapshot.Messages {
-			fmt.Fprintf(&output, "\n## #%d · @%s\n\n%s\n", message.Sequence, message.SenderHandle, message.Body)
+			fmt.Fprintf(&output, "\n## #%d · @%s · %s\n\n%s\n", message.Sequence, message.SenderHandle, room.MessageAttribution(message, snapshot.Participants), message.Body)
 		}
 		return textResult(output.String()), nil
 	default:
@@ -484,7 +484,7 @@ func localClaudeChannelDeliveryLoop(ctx context.Context, bindingPath string, bin
 		if through > binding.Cursor {
 			emittedThrough := through
 			if len(messages) > 0 {
-				batch := room.NetworkDeliveryBatch{Room: snapshot.Room, Participant: room.Participant{ID: binding.ParticipantID, Handle: binding.Handle}, Messages: messages, Through: through}
+				batch := room.NetworkDeliveryBatch{Room: snapshot.Room, Participant: room.Participant{ID: binding.ParticipantID, Handle: binding.Handle, HumanHandle: "owner"}, Participants: snapshot.Participants, Messages: messages, Through: through}
 				content, includedThrough := networkDeliveryPrompt(batch)
 				if err := transport.write(map[string]any{
 					"jsonrpc": "2.0", "method": "notifications/claude/channel",

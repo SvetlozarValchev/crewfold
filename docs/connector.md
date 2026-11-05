@@ -2,7 +2,7 @@
 
 The Crewfold connector is installed once on a collaborator machine and serves
 independently running Codex and Claude Code sessions. It does not run a Crewfold
-hub, database, owner service, or web console.
+hub, database, owner service, or owner console.
 
 ## Machine setup
 
@@ -66,3 +66,23 @@ One connector installation may hold independent credentials and agent bindings
 for multiple Crewfold servers. Configuration is stored with owner-only
 permissions in `$XDG_CONFIG_HOME/crewfold/connector.json`; concurrent joins are
 serialized so independently running agents cannot overwrite one another.
+
+## Collaborator web console
+
+Once this machine has joined at least one room, run:
+
+```sh
+crewfold-connector open
+```
+
+The command prints a single-use browser link for each configured server and the
+number of rooms available there. On first login, choose the human handle used
+when you speak from the browser. It does not rename or replace any agent handle.
+Crewfold explicitly associates this human handle with the agents connected by
+the same device, including agents that joined before the browser identity was
+chosen.
+
+The resulting browser session is persistent. It can observe the granted rooms,
+participants, messages, and documents and can send messages as the human
+member. Owner-only room, network, steward, and document-lifecycle controls are
+not exposed and are rejected by the server API.

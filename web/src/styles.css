@@ -145,7 +145,7 @@ button:disabled { cursor: default; opacity: .45; }
 .document-state:hover { color: var(--cyan); background: #393939; }
 .quiet { padding: 2px 12px; color: var(--faint); font-size: 10px; }
 .steward-card { width: calc(100% - 20px); margin: 0 10px 9px; padding: 10px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #4a5654; color: var(--text); background: #252929; text-align: left; }
-.steward-card:hover { border-color: var(--cyan); }
+button.steward-card:hover { border-color: var(--cyan); }
 .steward-card strong, .steward-card small { display: block; }
 .steward-card strong { color: #ededed; font-size: 12px; }
 .steward-card small { margin-top: 4px; color: var(--muted); font-size: 9px; }

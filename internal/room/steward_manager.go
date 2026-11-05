@@ -267,7 +267,7 @@ func (m *StewardManager) deliverOnce(ctx context.Context, roomID string) {
 			continue
 		}
 		body := strings.TrimSpace(message.Body)
-		line := fmt.Sprintf("#%d · @%s · %s\n%s", message.Sequence, message.SenderHandle, message.Kind, body)
+		line := fmt.Sprintf("#%d · @%s · %s · %s\n%s", message.Sequence, message.SenderHandle, MessageAttribution(message, snapshot.Participants), message.Kind, body)
 		separatorBytes := 0
 		if len(lines) > 0 {
 			separatorBytes = 2

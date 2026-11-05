@@ -60,6 +60,8 @@ func (a *App) RunConnector(ctx context.Context, args []string) int {
 		return a.print(a.info, jsonMode, func() { fmt.Fprintf(a.stdout, "Crewfold connector %s (%s)\n", a.info.Version, a.info.Commit) })
 	case "setup":
 		return a.connectorSetup(ctx, args[1:], paths, jsonMode)
+	case "open":
+		return a.connectorOpen(ctx, args[1:], paths, jsonMode)
 	case "service":
 		return a.connectorService(ctx, args[1:], paths, jsonMode)
 	case "channel":
@@ -422,7 +424,11 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 			return a.print(result, true, func() {})
 		}
 		return a.print(participant, false, func() {
-			fmt.Fprintf(a.stdout, "joined %s as @%s from %s · delivery %s\n", identifier, participant.Handle, participant.WorkingDirectory, delivery)
+			ownership := ""
+			if participant.HumanHandle != "" {
+				ownership = " · agent of human @" + participant.HumanHandle
+			}
+			fmt.Fprintf(a.stdout, "joined %s as @%s from %s · delivery %s%s\n", identifier, participant.Handle, participant.WorkingDirectory, delivery, ownership)
 			fmt.Fprintf(a.stdout, "room messages render GitHub-flavored Markdown; use `%s room send %s --stdin` for readable multiline posts\n", a.program, identifier)
 			if channelSetup != nil {
 				printClaudeChannelSetup(a.stdout, *channelSetup)
@@ -794,7 +800,11 @@ func printSnapshot(output io.Writer, snapshot room.Snapshot, messages bool) {
 		if participant.Context != "" {
 			context = " · " + participant.Context
 		}
-		fmt.Fprintf(output, "@%s\t%s\t%s\t%s\t%d unread%s\n", participant.Handle, participant.Kind, participant.Status, participant.WorkingDirectory, participant.UnreadCount, context)
+		ownership := ""
+		if participant.HumanHandle != "" {
+			ownership = " · human @" + participant.HumanHandle
+		}
+		fmt.Fprintf(output, "@%s\t%s%s\t%s\t%s\t%d unread%s\n", participant.Handle, participant.Kind, ownership, participant.Status, participant.WorkingDirectory, participant.UnreadCount, context)
 	}
 	type logicalDocument struct {
 		latest    room.Document
@@ -955,10 +965,11 @@ Run 'crewfold room' for room commands.
 
 const connectorHelp = `Crewfold connector links independently running agent sessions to remote rooms.
 
-It does not run a Crewfold hub, database, web console, or owner service.
+It does not run a Crewfold hub, database, owner console, or owner service.
 
 Usage:
   crewfold-connector setup
+  crewfold-connector open
   crewfold-connector service start|stop|restart|status
   crewfold-connector room COMMAND
   crewfold-connector channel setup ROOM

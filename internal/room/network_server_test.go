@@ -1,7 +1,13 @@
 package room
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,9 +64,54 @@ func TestNetworkHTTPWorkflowUsesRoomScopedDeviceIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	network.Token = enrollment.Token
+	var webBootstrap NetworkBrowserBootstrap
+	if err := network.Call(ctx, "browser.bootstrap", map[string]any{}, &webBootstrap); err != nil {
+		t.Fatal(err)
+	}
+	if webBootstrap.Rooms != 1 {
+		t.Fatalf("browser bootstrap rooms = %d", webBootstrap.Rooms)
+	}
+	bootstrapURL, err := url.Parse(webBootstrap.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := strings.TrimPrefix(bootstrapURL.Fragment, "network-bootstrap=")
+	if bootstrap == "" {
+		t.Fatalf("browser bootstrap URL = %q", webBootstrap.URL)
+	}
+	browserToken := redeemNetworkWebSession(t, baseURL, bootstrapURL.Host, "https://"+bootstrapURL.Host, bootstrap)
+	if status := redeemNetworkWebSessionStatus(t, baseURL, bootstrapURL.Host, "https://"+bootstrapURL.Host, bootstrap); status != http.StatusUnauthorized {
+		t.Fatalf("reused browser bootstrap status = %d", status)
+	}
+	var browserRooms []Room
+	networkWebCall(t, baseURL, bootstrapURL.Host, "https://"+bootstrapURL.Host, browserToken, "room.list", map[string]any{}, &browserRooms)
+	if len(browserRooms) != 1 || browserRooms[0].ID != created.Room.ID {
+		t.Fatalf("browser rooms = %#v", browserRooms)
+	}
+	var identity NetworkBrowserIdentity
+	networkWebCall(t, baseURL, bootstrapURL.Host, "https://"+bootstrapURL.Host, browserToken, "browser.identity", map[string]any{}, &identity)
+	if identity.Handle != "" || identity.SuggestedHandle == "" {
+		t.Fatalf("initial browser identity = %#v", identity)
+	}
+	networkWebCall(t, baseURL, bootstrapURL.Host, "https://"+bootstrapURL.Host, browserToken, "browser.identity.set", map[string]any{"handle": "remote-human"}, &identity)
+	if identity.Handle != "remote-human" {
+		t.Fatalf("configured browser identity = %#v", identity)
+	}
+	var memberMessage Message
+	networkWebCall(t, baseURL, bootstrapURL.Host, "https://"+bootstrapURL.Host, browserToken, "message.send", SendInput{Room: created.Room.ID, Body: "Hello from the collaborator browser."}, &memberMessage)
+	if memberMessage.SenderKind != "member" || memberMessage.SenderHandle != "remote-human" || memberMessage.ParticipantID != "" {
+		t.Fatalf("browser member message = %#v", memberMessage)
+	}
+	var ownerOnly any
+	if err := networkWebCallError(baseURL, bootstrapURL.Host, "https://"+bootstrapURL.Host, browserToken, "room.create", CreateRoomInput{Slug: "forbidden", Title: "Forbidden"}, &ownerOnly); err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("browser owner operation = %v", err)
+	}
 	var participant Participant
 	if err := network.Call(ctx, "participant.join", JoinInput{Room: created.Room.Slug, Handle: "remote-agent", WorkingDirectory: "/remote/project", Delivery: "codex"}, &participant); err != nil {
 		t.Fatal(err)
+	}
+	if participant.HumanHandle != "remote-human" {
+		t.Fatalf("remote participant human = %#v", participant)
 	}
 	network.ParticipantID = participant.ID
 	var ownerMessage Message
@@ -100,6 +151,111 @@ func TestNetworkHTTPWorkflowUsesRoomScopedDeviceIdentity(t *testing.T) {
 	if err := unauthorized.Call(ctx, "room.list", map[string]any{}, &forbidden); err == nil || !strings.Contains(err.Error(), "unauthorized") {
 		t.Fatalf("invalid credential = %v", err)
 	}
+}
+
+func redeemNetworkWebSession(t *testing.T, baseURL, host, origin, bootstrap string) string {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"bootstrap": bootstrap})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, baseURL+"/api/network/session", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Host = host
+	request.Header.Set("Origin", origin)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		detail, _ := io.ReadAll(response.Body)
+		t.Fatalf("redeem browser session: %s: %s", response.Status, strings.TrimSpace(string(detail)))
+	}
+	var session struct {
+		Token string `json:"token"`
+		Mode  string `json:"mode"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&session); err != nil {
+		t.Fatal(err)
+	}
+	if session.Token == "" || session.Mode != "collaborator" {
+		t.Fatalf("browser session = %#v", session)
+	}
+	return session.Token
+}
+
+func redeemNetworkWebSessionStatus(t *testing.T, baseURL, host, origin, bootstrap string) int {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"bootstrap": bootstrap})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, baseURL+"/api/network/session", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Host = host
+	request.Header.Set("Origin", origin)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	return response.StatusCode
+}
+
+func networkWebCall(t *testing.T, baseURL, host, origin, token, method string, params, result any) {
+	t.Helper()
+	if err := networkWebCallError(baseURL, host, origin, token, method, params, result); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func networkWebCallError(baseURL, host, origin, token, method string, params, result any) error {
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(Request{ID: "test-request", Method: method, Params: raw})
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequest(http.MethodPost, baseURL+"/api/network/web/rpc", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Host = host
+	request.Header.Set("Origin", origin)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return errors.New(strings.TrimSpace(string(detail)))
+	}
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+		Error  string          `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		return err
+	}
+	if envelope.Error != "" {
+		return errors.New(envelope.Error)
+	}
+	if result == nil {
+		return nil
+	}
+	return json.Unmarshal(envelope.Result, result)
 }
 
 func waitForTestPath(t *testing.T, path string) {

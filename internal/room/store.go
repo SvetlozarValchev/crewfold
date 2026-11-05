@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS network_devices (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   token_hash TEXT NOT NULL UNIQUE,
+  browser_handle TEXT NOT NULL DEFAULT '',
   joined_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL
 ) STRICT;
@@ -174,6 +175,12 @@ CREATE TABLE IF NOT EXISTS network_participant_bindings (
   error TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS network_browser_sessions (
+  token_hash TEXT PRIMARY KEY,
+  device_id TEXT NOT NULL REFERENCES network_devices(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY,
   room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -193,7 +200,7 @@ CREATE TABLE IF NOT EXISTS messages (
   participant_id TEXT REFERENCES participants(id),
   sender_handle TEXT NOT NULL,
   sender_name TEXT NOT NULL,
-  sender_kind TEXT NOT NULL CHECK(sender_kind IN ('owner','agent','steward','system')),
+  sender_kind TEXT NOT NULL CHECK(sender_kind IN ('owner','member','agent','steward','system')),
   kind TEXT NOT NULL CHECK(kind IN ('message','context','document','system')),
   body TEXT NOT NULL,
   document_id TEXT REFERENCES documents(id),
@@ -216,6 +223,54 @@ CREATE INDEX IF NOT EXISTS network_bindings_device ON network_participant_bindin
 	if archivedColumn == 0 {
 		if _, err := s.db.ExecContext(ctx, `ALTER TABLE documents ADD COLUMN archived_at TEXT`); err != nil {
 			return fmt.Errorf("add document archive state: %w", err)
+		}
+	}
+	var browserHandleColumn int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('network_devices') WHERE name='browser_handle'`).Scan(&browserHandleColumn); err != nil {
+		return fmt.Errorf("inspect network device identity: %w", err)
+	}
+	if browserHandleColumn == 0 {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE network_devices ADD COLUMN browser_handle TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add network browser identity: %w", err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS network_devices_browser_handle ON network_devices(browser_handle) WHERE browser_handle<>''`); err != nil {
+		return fmt.Errorf("index network browser identity: %w", err)
+	}
+	var messagesSchema string
+	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'`).Scan(&messagesSchema); err != nil {
+		return fmt.Errorf("inspect message sender kinds: %w", err)
+	}
+	if !strings.Contains(messagesSchema, "'member'") {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		migration := `
+CREATE TABLE messages_member_migration (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
+  room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  participant_id TEXT REFERENCES participants(id),
+  sender_handle TEXT NOT NULL,
+  sender_name TEXT NOT NULL,
+  sender_kind TEXT NOT NULL CHECK(sender_kind IN ('owner','member','agent','steward','system')),
+  kind TEXT NOT NULL CHECK(kind IN ('message','context','document','system')),
+  body TEXT NOT NULL,
+  document_id TEXT REFERENCES documents(id),
+  created_at TEXT NOT NULL
+) STRICT;
+INSERT INTO messages_member_migration(sequence,id,room_id,participant_id,sender_handle,sender_name,sender_kind,kind,body,document_id,created_at)
+SELECT sequence,id,room_id,participant_id,sender_handle,sender_name,sender_kind,kind,body,document_id,created_at FROM messages;
+DROP TABLE messages;
+ALTER TABLE messages_member_migration RENAME TO messages;
+CREATE INDEX messages_room_sequence ON messages(room_id, sequence);`
+		if _, err := tx.ExecContext(ctx, migration); err != nil {
+			return fmt.Errorf("add human member message identity: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit human member identity: %w", err)
 		}
 	}
 	return nil
@@ -286,6 +341,9 @@ func (s *Store) Join(ctx context.Context, input JoinInput) (Participant, error) 
 	if !validHandle(handle) {
 		return Participant{}, errors.New("participant handle must use 1-63 lowercase letters, numbers, dots, underscores, or hyphens")
 	}
+	if handle == "owner" {
+		return Participant{}, errors.New("participant handle @owner is reserved for the room owner")
+	}
 	display := strings.TrimSpace(input.DisplayName)
 	if display == "" {
 		display = handle
@@ -323,8 +381,19 @@ func (s *Store) Join(ctx context.Context, input JoinInput) (Participant, error) 
 		return Participant{}, err
 	}
 	defer tx.Rollback()
-	var participantID, existingKind string
-	err = tx.QueryRowContext(ctx, `SELECT id,kind FROM participants WHERE room_id=? AND handle=?`, room.ID, handle).Scan(&participantID, &existingKind)
+	var humanHandleConflict bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+SELECT 1 FROM network_devices d JOIN network_room_memberships n ON n.device_id=d.id
+WHERE n.room_id=? AND d.browser_handle=?)`, room.ID, handle).Scan(&humanHandleConflict); err != nil {
+		return Participant{}, err
+	}
+	if humanHandleConflict {
+		return Participant{}, errors.New("participant handle belongs to a human collaborator in this room")
+	}
+	var participantID, existingKind, existingDeviceID string
+	err = tx.QueryRowContext(ctx, `SELECT p.id,p.kind,COALESCE(n.device_id,'')
+FROM participants p LEFT JOIN network_participant_bindings n ON n.participant_id=p.id
+WHERE p.room_id=? AND p.handle=?`, room.ID, handle).Scan(&participantID, &existingKind, &existingDeviceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		participantID, err = randomID("member_")
 		if err != nil {
@@ -336,6 +405,9 @@ func (s *Store) Join(ctx context.Context, input JoinInput) (Participant, error) 
 	} else if err != nil {
 		return Participant{}, err
 	} else {
+		if existingDeviceID != "" {
+			return Participant{}, errors.New("participant handle belongs to a remote collaborator in this room")
+		}
 		if existingKind == "steward" {
 			kind = "steward"
 		}
@@ -355,6 +427,11 @@ ON CONFLICT(participant_id) DO UPDATE SET kind='codex',target=excluded.target,st
 		}
 	}
 	message := display + " joined from " + cwd + "."
+	if kind == "agent" {
+		message = display + " joined as an agent of human @owner from " + cwd + "."
+	} else if kind == "steward" {
+		message = display + " joined as a hosted steward from " + cwd + "."
+	}
 	if _, err := insertMessage(ctx, tx, room.ID, &participantID, handle, display, kind, "system", message, "", now); err != nil {
 		return Participant{}, err
 	}
@@ -986,6 +1063,7 @@ func (s *Store) resolveRoom(ctx context.Context, identifier string) (Room, error
 
 func (s *Store) participants(ctx context.Context, roomID string) ([]Participant, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.room_id,p.handle,p.display_name,p.kind,
+CASE WHEN p.kind='agent' AND n.participant_id IS NULL THEN 'owner' ELSE COALESCE(nd.browser_handle,'') END,
 CASE WHEN n.participant_id IS NOT NULL THEN COALESCE(nd.name,'remote') || ':' || n.remote_directory ELSE COALESCE(p.working_directory,'') END,
 p.status,p.context,COALESCE(p.context_updated_at,''),p.last_read_sequence,p.joined_at,p.last_seen_at,
 (SELECT COUNT(*) FROM messages m WHERE m.room_id=p.room_id AND m.sequence>p.last_read_sequence AND (m.participant_id IS NULL OR m.participant_id<>p.id)),
@@ -1006,7 +1084,7 @@ WHERE p.room_id=? ORDER BY p.kind='steward' DESC,p.joined_at,p.handle`, roomID)
 	for rows.Next() {
 		var participant Participant
 		var delivery ParticipantDelivery
-		if err := rows.Scan(&participant.ID, &participant.RoomID, &participant.Handle, &participant.DisplayName, &participant.Kind, &participant.WorkingDirectory, &participant.Status, &participant.Context, &participant.ContextUpdatedAt, &participant.LastReadSequence, &participant.JoinedAt, &participant.LastSeenAt, &participant.UnreadCount, &delivery.Kind, &delivery.Target, &delivery.Status, &delivery.LastDeliveredSequence, &delivery.LastAttemptAt, &delivery.LastDeliveredAt, &delivery.Error, &delivery.UpdatedAt); err != nil {
+		if err := rows.Scan(&participant.ID, &participant.RoomID, &participant.Handle, &participant.DisplayName, &participant.Kind, &participant.HumanHandle, &participant.WorkingDirectory, &participant.Status, &participant.Context, &participant.ContextUpdatedAt, &participant.LastReadSequence, &participant.JoinedAt, &participant.LastSeenAt, &participant.UnreadCount, &delivery.Kind, &delivery.Target, &delivery.Status, &delivery.LastDeliveredSequence, &delivery.LastAttemptAt, &delivery.LastDeliveredAt, &delivery.Error, &delivery.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if delivery.Kind != "" {
@@ -1039,7 +1117,7 @@ type codexDeliveryRoute struct {
 func (s *Store) pendingCodexDeliveries(ctx context.Context) ([]codexDeliveryRoute, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,COALESCE(r.steward_id,''),r.created_at,r.updated_at,
 COALESCE((SELECT MAX(sequence) FROM messages WHERE room_id=r.id),0),
-p.id,p.room_id,p.handle,p.display_name,p.kind,COALESCE(p.working_directory,''),p.status,p.context,COALESCE(p.context_updated_at,''),p.last_read_sequence,p.joined_at,p.last_seen_at,
+p.id,p.room_id,p.handle,p.display_name,p.kind,'owner',COALESCE(p.working_directory,''),p.status,p.context,COALESCE(p.context_updated_at,''),p.last_read_sequence,p.joined_at,p.last_seen_at,
 d.kind,d.target,d.status,d.last_delivered_sequence,COALESCE(d.last_attempt_at,''),COALESCE(d.last_delivered_at,''),d.error,d.updated_at
 FROM participant_deliveries d
 JOIN participants p ON p.id=d.participant_id
@@ -1056,7 +1134,7 @@ ORDER BY d.updated_at,p.id`)
 		var route codexDeliveryRoute
 		if err := rows.Scan(
 			&route.Room.ID, &route.Room.Slug, &route.Room.Title, &route.Room.Topic, &route.Room.Status, &route.Room.StewardID, &route.Room.CreatedAt, &route.Room.UpdatedAt, &route.Room.LastSequence,
-			&route.Participant.ID, &route.Participant.RoomID, &route.Participant.Handle, &route.Participant.DisplayName, &route.Participant.Kind, &route.Participant.WorkingDirectory, &route.Participant.Status, &route.Participant.Context, &route.Participant.ContextUpdatedAt, &route.Participant.LastReadSequence, &route.Participant.JoinedAt, &route.Participant.LastSeenAt,
+			&route.Participant.ID, &route.Participant.RoomID, &route.Participant.Handle, &route.Participant.DisplayName, &route.Participant.Kind, &route.Participant.HumanHandle, &route.Participant.WorkingDirectory, &route.Participant.Status, &route.Participant.Context, &route.Participant.ContextUpdatedAt, &route.Participant.LastReadSequence, &route.Participant.JoinedAt, &route.Participant.LastSeenAt,
 			&route.Delivery.Kind, &route.Delivery.Target, &route.Delivery.Status, &route.Delivery.LastDeliveredSequence, &route.Delivery.LastAttemptAt, &route.Delivery.LastDeliveredAt, &route.Delivery.Error, &route.Delivery.UpdatedAt,
 		); err != nil {
 			return nil, err

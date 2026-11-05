@@ -26,6 +26,7 @@ Collaborator commands:
 
 ```text
 crewfold-connector setup
+crewfold-connector open
 crewfold-connector service start|stop|restart|status
 crewfold-connector room join HTTPS-URL --invite SECRET --handle HANDLE [--delivery codex|claude|none]
 crewfold-connector channel setup ROOM
@@ -41,6 +42,10 @@ the server grant, joins the invited room, and binds the provider session from
 which it is run. Claude participants use `--delivery claude` and start Claude
 Code with the printed experimental Channels command. See [tailnet
 collaboration](tailnet.md) for the complete sequence.
+
+`crewfold-connector open` prints one browser login link for each enrolled hub.
+The browser session sees only rooms granted to that device. Its first login
+chooses a persistent human handle that is separate from all agent handles.
 
 Claude Code on the owner machine uses the same commands without `connect`:
 

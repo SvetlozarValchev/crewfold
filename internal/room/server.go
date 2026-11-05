@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,7 @@ type Server struct {
 	origin      string
 	mu          sync.Mutex
 	bootstrap   map[[32]byte]time.Time
+	networkWeb  map[[32]byte]networkWebBootstrap
 	networkMu   sync.Mutex
 	networkWake chan struct{}
 	ownerToken  string
@@ -64,6 +66,11 @@ type Server struct {
 	stewards    *StewardManager
 	deliveries  *DeliveryManager
 	closeOnce   sync.Once
+}
+
+type networkWebBootstrap struct {
+	DeviceID string
+	Expires  time.Time
 }
 
 func RunServer(ctx context.Context, config ServerConfig) error {
@@ -110,7 +117,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 			return err
 		}
 	}
-	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, networkWake: make(chan struct{}), ownerToken: ownerToken, ownerHash: ownerHash}
+	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, networkWeb: map[[32]byte]networkWebBootstrap{}, networkWake: make(chan struct{}), ownerToken: ownerToken, ownerHash: ownerHash}
 	cliPath, err := os.Executable()
 	if err != nil {
 		server.stewards = NewStewardManager(ctx, store, runtime, "crewfold", socketPath)
@@ -424,7 +431,7 @@ func (s *Server) startWeb() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(response http.ResponseWriter, request *http.Request) {
 		s.secureWeb(response)
-		if request.Host != listener.Addr().String() {
+		if !s.webHostAllowed(request, listener.Addr().String()) {
 			http.Error(response, "invalid host", http.StatusForbidden)
 			return
 		}
@@ -438,7 +445,7 @@ func (s *Server) startWeb() error {
 	})
 	mux.Handle("/assets/", http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		s.secureWeb(response)
-		if request.Host != listener.Addr().String() {
+		if !s.webHostAllowed(request, listener.Addr().String()) {
 			http.Error(response, "invalid host", http.StatusForbidden)
 			return
 		}
@@ -449,9 +456,23 @@ func (s *Server) startWeb() error {
 	mux.HandleFunc("/api/rpc", s.handleWebRPC)
 	mux.HandleFunc("/api/network/enroll", s.handleNetworkEnroll)
 	mux.HandleFunc("/api/network/rpc", s.handleNetworkRPC)
+	mux.HandleFunc("/api/network/session", s.handleNetworkWebSession)
+	mux.HandleFunc("/api/network/web/rpc", s.handleNetworkWebRPC)
 	s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 40 * time.Second, IdleTimeout: 45 * time.Second, MaxHeaderBytes: 16 * 1024}
 	go func() { _ = s.http.Serve(listener) }()
 	return nil
+}
+
+func (s *Server) webHostAllowed(request *http.Request, localHost string) bool {
+	if request.Host == localHost {
+		return true
+	}
+	settings, err := s.store.NetworkSettings(request.Context())
+	if err != nil || !settings.Enabled {
+		return false
+	}
+	public, err := url.Parse(settings.PublicOrigin)
+	return err == nil && request.Host == public.Host
 }
 
 func (s *Server) mintBootstrap() (map[string]any, error) {
@@ -530,6 +551,11 @@ func (s *Server) pruneSecretsLocked() {
 	for key, expiry := range s.bootstrap {
 		if !now.Before(expiry) {
 			delete(s.bootstrap, key)
+		}
+	}
+	for key, bootstrap := range s.networkWeb {
+		if !now.Before(bootstrap.Expires) {
+			delete(s.networkWeb, key)
 		}
 	}
 }

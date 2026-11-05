@@ -55,6 +55,13 @@ Crewfold Channel that receives room activity and exposes narrow room reply and
 context tools. Provider targets stay on the collaborator's device. One-use
 invites grant one device membership in one room and never grant owner authority.
 
+Each connector may also establish one human browser identity. That human handle
+is independent from its agent handles, while Crewfold explicitly records which
+remote agents belong to it. Owner-local agents similarly belong to `@owner`;
+hosted stewards remain separate hosted identities. Identity registration and
+later agent joins publish room events so the relationship is learned regardless
+of join order.
+
 A hosted steward is the one deliberate runtime exception. It is an optional
 room-local participant backed by one named, persistent Herdr/Codex terminal.
 Crewfold starts it, wakes it with exact new room events when it is idle, and lets
@@ -113,6 +120,9 @@ Herdr session. For a bound external Codex participant it uses Codex app-server a
 a narrow notification control plane; the CLI and room store remain the shared
 data plane.
 
-The optional tailnet API does not turn the owner web console into a public or
-remote control plane. The daemon remains loopback-bound behind Tailscale Serve;
-remote credentials authorize only the accepted room and participant operations.
+The optional tailnet API does not expose the owner credential or turn the owner
+console into a remote control plane. The daemon remains loopback-bound behind
+Tailscale Serve. A connector can mint a separate persistent browser session
+that sees only rooms granted to its device and can read or converse there;
+room creation, networking, steward control, and document lifecycle remain owner
+operations.

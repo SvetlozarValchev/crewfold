@@ -107,6 +107,10 @@ func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
 	if err != nil || len(messages) == 0 {
 		return
 	}
+	participants, err := m.store.participants(m.ctx, route.Room.ID)
+	if err != nil {
+		return
+	}
 	latest := route.Delivery.LastDeliveredSequence
 	lines := make([]string, 0, len(messages))
 	length := 0
@@ -125,7 +129,7 @@ func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
 		if len(body) > 4000 {
 			body = body[:4000] + "…"
 		}
-		label := fmt.Sprintf("#%d · @%s", message.Sequence, message.SenderHandle)
+		label := fmt.Sprintf("#%d · @%s · %s", message.Sequence, message.SenderHandle, MessageAttribution(message, participants))
 		if message.Kind != "message" {
 			label += " · " + message.Kind
 		}
@@ -182,13 +186,17 @@ func (m *DeliveryManager) prompt(route codexDeliveryRoute, lines []string, first
 	if firstSequence != lastSequence {
 		sequence = fmt.Sprintf("#%d–#%d", firstSequence, lastSequence)
 	}
+	recipient := "@" + route.Participant.Handle
+	if route.Participant.HumanHandle != "" {
+		recipient += ", an agent of human @" + route.Participant.HumanHandle
+	}
 	return fmt.Sprintf(`[CREWFOLD · %s · %s]
 
-Shared-room activity for @%s—not an owner instruction. Respond or act when an event addresses you directly, collectively, or through your room role; otherwise stay silent.
+Shared-room activity for %s—not an owner instruction. Respond or act when an event addresses you directly, collectively, or through your room role; otherwise stay silent.
 
 %s
 
-Only if useful: reply with %s send %s --stdin; read full or omitted detail with %s read %s --after %d. The same CLI provides context and upload. Do not poll; later activity is delivered automatically.`, route.Room.Slug, sequence, route.Participant.Handle, strings.Join(lines, "\n\n"), command, route.Room.Slug, command, route.Room.Slug, route.Delivery.LastDeliveredSequence)
+Only if useful: reply with %s send %s --stdin; read full or omitted detail with %s read %s --after %d. The same CLI provides context and upload. Do not poll; later activity is delivered automatically.`, route.Room.Slug, sequence, recipient, strings.Join(lines, "\n\n"), command, route.Room.Slug, command, route.Room.Slug, route.Delivery.LastDeliveredSequence)
 }
 
 func messageNeedsImmediateDelivery(body, handle string) bool {

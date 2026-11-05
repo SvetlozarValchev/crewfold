@@ -77,7 +77,7 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.deliverPending()
-	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], "compare the interface contract") || !strings.Contains(runtime.prompts[0], "send shared --stdin") || !strings.Contains(runtime.prompts[0], "directly, collectively, or through your room role") || !strings.Contains(runtime.prompts[0], "Do not poll") || strings.Contains(runtime.prompts[0], "No response is required") || strings.Contains(runtime.prompts[0], "Share a file with") {
+	if len(runtime.prompts) != 1 || runtime.targets[0] != "thread-one" || !strings.Contains(runtime.prompts[0], "compare the interface contract") || !strings.Contains(runtime.prompts[0], "agent of human @owner") || !strings.Contains(runtime.prompts[0], "@second · agent of @owner") || !strings.Contains(runtime.prompts[0], "send shared --stdin") || !strings.Contains(runtime.prompts[0], "directly, collectively, or through your room role") || !strings.Contains(runtime.prompts[0], "Do not poll") || strings.Contains(runtime.prompts[0], "No response is required") || strings.Contains(runtime.prompts[0], "Share a file with") {
 		t.Fatalf("unexpected delivery: targets=%#v prompts=%#v", runtime.targets, runtime.prompts)
 	}
 	if runtime.messageIDs[0] != "crewfold:"+first.ID+":"+fmt.Sprint(message.Sequence) {

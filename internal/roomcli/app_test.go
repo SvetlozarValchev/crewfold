@@ -230,6 +230,14 @@ func TestRemoteConnectJoinAndRoomCommandsRouteThroughHub(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
+	if code := app.RunConnector(context.Background(), []string{"open"}); code != 0 {
+		t.Fatalf("connector open exit %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Crewfold servers") || !strings.Contains(stdout.String(), "1 room") || !strings.Contains(stdout.String(), "https://crewfold.example.ts.net/#network-bootstrap=") {
+		t.Fatalf("connector open output = %q", stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
 	if code := app.RunConnector(context.Background(), []string{"room", "send", "remote-cli", "Remote CLI connected."}); code != 0 {
 		t.Fatalf("remote send exit %d: %s", code, stderr.String())
 	}
@@ -415,10 +423,10 @@ func TestLocalClaudeChannelSetupUsesOwnerSocketWithoutRemoteProfile(t *testing.T
 func TestNetworkDeliveryPromptDoesNotAcknowledgeOmittedMessages(t *testing.T) {
 	messages := make([]room.Message, 0, 5)
 	for sequence := int64(1); sequence <= 5; sequence++ {
-		messages = append(messages, room.Message{Sequence: sequence, SenderHandle: "peer", Body: strings.Repeat(string(rune('a'+sequence)), 4000)})
+		messages = append(messages, room.Message{Sequence: sequence, ParticipantID: "peer-id", SenderHandle: "peer", SenderKind: "agent", Body: strings.Repeat(string(rune('a'+sequence)), 4000)})
 	}
 	prompt, through := networkDeliveryPrompt(room.NetworkDeliveryBatch{
-		Room: room.Room{Slug: "shared"}, Participant: room.Participant{Handle: "receiver"}, Messages: messages, Through: 5,
+		Room: room.Room{Slug: "shared"}, Participant: room.Participant{Handle: "receiver", HumanHandle: "alice"}, Participants: []room.Participant{{ID: "peer-id", Handle: "peer", HumanHandle: "bob"}}, Messages: messages, Through: 5,
 	})
 	if through >= 5 {
 		t.Fatalf("acknowledgement advanced through omitted content: %d", through)
@@ -428,6 +436,9 @@ func TestNetworkDeliveryPromptDoesNotAcknowledgeOmittedMessages(t *testing.T) {
 	}
 	if strings.Contains(prompt, "#5 · @peer") {
 		t.Fatal("prompt unexpectedly included the final message")
+	}
+	if !strings.Contains(prompt, "agent of human @alice") || !strings.Contains(prompt, "@peer · agent of @bob") {
+		t.Fatalf("prompt omitted explicit human ownership: %q", prompt)
 	}
 }
 

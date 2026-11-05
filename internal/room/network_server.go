@@ -2,10 +2,13 @@ package room
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -88,6 +91,181 @@ func (s *Server) handleNetworkRPC(response http.ResponseWriter, request *http.Re
 	s.writeWebJSON(response, Response{ID: rpc.ID, Result: result})
 }
 
+func (s *Server) mintNetworkWebBootstrap(ctx context.Context, device NetworkDevice) (NetworkBrowserBootstrap, error) {
+	settings, err := s.store.NetworkSettings(ctx)
+	if err != nil || !settings.Enabled {
+		return NetworkBrowserBootstrap{}, errors.New("Crewfold networking is disabled")
+	}
+	token, digest, err := secret()
+	if err != nil {
+		return NetworkBrowserBootstrap{}, err
+	}
+	rooms, err := s.store.NetworkRooms(ctx, device.ID)
+	if err != nil {
+		return NetworkBrowserBootstrap{}, err
+	}
+	expires := time.Now().UTC().Add(2 * time.Minute)
+	s.mu.Lock()
+	s.pruneSecretsLocked()
+	s.networkWeb[digest] = networkWebBootstrap{DeviceID: device.ID, Expires: expires}
+	s.mu.Unlock()
+	return NetworkBrowserBootstrap{URL: settings.PublicOrigin + "/#network-bootstrap=" + token, ExpiresAt: expires.Format(time.RFC3339Nano), Rooms: len(rooms)}, nil
+}
+
+func (s *Server) publicWebRequest(request *http.Request) bool {
+	settings, err := s.store.NetworkSettings(request.Context())
+	if err != nil || !settings.Enabled || request.Header.Get("Origin") != settings.PublicOrigin {
+		return false
+	}
+	public, err := url.Parse(settings.PublicOrigin)
+	return err == nil && request.Host == public.Host
+}
+
+func (s *Server) handleNetworkWebSession(response http.ResponseWriter, request *http.Request) {
+	s.secureWeb(response)
+	if request.Method != http.MethodPost || !s.publicWebRequest(request) {
+		http.Error(response, "forbidden", http.StatusForbidden)
+		return
+	}
+	var body struct {
+		Bootstrap string `json:"bootstrap"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(response, request.Body, 4096)).Decode(&body); err != nil {
+		http.Error(response, "invalid request", http.StatusBadRequest)
+		return
+	}
+	raw, err := hex.DecodeString(strings.TrimSpace(body.Bootstrap))
+	if err != nil || len(raw) != 32 {
+		http.Error(response, "invalid bootstrap", http.StatusUnauthorized)
+		return
+	}
+	digest := sha256.Sum256(raw)
+	now := time.Now().UTC()
+	s.mu.Lock()
+	bootstrap, exists := s.networkWeb[digest]
+	delete(s.networkWeb, digest)
+	s.pruneSecretsLocked()
+	s.mu.Unlock()
+	if !exists || !now.Before(bootstrap.Expires) {
+		http.Error(response, "expired bootstrap", http.StatusUnauthorized)
+		return
+	}
+	token, err := s.store.CreateNetworkBrowserSession(request.Context(), bootstrap.DeviceID)
+	if err != nil {
+		http.Error(response, "could not create browser session", http.StatusInternalServerError)
+		return
+	}
+	identity, err := s.store.NetworkBrowserIdentity(request.Context(), bootstrap.DeviceID)
+	if err != nil {
+		http.Error(response, "could not read browser identity", http.StatusInternalServerError)
+		return
+	}
+	s.writeWebJSON(response, map[string]any{"token": token, "mode": "collaborator", "identity": identity})
+}
+
+func (s *Server) handleNetworkWebRPC(response http.ResponseWriter, request *http.Request) {
+	s.secureWeb(response)
+	if request.Method != http.MethodPost || !s.publicWebRequest(request) {
+		http.Error(response, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	token := strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer ")
+	device, err := s.store.AuthenticateNetworkBrowserSession(request.Context(), token)
+	if err != nil {
+		http.Error(response, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var rpc Request
+	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, 6*1024*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&rpc); err != nil {
+		http.Error(response, "invalid request", http.StatusBadRequest)
+		return
+	}
+	result, err := s.networkBrowserCall(request.Context(), device, rpc.Method, rpc.Params)
+	if err != nil {
+		s.writeWebJSON(response, Response{ID: rpc.ID, Error: err.Error()})
+		return
+	}
+	s.writeWebJSON(response, Response{ID: rpc.ID, Result: result})
+}
+
+func (s *Server) networkBrowserCall(ctx context.Context, device NetworkDevice, method string, raw json.RawMessage) (any, error) {
+	decode := func(target any) error {
+		if len(raw) == 0 {
+			raw = json.RawMessage("{}")
+		}
+		decoder := json.NewDecoder(strings.NewReader(string(raw)))
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(target)
+	}
+	switch method {
+	case "room.list":
+		return s.store.NetworkRooms(ctx, device.ID)
+	case "room.snapshot":
+		var input ListMessagesInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		room, err := s.store.NetworkRoom(ctx, device.ID, input.Room)
+		if err != nil {
+			return nil, err
+		}
+		if input.After > 0 && input.Before > 0 {
+			return nil, errors.New("after and before cannot be used together")
+		}
+		if input.Before > 0 {
+			return s.store.SnapshotBefore(ctx, room.ID, input.Before, input.Limit)
+		}
+		return s.store.Snapshot(ctx, room.ID, input.After, input.Limit)
+	case "browser.identity":
+		return s.store.NetworkBrowserIdentity(ctx, device.ID)
+	case "browser.identity.set":
+		var input struct {
+			Handle string `json:"handle"`
+		}
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		identity, err := s.store.SetNetworkBrowserIdentity(ctx, device.ID, input.Handle)
+		if err == nil {
+			s.deliveries.Wake()
+			s.wakeNetwork()
+		}
+		return identity, err
+	case "message.send":
+		var input SendInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		message, err := s.store.SendNetworkMember(ctx, device.ID, input)
+		if err == nil {
+			s.deliveries.Wake()
+			s.wakeNetwork()
+		}
+		return message, err
+	case "document.read":
+		var input struct {
+			Room     string `json:"room"`
+			Document string `json:"document"`
+		}
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		room, err := s.store.NetworkRoom(ctx, device.ID, input.Room)
+		if err != nil {
+			return nil, err
+		}
+		document, content, err := s.store.ReadDocument(ctx, room.ID, input.Document)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"document": document, "content_base64": base64.StdEncoding.EncodeToString(content)}, nil
+	default:
+		return nil, errors.New("method is not available in the collaborator web view")
+	}
+}
+
 func (s *Server) networkCall(ctx context.Context, device NetworkDevice, participantID, method string, raw json.RawMessage) (any, error) {
 	decode := func(target any) error {
 		if len(raw) == 0 {
@@ -123,6 +301,8 @@ func (s *Server) networkCall(ctx context.Context, device NetworkDevice, particip
 			return nil, err
 		}
 		return s.store.AcceptNetworkInvite(ctx, device.ID, input)
+	case "browser.bootstrap":
+		return s.mintNetworkWebBootstrap(ctx, device)
 	case "room.list":
 		return s.store.NetworkRooms(ctx, device.ID)
 	case "room.snapshot":

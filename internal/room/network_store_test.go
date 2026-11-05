@@ -2,9 +2,52 @@ package room
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestNetworkBrowserSessionSurvivesStoreRestart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "persistent-browser", Title: "Persistent browser"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ConfigureNetwork(ctx, ConfigureNetworkInput{Enabled: true, PublicOrigin: "https://crewfold.example.ts.net"}); err != nil {
+		t.Fatal(err)
+	}
+	invite, err := store.CreateNetworkInvite(ctx, CreateNetworkInviteInput{Room: created.Room.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := store.EnrollNetworkDevice(ctx, NetworkEnrollInput{Invite: invite.Secret, DeviceName: "persistent-device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := store.CreateNetworkBrowserSession(ctx, enrollment.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	device, err := store.AuthenticateNetworkBrowserSession(ctx, token)
+	if err != nil || device.ID != enrollment.DeviceID {
+		t.Fatalf("persistent browser session = %#v, %v", device, err)
+	}
+}
 
 func TestNetworkEnrollmentParticipantAndDurableDelivery(t *testing.T) {
 	t.Parallel()
@@ -59,6 +102,36 @@ func TestNetworkEnrollmentParticipantAndDurableDelivery(t *testing.T) {
 	}
 	if participant.Delivery == nil || participant.Delivery.Kind != "codex" || !strings.Contains(participant.WorkingDirectory, "alice-laptop:/home/alice/project") {
 		t.Fatalf("remote participant = %#v", participant)
+	}
+	identity, err := store.SetNetworkBrowserIdentity(ctx, device.ID, "alice")
+	if err != nil || identity.Handle != "alice" {
+		t.Fatalf("set browser identity = %#v, %v", identity, err)
+	}
+	identitySnapshot, err := store.Snapshot(ctx, created.Room.ID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(identitySnapshot.Participants) != 1 || identitySnapshot.Participants[0].HumanHandle != "alice" {
+		t.Fatalf("participant ownership after later human join = %#v", identitySnapshot.Participants)
+	}
+	identityMessage := identitySnapshot.Messages[len(identitySnapshot.Messages)-1]
+	if identityMessage.SenderKind != "member" || identityMessage.Kind != "system" || !strings.Contains(identityMessage.Body, "@alice-agent") {
+		t.Fatalf("human identity announcement = %#v", identityMessage)
+	}
+	identityBatch, err := store.NetworkDeliveryBatch(ctx, device.ID, participant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(identityBatch.Messages) != 1 || identityBatch.Messages[0].ID != identityMessage.ID || identityBatch.Participant.HumanHandle != "alice" {
+		t.Fatalf("human identity delivery = %#v", identityBatch)
+	}
+	if _, err := store.RecordNetworkDelivery(ctx, device.ID, NetworkDeliveryResultInput{ParticipantID: participant.ID, Through: identityBatch.Through, Status: "delivered"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.JoinNetworkParticipant(ctx, device, JoinInput{
+		Room: created.Room.Slug, Handle: "alice", WorkingDirectory: "/home/alice/conflict", Delivery: "none",
+	}); err == nil || !strings.Contains(err.Error(), "human collaborator") {
+		t.Fatalf("agent reused its human handle: %v", err)
 	}
 	ownerMessage, err := store.Send(ctx, SendInput{Room: created.Room.ID, Owner: true, Body: "@alice-agent please report the current result."})
 	if err != nil {

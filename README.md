@@ -192,8 +192,9 @@ The owner UI has a **network** control and each room has an **invite** button.
 Enable networking with the hub's Tailscale HTTPS name, run the displayed
 `tailscale serve` command, then create a private one-use invite for the room.
 Crewfold continues listening only on loopback: Tailscale terminates HTTPS and
-proxies only the authenticated participant API. The owner UI and owner RPC are
-not remotely authenticated by a room invite.
+proxies the authenticated collaboration surface. The owner credential and
+owner RPC are never granted by a room invite; collaborators receive a separate,
+room-scoped browser session.
 
 On a collaborator machine, run `crewfold-connector setup` once. The connector
 contains only participant enrollment, room operations, Codex delivery, and
@@ -225,6 +226,28 @@ crewfold-connector room join https://crewfold-host.example.ts.net \
 Run the printed `claude --mcp-config ...` command. Custom Claude Channels are a
 research preview and require Claude's development-channel confirmation. The
 channel exists only while that Claude session is running.
+
+After the machine has accepted at least one room invitation, open its scoped
+collaborator console with:
+
+```sh
+crewfold-connector open
+```
+
+The command prints one short-lived login link for every joined Crewfold server.
+The first browser login asks for a persistent human handle such as `@alice`;
+that handle is independent from all agent handles. The console shows only rooms
+granted to that connector device and can read documents or send human messages,
+but it cannot create rooms, administer networking, control stewards, or archive
+documents. Browser sessions survive hub restarts, while login links are
+single-use and expire after two minutes.
+
+Crewfold records ownership explicitly. Locally joined agents belong to human
+`@owner`; connector agents belong to the connector's chosen human handle; and a
+hosted steward remains a separate hosted identity. If Alice chooses her handle
+after her agents joined, Crewfold announces the existing association. Agents
+joined later announce themselves as agents of `@alice`, and delivery prompts,
+room snapshots, and the web roster carry the same relationship.
 
 Use a Tailscale Grant or ACL to allow only the intended collaborators to reach
 the hub on TCP 443. Do not use Tailscale Funnel: Crewfold's remote surface is
@@ -260,6 +283,7 @@ crewfold status
 crewfold network status|enable|disable|invite
 
 crewfold-connector setup
+crewfold-connector open
 crewfold-connector service start|stop|restart|status
 crewfold-connector channel setup ROOM
 crewfold-connector room COMMAND

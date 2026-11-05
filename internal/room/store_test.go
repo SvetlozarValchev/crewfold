@@ -54,6 +54,93 @@ created_at TEXT NOT NULL
 	}
 }
 
+func TestOpenMigratesBrowserIdentityAndHumanMessageKinds(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := t.TempDir()
+	location := &url.URL{Scheme: "file", Path: filepath.Join(root, databaseFilename)}
+	database, err := driver.Open(location.String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := `
+CREATE TABLE rooms (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  topic TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('open','archived')),
+  steward_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE network_devices (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  joined_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE messages (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
+  room_id TEXT NOT NULL,
+  participant_id TEXT,
+  sender_handle TEXT NOT NULL,
+  sender_name TEXT NOT NULL,
+  sender_kind TEXT NOT NULL CHECK(sender_kind IN ('owner','agent','steward','system')),
+  kind TEXT NOT NULL CHECK(kind IN ('message','context','document','system')),
+  body TEXT NOT NULL,
+  document_id TEXT,
+  created_at TEXT NOT NULL
+) STRICT;
+INSERT INTO rooms(id,slug,title,topic,status,created_at,updated_at)
+VALUES('room_legacy','legacy','Legacy','Migration fixture','open','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+INSERT INTO messages(sequence,id,room_id,sender_handle,sender_name,sender_kind,kind,body,created_at)
+VALUES(42,'message_legacy','room_legacy','owner','You','owner','message','Preserve me.','2026-01-01T00:00:00Z');`
+	if _, err := database.ExecContext(ctx, legacy); err != nil {
+		_ = database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	var browserColumns int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('network_devices') WHERE name='browser_handle'`).Scan(&browserColumns); err != nil {
+		t.Fatal(err)
+	}
+	if browserColumns != 1 {
+		t.Fatalf("browser_handle columns = %d", browserColumns)
+	}
+	var messagesSchema string
+	if err := store.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'`).Scan(&messagesSchema); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(messagesSchema, "'member'") {
+		t.Fatalf("messages schema was not migrated: %s", messagesSchema)
+	}
+	snapshot, err := store.Snapshot(ctx, "legacy", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 1 || snapshot.Messages[0].Sequence != 42 || snapshot.Messages[0].Body != "Preserve me." {
+		t.Fatalf("migrated messages = %#v", snapshot.Messages)
+	}
+	message, err := store.Send(ctx, SendInput{Room: "legacy", Owner: true, Body: "After migration."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.Sequence != 43 {
+		t.Fatalf("post-migration sequence = %d", message.Sequence)
+	}
+}
+
 func TestCanonicalFeedRejectsUnstructuredSubstantialContent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -115,6 +202,9 @@ func TestLeaveDisablesDeliveryAndRejoinPreservesParticipantState(t *testing.T) {
 	joined, err := store.Join(ctx, JoinInput{Room: created.Room.ID, Handle: "worker", WorkingDirectory: directory, Delivery: "codex", ThreadID: "thread-old"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if joined.HumanHandle != "owner" {
+		t.Fatalf("local participant human = %#v", joined)
 	}
 	if _, err := store.Send(ctx, SendInput{Room: created.Room.ID, WorkingDirectory: directory, Kind: "context", Body: "Current durable finding."}); err != nil {
 		t.Fatal(err)
