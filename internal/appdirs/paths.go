@@ -16,14 +16,16 @@ const (
 
 // Paths is the one current owner-local filesystem layout.
 type Paths struct {
-	StateHome  string
-	ConfigHome string
-	StateDir   string
-	ConfigDir  string
-	RuntimeDir string
-	DataDir    string
-	SocketPath string
-	UnitPath   string
+	StateHome        string
+	ConfigHome       string
+	StateDir         string
+	ConfigDir        string
+	RuntimeDir       string
+	DataDir          string
+	SocketPath       string
+	UnitPath         string
+	RemoteConfigPath string
+	RelayUnitPath    string
 }
 
 // Default resolves the current process owner's XDG paths.
@@ -71,18 +73,21 @@ func Resolve(home string, getenv func(string) string) (Paths, error) {
 	}
 
 	result := Paths{
-		StateHome:  stateHome,
-		ConfigHome: configHome,
-		StateDir:   stateDir,
-		ConfigDir:  configDir,
-		RuntimeDir: runtimeDir,
-		DataDir:    stateDir,
-		SocketPath: filepath.Join(runtimeDir, "crewfold.sock"),
-		UnitPath:   filepath.Join(configHome, "systemd", "user", "crewfold.service"),
+		StateHome:        stateHome,
+		ConfigHome:       configHome,
+		StateDir:         stateDir,
+		ConfigDir:        configDir,
+		RuntimeDir:       runtimeDir,
+		DataDir:          stateDir,
+		SocketPath:       filepath.Join(runtimeDir, "crewfold.sock"),
+		UnitPath:         filepath.Join(configHome, "systemd", "user", "crewfold.service"),
+		RemoteConfigPath: filepath.Join(configDir, "remote.json"),
+		RelayUnitPath:    filepath.Join(configHome, "systemd", "user", "crewfold-relay.service"),
 	}
 	for name, value := range map[string]string{
 		"state directory": result.StateDir, "configuration directory": result.ConfigDir,
 		"runtime directory": result.RuntimeDir, "socket path": result.SocketPath, "unit path": result.UnitPath,
+		"remote configuration": result.RemoteConfigPath, "relay unit path": result.RelayUnitPath,
 	} {
 		if len(value) > maximumOwnerPathBytes {
 			return Paths{}, fmt.Errorf("%s exceeds %d bytes", name, maximumOwnerPathBytes)

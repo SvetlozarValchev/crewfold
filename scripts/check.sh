@@ -37,7 +37,8 @@ else
   printf 'go test -race ./... skipped: race detector prerequisites unavailable\n'
 fi
 
-printf 'production binary\n'
+printf 'production binaries\n'
 build_dir=$(mktemp -d)
 trap 'rm -rf -- "$build_dir"' EXIT HUP INT TERM
 $go_runner build -o "$build_dir/crewfold" ./cmd/crewfold
+$go_runner build -o "$build_dir/crewfold-connector" ./cmd/crewfold-connector

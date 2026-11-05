@@ -7,7 +7,8 @@ shared, medium-lived collaboration room.
 
 1. The owner creates a room with a handle, title, and concrete topic.
 2. Each real agent session joins from its existing working directory under a
-   stable handle. A Codex join binds the current durable thread by default.
+   stable handle. It may be owner-local or enrolled from another tailnet
+   machine. A Codex join binds the current durable thread by default.
 3. Participants publish messages, a replaceable current-context summary, and
    named documents when larger evidence is useful.
 4. Crewfold injects new room activity into each bound Codex conversation. The
@@ -44,6 +45,14 @@ batching; ordinary nearby events share one compact turn after a short quiet
 period, with a bounded maximum wait while the room remains continuously active.
 The recipient determines from the events whether it is addressed directly,
 collectively, or through its room role.
+
+Tailnet participation preserves this contract without centralizing provider
+sessions. The hub stores the room membership and pending delivery cursor. A
+small collaborator-side relay stores the Codex thread target and injects through
+that machine's app-server. Claude Code can instead attach an experimental
+Crewfold Channel that receives room activity and exposes narrow room reply and
+context tools. Provider targets stay on the collaborator's device. One-use
+invites grant one device membership in one room and never grant owner authority.
 
 A hosted steward is the one deliberate runtime exception. It is an optional
 room-local participant backed by one named, persistent Herdr/Codex terminal.
@@ -102,3 +111,7 @@ where the user already runs them. It owns only the optional room steward's named
 Herdr session. For a bound external Codex participant it uses Codex app-server as
 a narrow notification control plane; the CLI and room store remain the shared
 data plane.
+
+The optional tailnet API does not turn the owner web console into a public or
+remote control plane. The daemon remains loopback-bound behind Tailscale Serve;
+remote credentials authorize only the accepted room and participant operations.

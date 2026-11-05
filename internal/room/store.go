@@ -134,6 +134,46 @@ CREATE TABLE IF NOT EXISTS participant_deliveries (
   error TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS network_settings (
+  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+  enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+  public_origin TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS network_devices (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  joined_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS network_room_memberships (
+  device_id TEXT NOT NULL REFERENCES network_devices(id) ON DELETE CASCADE,
+  room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(device_id,room_id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS network_invites (
+  id TEXT PRIMARY KEY,
+  room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  secret_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL,
+  used_by_device_id TEXT REFERENCES network_devices(id),
+  used_at TEXT,
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS network_participant_bindings (
+  participant_id TEXT PRIMARY KEY REFERENCES participants(id) ON DELETE CASCADE,
+  device_id TEXT NOT NULL REFERENCES network_devices(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK(provider IN ('codex','claude','none')),
+  remote_directory TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('bound','queued','delivered','error','left')),
+  last_delivered_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_delivered_sequence >= 0),
+  last_attempt_at TEXT,
+  last_delivered_at TEXT,
+  error TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY,
   room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -163,6 +203,8 @@ CREATE INDEX IF NOT EXISTS messages_room_sequence ON messages(room_id, sequence)
 CREATE INDEX IF NOT EXISTS documents_room_created ON documents(room_id, created_at);
 CREATE INDEX IF NOT EXISTS participants_room_handle ON participants(room_id, handle);
 CREATE INDEX IF NOT EXISTS participant_deliveries_status ON participant_deliveries(kind,status,updated_at);
+CREATE INDEX IF NOT EXISTS network_invites_room ON network_invites(room_id,expires_at);
+CREATE INDEX IF NOT EXISTS network_bindings_device ON network_participant_bindings(device_id,status,updated_at);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize room database: %w", err)
@@ -336,7 +378,7 @@ func (s *Store) Leave(ctx context.Context, input LeaveInput) (Participant, error
 		return Participant{}, err
 	}
 	defer tx.Rollback()
-	participant, err := resolveParticipantTx(ctx, tx, room.ID, input.WorkingDirectory, input.Handle)
+	participant, err := resolveParticipantActorTx(ctx, tx, room.ID, input.ParticipantID, input.WorkingDirectory, input.Handle)
 	if err != nil {
 		return Participant{}, err
 	}
@@ -349,6 +391,11 @@ func (s *Store) Leave(ctx context.Context, input LeaveInput) (Participant, error
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE participants SET status='left',last_seen_at=? WHERE id=?`, now, participant.ID); err != nil {
 		return Participant{}, fmt.Errorf("leave room: %w", err)
+	}
+	if input.ParticipantID != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE network_participant_bindings SET status='left',updated_at=? WHERE participant_id=?`, now, participant.ID); err != nil {
+			return Participant{}, fmt.Errorf("disable network delivery: %w", err)
+		}
 	}
 	message := participant.DisplayName + " left the room."
 	if _, err := insertMessage(ctx, tx, room.ID, &participant.ID, participant.Handle, participant.DisplayName, participant.Kind, "system", message, "", now); err != nil {
@@ -396,7 +443,7 @@ func (s *Store) Send(ctx context.Context, input SendInput) (Message, error) {
 	var participantID *string
 	handle, name, senderKind := "owner", "You", "owner"
 	if !input.Owner {
-		participant, resolveErr := resolveParticipantTx(ctx, tx, room.ID, input.WorkingDirectory, input.Handle)
+		participant, resolveErr := resolveParticipantActorTx(ctx, tx, room.ID, input.ParticipantID, input.WorkingDirectory, input.Handle)
 		if resolveErr != nil {
 			return Message{}, resolveErr
 		}
@@ -488,7 +535,7 @@ func (s *Store) Upload(ctx context.Context, input UploadInput) (Message, error) 
 	var participantID *string
 	handle, display, senderKind := "owner", "You", "owner"
 	if !input.Owner {
-		participant, resolveErr := resolveParticipantTx(ctx, tx, room.ID, input.WorkingDirectory, input.Handle)
+		participant, resolveErr := resolveParticipantActorTx(ctx, tx, room.ID, input.ParticipantID, input.WorkingDirectory, input.Handle)
 		if resolveErr != nil {
 			_ = os.Remove(absolute)
 			return Message{}, resolveErr
@@ -530,7 +577,7 @@ func (s *Store) Ack(ctx context.Context, input AckInput) (Participant, error) {
 		return Participant{}, err
 	}
 	defer tx.Rollback()
-	participant, err := resolveParticipantTx(ctx, tx, room.ID, input.WorkingDirectory, input.Handle)
+	participant, err := resolveParticipantActorTx(ctx, tx, room.ID, input.ParticipantID, input.WorkingDirectory, input.Handle)
 	if err != nil {
 		return Participant{}, err
 	}
@@ -657,7 +704,7 @@ func (s *Store) SetDocumentArchived(ctx context.Context, input ArchiveDocumentIn
 
 	var actor Participant
 	if !input.Owner {
-		actor, err = resolveParticipantTx(ctx, tx, room.ID, input.WorkingDirectory, input.Handle)
+		actor, err = resolveParticipantActorTx(ctx, tx, room.ID, input.ParticipantID, input.WorkingDirectory, input.Handle)
 		if err != nil {
 			return Document{}, err
 		}
@@ -938,10 +985,18 @@ func (s *Store) resolveRoom(ctx context.Context, identifier string) (Room, error
 }
 
 func (s *Store) participants(ctx context.Context, roomID string) ([]Participant, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.room_id,p.handle,p.display_name,p.kind,COALESCE(p.working_directory,''),p.status,p.context,COALESCE(p.context_updated_at,''),p.last_read_sequence,p.joined_at,p.last_seen_at,
+	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.room_id,p.handle,p.display_name,p.kind,
+CASE WHEN n.participant_id IS NOT NULL THEN COALESCE(nd.name,'remote') || ':' || n.remote_directory ELSE COALESCE(p.working_directory,'') END,
+p.status,p.context,COALESCE(p.context_updated_at,''),p.last_read_sequence,p.joined_at,p.last_seen_at,
 (SELECT COUNT(*) FROM messages m WHERE m.room_id=p.room_id AND m.sequence>p.last_read_sequence AND (m.participant_id IS NULL OR m.participant_id<>p.id)),
-COALESCE(d.kind,''),COALESCE(d.target,''),COALESCE(d.status,''),COALESCE(d.last_delivered_sequence,0),COALESCE(d.last_attempt_at,''),COALESCE(d.last_delivered_at,''),COALESCE(d.error,''),COALESCE(d.updated_at,'')
-FROM participants p LEFT JOIN participant_deliveries d ON d.participant_id=p.id
+COALESCE(d.kind,CASE WHEN n.provider<>'none' THEN n.provider ELSE '' END,''),
+COALESCE(d.target,n.device_id,''),COALESCE(d.status,CASE WHEN n.provider<>'none' THEN n.status ELSE '' END,''),
+COALESCE(d.last_delivered_sequence,n.last_delivered_sequence,0),COALESCE(d.last_attempt_at,n.last_attempt_at,''),
+COALESCE(d.last_delivered_at,n.last_delivered_at,''),COALESCE(d.error,n.error,''),COALESCE(d.updated_at,n.updated_at,'')
+FROM participants p
+LEFT JOIN participant_deliveries d ON d.participant_id=p.id
+LEFT JOIN network_participant_bindings n ON n.participant_id=p.id
+LEFT JOIN network_devices nd ON nd.id=n.device_id
 WHERE p.room_id=? ORDER BY p.kind='steward' DESC,p.joined_at,p.handle`, roomID)
 	if err != nil {
 		return nil, err
@@ -1130,6 +1185,22 @@ func resolveParticipantTx(ctx context.Context, tx *sql.Tx, roomID, cwd, handle s
 		}
 		err = tx.QueryRowContext(ctx, `SELECT id,room_id,handle,display_name,kind,COALESCE(working_directory,''),status FROM participants WHERE room_id=? AND working_directory=? AND status='joined'`, roomID, cwd).Scan(&participant.ID, &participant.RoomID, &participant.Handle, &participant.DisplayName, &participant.Kind, &participant.WorkingDirectory, &participant.Status)
 	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return Participant{}, errors.New("this session has not joined the room; run crewfold room join first")
+	}
+	return participant, err
+}
+
+func resolveParticipantActorTx(ctx context.Context, tx *sql.Tx, roomID, participantID, cwd, handle string) (Participant, error) {
+	if strings.TrimSpace(participantID) == "" {
+		return resolveParticipantTx(ctx, tx, roomID, cwd, handle)
+	}
+	var participant Participant
+	err := tx.QueryRowContext(ctx, `SELECT id,room_id,handle,display_name,kind,COALESCE(working_directory,''),status
+FROM participants WHERE id=? AND room_id=? AND status='joined'`, participantID, roomID).Scan(
+		&participant.ID, &participant.RoomID, &participant.Handle, &participant.DisplayName,
+		&participant.Kind, &participant.WorkingDirectory, &participant.Status,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Participant{}, errors.New("this session has not joined the room; run crewfold room join first")
 	}

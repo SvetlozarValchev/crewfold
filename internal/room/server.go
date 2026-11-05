@@ -48,20 +48,22 @@ type Response struct {
 }
 
 type Server struct {
-	config     ServerConfig
-	store      *Store
-	listener   net.Listener
-	http       *http.Server
-	httpListen net.Listener
-	startedAt  time.Time
-	origin     string
-	mu         sync.Mutex
-	bootstrap  map[[32]byte]time.Time
-	ownerToken string
-	ownerHash  [32]byte
-	stewards   *StewardManager
-	deliveries *DeliveryManager
-	closeOnce  sync.Once
+	config      ServerConfig
+	store       *Store
+	listener    net.Listener
+	http        *http.Server
+	httpListen  net.Listener
+	startedAt   time.Time
+	origin      string
+	mu          sync.Mutex
+	bootstrap   map[[32]byte]time.Time
+	networkMu   sync.Mutex
+	networkWake chan struct{}
+	ownerToken  string
+	ownerHash   [32]byte
+	stewards    *StewardManager
+	deliveries  *DeliveryManager
+	closeOnce   sync.Once
 }
 
 func RunServer(ctx context.Context, config ServerConfig) error {
@@ -108,7 +110,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 			return err
 		}
 	}
-	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, ownerToken: ownerToken, ownerHash: ownerHash}
+	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, networkWake: make(chan struct{}), ownerToken: ownerToken, ownerHash: ownerHash}
 	cliPath, err := os.Executable()
 	if err != nil {
 		server.stewards = NewStewardManager(ctx, store, runtime, "crewfold", socketPath)
@@ -222,6 +224,24 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		return map[string]any{"status": "ok", "pid": os.Getpid(), "started_at": s.startedAt.Format(time.RFC3339Nano), "rooms": len(rooms), "version": s.config.Version}, err
 	case "web.bootstrap":
 		return s.mintBootstrap()
+	case "network.status":
+		settings, err := s.store.NetworkSettings(ctx)
+		settings.LocalOrigin = s.origin
+		return settings, err
+	case "network.configure":
+		var input ConfigureNetworkInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		settings, err := s.store.ConfigureNetwork(ctx, input)
+		settings.LocalOrigin = s.origin
+		return settings, err
+	case "network.invite.create":
+		var input CreateNetworkInviteInput
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		return s.store.CreateNetworkInvite(ctx, input)
 	case "room.create":
 		var input CreateRoomInput
 		if err := decode(&input); err != nil {
@@ -315,6 +335,7 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		participant, err := s.store.Join(ctx, input)
 		if err == nil {
 			s.deliveries.Wake()
+			s.wakeNetwork()
 		}
 		return participant, err
 	case "participant.leave":
@@ -325,6 +346,7 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		participant, err := s.store.Leave(ctx, input)
 		if err == nil {
 			s.deliveries.Wake()
+			s.wakeNetwork()
 		}
 		return participant, err
 	case "message.send":
@@ -335,6 +357,7 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		message, err := s.store.Send(ctx, input)
 		if err == nil {
 			s.deliveries.Wake()
+			s.wakeNetwork()
 		}
 		return message, err
 	case "participant.ack":
@@ -351,6 +374,7 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		message, err := s.store.Upload(ctx, input)
 		if err == nil {
 			s.deliveries.Wake()
+			s.wakeNetwork()
 		}
 		return message, err
 	case "document.read":
@@ -423,7 +447,9 @@ func (s *Server) startWeb() error {
 	}))
 	mux.HandleFunc("/api/session", s.handleWebSession)
 	mux.HandleFunc("/api/rpc", s.handleWebRPC)
-	s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
+	mux.HandleFunc("/api/network/enroll", s.handleNetworkEnroll)
+	mux.HandleFunc("/api/network/rpc", s.handleNetworkRPC)
+	s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 40 * time.Second, IdleTimeout: 45 * time.Second, MaxHeaderBytes: 16 * 1024}
 	go func() { _ = s.http.Serve(listener) }()
 	return nil
 }

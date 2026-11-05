@@ -144,10 +144,98 @@ type JoinInput struct {
 	ThreadID         string `json:"thread_id,omitempty"`
 }
 
+// NetworkSettings controls the explicitly enabled tailnet-facing API. The
+// daemon still listens only on loopback; PublicOrigin is the HTTPS address of
+// the trusted reverse proxy in front of it (normally Tailscale Serve).
+type NetworkSettings struct {
+	Enabled      bool   `json:"enabled"`
+	PublicOrigin string `json:"public_origin,omitempty"`
+	LocalOrigin  string `json:"local_origin,omitempty"`
+	UpdatedAt    string `json:"updated_at,omitempty"`
+}
+
+type ConfigureNetworkInput struct {
+	Enabled      bool   `json:"enabled"`
+	PublicOrigin string `json:"public_origin,omitempty"`
+}
+
+type CreateNetworkInviteInput struct {
+	Room           string `json:"room"`
+	ExpiresSeconds int64  `json:"expires_seconds,omitempty"`
+}
+
+// NetworkInvite is returned only to the owner at creation time. Secret is not
+// persisted and cannot be recovered later.
+type NetworkInvite struct {
+	ID           string `json:"id"`
+	RoomID       string `json:"room_id"`
+	RoomSlug     string `json:"room_slug"`
+	Secret       string `json:"secret,omitempty"`
+	PublicOrigin string `json:"public_origin,omitempty"`
+	ExpiresAt    string `json:"expires_at"`
+	CreatedAt    string `json:"created_at"`
+}
+
+type NetworkEnrollInput struct {
+	Invite     string `json:"invite"`
+	DeviceName string `json:"device_name"`
+}
+
+type NetworkEnrollment struct {
+	DeviceID   string `json:"device_id"`
+	DeviceName string `json:"device_name"`
+	Token      string `json:"token"`
+	Room       Room   `json:"room"`
+}
+
+type AcceptNetworkInviteInput struct {
+	Invite string `json:"invite"`
+}
+
+type NetworkDevice struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	JoinedAt string `json:"joined_at"`
+	LastSeen string `json:"last_seen"`
+}
+
+type NetworkBinding struct {
+	ParticipantID         string `json:"participant_id"`
+	DeviceID              string `json:"device_id"`
+	Provider              string `json:"provider"`
+	RemoteDirectory       string `json:"remote_directory"`
+	Status                string `json:"status"`
+	LastDeliveredSequence int64  `json:"last_delivered_sequence"`
+	LastAttemptAt         string `json:"last_attempt_at,omitempty"`
+	LastDeliveredAt       string `json:"last_delivered_at,omitempty"`
+	Error                 string `json:"error,omitempty"`
+	UpdatedAt             string `json:"updated_at"`
+}
+
+type NetworkDeliveryPollInput struct {
+	ParticipantID string `json:"participant_id"`
+	WaitSeconds   int    `json:"wait_seconds,omitempty"`
+}
+
+type NetworkDeliveryBatch struct {
+	Room        Room        `json:"room"`
+	Participant Participant `json:"participant"`
+	Messages    []Message   `json:"messages"`
+	Through     int64       `json:"through"`
+}
+
+type NetworkDeliveryResultInput struct {
+	ParticipantID string `json:"participant_id"`
+	Through       int64  `json:"through,omitempty"`
+	Status        string `json:"status"`
+	Error         string `json:"error,omitempty"`
+}
+
 type LeaveInput struct {
 	Room             string `json:"room"`
 	WorkingDirectory string `json:"working_directory"`
 	Handle           string `json:"handle,omitempty"`
+	ParticipantID    string `json:"-"`
 }
 
 type SendInput struct {
@@ -157,6 +245,7 @@ type SendInput struct {
 	Owner            bool   `json:"owner,omitempty"`
 	Kind             string `json:"kind,omitempty"`
 	Body             string `json:"body"`
+	ParticipantID    string `json:"-"`
 }
 
 type UploadInput struct {
@@ -168,6 +257,7 @@ type UploadInput struct {
 	MediaType        string `json:"media_type"`
 	ContentBase64    string `json:"content_base64"`
 	Caption          string `json:"caption,omitempty"`
+	ParticipantID    string `json:"-"`
 }
 
 type ArchiveDocumentInput struct {
@@ -176,6 +266,7 @@ type ArchiveDocumentInput struct {
 	WorkingDirectory string `json:"working_directory,omitempty"`
 	Handle           string `json:"handle,omitempty"`
 	Owner            bool   `json:"owner,omitempty"`
+	ParticipantID    string `json:"-"`
 }
 
 type AckInput struct {
@@ -183,6 +274,7 @@ type AckInput struct {
 	WorkingDirectory string `json:"working_directory,omitempty"`
 	Handle           string `json:"handle,omitempty"`
 	Through          int64  `json:"through,omitempty"`
+	ParticipantID    string `json:"-"`
 }
 
 type ListMessagesInput struct {

@@ -24,6 +24,13 @@ requiring direct mentions to bypass the batching delay. A gated real-runtime
 probe uses a disposable Codex thread to validate the owner-local app-server
 WebSocket and turn injection without touching an existing conversation.
 
+Tailnet coverage runs against temporary loopback servers only. It exercises
+network enablement, one-use enrollment, replay rejection, room membership
+scoping, remote participant identity, owner-operation rejection, handle-takeover
+rejection, durable delivery poll/report, remote CLI routing, and the Claude
+Channel capability and tools. Prompt-size coverage verifies that delivery never
+acknowledges canonical messages omitted from a compact provider notification.
+
 The release gate also performs a manual real-runtime probe with a temporary
 daemon and named Herdr session: start Codex, observe onboarding in the actual
 terminal, send a private owner prompt, relay a direct participant exchange and

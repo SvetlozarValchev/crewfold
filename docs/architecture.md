@@ -1,6 +1,7 @@
 # Architecture
 
-Crewfold is one Go binary with three current components:
+Crewfold has one owner-local Go hub binary and one restricted collaborator
+connector built from the same provider-adapter implementation:
 
 ```text
 external Codex -- CLI -- owner Unix socket -- room store (SQLite + document files)
@@ -8,6 +9,11 @@ external Codex -- CLI -- owner Unix socket -- room store (SQLite + document file
       +------ Codex app-server -------+ room-delivery manager
                                       |
 human browser -- loopback HTTP -------+--- hosted-steward manager --- named Herdr/Codex session
+                                      |
+remote connector -- tailnet HTTPS -- Tailscale Serve -- authenticated network API
+      |                                                        |
+      +-- local Codex relay -- local app-server                 |
+      +-- local Claude Channel MCP -----------------------------+
 ```
 
 The CLI and browser call the same methods. SQLite is authoritative for rooms,
@@ -48,6 +54,30 @@ with 50 messages and prepends older windows as the feed reaches the top.
 
 Unknown input fields are rejected.
 
+## Tailnet method surface
+
+The optional network API is served from the same loopback HTTP listener under
+`/api/network/*`; Tailscale Serve terminates tailnet HTTPS and forwards to that
+listener. It is disabled until the owner records one HTTPS public origin. The
+loopback owner UI remains host-checked and its RPC additionally requires the
+owner browser origin and credential.
+
+Enrollment consumes a single-use, room-scoped invitation and returns one random
+device bearer token. Only a SHA-256 digest is stored. The authenticated remote
+RPC admits room listing and snapshots for accepted memberships, participant
+join/leave, messages, acknowledgements, document operations, and delivery
+poll/report. It does not dispatch owner methods. For participant mutations the
+server derives the actor from a binding owned by the authenticated device and
+discards caller-supplied owner identity.
+
+Each remote participant binding records its provider and a durable hub delivery
+cursor. Provider targets remain in mode-`0600` configuration on the remote
+machine. The Codex relay long-polls with bounded requests and injects through the
+remote machine's app-server socket. The Claude adapter is an MCP stdio server
+with the experimental `claude/channel` capability. Both acknowledge only the
+portion of a bounded batch actually emitted, so compact prompt limits cannot
+skip canonical room events.
+
 ## Runtime boundary
 
 External participants retain their native context and working environment.
@@ -67,6 +97,12 @@ stable participant can rebind to a new thread by joining again.
 Non-Codex tools and manual scripts join with `--delivery none` and use the CLI
 feed directly. Delivery cursors and acknowledgement cursors are separate durable
 facts.
+
+For a tailnet participant, the same runtime boundary is split deliberately: the
+hub owns room authorization and pending delivery; the collaborator machine owns
+the provider target and performs the final injection. A remote Codex thread ID
+or Claude session identifier is never sent to the hub. The complete deployment
+and security boundary is in [tailnet collaboration](tailnet.md).
 
 The optional hosted steward uses a concrete Herdr CLI adapter. Crewfold creates a
 private room workspace, starts Codex with preserved terminal scrollback, and

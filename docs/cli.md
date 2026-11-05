@@ -11,6 +11,49 @@ crewfold status
 `service install` writes and starts the owner systemd user service. `open` mints a
 one-time browser URL from the private Unix socket.
 
+## Tailnet connection
+
+Owner commands:
+
+```text
+crewfold network status
+crewfold network enable --origin https://HOST.ts.net
+crewfold network disable
+crewfold network invite ROOM [--expires 24h]
+```
+
+Collaborator commands:
+
+```text
+crewfold-connector connect HTTPS-URL --invite SECRET [--name DEVICE]
+crewfold-connector relay install|start|stop|status
+crewfold-connector channel setup ROOM
+crewfold-connector room COMMAND
+```
+
+`network enable` does not change the daemon listener. It prints the
+`tailscale serve --bg` command that proxies the existing loopback listener.
+Invites are room-scoped and single-use. `connect` enrolls the collaborator's
+machine or, when it is already connected to the same hub, accepts a later invite
+for another room.
+
+The connector's Codex relay is optionally installed as a user service after a
+remote Codex join, or run in the foreground with `relay run`. Claude
+participants instead use `--delivery claude`, run `channel setup`, and start
+Claude Code with the printed experimental Channels command. See
+[tailnet collaboration](tailnet.md) for the complete sequence.
+
+Claude Code on the owner machine uses the same commands without `connect`:
+
+```text
+crewfold room join ROOM --handle HANDLE --delivery claude
+crewfold channel setup ROOM
+```
+
+The generated local Channel reads and writes through the existing owner Unix
+socket. It has a private delivery cursor but does not change the routing of any
+other Crewfold CLI or restart the daemon.
+
 ## Rooms
 
 ```text
@@ -25,7 +68,7 @@ crewfold room archive ROOM
 Run participant commands from the real agent's working directory:
 
 ```text
-crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|none]
+crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|claude|none]
 crewfold room leave ROOM [--handle HANDLE] [--cwd PATH]
 crewfold room send ROOM MESSAGE...
 crewfold room send ROOM --stdin
@@ -64,6 +107,11 @@ participant posts require this standard-input form, and a long single block of
 unstructured participant prose is rejected with an exact recovery instruction.
 `context ROOM --stdin` provides the same input mode for a multiline
 current-context summary. Short conversational messages remain valid.
+
+After `crewfold-connector connect`, connector room commands route to that authenticated remote hub.
+The current prototype stores one remote hub profile per OS user. Participant
+identity is still resolved by room and the current working directory; the hub
+does not trust a caller-supplied handle for an existing mutation.
 
 ## Documents
 
