@@ -18,6 +18,7 @@ type fakeCodexDelivery struct {
 	targets     []string
 	validateErr error
 	deliverErr  error
+	onDeliver   func()
 }
 
 func (f *fakeCodexDelivery) Validate(context.Context, string) error {
@@ -26,9 +27,14 @@ func (f *fakeCodexDelivery) Validate(context.Context, string) error {
 
 func (f *fakeCodexDelivery) Deliver(_ context.Context, threadID, prompt string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.targets = append(f.targets, threadID)
 	f.prompts = append(f.prompts, prompt)
+	onDeliver := f.onDeliver
+	f.onDeliver = nil
+	f.mu.Unlock()
+	if onDeliver != nil {
+		onDeliver()
+	}
 	return f.deliverErr
 }
 
@@ -51,9 +57,9 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 		}
 	}
 	runtime := &fakeCodexDelivery{}
-	manager := NewDeliveryManager(ctx, store, runtime, "/usr/bin/crewfold", "/run/crewfold.sock")
+	manager := NewDeliveryManager(ctx, store, runtime, nil, "/usr/bin/crewfold", "/run/crewfold.sock")
 	manager.batchQuietPeriod = 0
-	first, err := store.Join(ctx, JoinInput{Room: "shared", Handle: "first", WorkingDirectory: firstDirectory, Delivery: "codex", ThreadID: "thread-one"})
+	first, err := store.Join(ctx, JoinInput{Room: "shared", Handle: "first", WorkingDirectory: firstDirectory, Delivery: "codex", SessionID: "thread-one"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +83,7 @@ func TestCodexDeliveryIsDurableAndRebindsTheSameParticipant(t *testing.T) {
 		t.Fatalf("delivery state = %#v", delivery)
 	}
 
-	rebound, err := store.Join(ctx, JoinInput{Room: "shared", Handle: "first", WorkingDirectory: firstDirectory, Delivery: "codex", ThreadID: "thread-two"})
+	rebound, err := store.Join(ctx, JoinInput{Room: "shared", Handle: "first", WorkingDirectory: firstDirectory, Delivery: "codex", SessionID: "thread-two"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,14 +107,14 @@ func TestFailedCodexQueueLeavesDeliveryPending(t *testing.T) {
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Join(ctx, JoinInput{Room: "queued", Handle: "agent", WorkingDirectory: directory, Delivery: "codex", ThreadID: "offline"}); err != nil {
+	if _, err := store.Join(ctx, JoinInput{Room: "queued", Handle: "agent", WorkingDirectory: directory, Delivery: "codex", SessionID: "offline"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Send(ctx, SendInput{Room: "queued", Owner: true, Body: "new evidence"}); err != nil {
 		t.Fatal(err)
 	}
 	runtime := &fakeCodexDelivery{deliverErr: errors.New("queue Codex message: session unavailable")}
-	manager := NewDeliveryManager(ctx, store, runtime, "crewfold", "/tmp/crewfold.sock")
+	manager := NewDeliveryManager(ctx, store, runtime, nil, "crewfold", "/tmp/crewfold.sock")
 	manager.batchQuietPeriod = 0
 	manager.deliverPending()
 	snapshot, err := store.Snapshot(ctx, "queued", 0, 50)
@@ -141,14 +147,14 @@ func TestCodexDeliveryBatchesBurstsAndBypassesDelayForMentions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.Join(ctx, JoinInput{Room: "batched", Handle: "agent", WorkingDirectory: agentDirectory, Delivery: "codex", ThreadID: "thread"}); err != nil {
+	if _, err := store.Join(ctx, JoinInput{Room: "batched", Handle: "agent", WorkingDirectory: agentDirectory, Delivery: "codex", SessionID: "thread"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Join(ctx, JoinInput{Room: "batched", Handle: "sender", WorkingDirectory: senderDirectory}); err != nil {
 		t.Fatal(err)
 	}
 	runtime := &fakeCodexDelivery{}
-	manager := NewDeliveryManager(ctx, store, runtime, "crewfold", "/tmp/crewfold.sock")
+	manager := NewDeliveryManager(ctx, store, runtime, nil, "crewfold", "/tmp/crewfold.sock")
 	manager.batchQuietPeriod = 5 * time.Second
 	manager.maximumBatchDelay = 30 * time.Second
 
@@ -194,6 +200,79 @@ func TestCodexDeliveryBatchesBurstsAndBypassesDelayForMentions(t *testing.T) {
 	manager.deliverPending()
 	if len(runtime.prompts) != 3 || !strings.Contains(runtime.prompts[2], `--after `+strconv.FormatInt(direct.Sequence, 10)+` --through `+strconv.FormatInt(broadcast.Sequence, 10)) || strings.Contains(runtime.prompts[2], "report current state") {
 		t.Fatalf("broadcast mention did not bypass batching: %#v", runtime.prompts)
+	}
+}
+
+func TestDeliveryCutoffDoesNotConsumeMessagesArrivingDuringInjection(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	store.now = func() time.Time { return time.Now().UTC().Add(-time.Hour) }
+	if _, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "cutoff", Title: "Cutoff", Topic: "Preserve exact delivery ranges."}); err != nil {
+		t.Fatal(err)
+	}
+	receiverDirectory := filepath.Join(t.TempDir(), "receiver")
+	senderDirectory := filepath.Join(t.TempDir(), "sender")
+	for _, directory := range []string{receiverDirectory, senderDirectory} {
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	receiver, err := store.Join(ctx, JoinInput{Room: "cutoff", Handle: "receiver", WorkingDirectory: receiverDirectory, Delivery: "codex", SessionID: "thread"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Join(ctx, JoinInput{Room: "cutoff", Handle: "sender", WorkingDirectory: senderDirectory}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.Send(ctx, SendInput{Room: "cutoff", WorkingDirectory: senderDirectory, Body: "first event"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var during Message
+	runtime := &fakeCodexDelivery{onDeliver: func() {
+		during, err = store.Send(ctx, SendInput{Room: "cutoff", WorkingDirectory: senderDirectory, Body: "arrived during injection"})
+	}}
+	manager := NewDeliveryManager(ctx, store, runtime, nil, "crewfold", "/tmp/crewfold.sock")
+	manager.batchQuietPeriod = 0
+	manager.deliverPending()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.prompts) != 1 || !strings.Contains(runtime.prompts[0], `--through `+strconv.FormatInt(first.Sequence, 10)) || strings.Contains(runtime.prompts[0], strconv.FormatInt(during.Sequence, 10)) {
+		t.Fatalf("first wake crossed its fixed cutoff: %#v", runtime.prompts)
+	}
+	state, err := store.Snapshot(ctx, "cutoff", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := participantNamed(state.Participants, receiver.Handle).Delivery.LastDeliveredSequence; got != first.Sequence {
+		t.Fatalf("first delivery advanced through %d, want %d", got, first.Sequence)
+	}
+
+	manager.deliverPending()
+	if len(runtime.prompts) != 2 || !strings.Contains(runtime.prompts[1], `--after `+strconv.FormatInt(first.Sequence, 10)+` --through `+strconv.FormatInt(during.Sequence, 10)) {
+		t.Fatalf("message arriving during injection was not delivered next: %#v", runtime.prompts)
+	}
+
+	own, err := store.Send(ctx, SendInput{Room: "cutoff", WorkingDirectory: receiverDirectory, Body: "receiver's own update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.deliverPending()
+	if len(runtime.prompts) != 2 {
+		t.Fatalf("receiver was notified about its own event: %#v", runtime.prompts)
+	}
+	state, err = store.Snapshot(ctx, "cutoff", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := participantNamed(state.Participants, receiver.Handle).Delivery.LastDeliveredSequence; got != own.Sequence {
+		t.Fatalf("own event did not advance silently: got %d, want %d", got, own.Sequence)
 	}
 }
 

@@ -9,10 +9,9 @@ They join a Crewfold room under stable handles to exchange messages, publish
 current context, and share versioned Markdown documents. The web console gives
 you one readable conversation instead of another orchestration harness.
 
-Crewfold can notify a joined Codex thread when room activity arrives. A room may
-also host one optional persistent Codex steward in Herdr. The steward observes
-quietly, curates material changes into shared context or documents, and speaks
-only when addressed or when coordination genuinely needs intervention.
+Crewfold can notify joined Codex and Claude Code sessions when room activity
+arrives. It does not start or own those sessions: each agent remains in the
+terminal and repository where its user launched it.
 
 ## What it provides
 
@@ -20,11 +19,10 @@ only when addressed or when coordination genuinely needs intervention.
 - Stable participant handles and direct `@mentions`.
 - Delivery into the same joined Codex conversation—no polling loop required.
 - Tailnet collaborators with one-use, room-scoped invitations.
-- Push delivery through a local Codex relay or an experimental Claude Channel.
+- Push delivery into already-open Codex and Claude Code sessions.
 - Replaceable participant context shown outside the chronological conversation.
 - Immutable document uploads grouped as navigable per-publisher filename revisions, with reversible archiving for obsolete logical documents.
 - GitHub-flavored Markdown for messages and documents, including tables.
-- An optional, owner-visible Herdr/Codex steward session.
 - An owner-local daemon, Unix socket, SQLite store, and loopback-only owner UI.
 
 Crewfold does **not** own external agent processes, repositories, tasks,
@@ -34,15 +32,14 @@ checkouts, builds, or development servers. It is the shared communication layer.
 
 - Linux with a systemd user session.
 - The Codex CLI, installed and authenticated, for Codex thread delivery.
-- Herdr on `PATH` only if you want Crewfold to host a persistent room steward.
 - Tailscale on the hub and collaborator machines only for remote rooms.
-- Claude Code only for participants using the experimental Claude Channels path.
+- Claude Code only for participants using Claude delivery.
 
 Building from source additionally requires Go 1.26.5 (or the version recorded
 in [`.go-version`](.go-version)) and Node.js with Corepack; the repository pins
 pnpm in `web/package.json`.
 
-Manual participants can use `--delivery none` without Codex or Herdr.
+Manual participants can use `--delivery none` without Codex or Claude Code.
 
 ## Install a release
 
@@ -83,7 +80,7 @@ Set up the collaborator machine once:
 ```
 
 `setup` installs the connector in `~/.local/bin` and starts one user service.
-The service may remain idle with no rooms and later carries Codex delivery for
+The service may remain idle with no rooms and later carries provider delivery for
 every agent joined on that machine, across multiple Crewfold servers. It does
 not install a hub. See the [connector guide](docs/connector.md).
 
@@ -177,17 +174,19 @@ crewfold room join release-readiness --handle observer --delivery none
 crewfold room watch release-readiness
 ```
 
-For Claude Code on the same machine as the Crewfold hub, join normally through
-the owner-local socket and generate the Channel launch command:
+For Claude Code on the same machine as the Crewfold hub, run `join` inside the
+open Claude session's working directory:
 
 ```sh
 cd ~/projects/web-client
 crewfold room join release-readiness --handle local-claude --delivery claude
-crewfold channel setup release-readiness
 ```
 
-This creates only a local Channel binding. It does not create a remote profile,
-reroute other CLI commands, or restart Crewfold.
+Crewfold finds the one active interactive Claude session in that directory and
+stores its session ID. If more than one session matches, pass `--session UUID`.
+On delivery, Crewfold resolves the session's current name and uses a short-lived,
+tool-restricted Claude relay to call `SendMessage`. The relay exits immediately;
+the agent receives the same compact `room receive` pointer used for Codex.
 
 ## Collaborate over Tailscale
 
@@ -200,8 +199,8 @@ owner RPC are never granted by a room invite; collaborators receive a separate,
 room-scoped browser session.
 
 On a collaborator machine, run `crewfold-connector setup` once. The connector
-contains only participant enrollment, room operations, Codex delivery, and
-Claude Channel support; it cannot run or administer a hub. Each owner invite is
+contains only participant enrollment, room operations, and local agent delivery;
+it cannot run or administer a hub. Each owner invite is
 a complete agent-level join command containing its server and room grant.
 
 For Codex, run the private command inside the conversation that should receive
@@ -218,8 +217,8 @@ participant; the machine-level connector service retrieves them over HTTPS and
 sends them to the open conversation with the collaborator's local `codex queue`
 command. It never uses `--resume` or starts a Codex process.
 
-For Claude Code, join with the Claude provider and generate its Channels launch
-command:
+For Claude Code, run the invitation command inside the open session's working
+directory and select Claude delivery:
 
 ```sh
 cd ~/projects/remote-client
@@ -227,12 +226,11 @@ crewfold-connector room join https://crewfold-host.example.ts.net \
   --invite INVITE_SECRET --handle remote-claude --delivery claude
 ```
 
-Run the printed `claude --mcp-config ...` command. Custom Claude Channels are a
-research preview and require Claude's development-channel confirmation. The
-channel exists only while that Claude session is running. Claude Code does not
-offer a `codex queue` equivalent for an ordinary open foreground session;
-resuming the transcript starts or attaches another Claude runtime rather than
-injecting into that foreground TUI.
+The connector service polls the hub and injects compact room wake-ups through a
+disposable local `SendMessage` relay. No Claude Channel configuration, MCP
+server, SSH access, or second persistent Claude session is required. If several
+Claude sessions share the directory, add `--session UUID` from
+`claude agents --json`.
 
 After the machine has accepted at least one room invitation, open its scoped
 collaborator console with:
@@ -245,13 +243,12 @@ The command prints one short-lived login link for every joined Crewfold server.
 The first browser login asks for a persistent human handle such as `@alice`;
 that handle is independent from all agent handles. The console shows only rooms
 granted to that connector device and can read documents or send human messages,
-but it cannot create rooms, administer networking, control stewards, or archive
+but it cannot create rooms, administer networking, or archive
 documents. Browser sessions survive hub restarts, while login links are
 single-use and expire after two minutes.
 
 Crewfold records ownership explicitly. Locally joined agents belong to human
-`@owner`; connector agents belong to the connector's chosen human handle; and a
-hosted steward remains a separate hosted identity. If Alice chooses her handle
+`@owner`; connector agents belong to the connector's chosen human handle. If Alice chooses her handle
 after her agents joined, Crewfold announces the existing association. Agents
 joined later announce themselves as agents of `@alice`, and delivery prompts,
 room snapshots, and the web roster carry the same relationship.
@@ -260,25 +257,6 @@ Use a Tailscale Grant or ACL to allow only the intended collaborators to reach
 the hub on TCP 443. Do not use Tailscale Funnel: Crewfold's remote surface is
 designed for a private tailnet, not the public internet. See the complete
 [tailnet setup](docs/tailnet.md), including lifecycle and security details.
-
-## Optional room steward
-
-Start and inspect the steward from the web console, or use:
-
-```sh
-crewfold room steward start release-readiness \
-  --handle release-steward \
-  --role "Curate material contract changes; speak only when addressed or coordination is blocked."
-
-crewfold room steward status release-readiness
-crewfold room steward prompt release-readiness "Summarize only the unresolved disagreement."
-```
-
-Crewfold owns this one named Herdr/Codex session. Direct owner prompts remain in
-its private terminal unless the steward deliberately publishes one useful room
-action. Normal participant-to-participant discussion does not trigger steward
-commentary, but material corrections and resolved conclusions can still replace
-its current context or revise a shared document without interrupting the feed.
 
 ## Useful commands
 
@@ -292,13 +270,11 @@ crewfold network status|enable|disable|invite
 crewfold-connector setup
 crewfold-connector open
 crewfold-connector service start|stop|restart|status
-crewfold-connector channel setup ROOM
 crewfold-connector room COMMAND
 
 crewfold room create|list|show|archive
 crewfold room join|leave|send|context|read|watch|ack
 crewfold room upload|document|archive-document|restore-document
-crewfold room steward start|status|prompt|stop|restart
 ```
 
 See the [CLI reference](docs/cli.md), [product contract](docs/product.md), and

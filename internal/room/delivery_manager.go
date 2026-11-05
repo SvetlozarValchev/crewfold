@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-type CodexDeliveryRuntime interface {
+type DeliveryRuntime interface {
 	Validate(context.Context, string) error
 	Deliver(context.Context, string, string) error
 }
 
 type DeliveryManager struct {
 	store             *Store
-	runtime           CodexDeliveryRuntime
+	runtimes          map[string]DeliveryRuntime
 	ctx               context.Context
 	cancel            context.CancelFunc
 	cliPath           string
@@ -25,11 +25,11 @@ type DeliveryManager struct {
 	wake              chan struct{}
 }
 
-func NewDeliveryManager(parent context.Context, store *Store, runtime CodexDeliveryRuntime, cliPath, socketPath string) *DeliveryManager {
+func NewDeliveryManager(parent context.Context, store *Store, codexRuntime, claudeRuntime DeliveryRuntime, cliPath, socketPath string) *DeliveryManager {
 	ctx, cancel := context.WithCancel(parent)
 	return &DeliveryManager{
 		store:             store,
-		runtime:           runtime,
+		runtimes:          map[string]DeliveryRuntime{"codex": codexRuntime, "claude": claudeRuntime},
 		ctx:               ctx,
 		cancel:            cancel,
 		cliPath:           cliPath,
@@ -50,8 +50,12 @@ func (m *DeliveryManager) Wake() {
 	}
 }
 
-func (m *DeliveryManager) Validate(ctx context.Context, threadID string) error {
-	return m.runtime.Validate(ctx, threadID)
+func (m *DeliveryManager) Validate(ctx context.Context, provider, sessionID string) error {
+	runtime := m.runtimes[provider]
+	if runtime == nil {
+		return fmt.Errorf("%s delivery is unavailable", provider)
+	}
+	return runtime.Validate(ctx, sessionID)
 }
 
 func (m *DeliveryManager) loop() {
@@ -69,7 +73,7 @@ func (m *DeliveryManager) loop() {
 }
 
 func (m *DeliveryManager) deliverPending() {
-	routes, err := m.store.pendingCodexDeliveries(m.ctx)
+	routes, err := m.store.pendingDeliveries(m.ctx)
 	if err != nil {
 		return
 	}
@@ -89,7 +93,14 @@ func deliveryAttemptDue(value string) bool {
 	return err != nil || time.Since(last) >= 5*time.Second
 }
 
-func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
+func shouldWaitForRoomBatch(now, first, last time.Time, quietPeriod, maximumDelay time.Duration) bool {
+	if first.IsZero() || last.IsZero() {
+		return false
+	}
+	return now.Sub(last) < quietPeriod && now.Sub(first) < maximumDelay
+}
+
+func (m *DeliveryManager) deliver(route deliveryRoute) {
 	messages, err := m.store.messages(m.ctx, route.Room.ID, route.Delivery.LastDeliveredSequence, 100)
 	if err != nil || len(messages) == 0 {
 		return
@@ -130,8 +141,17 @@ func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
 	}
 	_ = m.store.recordDeliveryAttempt(m.ctx, route.Participant.ID, "queued", "")
 	prompt := m.prompt(route, firstRelevantSequence, lastRelevantSequence, latest)
-	deliveryCtx, cancel := context.WithTimeout(m.ctx, 12*time.Second)
-	err = m.runtime.Deliver(deliveryCtx, route.Delivery.Target, prompt)
+	runtime := m.runtimes[route.Delivery.Kind]
+	if runtime == nil {
+		_ = m.store.recordDeliveryAttempt(context.Background(), route.Participant.ID, "error", route.Delivery.Kind+" delivery is unavailable")
+		return
+	}
+	timeout := 12 * time.Second
+	if route.Delivery.Kind == "claude" {
+		timeout = 45 * time.Second
+	}
+	deliveryCtx, cancel := context.WithTimeout(m.ctx, timeout)
+	err = runtime.Deliver(deliveryCtx, route.Delivery.Target, prompt)
 	cancel()
 	if err != nil {
 		_ = m.store.recordDeliveryAttempt(context.Background(), route.Participant.ID, "error", err.Error())
@@ -140,7 +160,7 @@ func (m *DeliveryManager) deliver(route codexDeliveryRoute) {
 	_ = m.store.advanceDelivery(m.ctx, route.Participant.ID, latest)
 }
 
-func (m *DeliveryManager) prompt(route codexDeliveryRoute, firstSequence, lastSequence, through int64) string {
+func (m *DeliveryManager) prompt(route deliveryRoute, firstSequence, lastSequence, through int64) string {
 	command := strconv.Quote(m.cliPath) + " room --socket " + strconv.Quote(m.socketPath)
 	sequence := fmt.Sprintf("#%d", lastSequence)
 	if firstSequence != lastSequence {

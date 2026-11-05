@@ -25,8 +25,6 @@ const (
 	maximumDocumentBytes = 4 * 1024 * 1024
 )
 
-var ErrHostedStewardNotConfigured = errors.New("hosted steward is not configured")
-
 type Store struct {
 	db      *sql.DB
 	dataDir string
@@ -84,7 +82,6 @@ CREATE TABLE IF NOT EXISTS rooms (
   title TEXT NOT NULL,
   topic TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('open','archived')),
-  steward_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 ) STRICT;
@@ -104,28 +101,9 @@ CREATE TABLE IF NOT EXISTS participants (
   UNIQUE(room_id, handle),
   UNIQUE(room_id, working_directory)
 ) STRICT;
-CREATE TABLE IF NOT EXISTS hosted_stewards (
-  room_id TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
-  participant_id TEXT NOT NULL UNIQUE REFERENCES participants(id) ON DELETE CASCADE,
-  role TEXT NOT NULL,
-  working_directory TEXT NOT NULL,
-  managed_working_directory INTEGER NOT NULL CHECK(managed_working_directory IN (0,1)),
-  herdr_session TEXT NOT NULL UNIQUE,
-  herdr_workspace_id TEXT NOT NULL DEFAULT '',
-  herdr_pane_id TEXT NOT NULL DEFAULT '',
-  agent_name TEXT NOT NULL UNIQUE,
-  desired_state TEXT NOT NULL CHECK(desired_state IN ('running','stopped')),
-  status TEXT NOT NULL CHECK(status IN ('starting','running','stopped','failed')),
-  agent_status TEXT NOT NULL DEFAULT '',
-  last_delivered_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_delivered_sequence >= 0),
-  error TEXT NOT NULL DEFAULT '',
-  initialized_at TEXT,
-  started_at TEXT,
-  updated_at TEXT NOT NULL
-) STRICT;
 CREATE TABLE IF NOT EXISTS participant_deliveries (
   participant_id TEXT PRIMARY KEY REFERENCES participants(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL CHECK(kind IN ('codex')),
+  kind TEXT NOT NULL CHECK(kind IN ('codex','claude')),
   target TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('bound','queued','delivered','error')),
   last_delivered_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_delivered_sequence >= 0),
@@ -216,6 +194,12 @@ CREATE INDEX IF NOT EXISTS network_bindings_device ON network_participant_bindin
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize room database: %w", err)
 	}
+	if err := s.removeHostedStewardSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateDeliveryProviders(ctx); err != nil {
+		return err
+	}
 	var archivedColumn int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='archived_at'`).Scan(&archivedColumn); err != nil {
 		return fmt.Errorf("inspect room database: %w", err)
@@ -276,6 +260,79 @@ CREATE INDEX messages_room_sequence ON messages(room_id, sequence);`
 	return nil
 }
 
+func (s *Store) removeHostedStewardSchema(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var hostedTable int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='hosted_stewards'`).Scan(&hostedTable); err != nil {
+		return fmt.Errorf("inspect hosted steward state: %w", err)
+	}
+	if hostedTable > 0 {
+		now := s.now().UTC().Format(time.RFC3339Nano)
+		if _, err := tx.ExecContext(ctx, `UPDATE participants SET status='left',last_seen_at=? WHERE id IN (SELECT participant_id FROM hosted_stewards)`, now); err != nil {
+			return fmt.Errorf("retire hosted steward participants: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DROP TABLE hosted_stewards`); err != nil {
+			return fmt.Errorf("remove hosted steward state: %w", err)
+		}
+	}
+	var stewardColumn int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('rooms') WHERE name='steward_id'`).Scan(&stewardColumn); err != nil {
+		return fmt.Errorf("inspect room steward state: %w", err)
+	}
+	if stewardColumn > 0 {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE rooms DROP COLUMN steward_id`); err != nil {
+			return fmt.Errorf("remove room steward state: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit hosted steward removal: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) migrateDeliveryProviders(ctx context.Context) error {
+	var definition string
+	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='participant_deliveries'`).Scan(&definition); err != nil {
+		return fmt.Errorf("inspect participant delivery providers: %w", err)
+	}
+	if strings.Contains(definition, "'claude'") {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	const migration = `
+CREATE TABLE participant_deliveries_provider_migration (
+  participant_id TEXT PRIMARY KEY REFERENCES participants(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('codex','claude')),
+  target TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('bound','queued','delivered','error')),
+  last_delivered_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_delivered_sequence >= 0),
+  last_attempt_at TEXT,
+  last_delivered_at TEXT,
+  error TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+) STRICT;
+INSERT INTO participant_deliveries_provider_migration
+SELECT * FROM participant_deliveries;
+DROP TABLE participant_deliveries;
+ALTER TABLE participant_deliveries_provider_migration RENAME TO participant_deliveries;
+CREATE INDEX participant_deliveries_status ON participant_deliveries(kind,status,updated_at);`
+	if _, err := tx.ExecContext(ctx, migration); err != nil {
+		return fmt.Errorf("add Claude delivery provider: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit Claude delivery provider: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) CreateRoom(ctx context.Context, input CreateRoomInput) (Snapshot, error) {
 	slug := strings.ToLower(strings.TrimSpace(input.Slug))
 	if !validSlug(slug) {
@@ -312,7 +369,7 @@ func (s *Store) CreateRoom(ctx context.Context, input CreateRoomInput) (Snapshot
 }
 
 func (s *Store) ListRooms(ctx context.Context) ([]Room, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,COALESCE(r.steward_id,''),r.created_at,r.updated_at,COALESCE(MAX(m.sequence),0)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,r.created_at,r.updated_at,COALESCE(MAX(m.sequence),0)
 FROM rooms r LEFT JOIN messages m ON m.room_id=r.id GROUP BY r.id ORDER BY r.status='open' DESC,r.updated_at DESC,r.slug`)
 	if err != nil {
 		return nil, err
@@ -321,7 +378,7 @@ FROM rooms r LEFT JOIN messages m ON m.room_id=r.id GROUP BY r.id ORDER BY r.sta
 	result := []Room{}
 	for rows.Next() {
 		var room Room
-		if err := rows.Scan(&room.ID, &room.Slug, &room.Title, &room.Topic, &room.Status, &room.StewardID, &room.CreatedAt, &room.UpdatedAt, &room.LastSequence); err != nil {
+		if err := rows.Scan(&room.ID, &room.Slug, &room.Title, &room.Topic, &room.Status, &room.CreatedAt, &room.UpdatedAt, &room.LastSequence); err != nil {
 			return nil, err
 		}
 		result = append(result, room)
@@ -364,16 +421,16 @@ func (s *Store) Join(ctx context.Context, input JoinInput) (Participant, error) 
 		return Participant{}, errors.New("participant kind must be agent or steward")
 	}
 	delivery := strings.ToLower(strings.TrimSpace(input.Delivery))
-	threadID := strings.TrimSpace(input.ThreadID)
-	if delivery != "" && delivery != "none" && delivery != "codex" {
-		return Participant{}, errors.New("participant delivery must be codex or none")
+	sessionID := strings.TrimSpace(input.SessionID)
+	if delivery != "" && delivery != "none" && delivery != "codex" && delivery != "claude" {
+		return Participant{}, errors.New("participant delivery must be codex, claude, or none")
 	}
-	if delivery == "codex" {
-		if threadID == "" || len(threadID) > 128 || strings.ContainsAny(threadID, " \t\r\n") {
-			return Participant{}, errors.New("Codex delivery requires one bounded thread ID")
+	if delivery == "codex" || delivery == "claude" {
+		if sessionID == "" || len(sessionID) > 128 || strings.ContainsAny(sessionID, " \t\r\n") {
+			return Participant{}, fmt.Errorf("%s delivery requires one bounded session ID", delivery)
 		}
-	} else if threadID != "" {
-		return Participant{}, errors.New("thread ID is only valid for Codex delivery")
+	} else if sessionID != "" {
+		return Participant{}, errors.New("session ID is only valid for active delivery")
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -415,11 +472,11 @@ WHERE p.room_id=? AND p.handle=?`, room.ID, handle).Scan(&participantID, &existi
 			return Participant{}, fmt.Errorf("rejoin room: %w", err)
 		}
 	}
-	if delivery == "codex" {
+	if delivery == "codex" || delivery == "claude" {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO participant_deliveries(participant_id,kind,target,status,updated_at)
-VALUES(?, 'codex',?, 'bound',?)
-ON CONFLICT(participant_id) DO UPDATE SET kind='codex',target=excluded.target,status='bound',error='',updated_at=excluded.updated_at`, participantID, threadID, now); err != nil {
-			return Participant{}, fmt.Errorf("bind Codex delivery: %w", err)
+VALUES(?,?,?,'bound',?)
+ON CONFLICT(participant_id) DO UPDATE SET kind=excluded.kind,target=excluded.target,status='bound',error='',updated_at=excluded.updated_at`, participantID, delivery, sessionID, now); err != nil {
+			return Participant{}, fmt.Errorf("bind %s delivery: %w", delivery, err)
 		}
 	} else if delivery == "none" {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM participant_deliveries WHERE participant_id=?`, participantID); err != nil {
@@ -430,7 +487,7 @@ ON CONFLICT(participant_id) DO UPDATE SET kind='codex',target=excluded.target,st
 	if kind == "agent" {
 		message = display + " joined as an agent of human @owner from " + cwd + "."
 	} else if kind == "steward" {
-		message = display + " joined as a hosted steward from " + cwd + "."
+		message = display + " joined as a steward from " + cwd + "."
 	}
 	if _, err := insertMessage(ctx, tx, room.ID, &participantID, handle, display, kind, "system", message, "", now); err != nil {
 		return Participant{}, err
@@ -458,13 +515,6 @@ func (s *Store) Leave(ctx context.Context, input LeaveInput) (Participant, error
 	participant, err := resolveParticipantActorTx(ctx, tx, room.ID, input.ParticipantID, input.WorkingDirectory, input.Handle)
 	if err != nil {
 		return Participant{}, err
-	}
-	var hosted bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM hosted_stewards WHERE participant_id=?)`, participant.ID).Scan(&hosted); err != nil {
-		return Participant{}, err
-	}
-	if hosted {
-		return Participant{}, errors.New("hosted steward lifecycle is managed with crewfold room steward stop")
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE participants SET status='left',last_seen_at=? WHERE id=?`, now, participant.ID); err != nil {
 		return Participant{}, fmt.Errorf("leave room: %w", err)
@@ -680,17 +730,24 @@ func (s *Store) Ack(ctx context.Context, input AckInput) (Participant, error) {
 }
 
 func (s *Store) Snapshot(ctx context.Context, roomIdentifier string, after int64, limit int) (Snapshot, error) {
-	return s.snapshot(ctx, roomIdentifier, after, 0, limit)
+	return s.snapshot(ctx, roomIdentifier, after, 0, 0, limit)
+}
+
+func (s *Store) SnapshotRange(ctx context.Context, roomIdentifier string, after, through int64) (Snapshot, error) {
+	if after < 0 || through <= after {
+		return Snapshot{}, errors.New("invalid delivery range")
+	}
+	return s.snapshot(ctx, roomIdentifier, after, 0, through, 500)
 }
 
 func (s *Store) SnapshotBefore(ctx context.Context, roomIdentifier string, before int64, limit int) (Snapshot, error) {
 	if before <= 0 {
 		return Snapshot{}, errors.New("before must be greater than zero")
 	}
-	return s.snapshot(ctx, roomIdentifier, 0, before, limit)
+	return s.snapshot(ctx, roomIdentifier, 0, before, 0, limit)
 }
 
-func (s *Store) snapshot(ctx context.Context, roomIdentifier string, after, before int64, limit int) (Snapshot, error) {
+func (s *Store) snapshot(ctx context.Context, roomIdentifier string, after, before, through int64, limit int) (Snapshot, error) {
 	room, err := s.resolveRoom(ctx, roomIdentifier)
 	if err != nil {
 		return Snapshot{}, err
@@ -703,8 +760,18 @@ func (s *Store) snapshot(ctx context.Context, roomIdentifier string, after, befo
 		return Snapshot{}, err
 	}
 	var messages []Message
-	if before > 0 {
+	if through > 0 {
+		if through > room.LastSequence {
+			return Snapshot{}, errors.New("delivery range exceeds room history")
+		}
+		messages, err = s.messagesRange(ctx, room.ID, after, through, 501)
+		if len(messages) > 500 {
+			return Snapshot{}, errors.New("delivery range exceeds 500 events; split the range before acknowledging")
+		}
+	} else if before > 0 {
 		messages, err = s.messagesBefore(ctx, room.ID, before, limit)
+	} else if after == 0 {
+		messages, err = s.messagesBefore(ctx, room.ID, room.LastSequence+1, limit)
 	} else {
 		messages, err = s.messages(ctx, room.ID, after, limit)
 	}
@@ -718,11 +785,7 @@ func (s *Store) snapshot(ctx context.Context, roomIdentifier string, after, befo
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0) FROM messages WHERE room_id=?`, room.ID).Scan(&room.LastSequence); err != nil {
 		return Snapshot{}, err
 	}
-	steward, err := s.HostedSteward(ctx, room.ID)
-	if err != nil && !errors.Is(err, ErrHostedStewardNotConfigured) {
-		return Snapshot{}, err
-	}
-	return Snapshot{Room: room, Participants: participants, Messages: messages, Documents: documents, Steward: steward}, nil
+	return Snapshot{Room: room, Participants: participants, Messages: messages, Documents: documents}, nil
 }
 
 func (s *Store) ReadDocument(ctx context.Context, roomIdentifier, documentIdentifier string) (Document, []byte, error) {
@@ -829,232 +892,10 @@ func (s *Store) Archive(ctx context.Context, roomIdentifier string) (Room, error
 	return s.resolveRoom(ctx, room.ID)
 }
 
-func (s *Store) ConfigureHostedSteward(ctx context.Context, input StartStewardInput) (HostedSteward, error) {
-	room, err := s.resolveRoom(ctx, input.Room)
-	if err != nil {
-		return HostedSteward{}, err
-	}
-	if room.Status != "open" {
-		return HostedSteward{}, errors.New("room is archived")
-	}
-	handle := strings.ToLower(strings.TrimSpace(input.Handle))
-	if !validHandle(handle) {
-		return HostedSteward{}, errors.New("steward handle must use 1-63 lowercase letters, numbers, dots, underscores, or hyphens")
-	}
-	display := strings.TrimSpace(input.DisplayName)
-	if display == "" {
-		display = handle
-	}
-	display, err = boundedText("steward display name", display, 1, 120)
-	if err != nil {
-		return HostedSteward{}, err
-	}
-	role, err := boundedText("steward role", input.Role, 0, 8192)
-	if err != nil {
-		return HostedSteward{}, err
-	}
-	if role == "" {
-		role = "Quietly maintain the room's shared context and documents as material conclusions change. Speak only when addressed or when an unresolved contradiction, blocker, or consequential owner decision requires intervention."
-	}
-	managedDirectory := strings.TrimSpace(input.WorkingDirectory) == ""
-	workingDirectory := input.WorkingDirectory
-	if managedDirectory {
-		workingDirectory = filepath.Join(s.dataDir, "rooms", room.ID, "steward")
-		if err := os.MkdirAll(workingDirectory, 0o700); err != nil {
-			return HostedSteward{}, fmt.Errorf("create steward workspace: %w", err)
-		}
-		if err := os.Chmod(workingDirectory, 0o700); err != nil {
-			return HostedSteward{}, fmt.Errorf("secure steward workspace: %w", err)
-		}
-	} else {
-		workingDirectory, err = exactDirectory(workingDirectory)
-		if err != nil {
-			return HostedSteward{}, err
-		}
-	}
-
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return HostedSteward{}, err
-	}
-	defer tx.Rollback()
-	var existingStatus string
-	err = tx.QueryRowContext(ctx, `SELECT status FROM hosted_stewards WHERE room_id=?`, room.ID).Scan(&existingStatus)
-	if err == nil && (existingStatus == "starting" || existingStatus == "running") {
-		return HostedSteward{}, errors.New("hosted steward is already running")
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return HostedSteward{}, err
-	}
-
-	var participantID, participantKind, participantDirectory string
-	err = tx.QueryRowContext(ctx, `SELECT id,kind,COALESCE(working_directory,'') FROM participants WHERE room_id=? AND handle=?`, room.ID, handle).Scan(&participantID, &participantKind, &participantDirectory)
-	if errors.Is(err, sql.ErrNoRows) {
-		participantID, err = randomID("member_")
-		if err != nil {
-			return HostedSteward{}, err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO participants(id,room_id,handle,display_name,kind,working_directory,status,joined_at,last_seen_at) VALUES(?,?,?,?, 'steward',?, 'joined',?,?)`, participantID, room.ID, handle, display, workingDirectory, now, now); err != nil {
-			return HostedSteward{}, fmt.Errorf("create hosted steward participant: %w", err)
-		}
-	} else if err != nil {
-		return HostedSteward{}, err
-	} else {
-		if participantKind != "steward" || (participantDirectory != "" && participantDirectory != workingDirectory) {
-			return HostedSteward{}, errors.New("steward handle already belongs to another room participant")
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE participants SET display_name=?,kind='steward',working_directory=?,status='joined',last_seen_at=? WHERE id=?`, display, workingDirectory, now, participantID); err != nil {
-			return HostedSteward{}, err
-		}
-	}
-
-	suffix := strings.TrimPrefix(room.ID, "room_")
-	if len(suffix) > 20 {
-		suffix = suffix[:20]
-	}
-	agentSuffix := strings.TrimPrefix(participantID, "member_")
-	if len(agentSuffix) > 20 {
-		agentSuffix = agentSuffix[:20]
-	}
-	herdrSession := "crewfold-" + suffix
-	agentName := "cf_" + agentSuffix
-	managed := 0
-	if managedDirectory {
-		managed = 1
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO hosted_stewards(room_id,participant_id,role,working_directory,managed_working_directory,herdr_session,agent_name,desired_state,status,updated_at)
-VALUES(?,?,?,?,?,?,?,'running','starting',?)
-ON CONFLICT(room_id) DO UPDATE SET participant_id=excluded.participant_id,role=excluded.role,working_directory=excluded.working_directory,managed_working_directory=excluded.managed_working_directory,herdr_session=excluded.herdr_session,herdr_workspace_id='',herdr_pane_id='',agent_name=excluded.agent_name,desired_state='running',status='starting',agent_status='',last_delivered_sequence=0,error='',initialized_at=NULL,started_at=NULL,updated_at=excluded.updated_at`, room.ID, participantID, role, workingDirectory, managed, herdrSession, agentName, now); err != nil {
-		return HostedSteward{}, fmt.Errorf("configure hosted steward: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE rooms SET steward_id=?,updated_at=? WHERE id=?`, participantID, now, room.ID); err != nil {
-		return HostedSteward{}, err
-	}
-	if _, err := insertMessage(ctx, tx, room.ID, &participantID, handle, display, "steward", "system", "Persistent Herdr steward @"+handle+" is starting.", "", now); err != nil {
-		return HostedSteward{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return HostedSteward{}, err
-	}
-	steward, err := s.HostedSteward(ctx, room.ID)
-	if err != nil {
-		return HostedSteward{}, err
-	}
-	return *steward, nil
-}
-
-func (s *Store) HostedSteward(ctx context.Context, roomIdentifier string) (*HostedSteward, error) {
-	room, err := s.resolveRoom(ctx, roomIdentifier)
-	if err != nil {
-		return nil, err
-	}
-	var steward HostedSteward
-	var managed int
-	err = s.db.QueryRowContext(ctx, `SELECT h.room_id,h.participant_id,p.handle,p.display_name,h.role,h.working_directory,h.managed_working_directory,h.herdr_session,h.herdr_workspace_id,h.herdr_pane_id,h.agent_name,h.desired_state,h.status,h.agent_status,h.last_delivered_sequence,h.error,COALESCE(h.initialized_at,''),COALESCE(h.started_at,''),h.updated_at
-FROM hosted_stewards h JOIN participants p ON p.id=h.participant_id WHERE h.room_id=?`, room.ID).Scan(&steward.RoomID, &steward.ParticipantID, &steward.Handle, &steward.DisplayName, &steward.Role, &steward.WorkingDirectory, &managed, &steward.HerdrSession, &steward.HerdrWorkspaceID, &steward.HerdrPaneID, &steward.AgentName, &steward.DesiredState, &steward.Status, &steward.AgentStatus, &steward.LastDeliveredSequence, &steward.Error, &steward.InitializedAt, &steward.StartedAt, &steward.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrHostedStewardNotConfigured
-	}
-	if err != nil {
-		return nil, err
-	}
-	steward.ManagedWorkingDirectory = managed == 1
-	return &steward, nil
-}
-
-func (s *Store) desiredHostedStewards(ctx context.Context) ([]HostedSteward, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT room_id FROM hosted_stewards WHERE desired_state='running' ORDER BY room_id`)
-	if err != nil {
-		return nil, err
-	}
-	var roomIDs []string
-	for rows.Next() {
-		var roomID string
-		if err := rows.Scan(&roomID); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		roomIDs = append(roomIDs, roomID)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	result := make([]HostedSteward, 0, len(roomIDs))
-	for _, roomID := range roomIDs {
-		steward, err := s.HostedSteward(ctx, roomID)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, *steward)
-	}
-	return result, nil
-}
-
-func (s *Store) prepareHostedStewardStart(ctx context.Context, roomID string) error {
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET desired_state='running',status='starting',agent_status='',herdr_workspace_id='',herdr_pane_id='',error='',initialized_at=NULL,started_at=NULL,updated_at=? WHERE room_id=?`, now, roomID)
-	return err
-}
-
-func (s *Store) recordHostedStewardRunning(ctx context.Context, roomID, workspaceID, paneID, agentStatus string) error {
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET status='running',agent_status=?,herdr_workspace_id=?,herdr_pane_id=?,error='',started_at=COALESCE(started_at,?),updated_at=? WHERE room_id=?`, agentStatus, workspaceID, paneID, now, now, roomID)
-	return err
-}
-
-func (s *Store) recordHostedStewardObservation(ctx context.Context, roomID, status, agentStatus, detail string) error {
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET status=?,agent_status=?,error=?,updated_at=? WHERE room_id=?`, status, agentStatus, detail, now, roomID)
-	return err
-}
-
-func (s *Store) completeHostedStewardOnboarding(ctx context.Context, roomID string, sequence int64) error {
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE hosted_stewards SET initialized_at=?,last_delivered_sequence=MAX(last_delivered_sequence,?),updated_at=? WHERE room_id=?`, now, sequence, now, roomID); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE participants SET last_read_sequence=MAX(last_read_sequence,?),last_seen_at=? WHERE id=(SELECT participant_id FROM hosted_stewards WHERE room_id=?)`, sequence, now, roomID); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func (s *Store) completeHostedStewardDelivery(ctx context.Context, roomID string, sequence int64) error {
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE hosted_stewards SET last_delivered_sequence=MAX(last_delivered_sequence,?),updated_at=? WHERE room_id=?`, sequence, now, roomID); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE participants SET last_read_sequence=MAX(last_read_sequence,?),last_seen_at=? WHERE id=(SELECT participant_id FROM hosted_stewards WHERE room_id=?)`, sequence, now, roomID); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func (s *Store) stopHostedSteward(ctx context.Context, roomID, detail string) error {
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `UPDATE hosted_stewards SET desired_state='stopped',status='stopped',agent_status='',error=?,updated_at=? WHERE room_id=?`, detail, now, roomID)
-	return err
-}
-
 func (s *Store) resolveRoom(ctx context.Context, identifier string) (Room, error) {
 	identifier = strings.TrimSpace(identifier)
 	var room Room
-	err := s.db.QueryRowContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,COALESCE(r.steward_id,''),r.created_at,r.updated_at,COALESCE((SELECT MAX(sequence) FROM messages WHERE room_id=r.id),0) FROM rooms r WHERE r.id=? OR r.slug=?`, identifier, identifier).Scan(&room.ID, &room.Slug, &room.Title, &room.Topic, &room.Status, &room.StewardID, &room.CreatedAt, &room.UpdatedAt, &room.LastSequence)
+	err := s.db.QueryRowContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,r.created_at,r.updated_at,COALESCE((SELECT MAX(sequence) FROM messages WHERE room_id=r.id),0) FROM rooms r WHERE r.id=? OR r.slug=?`, identifier, identifier).Scan(&room.ID, &room.Slug, &room.Title, &room.Topic, &room.Status, &room.CreatedAt, &room.UpdatedAt, &room.LastSequence)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Room{}, errors.New("room not found")
 	}
@@ -1108,32 +949,32 @@ func (s *Store) participant(ctx context.Context, roomID, participantID string) (
 	return Participant{}, errors.New("participant not found")
 }
 
-type codexDeliveryRoute struct {
+type deliveryRoute struct {
 	Room        Room
 	Participant Participant
 	Delivery    ParticipantDelivery
 }
 
-func (s *Store) pendingCodexDeliveries(ctx context.Context) ([]codexDeliveryRoute, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,COALESCE(r.steward_id,''),r.created_at,r.updated_at,
+func (s *Store) pendingDeliveries(ctx context.Context) ([]deliveryRoute, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,r.created_at,r.updated_at,
 COALESCE((SELECT MAX(sequence) FROM messages WHERE room_id=r.id),0),
 p.id,p.room_id,p.handle,p.display_name,p.kind,'owner',COALESCE(p.working_directory,''),p.status,p.context,COALESCE(p.context_updated_at,''),p.last_read_sequence,p.joined_at,p.last_seen_at,
 d.kind,d.target,d.status,d.last_delivered_sequence,COALESCE(d.last_attempt_at,''),COALESCE(d.last_delivered_at,''),d.error,d.updated_at
 FROM participant_deliveries d
 JOIN participants p ON p.id=d.participant_id
 JOIN rooms r ON r.id=p.room_id
-WHERE d.kind='codex' AND p.status='joined' AND r.status='open'
+WHERE d.kind IN ('codex','claude') AND p.status='joined' AND r.status='open'
 AND EXISTS(SELECT 1 FROM messages m WHERE m.room_id=p.room_id AND m.sequence>d.last_delivered_sequence)
 ORDER BY d.updated_at,p.id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var routes []codexDeliveryRoute
+	var routes []deliveryRoute
 	for rows.Next() {
-		var route codexDeliveryRoute
+		var route deliveryRoute
 		if err := rows.Scan(
-			&route.Room.ID, &route.Room.Slug, &route.Room.Title, &route.Room.Topic, &route.Room.Status, &route.Room.StewardID, &route.Room.CreatedAt, &route.Room.UpdatedAt, &route.Room.LastSequence,
+			&route.Room.ID, &route.Room.Slug, &route.Room.Title, &route.Room.Topic, &route.Room.Status, &route.Room.CreatedAt, &route.Room.UpdatedAt, &route.Room.LastSequence,
 			&route.Participant.ID, &route.Participant.RoomID, &route.Participant.Handle, &route.Participant.DisplayName, &route.Participant.Kind, &route.Participant.HumanHandle, &route.Participant.WorkingDirectory, &route.Participant.Status, &route.Participant.Context, &route.Participant.ContextUpdatedAt, &route.Participant.LastReadSequence, &route.Participant.JoinedAt, &route.Participant.LastSeenAt,
 			&route.Delivery.Kind, &route.Delivery.Target, &route.Delivery.Status, &route.Delivery.LastDeliveredSequence, &route.Delivery.LastAttemptAt, &route.Delivery.LastDeliveredAt, &route.Delivery.Error, &route.Delivery.UpdatedAt,
 		); err != nil {
@@ -1163,18 +1004,14 @@ WHERE participant_id=?`, sequence, now, now, now, participantID)
 }
 
 func (s *Store) messages(ctx context.Context, roomID string, after int64, limit int) ([]Message, error) {
+	return s.messagesRange(ctx, roomID, after, 9223372036854775807, limit)
+}
+
+func (s *Store) messagesRange(ctx context.Context, roomID string, after, through int64, limit int) ([]Message, error) {
 	query := `SELECT m.sequence,m.id,m.room_id,COALESCE(m.participant_id,''),m.sender_handle,m.sender_name,m.sender_kind,m.kind,m.body,COALESCE(m.document_id,''),m.created_at,
 COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d.sha256,''),COALESCE(d.archived_at,''),COALESCE(d.created_at,'')
-	FROM messages m LEFT JOIN documents d ON d.id=m.document_id WHERE m.room_id=? AND m.sequence>? ORDER BY m.sequence LIMIT ?`
-	arguments := []any{roomID, after, limit}
-	if after == 0 {
-		query = `WITH selected AS (SELECT * FROM messages WHERE room_id=? ORDER BY sequence DESC LIMIT ?)
-		SELECT m.sequence,m.id,m.room_id,COALESCE(m.participant_id,''),m.sender_handle,m.sender_name,m.sender_kind,m.kind,m.body,COALESCE(m.document_id,''),m.created_at,
-		COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.byte_size,0),COALESCE(d.sha256,''),COALESCE(d.archived_at,''),COALESCE(d.created_at,'')
-		FROM selected m LEFT JOIN documents d ON d.id=m.document_id ORDER BY m.sequence`
-		arguments = []any{roomID, limit}
-	}
-	return s.queryMessages(ctx, query, arguments...)
+	FROM messages m LEFT JOIN documents d ON d.id=m.document_id WHERE m.room_id=? AND m.sequence>? AND m.sequence<=? ORDER BY m.sequence LIMIT ?`
+	return s.queryMessages(ctx, query, roomID, after, through, limit)
 }
 
 func (s *Store) messagesBefore(ctx context.Context, roomID string, before int64, limit int) ([]Message, error) {

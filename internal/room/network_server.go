@@ -211,6 +211,12 @@ func (s *Server) networkBrowserCall(ctx context.Context, device NetworkDevice, m
 		if err != nil {
 			return nil, err
 		}
+		if input.Through != 0 {
+			if input.Before != 0 {
+				return nil, errors.New("before and through cannot be used together")
+			}
+			return s.store.SnapshotRange(ctx, room.ID, input.After, input.Through)
+		}
 		if input.After > 0 && input.Before > 0 {
 			return nil, errors.New("after and before cannot be used together")
 		}
@@ -320,13 +326,16 @@ func (s *Server) networkCall(ctx context.Context, device NetworkDevice, particip
 		if input.Before > 0 {
 			return s.store.SnapshotBefore(ctx, room.ID, input.Before, input.Limit)
 		}
+		if input.Through != 0 {
+			return s.store.SnapshotRange(ctx, room.ID, input.After, input.Through)
+		}
 		return s.store.Snapshot(ctx, room.ID, input.After, input.Limit)
 	case "participant.join":
 		var input JoinInput
 		if err := decode(&input); err != nil {
 			return nil, err
 		}
-		input.ThreadID = ""
+		input.SessionID = ""
 		participant, err := s.store.JoinNetworkParticipant(ctx, device, input)
 		if err == nil {
 			s.deliveries.Wake()

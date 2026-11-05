@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"crewfold/internal/claudequeue"
 	"crewfold/internal/codexqueue"
 	"crewfold/internal/room"
 )
@@ -18,7 +19,7 @@ import (
 const remoteConfigVersion = 1
 
 // remoteConfig is machine-level connector state. Hubs are independent: one
-// connector service reconciles every Codex binding across every enrolled hub.
+// connector service reconciles every delivery binding across every enrolled hub.
 type remoteConfig struct {
 	Version int         `json:"version"`
 	Hubs    []remoteHub `json:"hubs,omitempty"`
@@ -104,7 +105,7 @@ func validateRemoteConfig(config remoteConfig) error {
 				return errors.New("connector configuration contains an invalid delivery provider")
 			}
 			if binding.Provider == "codex" && binding.Target == "" {
-				return errors.New("connector configuration contains a Codex binding without a local thread")
+				return errors.New("connector configuration contains an active delivery binding without a local session")
 			}
 			if binding.Executable != "" && !filepath.IsAbs(binding.Executable) {
 				return errors.New("connector configuration contains a non-absolute provider executable")
@@ -204,7 +205,7 @@ func (c *routedCaller) Call(ctx context.Context, method string, params any, resu
 	client := room.NetworkClient{BaseURL: route.hub.URL, Token: route.hub.Token, ParticipantID: participantID}
 	remoteParams := params
 	var joinInput room.JoinInput
-	codexExecutable := ""
+	providerExecutable := ""
 	joining := method == "participant.join"
 	leaving := method == "participant.leave"
 	if joining {
@@ -215,12 +216,18 @@ func (c *routedCaller) Call(ctx context.Context, method string, params any, resu
 		}
 		if joinInput.Delivery == "codex" {
 			var validationErr error
-			codexExecutable, validationErr = validateLocalCodexThread(ctx, joinInput.ThreadID)
+			providerExecutable, validationErr = validateLocalCodexSession(ctx, joinInput.SessionID)
 			if validationErr != nil {
 				return fmt.Errorf("bind local Codex delivery: %w", validationErr)
 			}
+		} else if joinInput.Delivery == "claude" {
+			var validationErr error
+			providerExecutable, validationErr = validateLocalClaudeSession(ctx, joinInput.SessionID)
+			if validationErr != nil {
+				return fmt.Errorf("bind local Claude delivery: %w", validationErr)
+			}
 		}
-		joinInput.ThreadID = ""
+		joinInput.SessionID = ""
 		remoteParams = joinInput
 	}
 	if err := client.Call(ctx, method, remoteParams, result); err != nil {
@@ -255,9 +262,9 @@ func (c *routedCaller) Call(ctx context.Context, method string, params any, resu
 		if updated.Provider == "" {
 			updated.Provider = "codex"
 		}
-		if updated.Provider == "codex" {
-			updated.Target = params.(room.JoinInput).ThreadID
-			updated.Executable = codexExecutable
+		if updated.Provider == "codex" || updated.Provider == "claude" {
+			updated.Target = params.(room.JoinInput).SessionID
+			updated.Executable = providerExecutable
 		}
 		return updateRemoteConfig(c.configPath, func(latest *remoteConfig) error {
 			hub := findRemoteHub(latest, route.hub.URL)
@@ -426,11 +433,21 @@ func upsertRemoteBinding(hub *remoteHub, updated remoteBinding) {
 	hub.Bindings = append(hub.Bindings, updated)
 }
 
-func validateLocalCodexThread(ctx context.Context, threadID string) (string, error) {
+func validateLocalCodexSession(ctx context.Context, sessionID string) (string, error) {
 	validationCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	client := codexqueue.Client{}
-	if err := client.Validate(validationCtx, threadID); err != nil {
+	if err := client.Validate(validationCtx, sessionID); err != nil {
+		return "", err
+	}
+	return client.ResolveExecutable()
+}
+
+func validateLocalClaudeSession(ctx context.Context, sessionID string) (string, error) {
+	validationCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	client := claudequeue.Client{}
+	if err := client.Validate(validationCtx, sessionID); err != nil {
 		return "", err
 	}
 	return client.ResolveExecutable()

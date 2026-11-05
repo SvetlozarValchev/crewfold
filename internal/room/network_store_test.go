@@ -152,6 +152,21 @@ func TestNetworkEnrollmentParticipantAndDurableDelivery(t *testing.T) {
 	if err != nil || reply.SenderHandle != participant.Handle {
 		t.Fatalf("remote reply = %#v, %v", reply, err)
 	}
+	ownBatch, err := store.NetworkDeliveryBatch(ctx, device.ID, participant.ID)
+	if err != nil || len(ownBatch.Messages) != 0 || ownBatch.Through != reply.Sequence {
+		t.Fatalf("own reply should advance silently: %#v, %v", ownBatch, err)
+	}
+	later, err := store.Send(ctx, SendInput{Room: created.Room.ID, Owner: true, Body: "Arrived while the earlier batch was in flight."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordNetworkDelivery(ctx, device.ID, NetworkDeliveryResultInput{ParticipantID: participant.ID, Through: ownBatch.Through, Status: "delivered"}); err != nil {
+		t.Fatal(err)
+	}
+	next, err := store.NetworkDeliveryBatch(ctx, device.ID, participant.ID)
+	if err != nil || len(next.Messages) != 1 || next.Messages[0].ID != later.ID || next.After != reply.Sequence {
+		t.Fatalf("later message was skipped: %#v, %v", next, err)
+	}
 	if _, err := store.NetworkDeliveryBatch(ctx, "device_not_owned", participant.ID); err == nil {
 		t.Fatal("another device could read the participant delivery")
 	}

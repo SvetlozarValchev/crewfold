@@ -8,12 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"crewfold/internal/appdirs"
+	"crewfold/internal/claudequeue"
 	"crewfold/internal/codexqueue"
 	"crewfold/internal/room"
 )
@@ -188,7 +188,7 @@ func runConnectorService(ctx context.Context, configPath string, stderr interfac
 		if config != nil {
 			for _, hub := range config.Hubs {
 				for _, binding := range hub.Bindings {
-					if binding.Provider == "codex" {
+					if binding.Provider == "codex" || binding.Provider == "claude" {
 						desired[hub.URL+"\x00"+binding.ParticipantID] = struct {
 							hub     remoteHub
 							binding remoteBinding
@@ -215,7 +215,7 @@ func runConnectorService(ctx context.Context, configPath string, stderr interfac
 			bindingCtx, cancel := context.WithCancel(ctx)
 			fingerprint := relayBindingFingerprint(entry.hub, entry.binding)
 			running[key] = runningBinding{fingerprint: fingerprint, cancel: cancel}
-			go codexRelayLoop(bindingCtx, entry.hub, entry.binding, stderr)
+			go providerRelayLoop(bindingCtx, entry.hub, entry.binding, stderr)
 		}
 		return nil
 	}
@@ -238,8 +238,13 @@ func relayBindingFingerprint(hub remoteHub, binding remoteBinding) string {
 	return strings.Join([]string{hub.URL, hub.DeviceID, hub.Token, binding.ParticipantID, binding.Provider, binding.Target, binding.Executable}, "\x00")
 }
 
-func codexRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding, stderr interface{ Write([]byte) (int, error) }) {
-	runtime := codexqueue.Client{Executable: binding.Executable}
+func providerRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding, stderr interface{ Write([]byte) (int, error) }) {
+	var runtime room.DeliveryRuntime
+	if binding.Provider == "claude" {
+		runtime = claudequeue.Client{Executable: binding.Executable}
+	} else {
+		runtime = codexqueue.Client{Executable: binding.Executable}
+	}
 	client := room.NetworkClient{BaseURL: hub.URL, Token: hub.Token, ParticipantID: binding.ParticipantID}
 	for ctx.Err() == nil {
 		var batch room.NetworkDeliveryBatch
@@ -261,7 +266,11 @@ func codexRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding, s
 			continue
 		}
 		prompt, deliveredThrough := networkDeliveryWake(batch)
-		deliveryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		timeout := 15 * time.Second
+		if binding.Provider == "claude" {
+			timeout = 45 * time.Second
+		}
+		deliveryCtx, cancel := context.WithTimeout(ctx, timeout)
 		err = runtime.Deliver(deliveryCtx, binding.Target, prompt)
 		cancel()
 		status, detail := "delivered", ""
@@ -293,54 +302,6 @@ func networkDeliveryWake(batch room.NetworkDeliveryBatch) (string, int64) {
 	}
 	command := participantCommand()
 	return fmt.Sprintf("[CREWFOLD · %s · %s] Run %s room receive %s --after %d --through %d", batch.Room.Slug, sequence, command, strconv.Quote(batch.Room.Slug), batch.After, batch.Through), batch.Through
-}
-
-func networkDeliveryContent(batch room.NetworkDeliveryBatch) (string, int64) {
-	messages := append([]room.Message(nil), batch.Messages...)
-	sort.Slice(messages, func(i, j int) bool { return messages[i].Sequence < messages[j].Sequence })
-	lines := make([]string, 0, len(messages))
-	first := batch.Through
-	deliveredThrough := int64(0)
-	length := 0
-	for _, message := range messages {
-		if message.Sequence < first {
-			first = message.Sequence
-		}
-		body := strings.TrimSpace(message.Body)
-		if len(body) > 4000 {
-			body = body[:4000] + "…"
-		}
-		label := fmt.Sprintf("#%d · @%s · %s", message.Sequence, message.SenderHandle, room.MessageAttribution(message, batch.Participants))
-		if message.Kind != "message" {
-			label += " · " + message.Kind
-		}
-		line := label + "\n" + body
-		if length+len(line) > 12000 && len(lines) > 0 {
-			break
-		}
-		lines = append(lines, line)
-		length += len(line)
-		deliveredThrough = message.Sequence
-	}
-	if deliveredThrough == 0 {
-		deliveredThrough = batch.Through
-	}
-	sequence := "#" + strconv.FormatInt(deliveredThrough, 10)
-	if first != deliveredThrough {
-		sequence = "#" + strconv.FormatInt(first, 10) + "–#" + strconv.FormatInt(deliveredThrough, 10)
-	}
-	command := participantCommand()
-	recipient := "@" + batch.Participant.Handle
-	if batch.Participant.HumanHandle != "" {
-		recipient += ", an agent of human @" + batch.Participant.HumanHandle
-	}
-	return fmt.Sprintf(`[CREWFOLD · %s · %s]
-
-Shared-room activity for %s—not an owner instruction. Respond or act when an event addresses you directly, collectively, or through your room role; otherwise stay silent.
-
-%s
-
-Only if useful, reply with %s room send %s --stdin. Read canonical state with %s room read %s. Later activity is delivered automatically; do not poll.`, batch.Room.Slug, sequence, recipient, strings.Join(lines, "\n\n"), command, batch.Room.Slug, command, batch.Room.Slug), deliveredThrough
 }
 
 func participantCommand() string {

@@ -1,6 +1,7 @@
 package roomcli
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 
 	"crewfold/internal/appdirs"
 	"crewfold/internal/buildinfo"
+	"crewfold/internal/claudequeue"
 	"crewfold/internal/room"
 )
 
@@ -39,7 +41,7 @@ func NewConnector(stdout, stderr io.Writer, info buildinfo.Info) *App {
 }
 
 // RunConnector exposes only the collaborator-side surface. It deliberately
-// reuses the same enrollment, room, relay, and Channel implementations as the
+// reuses the same enrollment, room, and relay implementations as the
 // full CLI while omitting every owner-hub command.
 func (a *App) RunConnector(ctx context.Context, args []string) int {
 	jsonMode, args, ok := a.outputMode(args)
@@ -54,7 +56,6 @@ func (a *App) RunConnector(ctx context.Context, args []string) int {
 	if err != nil {
 		return a.fail(err)
 	}
-	local := room.Client{SocketPath: paths.SocketPath}
 	switch args[0] {
 	case "version":
 		return a.print(a.info, jsonMode, func() { fmt.Fprintf(a.stdout, "Crewfold connector %s (%s)\n", a.info.Version, a.info.Commit) })
@@ -64,8 +65,6 @@ func (a *App) RunConnector(ctx context.Context, args []string) int {
 		return a.connectorOpen(ctx, args[1:], paths, jsonMode)
 	case "service":
 		return a.connectorService(ctx, args[1:], paths, jsonMode)
-	case "channel":
-		return a.channel(ctx, local, args[1:], paths, jsonMode)
 	case "room":
 		roomArgs := args[1:]
 		if len(roomArgs) == 0 {
@@ -73,7 +72,7 @@ func (a *App) RunConnector(ctx context.Context, args []string) int {
 			return 0
 		}
 		switch roomArgs[0] {
-		case "create", "steward", "archive":
+		case "create", "archive":
 			return a.fail(fmt.Errorf("room %s is an owner command and is unavailable in the connector", roomArgs[0]))
 		}
 		caller := &routedCaller{configPath: paths.ConnectorConfigPath}
@@ -132,8 +131,6 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		})
 	case "network":
 		return a.network(ctx, client, remaining, jsonMode)
-	case "channel":
-		return a.channel(ctx, client, remaining, paths, jsonMode)
 	case "room":
 		return a.room(ctx, client, remaining, paths, jsonMode)
 	default:
@@ -302,8 +299,6 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 		return a.print(snapshot, jsonMode, func() {
 			fmt.Fprintf(a.stdout, "room %s created\n", snapshot.Room.Slug)
 		})
-	case "steward":
-		return a.roomSteward(ctx, client, args[1:], jsonMode)
 	case "list":
 		var rooms []room.Room
 		if err := client.Call(ctx, "room.list", map[string]any{}, &rooms); err != nil {
@@ -356,6 +351,10 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 		if err != nil {
 			return a.fail(err)
 		}
+		session, rest, err := pullOption(rest, "session")
+		if err != nil {
+			return a.fail(err)
+		}
 		invite, rest, err := pullOption(rest, "invite")
 		if err != nil {
 			return a.fail(err)
@@ -365,7 +364,7 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 			return a.fail(err)
 		}
 		if len(rest) != 0 || handle == "" {
-			return a.fail(fmt.Errorf("usage: %s room join ROOM|SERVER --handle HANDLE [--invite SECRET] [--name NAME] [--cwd PATH] [--delivery codex|claude|none]", a.program))
+			return a.fail(fmt.Errorf("usage: %s room join ROOM|SERVER --handle HANDLE [--invite SECRET] [--name NAME] [--cwd PATH] [--delivery codex|claude|none] [--session SESSION_ID]", a.program))
 		}
 		if cwd == "" {
 			cwd, _ = os.Getwd()
@@ -373,23 +372,30 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 		if delivery == "" {
 			delivery = "codex"
 		}
-		threadID := ""
+		sessionID := ""
 		if delivery == "codex" {
-			threadID = strings.TrimSpace(os.Getenv("CODEX_THREAD_ID"))
-			if threadID == "" {
+			if session != "" {
+				return a.fail(errors.New("--session is only needed for Claude delivery; Codex binds the current CODEX_THREAD_ID"))
+			}
+			sessionID = strings.TrimSpace(os.Getenv("CODEX_THREAD_ID"))
+			if sessionID == "" {
 				return a.fail(errors.New("Codex delivery is the default, but CODEX_THREAD_ID is unavailable; run join from inside the Codex session or use --delivery none"))
 			}
-		} else if delivery != "none" && delivery != "claude" {
+		} else if delivery == "claude" {
+			resolved, resolveErr := (claudequeue.Client{}).ResolveSession(ctx, filepath.Clean(cwd), session)
+			if resolveErr != nil {
+				return a.fail(fmt.Errorf("resolve open Claude Code session: %w", resolveErr))
+			}
+			sessionID = resolved.SessionID
+		} else if delivery == "none" {
+			if session != "" {
+				return a.fail(errors.New("--session requires --delivery claude"))
+			}
+		} else {
 			return a.fail(errors.New("--delivery must be codex, claude, or none"))
 		}
-		storeDelivery := delivery
-		if delivery == "claude" {
-			if routed, ok := client.(*routedCaller); !ok || !routed.isRemote() {
-				storeDelivery = "none"
-			}
-		}
 		var participant room.Participant
-		joinInput := room.JoinInput{Room: identifier, Handle: handle, DisplayName: name, WorkingDirectory: cwd, Kind: kind, Delivery: storeDelivery, ThreadID: threadID}
+		joinInput := room.JoinInput{Room: identifier, Handle: handle, DisplayName: name, WorkingDirectory: cwd, Kind: kind, Delivery: delivery, SessionID: sessionID}
 		if invite != "" {
 			routed, ok := client.(*routedCaller)
 			if !ok {
@@ -403,25 +409,8 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 		} else if err := client.Call(ctx, "participant.join", joinInput, &participant); err != nil {
 			return a.fail(err)
 		}
-		var channelSetup *claudeChannelSetup
-		if delivery == "claude" {
-			localClient, _ := client.(room.Client)
-			configPath := ""
-			if _, remote := client.(*routedCaller); remote {
-				configPath = paths.ConnectorConfigPath
-			}
-			setup, setupErr := setupClaudeChannel(ctx, localClient, paths, configPath, identifier, filepath.Clean(cwd))
-			if setupErr != nil {
-				return a.fail(fmt.Errorf("participant joined, but configure Claude Channel: %w", setupErr))
-			}
-			channelSetup = &setup
-		}
 		if jsonMode {
-			result := map[string]any{"participant": participant}
-			if channelSetup != nil {
-				result["channel"] = channelSetup
-			}
-			return a.print(result, true, func() {})
+			return a.print(map[string]any{"participant": participant}, true, func() {})
 		}
 		return a.print(participant, false, func() {
 			ownership := ""
@@ -430,9 +419,6 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 			}
 			fmt.Fprintf(a.stdout, "joined %s as @%s from %s · delivery %s%s\n", identifier, participant.Handle, participant.WorkingDirectory, delivery, ownership)
 			fmt.Fprintf(a.stdout, "room messages render GitHub-flavored Markdown; use `%s room send %s --stdin` for readable multiline posts\n", a.program, identifier)
-			if channelSetup != nil {
-				printClaudeChannelSetup(a.stdout, *channelSetup)
-			}
 		})
 	case "leave":
 		identifier, rest, err := leading(args[1:], "room")
@@ -529,11 +515,14 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 			return a.fail(errors.New("--through must be an integer greater than --after"))
 		}
 		var snapshot room.Snapshot
-		if err := client.Call(ctx, "room.snapshot", room.ListMessagesInput{Room: identifier, After: after, Limit: 500}, &snapshot); err != nil {
+		if err := client.Call(ctx, "room.snapshot", room.ListMessagesInput{Room: identifier, After: after, Through: through, Limit: 500}, &snapshot); err != nil {
 			return a.fail(err)
 		}
 		cwd, _ := os.Getwd()
 		participant := deliveryParticipant(client, identifier, cwd, snapshot.Participants)
+		if participant.ID == "" {
+			return a.fail(errors.New("receive requires a joined participant in this working directory"))
+		}
 		messages := make([]room.Message, 0, len(snapshot.Messages))
 		for _, message := range snapshot.Messages {
 			if message.Sequence > through {
@@ -545,13 +534,22 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 			messages = append(messages, message)
 		}
 		snapshot.Messages = messages
+		var output bytes.Buffer
+		if jsonMode {
+			if err := json.NewEncoder(&output).Encode(snapshot); err != nil {
+				return a.fail(err)
+			}
+		} else {
+			printDelivery(&output, snapshot, participant, after, through, a.program)
+		}
+		if _, err := io.Copy(a.stdout, &output); err != nil {
+			return a.fail(err)
+		}
 		var ignored room.Participant
 		if err := client.Call(ctx, "participant.ack", room.AckInput{Room: identifier, WorkingDirectory: cwd, Through: through}, &ignored); err != nil {
 			return a.fail(err)
 		}
-		return a.print(snapshot, jsonMode, func() {
-			printDelivery(a.stdout, snapshot, participant, after, through, a.program)
-		})
+		return 0
 	case "read":
 		identifier, rest, err := leading(args[1:], "room")
 		if err != nil {
@@ -580,9 +578,9 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 				printMessage(a.stdout, message)
 			}
 		}
-		if cwd, cwdErr := os.Getwd(); cwdErr == nil && snapshot.Room.LastSequence > 0 {
+		if cwd, cwdErr := os.Getwd(); cwdErr == nil && len(snapshot.Messages) > 0 {
 			var ignored room.Participant
-			_ = client.Call(ctx, "participant.ack", room.AckInput{Room: identifier, WorkingDirectory: cwd, Through: snapshot.Room.LastSequence}, &ignored)
+			_ = client.Call(ctx, "participant.ack", room.AckInput{Room: identifier, WorkingDirectory: cwd, Through: snapshot.Messages[len(snapshot.Messages)-1].Sequence}, &ignored)
 		}
 		if jsonMode {
 			return a.print(snapshot, true, func() {})
@@ -726,89 +724,6 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 		return a.print(result, jsonMode, func() { fmt.Fprintf(a.stdout, "room %s archived\n", result.Slug) })
 	default:
 		return a.fail(fmt.Errorf("unknown room command %q", args[0]))
-	}
-}
-
-func (a *App) roomSteward(ctx context.Context, client room.Caller, args []string, jsonMode bool) int {
-	if len(args) == 0 {
-		return a.fail(errors.New("usage: crewfold room steward start|status|prompt|key|stop|restart ROOM"))
-	}
-	action := args[0]
-	identifier, rest, err := leading(args[1:], "room")
-	if err != nil {
-		return a.fail(err)
-	}
-	switch action {
-	case "start":
-		handle, rest, err := pullOption(rest, "handle")
-		if err != nil {
-			return a.fail(err)
-		}
-		name, rest, err := pullOption(rest, "name")
-		if err != nil {
-			return a.fail(err)
-		}
-		role, rest, err := pullOption(rest, "role")
-		if err != nil {
-			return a.fail(err)
-		}
-		cwd, rest, err := pullOption(rest, "cwd")
-		if err != nil {
-			return a.fail(err)
-		}
-		if len(rest) != 0 || handle == "" {
-			return a.fail(errors.New("usage: crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH]"))
-		}
-		var steward room.HostedSteward
-		if err := client.Call(ctx, "steward.start", room.StartStewardInput{Room: identifier, Handle: handle, DisplayName: name, Role: role, WorkingDirectory: cwd}, &steward); err != nil {
-			return a.fail(err)
-		}
-		return a.print(steward, jsonMode, func() {
-			fmt.Fprintf(a.stdout, "@%s is starting in Herdr session %s\n", steward.Handle, steward.HerdrSession)
-		})
-	case "status":
-		if len(rest) != 0 {
-			return a.fail(errors.New("unexpected arguments"))
-		}
-		var console *room.StewardConsole
-		if err := client.Call(ctx, "steward.status", map[string]any{"room": identifier}, &console); err != nil {
-			return a.fail(err)
-		}
-		if console == nil {
-			return a.print(console, jsonMode, func() { fmt.Fprintln(a.stdout, "no hosted steward") })
-		}
-		return a.print(console, jsonMode, func() {
-			fmt.Fprintf(a.stdout, "@%s\t%s\t%s\t%s\n", console.Steward.Handle, console.Steward.Status, console.Steward.AgentStatus, console.Steward.HerdrSession)
-		})
-	case "prompt":
-		if len(rest) == 0 {
-			return a.fail(errors.New("prompt text is required"))
-		}
-		var accepted map[string]any
-		if err := client.Call(ctx, "steward.prompt", room.PromptStewardInput{Room: identifier, Text: strings.Join(rest, " ")}, &accepted); err != nil {
-			return a.fail(err)
-		}
-		return a.print(accepted, jsonMode, func() { fmt.Fprintln(a.stdout, "prompt sent to hosted steward") })
-	case "key":
-		if len(rest) != 1 {
-			return a.fail(errors.New("usage: crewfold room steward key ROOM enter|esc|ctrl+c"))
-		}
-		var accepted map[string]any
-		if err := client.Call(ctx, "steward.key", room.StewardKeyInput{Room: identifier, Key: rest[0]}, &accepted); err != nil {
-			return a.fail(err)
-		}
-		return a.print(accepted, jsonMode, func() { fmt.Fprintln(a.stdout, "key sent to hosted steward") })
-	case "stop", "restart":
-		if len(rest) != 0 {
-			return a.fail(errors.New("unexpected arguments"))
-		}
-		var steward room.HostedSteward
-		if err := client.Call(ctx, "steward."+action, map[string]any{"room": identifier}, &steward); err != nil {
-			return a.fail(err)
-		}
-		return a.print(steward, jsonMode, func() { fmt.Fprintf(a.stdout, "hosted steward %s\n", steward.Status) })
-	default:
-		return a.fail(fmt.Errorf("unknown steward command %q", action))
 	}
 }
 
@@ -1053,7 +968,6 @@ Usage:
   crewfold open
   crewfold status
   crewfold network status|enable|disable|invite
-  crewfold channel setup ROOM
   crewfold room COMMAND
   crewfold daemon run
 
@@ -1069,7 +983,6 @@ Usage:
   crewfold-connector open
   crewfold-connector service start|stop|restart|status
   crewfold-connector room COMMAND
-  crewfold-connector channel setup ROOM
   crewfold-connector version
 
 Setup is once per machine. Each room invitation is accepted from inside the
@@ -1079,8 +992,8 @@ agent session that will participate.
 const connectorRoomHelp = `Participant room commands:
   crewfold-connector room list
   crewfold-connector room show ROOM
-  crewfold-connector room join SERVER --invite SECRET --handle HANDLE [--delivery codex|claude|none]
-  crewfold-connector room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|claude|none]
+  crewfold-connector room join SERVER --invite SECRET --handle HANDLE [--delivery codex|claude|none] [--session SESSION_ID]
+  crewfold-connector room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|claude|none] [--session SESSION_ID]
   crewfold-connector room leave ROOM [--handle HANDLE] [--cwd PATH]
   crewfold-connector room send ROOM MESSAGE... | --stdin
   crewfold-connector room context ROOM CURRENT-CONTEXT... | --stdin
@@ -1098,7 +1011,7 @@ const roomHelp = `Room commands:
   crewfold room create SLUG [--title TITLE] [--topic TOPIC]
   crewfold room list
   crewfold room show ROOM
-  crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|claude|none]
+  crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|claude|none] [--session SESSION_ID]
   crewfold room leave ROOM [--handle HANDLE] [--cwd PATH]
   crewfold room send ROOM MESSAGE... | --stdin
   crewfold room context ROOM CURRENT-CONTEXT... | --stdin
@@ -1110,16 +1023,12 @@ const roomHelp = `Room commands:
   crewfold room document ROOM DOCUMENT [--to PATH]
   crewfold room archive-document ROOM DOCUMENT
   crewfold room restore-document ROOM DOCUMENT
-  crewfold room steward start ROOM --handle HANDLE [--name NAME] [--role ROLE] [--cwd PATH]
-  crewfold room steward status ROOM
-  crewfold room steward prompt ROOM MESSAGE...
-  crewfold room steward key ROOM enter|esc|ctrl+c
-  crewfold room steward stop ROOM
-  crewfold room steward restart ROOM
   crewfold room archive ROOM
 
 Codex delivery is the join default and binds the current CODEX_THREAD_ID. Use
---delivery claude for a Claude Channels session, or --delivery none for a
-participant that cannot receive pushed prompts.
+--delivery claude for an already-open Claude Code session. If exactly one open
+Claude session matches the working directory it is selected automatically;
+otherwise pass --session SESSION_ID. Use --delivery none for a participant that
+cannot receive pushed prompts.
 Participant commands identify the current session by its joined working directory.
 `

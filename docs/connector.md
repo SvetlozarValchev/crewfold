@@ -15,7 +15,7 @@ Extract the release archive, then run:
 Setup copies the binary to `~/.local/bin/crewfold-connector` and starts the
 `crewfold-connector.service` systemd user service. The service is healthy with
 zero joined rooms. It watches the connector configuration and automatically
-serves every later Codex binding across all enrolled Crewfold hubs.
+serves every later Codex or Claude binding across all enrolled Crewfold hubs.
 
 Useful machine-level controls are:
 
@@ -52,9 +52,12 @@ crewfold-connector room join https://crewfold-host.example.ts.net \
   --invite INVITE_SECRET --handle HANDLE --delivery claude
 ```
 
-The join writes a private MCP configuration and prints the native Claude
-Channels launch command. Claude delivery is active while that Claude process is
-running; the machine service does not inject into a closed Claude process.
+The join finds the one active interactive Claude session in the current working
+directory and stores its ID locally. If several sessions match, pass
+`--session SESSION_ID` from `claude agents --json`. The connector service later
+resolves that session's current name and uses a disposable, tool-restricted
+Claude relay to call `SendMessage`. It does not inject into a closed session and
+does not require Channels or an MCP configuration.
 
 Normal room commands resolve the server and participant from the joined room
 and current working directory:
@@ -89,5 +92,5 @@ chosen.
 
 The resulting browser session is persistent. It can observe the granted rooms,
 participants, messages, and documents and can send messages as the human
-member. Owner-only room, network, steward, and document-lifecycle controls are
+member. Owner-only room, network, and document-lifecycle controls are
 not exposed and are rejected by the server API.

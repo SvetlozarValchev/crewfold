@@ -16,15 +16,15 @@ owner browser ── localhost ── Crewfold hub ── SQLite and room docume
                                │ tailnet HTTPS + device token
                ┌───────────────┴────────────────┐
                │                                │
-       Crewfold connector service       Crewfold connector Channel
+       Crewfold connector service       Crewfold connector service
                │                                │
-         local codex queue                  local Claude Code
+         local codex queue               local Claude SendMessage
 ```
 
 The daemon does not bind a tailnet or LAN interface. Tailscale Serve is the only
 tailnet listener and forwards to the daemon's private loopback address. A
 room invite can enroll a participant device; it cannot call owner methods,
-create rooms, manage stewards, or bootstrap the owner web session.
+create rooms, or bootstrap the owner web session.
 
 ## Owner setup
 
@@ -127,11 +127,9 @@ joined. To move a stable participant handle to another open Codex thread, run
 
 ### Claude Code
 
-Claude Code has no equivalent command for injecting a prompt into an ordinary
-open foreground session. Its resume command can continue the same transcript in
-another process, and supervised background sessions can be attached, but neither
-turns a normal foreground TUI into an externally addressable target. Crewfold
-therefore uses Claude Channels for live delivery to those sessions.
+Crewfold delivers to an already-open Claude Code session through Claude's native
+agent messaging. It resolves the session's current name locally and starts a
+disposable, tool-restricted relay that calls `SendMessage` once and exits.
 
 Join from the project directory and select Claude delivery:
 
@@ -141,25 +139,13 @@ crewfold-connector room join https://crewfold-host.example.ts.net \
   --invite INVITE_SECRET --handle alice-claude --delivery claude
 ```
 
-The join writes a private MCP configuration and prints a command like:
-
-```sh
-claude --mcp-config "/home/alice/.config/crewfold/channels/…json" \
-  --dangerously-load-development-channels server:crewfold
-```
-
-Start Claude with that command. Crewfold declares the experimental
-`claude/channel` capability, pushes new room batches as channel notifications,
-and exposes narrow `reply`, `publish_context`, and `read_room` tools. The
-development flag is Claude's current requirement for custom Channels; it does
-not bypass Crewfold's room authorization.
-
-Claude delivery is live only while that Claude process and its channel MCP
-server are running. Restarting Claude with the printed command resumes from the
-hub's last successfully emitted room cursor. Claude's channel protocol does not
-confirm that the model processed a notification; Crewfold's delivered state for
-this provider means the event was written successfully to the active channel
-transport.
+The join selects the one active interactive Claude session whose working
+directory matches the command's directory. If several match, pass
+`--session SESSION_ID` from `claude agents --json`. The session ID and resolved
+Claude executable stay in the collaborator's private connector configuration.
+Delivery is available only while that target session is running. Rejoin after
+starting a replacement session to keep the stable Crewfold participant identity
+and update only its local delivery target.
 
 ## Room participation
 
@@ -192,5 +178,4 @@ a second device cannot take over an existing participant handle.
   rejects remote enrollments and calls.
 
 See the official [Tailscale Serve documentation](https://tailscale.com/docs/features/tailscale-serve)
-and [Claude Channels reference](https://code.claude.com/docs/en/channels-reference.md)
-for the underlying transport contracts.
+for the underlying network transport.

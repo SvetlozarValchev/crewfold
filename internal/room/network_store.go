@@ -112,10 +112,10 @@ func networkSecretDigest(value string) (string, error) {
 func consumeNetworkInviteTx(ctx context.Context, tx *sql.Tx, secretHash, deviceID, now string) (Room, error) {
 	var room Room
 	var expiresAt, usedAt string
-	err := tx.QueryRowContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,COALESCE(r.steward_id,''),r.created_at,r.updated_at,
+	err := tx.QueryRowContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,r.created_at,r.updated_at,
 COALESCE((SELECT MAX(sequence) FROM messages WHERE room_id=r.id),0),i.expires_at,COALESCE(i.used_at,'')
 FROM network_invites i JOIN rooms r ON r.id=i.room_id WHERE i.secret_hash=?`, secretHash).Scan(
-		&room.ID, &room.Slug, &room.Title, &room.Topic, &room.Status, &room.StewardID,
+		&room.ID, &room.Slug, &room.Title, &room.Topic, &room.Status,
 		&room.CreatedAt, &room.UpdatedAt, &room.LastSequence, &expiresAt, &usedAt,
 	)
 	nowTime, nowErr := time.Parse(time.RFC3339Nano, now)
@@ -414,7 +414,7 @@ func (s *Store) AcceptNetworkInvite(ctx context.Context, deviceID string, input 
 }
 
 func (s *Store) NetworkRooms(ctx context.Context, deviceID string) ([]Room, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,COALESCE(r.steward_id,''),r.created_at,r.updated_at,
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,r.created_at,r.updated_at,
 COALESCE((SELECT MAX(sequence) FROM messages WHERE room_id=r.id),0)
 FROM network_room_memberships n JOIN rooms r ON r.id=n.room_id WHERE n.device_id=?
 ORDER BY r.status='open' DESC,r.updated_at DESC,r.slug`, deviceID)
@@ -425,7 +425,7 @@ ORDER BY r.status='open' DESC,r.updated_at DESC,r.slug`, deviceID)
 	var rooms []Room
 	for rows.Next() {
 		var room Room
-		if err := rows.Scan(&room.ID, &room.Slug, &room.Title, &room.Topic, &room.Status, &room.StewardID, &room.CreatedAt, &room.UpdatedAt, &room.LastSequence); err != nil {
+		if err := rows.Scan(&room.ID, &room.Slug, &room.Title, &room.Topic, &room.Status, &room.CreatedAt, &room.UpdatedAt, &room.LastSequence); err != nil {
 			return nil, err
 		}
 		rooms = append(rooms, room)
@@ -516,9 +516,6 @@ WHERE p.room_id=? AND p.handle=?`, room.ID, handle).Scan(&participantID, &existi
 	} else if err != nil {
 		return Participant{}, err
 	} else {
-		if existingKind == "steward" {
-			return Participant{}, errors.New("hosted steward identity cannot become a remote participant")
-		}
 		if existingDeviceID != device.ID {
 			return Participant{}, errors.New("participant handle is already in use in this room")
 		}
@@ -569,7 +566,7 @@ func (s *Store) NetworkBinding(ctx context.Context, deviceID, participantID stri
 	err := s.db.QueryRowContext(ctx, `SELECT n.participant_id,n.device_id,n.provider,n.remote_directory,n.status,n.last_delivered_sequence,
 COALESCE(n.last_attempt_at,''),COALESCE(n.last_delivered_at,''),n.error,n.updated_at,
 p.id,p.room_id,p.handle,p.display_name,p.kind,COALESCE(d.browser_handle,''),p.status,p.context,COALESCE(p.context_updated_at,''),p.last_read_sequence,p.joined_at,p.last_seen_at,
-r.id,r.slug,r.title,r.topic,r.status,COALESCE(r.steward_id,''),r.created_at,r.updated_at,
+r.id,r.slug,r.title,r.topic,r.status,r.created_at,r.updated_at,
 COALESCE((SELECT MAX(sequence) FROM messages WHERE room_id=r.id),0)
 FROM network_participant_bindings n JOIN participants p ON p.id=n.participant_id JOIN network_devices d ON d.id=n.device_id JOIN rooms r ON r.id=p.room_id
 WHERE n.device_id=? AND n.participant_id=?`, deviceID, participantID).Scan(
@@ -577,7 +574,7 @@ WHERE n.device_id=? AND n.participant_id=?`, deviceID, participantID).Scan(
 		&binding.LastAttemptAt, &binding.LastDeliveredAt, &binding.Error, &binding.UpdatedAt,
 		&participant.ID, &participant.RoomID, &participant.Handle, &participant.DisplayName, &participant.Kind, &participant.HumanHandle, &participant.Status,
 		&participant.Context, &participant.ContextUpdatedAt, &participant.LastReadSequence, &participant.JoinedAt, &participant.LastSeenAt,
-		&room.ID, &room.Slug, &room.Title, &room.Topic, &room.Status, &room.StewardID, &room.CreatedAt, &room.UpdatedAt, &room.LastSequence,
+		&room.ID, &room.Slug, &room.Title, &room.Topic, &room.Status, &room.CreatedAt, &room.UpdatedAt, &room.LastSequence,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return binding, participant, room, errors.New("remote participant binding not found")

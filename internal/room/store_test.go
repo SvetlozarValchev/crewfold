@@ -3,6 +3,7 @@ package room
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -12,6 +13,145 @@ import (
 
 	"github.com/ncruces/go-sqlite3/driver"
 )
+
+func TestDeliveryRangesStartAtZeroAndRemainBounded(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	created, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "ranges", Title: "Ranges"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cutoff int64
+	for index := 0; index < 600; index++ {
+		message, err := store.Send(ctx, SendInput{Room: created.Room.ID, Owner: true, Body: fmt.Sprintf("event %d", index)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index == 19 {
+			cutoff = message.Sequence
+		}
+	}
+	first, err := store.messages(ctx, created.Room.ID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 100 || first[0].Sequence != created.Messages[0].Sequence {
+		t.Fatalf("delivery skipped beginning: %#v", first)
+	}
+	snapshot, err := store.SnapshotRange(ctx, created.Room.ID, 0, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 21 || snapshot.Messages[0].Sequence != created.Messages[0].Sequence || snapshot.Messages[20].Sequence != cutoff {
+		t.Fatalf("bounded range moved with new activity: %#v", snapshot.Messages)
+	}
+	if _, err := store.SnapshotRange(ctx, created.Room.ID, 0, snapshot.Room.LastSequence); err == nil {
+		t.Fatal("oversized delivery range silently truncated")
+	}
+}
+
+func TestRemoveHostedStatePreservesRoomHistory(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "preserved", Title: "Preserved"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	participant, err := store.Join(ctx, JoinInput{Room: created.Room.ID, Handle: "curator", Kind: "steward", WorkingDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := store.Send(ctx, SendInput{Room: created.Room.ID, ParticipantID: participant.ID, Body: "Durable finding."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `ALTER TABLE rooms ADD COLUMN steward_id TEXT;
+CREATE TABLE hosted_stewards(participant_id TEXT PRIMARY KEY REFERENCES participants(id));`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO hosted_stewards(participant_id) VALUES (?)`, participant.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	snapshot, err := store.Snapshot(ctx, created.Room.ID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Participants[0].Status != "left" || snapshot.Messages[len(snapshot.Messages)-1].ID != message.ID {
+		t.Fatalf("migration lost history or kept managed participant active: %#v", snapshot)
+	}
+	var remaining int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name='hosted_stewards'`).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("hosted table remains: %d, %v", remaining, err)
+	}
+	if _, err := store.Join(ctx, JoinInput{Room: created.Room.ID, Handle: "claude-agent", WorkingDirectory: t.TempDir(), Delivery: "claude", SessionID: "open-session"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeliveryProviderMigrationPreservesCodexBinding(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := t.TempDir()
+	store, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "bindings", Title: "Bindings"}); err != nil {
+		t.Fatal(err)
+	}
+	var schema string
+	if err := store.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE name='participant_deliveries'`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	schema = strings.ReplaceAll(schema, "'codex','claude'", "'codex'")
+	if _, err := store.db.ExecContext(ctx, "DROP TABLE participant_deliveries;"+schema); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := store.Join(ctx, JoinInput{Room: "bindings", Handle: "worker", WorkingDirectory: t.TempDir(), Delivery: "codex", SessionID: "open-thread"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.advanceDelivery(ctx, worker.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	state, err := store.Snapshot(ctx, "bindings", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery := participantNamed(state.Participants, "worker").Delivery
+	if delivery == nil || delivery.Target != "open-thread" || delivery.LastDeliveredSequence != 2 {
+		t.Fatalf("Codex binding lost during migration: %#v", delivery)
+	}
+	if _, err := store.Join(ctx, JoinInput{Room: "bindings", Handle: "claude", WorkingDirectory: t.TempDir(), Delivery: "claude", SessionID: "open-session"}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestOpenAddsDocumentArchiveStateToExistingStore(t *testing.T) {
 	t.Parallel()
@@ -199,7 +339,7 @@ func TestLeaveDisablesDeliveryAndRejoinPreservesParticipantState(t *testing.T) {
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	joined, err := store.Join(ctx, JoinInput{Room: created.Room.ID, Handle: "worker", WorkingDirectory: directory, Delivery: "codex", ThreadID: "thread-old"})
+	joined, err := store.Join(ctx, JoinInput{Room: created.Room.ID, Handle: "worker", WorkingDirectory: directory, Delivery: "codex", SessionID: "thread-old"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +373,7 @@ func TestLeaveDisablesDeliveryAndRejoinPreservesParticipantState(t *testing.T) {
 	if _, err := store.Send(ctx, SendInput{Room: created.Room.ID, Owner: true, Body: "Update while worker is away."}); err != nil {
 		t.Fatal(err)
 	}
-	routes, err := store.pendingCodexDeliveries(ctx)
+	routes, err := store.pendingDeliveries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +381,7 @@ func TestLeaveDisablesDeliveryAndRejoinPreservesParticipantState(t *testing.T) {
 		t.Fatalf("left participant still had an active delivery route: %#v", routes)
 	}
 
-	rejoined, err := store.Join(ctx, JoinInput{Room: created.Room.ID, Handle: "worker", WorkingDirectory: directory, Delivery: "codex", ThreadID: "thread-new"})
+	rejoined, err := store.Join(ctx, JoinInput{Room: created.Room.ID, Handle: "worker", WorkingDirectory: directory, Delivery: "codex", SessionID: "thread-new"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,27 +403,6 @@ func TestLeaveDisablesDeliveryAndRejoinPreservesParticipantState(t *testing.T) {
 	}
 	if !sawLeave {
 		t.Fatalf("leave event missing from history: %#v", afterRejoin.Messages)
-	}
-}
-
-func TestHostedStewardCannotUseParticipantLeave(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	store, err := Open(ctx, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	created, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "hosted-leave", Title: "Hosted leave", Topic: "Keep lifecycle controls distinct."})
-	if err != nil {
-		t.Fatal(err)
-	}
-	steward, err := store.ConfigureHostedSteward(ctx, StartStewardInput{Room: created.Room.ID, Handle: "hosted-steward"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Leave(ctx, LeaveInput{Room: created.Room.ID, WorkingDirectory: steward.WorkingDirectory}); err == nil || !strings.Contains(err.Error(), "room steward stop") {
-		t.Fatalf("hosted steward leave error = %v", err)
 	}
 }
 
@@ -535,39 +654,6 @@ func TestDocumentArchivingCuratesLogicalDocumentsWithoutHidingNewRevisions(t *te
 	}
 	if restored.ArchivedAt != "" {
 		t.Fatalf("restored document is still archived: %#v", restored)
-	}
-}
-
-func TestHostedStewardConfigurationIsCanonicalRoomState(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	store, err := Open(ctx, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	if _, err := store.CreateRoom(ctx, CreateRoomInput{Slug: "hosted", Title: "Hosted", Topic: "Keep two sessions aligned."}); err != nil {
-		t.Fatal(err)
-	}
-	steward, err := store.ConfigureHostedSteward(ctx, StartStewardInput{Room: "hosted", Handle: "room-steward", Role: "Watch for incompatible conclusions."})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if steward.Status != "starting" || steward.DesiredState != "running" || !steward.ManagedWorkingDirectory {
-		t.Fatalf("unexpected hosted steward: %#v", steward)
-	}
-	if info, err := os.Stat(steward.WorkingDirectory); err != nil || !info.IsDir() {
-		t.Fatalf("managed steward workspace is unavailable: %v", err)
-	}
-	snapshot, err := store.Snapshot(ctx, "hosted", 0, 50)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.Steward == nil || snapshot.Room.StewardID != steward.ParticipantID || len(snapshot.Participants) != 1 {
-		t.Fatalf("hosted steward missing from snapshot: %#v", snapshot)
-	}
-	if len(snapshot.Messages) != 2 || snapshot.Messages[1].Kind != "system" {
-		t.Fatalf("hosted lifecycle message missing: %#v", snapshot.Messages)
 	}
 }
 

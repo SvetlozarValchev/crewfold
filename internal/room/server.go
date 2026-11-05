@@ -23,17 +23,18 @@ import (
 	"time"
 
 	"crewfold/internal/buildinfo"
+	"crewfold/internal/claudequeue"
 	"crewfold/internal/codexqueue"
 	webui "crewfold/web"
 )
 
 type ServerConfig struct {
-	DataDir        string
-	SocketPath     string
-	WebAddress     string
-	Version        buildinfo.Info
-	StewardRuntime StewardRuntime
-	CodexRuntime   CodexDeliveryRuntime
+	DataDir       string
+	SocketPath    string
+	WebAddress    string
+	Version       buildinfo.Info
+	CodexRuntime  DeliveryRuntime
+	ClaudeRuntime DeliveryRuntime
 }
 
 type Request struct {
@@ -63,7 +64,6 @@ type Server struct {
 	networkWake chan struct{}
 	ownerToken  string
 	ownerHash   [32]byte
-	stewards    *StewardManager
 	deliveries  *DeliveryManager
 	closeOnce   sync.Once
 }
@@ -108,33 +108,20 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 		_ = listener.Close()
 		return err
 	}
-	runtime := config.StewardRuntime
-	if runtime == nil {
-		runtime, err = NewHerdrStewardRuntime(socketPath, dataDir)
-		if err != nil {
-			_ = listener.Close()
-			_ = os.Remove(socketPath)
-			return err
-		}
-	}
 	server := &Server{config: config, store: store, listener: listener, startedAt: time.Now().UTC(), bootstrap: map[[32]byte]time.Time{}, networkWeb: map[[32]byte]networkWebBootstrap{}, networkWake: make(chan struct{}), ownerToken: ownerToken, ownerHash: ownerHash}
 	cliPath, err := os.Executable()
 	if err != nil {
-		server.stewards = NewStewardManager(ctx, store, runtime, "crewfold", socketPath)
-	} else {
-		server.stewards = NewStewardManager(ctx, store, runtime, cliPath, socketPath)
-	}
-	if err := server.stewards.Start(); err != nil {
-		server.stewards.Close()
-		_ = listener.Close()
-		_ = os.Remove(socketPath)
-		return err
+		cliPath = "crewfold"
 	}
 	codexRuntime := config.CodexRuntime
 	if codexRuntime == nil {
 		codexRuntime = codexqueue.Client{}
 	}
-	server.deliveries = NewDeliveryManager(ctx, store, codexRuntime, cliPath, socketPath)
+	claudeRuntime := config.ClaudeRuntime
+	if claudeRuntime == nil {
+		claudeRuntime = claudequeue.Client{}
+	}
+	server.deliveries = NewDeliveryManager(ctx, store, codexRuntime, claudeRuntime, cliPath, socketPath)
 	server.deliveries.Start()
 	if err := server.startWeb(); err != nil {
 		server.deliveries.Close()
@@ -163,9 +150,6 @@ func (s *Server) close() {
 	s.closeOnce.Do(func() {
 		if s.deliveries != nil {
 			s.deliveries.Close()
-		}
-		if s.stewards != nil {
-			s.stewards.Close()
 		}
 		if s.listener != nil {
 			_ = s.listener.Close()
@@ -255,6 +239,12 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		if err := decode(&input); err != nil {
 			return nil, err
 		}
+		if input.Through != 0 {
+			if input.Before != 0 {
+				return nil, errors.New("before and through cannot be used together")
+			}
+			return s.store.SnapshotRange(ctx, input.Room, input.After, input.Through)
+		}
 		if input.After > 0 && input.Before > 0 {
 			return nil, errors.New("after and before cannot be used together")
 		}
@@ -269,67 +259,18 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		if err := decode(&input); err != nil {
 			return nil, err
 		}
-		if _, err := s.stewards.Stop(ctx, input.Room); err != nil && !errors.Is(err, ErrHostedStewardNotConfigured) {
-			return nil, err
-		}
 		return s.store.Archive(ctx, input.Room)
-	case "steward.start":
-		var input StartStewardInput
-		if err := decode(&input); err != nil {
-			return nil, err
-		}
-		return s.stewards.ConfigureAndStart(ctx, input)
-	case "steward.status":
-		var input struct {
-			Room string `json:"room"`
-		}
-		if err := decode(&input); err != nil {
-			return nil, err
-		}
-		console, err := s.stewards.Status(ctx, input.Room)
-		if errors.Is(err, ErrHostedStewardNotConfigured) {
-			return nil, nil
-		}
-		return console, err
-	case "steward.prompt":
-		var input PromptStewardInput
-		if err := decode(&input); err != nil {
-			return nil, err
-		}
-		return map[string]any{"accepted": true}, s.stewards.Prompt(ctx, input)
-	case "steward.key":
-		var input StewardKeyInput
-		if err := decode(&input); err != nil {
-			return nil, err
-		}
-		return map[string]any{"accepted": true}, s.stewards.SendKey(ctx, input)
-	case "steward.stop":
-		var input struct {
-			Room string `json:"room"`
-		}
-		if err := decode(&input); err != nil {
-			return nil, err
-		}
-		return s.stewards.Stop(ctx, input.Room)
-	case "steward.restart":
-		var input struct {
-			Room string `json:"room"`
-		}
-		if err := decode(&input); err != nil {
-			return nil, err
-		}
-		return s.stewards.Restart(ctx, input.Room)
 	case "participant.join":
 		var input JoinInput
 		if err := decode(&input); err != nil {
 			return nil, err
 		}
-		if input.Delivery == "codex" {
+		if input.Delivery == "codex" || input.Delivery == "claude" {
 			validationCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-			err := s.deliveries.Validate(validationCtx, input.ThreadID)
+			err := s.deliveries.Validate(validationCtx, input.Delivery, input.SessionID)
 			cancel()
 			if err != nil {
-				return nil, fmt.Errorf("bind Codex delivery: %w", err)
+				return nil, fmt.Errorf("bind %s delivery: %w", input.Delivery, err)
 			}
 		}
 		participant, err := s.store.Join(ctx, input)

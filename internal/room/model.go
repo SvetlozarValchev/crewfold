@@ -10,7 +10,6 @@ type Room struct {
 	Title        string `json:"title"`
 	Topic        string `json:"topic"`
 	Status       string `json:"status"`
-	StewardID    string `json:"steward_id,omitempty"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
 	LastSequence int64  `json:"last_sequence"`
@@ -49,36 +48,6 @@ type ParticipantDelivery struct {
 	UpdatedAt             string `json:"updated_at"`
 }
 
-// HostedSteward is the one optional room participant whose real Codex terminal
-// is kept alive by a named Herdr session. Other room participants remain
-// independently run processes that join through the CLI.
-type HostedSteward struct {
-	RoomID                  string `json:"room_id"`
-	ParticipantID           string `json:"participant_id"`
-	Handle                  string `json:"handle"`
-	DisplayName             string `json:"display_name"`
-	Role                    string `json:"role"`
-	WorkingDirectory        string `json:"working_directory"`
-	ManagedWorkingDirectory bool   `json:"managed_working_directory"`
-	HerdrSession            string `json:"herdr_session"`
-	HerdrWorkspaceID        string `json:"herdr_workspace_id,omitempty"`
-	HerdrPaneID             string `json:"herdr_pane_id,omitempty"`
-	AgentName               string `json:"agent_name"`
-	DesiredState            string `json:"desired_state"`
-	Status                  string `json:"status"`
-	AgentStatus             string `json:"agent_status,omitempty"`
-	LastDeliveredSequence   int64  `json:"last_delivered_sequence"`
-	Error                   string `json:"error,omitempty"`
-	InitializedAt           string `json:"initialized_at,omitempty"`
-	StartedAt               string `json:"started_at,omitempty"`
-	UpdatedAt               string `json:"updated_at"`
-}
-
-type StewardConsole struct {
-	Steward HostedSteward `json:"steward"`
-	Output  string        `json:"output"`
-}
-
 type Document struct {
 	ID            string `json:"id"`
 	RoomID        string `json:"room_id"`
@@ -105,7 +74,7 @@ type Message struct {
 	CreatedAt     string    `json:"created_at"`
 }
 
-// MessageAttribution describes the human or hosted identity behind a room
+// MessageAttribution describes the human or participant identity behind a room
 // message without relying on naming conventions between handles.
 func MessageAttribution(message Message, participants []Participant) string {
 	switch message.SenderKind {
@@ -121,7 +90,7 @@ func MessageAttribution(message Message, participants []Participant) string {
 		}
 		return "human"
 	case "steward":
-		return "hosted steward"
+		return "steward"
 	case "agent":
 		for _, participant := range participants {
 			if participant.ID == message.ParticipantID && participant.HumanHandle != "" {
@@ -133,35 +102,16 @@ func MessageAttribution(message Message, participants []Participant) string {
 }
 
 type Snapshot struct {
-	Room         Room           `json:"room"`
-	Participants []Participant  `json:"participants"`
-	Messages     []Message      `json:"messages"`
-	Documents    []Document     `json:"documents"`
-	Steward      *HostedSteward `json:"steward,omitempty"`
+	Room         Room          `json:"room"`
+	Participants []Participant `json:"participants"`
+	Messages     []Message     `json:"messages"`
+	Documents    []Document    `json:"documents"`
 }
 
 type CreateRoomInput struct {
 	Slug  string `json:"slug"`
 	Title string `json:"title"`
 	Topic string `json:"topic"`
-}
-
-type StartStewardInput struct {
-	Room             string `json:"room"`
-	Handle           string `json:"handle"`
-	DisplayName      string `json:"display_name,omitempty"`
-	Role             string `json:"role,omitempty"`
-	WorkingDirectory string `json:"working_directory,omitempty"`
-}
-
-type PromptStewardInput struct {
-	Room string `json:"room"`
-	Text string `json:"text"`
-}
-
-type StewardKeyInput struct {
-	Room string `json:"room"`
-	Key  string `json:"key"`
 }
 
 type JoinInput struct {
@@ -171,7 +121,7 @@ type JoinInput struct {
 	WorkingDirectory string `json:"working_directory"`
 	Kind             string `json:"kind,omitempty"`
 	Delivery         string `json:"delivery,omitempty"`
-	ThreadID         string `json:"thread_id,omitempty"`
+	SessionID        string `json:"session_id,omitempty"`
 }
 
 // NetworkSettings controls the explicitly enabled tailnet-facing API. The
@@ -322,8 +272,9 @@ type AckInput struct {
 }
 
 type ListMessagesInput struct {
-	Room   string `json:"room"`
-	After  int64  `json:"after,omitempty"`
-	Before int64  `json:"before,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
+	Room    string `json:"room"`
+	After   int64  `json:"after,omitempty"`
+	Before  int64  `json:"before,omitempty"`
+	Through int64  `json:"through,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
 }

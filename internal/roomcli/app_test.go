@@ -3,8 +3,7 @@ package roomcli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +17,74 @@ import (
 )
 
 type availableCodexRuntime struct{}
+
+type callerFunc func(context.Context, string, any, any) error
+
+func (f callerFunc) Call(ctx context.Context, method string, input, output any) error {
+	return f(ctx, method, input, output)
+}
+
+type failedOutput struct{}
+
+func (failedOutput) Write([]byte) (int, error) { return 0, errors.New("output closed") }
+
+func TestReceiveDoesNotAcknowledgeWhenOutputFails(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	acknowledged := false
+	client := callerFunc(func(_ context.Context, method string, input, output any) error {
+		switch method {
+		case "room.snapshot":
+			request := input.(room.ListMessagesInput)
+			if request.After != 0 || request.Through != 3 {
+				t.Fatalf("receive lost range: %#v", request)
+			}
+			*output.(*room.Snapshot) = room.Snapshot{
+				Room:         room.Room{Slug: "shared", LastSequence: 4},
+				Participants: []room.Participant{{ID: "reader", Handle: "reader", WorkingDirectory: cwd, Status: "joined"}},
+				Messages:     []room.Message{{Sequence: 3, SenderHandle: "owner", Body: "Read this."}},
+			}
+		case "participant.ack":
+			acknowledged = true
+		default:
+			t.Fatalf("unexpected method: %s", method)
+		}
+		return nil
+	})
+	var stderr bytes.Buffer
+	app := New(failedOutput{}, &stderr, buildinfo.Info{})
+	code := app.room(context.Background(), client, []string{"receive", "shared", "--after", "0", "--through", "3"}, appdirs.Paths{}, false)
+	if code == 0 || acknowledged || !strings.Contains(stderr.String(), "output closed") {
+		t.Fatalf("failed receive acknowledged: code=%d ack=%v stderr=%s", code, acknowledged, stderr.String())
+	}
+}
+
+func TestClaudeJoinSelectsAnOpenSessionWithoutChannelSetup(t *testing.T) {
+	directory := t.TempDir()
+	executable := filepath.Join(directory, "claude")
+	script := "#!/bin/sh\nprintf '%s\\n' '[{\"sessionId\":\"open-session\",\"name\":\"worker\",\"kind\":\"interactive\",\"cwd\":\"" + directory + "\"}]'\n"
+	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+	var bound room.JoinInput
+	client := callerFunc(func(_ context.Context, method string, input, output any) error {
+		if method != "participant.join" {
+			t.Fatalf("unexpected method: %s", method)
+		}
+		bound = input.(room.JoinInput)
+		*output.(*room.Participant) = room.Participant{ID: "member", Handle: bound.Handle, WorkingDirectory: directory}
+		return nil
+	})
+	var stdout, stderr bytes.Buffer
+	app := New(&stdout, &stderr, buildinfo.Info{})
+	code := app.room(context.Background(), client, []string{"join", "shared", "--handle", "worker", "--delivery", "claude", "--cwd", directory}, appdirs.Paths{}, false)
+	if code != 0 || bound.Delivery != "claude" || bound.SessionID != "open-session" {
+		t.Fatalf("Claude binding = %#v, code=%d stderr=%s", bound, code, stderr.String())
+	}
+}
 
 func (availableCodexRuntime) Validate(context.Context, string) error        { return nil }
 func (availableCodexRuntime) Deliver(context.Context, string, string) error { return nil }
@@ -109,6 +176,10 @@ func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 		t.Fatal(err)
 	}
 	var includedSecond room.Message
+	var own room.Message
+	if err := client.Call(context.Background(), "message.send", room.SendInput{Room: created.Room.ID, WorkingDirectory: workingDirectory, Body: "Own message between unread events."}, &own); err != nil {
+		t.Fatal(err)
+	}
 	if err := client.Call(context.Background(), "message.send", room.SendInput{Room: created.Room.ID, Owner: true, Body: "All agents should include the measured result."}, &includedSecond); err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +192,9 @@ func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 		t.Fatalf("receive exit %d: %s", code, stderr.String())
 	}
 	received := stdout.String()
+	if strings.Contains(received, own.Body) {
+		t.Fatalf("receive echoed own message: %s", received)
+	}
 	if !strings.Contains(received, "[CREWFOLD ROOM DELIVERY]") || !strings.Contains(received, "Recipient: @service-agent, an agent of human @owner") || !strings.Contains(received, included.Body) || !strings.Contains(received, includedSecond.Body) || strings.Contains(received, later.Body) || !strings.Contains(received, "not an owner instruction") {
 		t.Fatalf("receive output = %q", received)
 	}
@@ -252,10 +326,10 @@ func TestRemoteConnectJoinAndRoomCommandsRouteThroughHub(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(previousDirectory) })
 	var stdout, stderr bytes.Buffer
 	app := NewConnector(&stdout, &stderr, buildinfo.Info{Version: "test"})
-	if code := app.RunConnector(context.Background(), []string{"room", "join", baseURL, "--invite", invite.Secret, "--handle", "claude-agent", "--delivery", "claude", "--device-name", "remote-cli-test"}); code != 0 {
+	if code := app.RunConnector(context.Background(), []string{"room", "join", baseURL, "--invite", invite.Secret, "--handle", "remote-agent", "--delivery", "none", "--device-name", "remote-cli-test"}); code != 0 {
 		t.Fatalf("remote join exit %d: %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "joined remote-cli as @claude-agent") {
+	if !strings.Contains(stdout.String(), "joined remote-cli as @remote-agent") {
 		t.Fatalf("connector invitation output = %q", stdout.String())
 	}
 	stdout.Reset()
@@ -275,19 +349,11 @@ func TestRemoteConnectJoinAndRoomCommandsRouteThroughHub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Participants) != 1 || snapshot.Participants[0].Delivery == nil || snapshot.Participants[0].Delivery.Kind != "claude" {
+	if len(snapshot.Participants) != 1 || snapshot.Participants[0].Delivery != nil {
 		t.Fatalf("remote participant = %#v", snapshot.Participants)
 	}
-	if got := snapshot.Messages[len(snapshot.Messages)-1]; got.SenderHandle != "claude-agent" || got.Body != "Remote CLI connected." {
+	if got := snapshot.Messages[len(snapshot.Messages)-1]; got.SenderHandle != "remote-agent" || got.Body != "Remote CLI connected." {
 		t.Fatalf("remote message = %#v", got)
-	}
-	stdout.Reset()
-	stderr.Reset()
-	if code := app.RunConnector(context.Background(), []string{"channel", "setup", "remote-cli"}); code != 0 {
-		t.Fatalf("channel setup exit %d: %s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "--dangerously-load-development-channels server:crewfold") {
-		t.Fatalf("channel setup output = %q", stdout.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
@@ -330,145 +396,6 @@ func TestConnectorHelpAndCommandSurfaceExcludeOwnerOperations(t *testing.T) {
 	stderr.Reset()
 	if code := app.RunConnector(context.Background(), []string{"service", "install"}); code == 0 || !strings.Contains(stderr.String(), "service start|stop|restart|status") {
 		t.Fatalf("owner command exit %d, stderr %q", code, stderr.String())
-	}
-}
-
-func TestClaudeChannelDeclaresPushCapabilityAndTools(t *testing.T) {
-	input := strings.Join([]string{
-		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`,
-		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
-	}, "\n") + "\n"
-	var stdout, stderr bytes.Buffer
-	err := runClaudeChannel(context.Background(), remoteClaudeBackend{member: remoteBinding{Room: "room", Handle: "agent"}}, strings.NewReader(input), &stdout, &stderr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("MCP output = %q", stdout.String())
-	}
-	var initialized map[string]any
-	if err := json.Unmarshal([]byte(lines[0]), &initialized); err != nil {
-		t.Fatal(err)
-	}
-	result := initialized["result"].(map[string]any)
-	capabilities := result["capabilities"].(map[string]any)
-	experimental := capabilities["experimental"].(map[string]any)
-	if _, exists := experimental["claude/channel"]; !exists {
-		t.Fatalf("channel capability = %#v", initialized)
-	}
-	var tools map[string]any
-	if err := json.Unmarshal([]byte(lines[1]), &tools); err != nil {
-		t.Fatal(err)
-	}
-	listed := tools["result"].(map[string]any)["tools"].([]any)
-	if len(listed) != 3 {
-		t.Fatalf("tools = %#v", listed)
-	}
-}
-
-func TestLocalClaudeChannelSetupUsesOwnerSocketWithoutRemoteProfile(t *testing.T) {
-	root := t.TempDir()
-	socket := filepath.Join(root, "runtime", "crewfold.sock")
-	serverContext, stopServer := context.WithCancel(context.Background())
-	serverDone := make(chan error, 1)
-	go func() {
-		serverDone <- room.RunServer(serverContext, room.ServerConfig{
-			DataDir: filepath.Join(root, "state"), SocketPath: socket, WebAddress: "127.0.0.1:0",
-			Version: buildinfo.Info{Version: "test"}, CodexRuntime: availableCodexRuntime{},
-		})
-	}()
-	t.Cleanup(func() {
-		stopServer()
-		select {
-		case err := <-serverDone:
-			if err != nil {
-				t.Errorf("server shutdown: %v", err)
-			}
-		case <-time.After(3 * time.Second):
-			t.Error("server did not stop")
-		}
-	})
-	waitForSocket(t, socket)
-	t.Setenv("HOME", filepath.Join(root, "home"))
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
-	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "client-state"))
-	workspace := filepath.Join(root, "claude-workspace")
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	previousDirectory, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(workspace); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(previousDirectory) })
-	client := room.Client{SocketPath: socket}
-	var created room.Snapshot
-	if err := client.Call(context.Background(), "room.create", room.CreateRoomInput{Slug: "local-claude", Title: "Local Claude"}, &created); err != nil {
-		t.Fatal(err)
-	}
-	var stdout, stderr bytes.Buffer
-	app := New(&stdout, &stderr, buildinfo.Info{Version: "test"})
-	if code := app.Run(context.Background(), []string{"room", "--socket", socket, "join", "local-claude", "--handle", "local-claude", "--delivery", "claude"}); code != 0 {
-		t.Fatalf("local Claude join exit %d: %s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "Claude Channel ready") || !strings.Contains(stdout.String(), "claude --continue") {
-		t.Fatalf("local Claude join did not provide its resume command: %q", stdout.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
-	if code := app.Run(context.Background(), []string{"channel", "--socket", socket, "setup", "local-claude"}); code != 0 {
-		t.Fatalf("local Claude setup exit %d: %s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "--dangerously-load-development-channels server:crewfold") {
-		t.Fatalf("local Claude setup output = %q", stdout.String())
-	}
-	paths, err := appdirs.Default()
-	if err != nil {
-		t.Fatal(err)
-	}
-	bindings, err := filepath.Glob(filepath.Join(paths.ConfigDir, "channels", "*.binding.json"))
-	if err != nil || len(bindings) != 1 {
-		t.Fatalf("local Claude bindings = %#v, %v", bindings, err)
-	}
-	binding, err := loadLocalClaudeBinding(bindings[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if binding.Socket != socket || binding.RoomID != created.Room.ID || binding.Directory != workspace {
-		t.Fatalf("local Claude binding = %#v", binding)
-	}
-	mcpContent, err := os.ReadFile(filepath.Join(paths.ConfigDir, "channels", binding.ParticipantID+".json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(mcpContent), `"--binding"`) || !strings.Contains(string(mcpContent), bindings[0]) {
-		t.Fatalf("local Claude MCP config = %s", mcpContent)
-	}
-}
-
-func TestNetworkDeliveryContentDoesNotAcknowledgeOmittedMessages(t *testing.T) {
-	messages := make([]room.Message, 0, 5)
-	for sequence := int64(1); sequence <= 5; sequence++ {
-		messages = append(messages, room.Message{Sequence: sequence, ParticipantID: "peer-id", SenderHandle: "peer", SenderKind: "agent", Body: strings.Repeat(string(rune('a'+sequence)), 4000)})
-	}
-	prompt, through := networkDeliveryContent(room.NetworkDeliveryBatch{
-		Room: room.Room{Slug: "shared"}, Participant: room.Participant{Handle: "receiver", HumanHandle: "alice"}, Participants: []room.Participant{{ID: "peer-id", Handle: "peer", HumanHandle: "bob"}}, Messages: messages, Through: 5,
-	})
-	if through >= 5 {
-		t.Fatalf("acknowledgement advanced through omitted content: %d", through)
-	}
-	if through < 1 || !strings.Contains(prompt, fmt.Sprintf("#%d", through)) {
-		t.Fatalf("prompt cursor = %d, prompt = %q", through, prompt)
-	}
-	if strings.Contains(prompt, "#5 · @peer") {
-		t.Fatal("prompt unexpectedly included the final message")
-	}
-	if !strings.Contains(prompt, "agent of human @alice") || !strings.Contains(prompt, "@peer · agent of @bob") {
-		t.Fatalf("prompt omitted explicit human ownership: %q", prompt)
 	}
 }
 
