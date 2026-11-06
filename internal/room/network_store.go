@@ -590,7 +590,10 @@ func (s *Store) NetworkDeliveryBatch(ctx context.Context, deviceID, participantI
 	if binding.Provider == "none" || binding.Status == "left" || participant.Status != "joined" || room.Status != "open" {
 		return NetworkDeliveryBatch{}, errors.New("automatic delivery is not active for this participant")
 	}
-	messages, err := s.messages(ctx, room.ID, binding.LastDeliveredSequence, 100)
+	// Manual reads/receives may already have acknowledged past a stale relay
+	// cursor. Keep genuinely unread events, but do not replay acknowledged ones.
+	after := max(binding.LastDeliveredSequence, participant.LastReadSequence)
+	messages, err := s.messages(ctx, room.ID, after, 100)
 	if err != nil {
 		return NetworkDeliveryBatch{}, err
 	}
@@ -598,7 +601,7 @@ func (s *Store) NetworkDeliveryBatch(ctx context.Context, deviceID, participantI
 	if err != nil {
 		return NetworkDeliveryBatch{}, err
 	}
-	through := binding.LastDeliveredSequence
+	through := after
 	filtered := make([]Message, 0, len(messages))
 	for _, message := range messages {
 		if message.Sequence > through {
@@ -609,7 +612,7 @@ func (s *Store) NetworkDeliveryBatch(ctx context.Context, deviceID, participantI
 		}
 		filtered = append(filtered, message)
 	}
-	return NetworkDeliveryBatch{Room: room, Participant: participant, Participants: participants, Messages: filtered, After: binding.LastDeliveredSequence, Through: through}, nil
+	return NetworkDeliveryBatch{Room: room, Participant: participant, Participants: participants, Messages: filtered, After: after, Through: through}, nil
 }
 
 func (s *Store) RecordNetworkDelivery(ctx context.Context, deviceID string, input NetworkDeliveryResultInput) (NetworkBinding, error) {

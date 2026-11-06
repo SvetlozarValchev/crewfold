@@ -30,6 +30,11 @@ mutation, one canonical event per activity, retry deduplication, room-scoped
 handles, and silent, idempotent migration of existing records. CLI/browser checks
 cover the single task assignee selector and absence of thread assignment controls.
 
+Delivery cursor regression tests cover acknowledged backlogs larger than a batch,
+provider changes, acknowledgements arriving after route selection, preservation
+of unread messages, and the reverse case where delivery is ahead of reading.
+Both local dispatch and remote connector batches use the later cursor.
+
 The browser regression uses only a disposable daemon and Chrome profile:
 
 ```sh

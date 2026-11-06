@@ -97,6 +97,13 @@ func shouldWaitForRoomBatch(now, first, last time.Time, quietPeriod, maximumDela
 }
 
 func (m *DeliveryManager) deliver(route deliveryRoute) {
+	// Routes may wait behind a slow provider call. Recheck the acknowledgement
+	// and binding before fetching a batch, not just when enumerating routes.
+	current, err := m.store.participant(m.ctx, route.Room.ID, route.Participant.ID)
+	if err != nil || current.Status != "joined" || current.Delivery == nil || current.Delivery.Kind != route.Delivery.Kind || current.Delivery.Target != route.Delivery.Target {
+		return
+	}
+	route.Delivery.LastDeliveredSequence = max(current.Delivery.LastDeliveredSequence, current.LastReadSequence)
 	messages, err := m.store.messages(m.ctx, route.Room.ID, route.Delivery.LastDeliveredSequence, 100)
 	if err != nil || len(messages) == 0 {
 		return

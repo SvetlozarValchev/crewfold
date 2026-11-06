@@ -962,12 +962,12 @@ func (s *Store) pendingDeliveries(ctx context.Context) ([]deliveryRoute, error) 
 	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.slug,r.title,r.topic,r.status,r.created_at,r.updated_at,
 COALESCE((SELECT MAX(sequence) FROM messages WHERE room_id=r.id),0),
 p.id,p.room_id,p.handle,p.display_name,p.kind,'owner',COALESCE(p.working_directory,''),p.status,p.context,COALESCE(p.context_updated_at,''),p.last_read_sequence,p.joined_at,p.last_seen_at,
-d.kind,d.target,d.status,d.last_delivered_sequence,COALESCE(d.last_attempt_at,''),COALESCE(d.last_delivered_at,''),d.error,d.updated_at
+d.kind,d.target,d.status,MAX(d.last_delivered_sequence,p.last_read_sequence),COALESCE(d.last_attempt_at,''),COALESCE(d.last_delivered_at,''),d.error,d.updated_at
 FROM participant_deliveries d
 JOIN participants p ON p.id=d.participant_id
 JOIN rooms r ON r.id=p.room_id
 WHERE d.kind IN ('codex','claude') AND p.status='joined' AND r.status='open'
-AND EXISTS(SELECT 1 FROM messages m WHERE m.room_id=p.room_id AND m.sequence>d.last_delivered_sequence)
+AND EXISTS(SELECT 1 FROM messages m WHERE m.room_id=p.room_id AND m.sequence>MAX(d.last_delivered_sequence,p.last_read_sequence))
 ORDER BY d.updated_at,p.id`)
 	if err != nil {
 		return nil, err

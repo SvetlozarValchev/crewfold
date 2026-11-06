@@ -83,15 +83,21 @@ try {
   assert.equal(await js("document.querySelectorAll('dialog .thread-post').length"), 57, "loaded history lost");
 
   await bottom();
-  await fill(".thread-composer textarea", "Keep this unsent draft.");
+  await fill(".thread-composer input", "Keep this unsent draft.");
   await mutate("thread.reply", { key, body: "Incoming update while writing a draft." });
   await wait("document.querySelector('dialog').textContent.includes('Incoming update while writing a draft.')");
-  assert.equal(await js("document.querySelector('.thread-composer textarea').value"), "Keep this unsent draft.");
+  assert.equal(await js("document.querySelector('.thread-composer input').value"), "Keep this unsent draft.");
   assert.ok(await distanceFromBottom() < 3, "bottom reader did not follow new post");
-  await button("Send", "document.querySelector('dialog .thread-composer')");
-  await wait("document.querySelector('.thread-composer textarea').value===''");
+  await js("document.querySelector('.thread-composer input').focus()");
+  await cdp("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r", unmodifiedText: "\r" });
+  await cdp("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  await wait("document.querySelector('.thread-composer input').value===''");
   assert.equal(await js("window.originalDialog===document.querySelector('dialog')"), true, "reply remounted dialog");
   assert.ok(await distanceFromBottom() < 3, "own reply jumped away from bottom");
+  assert.equal(await js("document.activeElement===document.querySelector('.thread-composer input')"), true, "sending lost keyboard focus");
+  assert.equal(await js("document.querySelector('.thread-composer button').disabled"), true, "empty reply should not be sendable");
+  const composer = await cdp("Page.captureScreenshot", { format: "png" });
+  fs.writeFileSync(path.join(temp, "reply-composer-desktop.png"), Buffer.from(composer.data, "base64"));
 
   const question = await mutate("thread.ask", { key, body: "Extend the trial?", options: ["Extend", "Wait"], human_input: true });
   await wait("!!document.querySelector('dialog .thread-answer')");
@@ -137,6 +143,7 @@ try {
   assert.equal(await js("[...document.querySelectorAll('.thread-post-content')].every(e=>e.getBoundingClientRect().width>240)"), true);
   assert.equal(await js("getComputedStyle(document.querySelector('.thread-post .markdown')).fontSize"), "16px");
   assert.equal(await js("document.querySelector('dialog').scrollWidth<=document.querySelector('dialog').clientWidth"), true);
+  assert.equal(await js("(()=>{const row=document.querySelector('.thread-composer-row');const input=row.querySelector('input').getBoundingClientRect();const button=row.querySelector('button').getBoundingClientRect();return Math.abs(input.top-button.top)<4 && input.width>140 && button.height>=40;})()"), true, "mobile composer must keep a usable inline input and send button");
   await bottom();
   const mobile = await cdp("Page.captureScreenshot", { format: "png" });
   fs.writeFileSync(path.join(temp, "thread-mobile.png"), Buffer.from(mobile.data, "base64"));

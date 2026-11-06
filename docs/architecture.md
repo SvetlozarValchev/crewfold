@@ -114,6 +114,13 @@ activity waits briefly so bursts share one turn; direct mentions and
 `@everyone` bypass that delay. A bounded maximum delay flushes a continuously
 active room.
 
+Both local and connector delivery start after the later of the durable delivery
+cursor and the participant's acknowledged read cursor. Local dispatch rechecks
+the current binding and cursor before fetching, since earlier provider calls may
+take time. Already-acknowledged history is not replayed after a provider switch;
+genuinely unread events still follow normal batching. This does not mark new
+messages read or jump to the room's latest sequence.
+
 Codex delivery uses `codex queue` against the open thread captured from
 `CODEX_THREAD_ID`. Claude delivery resolves the open session's current name with
 `claude agents --json`, launches one disposable tool-restricted Claude process,

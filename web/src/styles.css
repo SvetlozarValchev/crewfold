@@ -143,6 +143,17 @@
 .thread-answer footer { align-items: center; justify-content: space-between; }
 .thread-answer footer small { font-size: 12px; color: var(--muted); }
 .thread-composer { margin: 24px 0 0 46px; }
+.thread-composer-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.board-editor .thread-composer-heading label { margin: 0; color: #bfc4c1; font-size: 13px; }
+.thread-composer-heading > span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.thread-composer-heading kbd { font: inherit; }
+.thread-composer-row { display: flex; align-items: center; gap: 6px; padding: 5px; border: 1px solid #535953; background: var(--pane); border-radius: 4px; transition: border-color .12s, box-shadow .12s; }
+.thread-composer-row:focus-within { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan); }
+.board-editor .thread-composer-row input[type="text"] { flex: 1; width: 0; padding: 8px 10px; border: 0; background: transparent; outline: none; font-size: 16px; line-height: 1.5; }
+.thread-composer-row input::placeholder { color: #9b9f9c; }
+.board-editor .thread-composer-row button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex-shrink: 0; min-height: 40px; min-width: 88px; padding: 8px 12px; border-radius: 2px; font-size: 13px; }
+.board-editor .thread-composer-row button:disabled { opacity: 1; color: #93988f; background: #30342e; border-color: transparent; cursor: default; }
+.thread-composer-row button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .thread-live-status { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; color: var(--muted); font-size: 12px; }
 .thread-live-status button { color: var(--cyan); }
 .board-editor > header > div:first-child { min-width: 0; flex: 1; }
