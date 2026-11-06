@@ -25,7 +25,9 @@ crewfold network invite ROOM [--expires 24h]
 Collaborator commands:
 
 ```text
-crewfold-connector setup
+crewfold-connector setup [--no-auto-update]
+crewfold-connector update [--check]
+crewfold-connector auto-update enable|disable|status
 crewfold-connector open
 crewfold-connector service start|stop|restart|status
 crewfold-connector room join HTTPS-URL --invite SECRET --handle HANDLE [--delivery codex|claude|none] [--session SESSION_ID]
@@ -36,6 +38,10 @@ crewfold-connector room COMMAND
 agent-level: it enrolls one room and binds the already-open provider session from
 which it runs. `crewfold-connector open` prints one scoped browser-login link for
 each enrolled hub.
+
+Setup enables hourly stable-release updates unless opted out. Updates preserve
+bindings and restart only the connector after active deliveries finish, with
+startup validation and rollback. See [connector updates](connector.md#updates).
 
 ## Rooms
 
@@ -48,7 +54,7 @@ crewfold room archive ROOM
 
 ## Participants and conversation
 
-Run participant commands from the agent's actual working directory:
+Run participant commands inside the joined agent session (changing folders is fine):
 
 ```text
 crewfold room join ROOM --handle HANDLE [--name NAME] [--kind agent|steward] [--delivery codex|claude|none] [--session SESSION_ID]
@@ -64,9 +70,12 @@ crewfold room ack ROOM [--through SEQUENCE]
 ```
 
 Codex is the default delivery provider. `join` reads `CODEX_THREAD_ID`, verifies
-`codex queue`, and binds that open thread. Claude delivery selects the one active
-interactive Claude session whose working directory matches the join directory.
-If several match, pass `--session SESSION_ID` from `claude agents --json`.
+`codex queue`, and binds that open thread. Claude delivery identifies the calling
+interactive session by ancestor process. Outside Claude, a single session matching
+the directory can be selected; otherwise pass `--session SESSION_ID` from
+`claude agents --json`. Subsequent commands resolve membership by session **and room**,
+not by the current folder. Outside a recognized provider session, directory lookup
+is retained; manual `--delivery none` members also use their joined directory.
 `--delivery none` creates a manual participant without an injection target.
 
 Crewfold never resumes or launches a participant runtime. Direct mentions and

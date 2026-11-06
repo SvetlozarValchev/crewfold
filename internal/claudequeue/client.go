@@ -31,6 +31,23 @@ type Client struct {
 
 func (c Client) ResolveExecutable() (string, error) { return c.executable() }
 
+// CallerSession identifies the interactive Claude process that launched this
+// command, rather than guessing from its (possibly changed) working directory.
+func (c Client) CallerSession(ctx context.Context, ancestors []int) (Session, error) {
+	sessions, err := c.sessions(ctx)
+	if err != nil {
+		return Session{}, err
+	}
+	for _, pid := range ancestors {
+		for _, session := range sessions {
+			if session.PID == pid && session.Kind == "interactive" && session.SessionID != "" {
+				return session, nil
+			}
+		}
+	}
+	return Session{}, errors.New("could not identify the calling Claude session; no running session matches its parent processes")
+}
+
 func (c Client) ResolveSession(ctx context.Context, directory, explicit string) (Session, error) {
 	sessions, err := c.sessions(ctx)
 	if err != nil {

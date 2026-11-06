@@ -263,6 +263,18 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 			return nil, err
 		}
 		return s.store.Archive(ctx, input.Room)
+	case "participant.list":
+		var input struct {
+			Room string `json:"room"`
+		}
+		if err := decode(&input); err != nil {
+			return nil, err
+		}
+		current, err := s.store.resolveRoom(ctx, input.Room)
+		if err != nil {
+			return nil, err
+		}
+		return s.store.participants(ctx, current.ID)
 	case "participant.join":
 		var input JoinInput
 		if err := decode(&input); err != nil {

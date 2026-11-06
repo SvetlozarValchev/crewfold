@@ -19,9 +19,19 @@ import (
 )
 
 func (a *App) connectorSetup(ctx context.Context, args []string, paths appdirs.Paths, jsonMode bool) int {
-	if len(args) != 0 {
-		return a.fail(errors.New("usage: crewfold-connector setup"))
+	autoUpdate := true
+	if len(args) == 1 && args[0] == "--no-auto-update" {
+		autoUpdate = false
+	} else if len(args) != 0 {
+		return a.fail(errors.New("usage: crewfold-connector setup [--no-auto-update]"))
 	}
+	lockCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	lock, err := connectorLock(lockCtx, paths.ConnectorConfigPath+".update.lock", true)
+	if err != nil {
+		return a.fail(err)
+	}
+	defer lock.Close()
 	source, err := os.Executable()
 	if err != nil {
 		return a.fail(err)
@@ -59,13 +69,25 @@ WantedBy=default.target
 			return a.fail(fmt.Errorf("systemctl %s: %s: %w", strings.Join(command, " "), strings.TrimSpace(string(output)), commandErr))
 		}
 	}
-	result := map[string]any{"status": "active", "binary": paths.ConnectorBinaryPath, "config": paths.ConnectorConfigPath, "unit": paths.ConnectorUnitPath}
+	if autoUpdate {
+		if err := configureConnectorUpdates(ctx, paths, true); err != nil {
+			return a.fail(err)
+		}
+	} else if _, err := os.Stat(filepath.Join(filepath.Dir(paths.ConnectorUnitPath), connectorUpdateTimer)); err == nil {
+		if err := configureConnectorUpdates(ctx, paths, false); err != nil {
+			return a.fail(err)
+		}
+	}
+	result := map[string]any{"status": "active", "binary": paths.ConnectorBinaryPath, "config": paths.ConnectorConfigPath, "unit": paths.ConnectorUnitPath, "automatic_updates": autoUpdate}
 	return a.print(result, jsonMode, func() {
 		fmt.Fprintf(a.stdout, "Crewfold connector installed at %s and running.\n", paths.ConnectorBinaryPath)
 		if !directoryOnPath(filepath.Dir(paths.ConnectorBinaryPath)) {
 			fmt.Fprintf(a.stdout, "Add %s to PATH before opening a new shell.\n", filepath.Dir(paths.ConnectorBinaryPath))
 		}
 		fmt.Fprintln(a.stdout, "This machine can now join rooms from any Crewfold server; run each invitation inside the intended agent session.")
+		if autoUpdate {
+			fmt.Fprintln(a.stdout, "Automatic stable-release updates enabled (hourly). Disable with: crewfold-connector auto-update disable")
+		}
 	})
 }
 
@@ -74,7 +96,7 @@ func (a *App) connectorService(ctx context.Context, args []string, paths appdirs
 		return a.fail(errors.New("usage: crewfold-connector service start|stop|restart|status"))
 	}
 	action := args[0]
-	if action == "run" {
+	if action == "run" || action == "check-config" {
 		configPath, rest, err := pullOption(args[1:], "config")
 		if err != nil {
 			return a.fail(err)
@@ -84,6 +106,12 @@ func (a *App) connectorService(ctx context.Context, args []string, paths appdirs
 		}
 		if configPath == "" {
 			configPath = paths.ConnectorConfigPath
+		}
+		if action == "check-config" {
+			if _, err := loadRemoteConfig(configPath); err != nil {
+				return a.fail(errors.New("connector configuration is incompatible"))
+			}
+			return 0
 		}
 		if err := runConnectorService(ctx, configPath, a.stderr); err != nil && !errors.Is(err, context.Canceled) {
 			return a.fail(err)
@@ -141,6 +169,9 @@ func installConnectorBinary(source, target string) error {
 	temporary := output.Name()
 	defer os.Remove(temporary)
 	_, copyErr := io.Copy(output, input)
+	if copyErr == nil {
+		copyErr = output.Sync()
+	}
 	closeErr := output.Close()
 	if copyErr != nil {
 		return copyErr
@@ -215,7 +246,7 @@ func runConnectorService(ctx context.Context, configPath string, stderr interfac
 			bindingCtx, cancel := context.WithCancel(ctx)
 			fingerprint := relayBindingFingerprint(entry.hub, entry.binding)
 			running[key] = runningBinding{fingerprint: fingerprint, cancel: cancel}
-			go providerRelayLoop(bindingCtx, entry.hub, entry.binding, stderr)
+			go providerRelayLoop(bindingCtx, entry.hub, entry.binding, stderr, configPath+".delivery.lock")
 		}
 		return nil
 	}
@@ -238,7 +269,7 @@ func relayBindingFingerprint(hub remoteHub, binding remoteBinding) string {
 	return strings.Join([]string{hub.URL, hub.DeviceID, hub.Token, binding.ParticipantID, binding.Provider, binding.Target, binding.Executable}, "\x00")
 }
 
-func providerRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding, stderr interface{ Write([]byte) (int, error) }) {
+func providerRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding, stderr interface{ Write([]byte) (int, error) }, deliveryLockPath string) {
 	var runtime room.DeliveryRuntime
 	if binding.Provider == "claude" {
 		runtime = claudequeue.Client{Executable: binding.Executable}
@@ -266,6 +297,14 @@ func providerRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding
 			continue
 		}
 		prompt, deliveredThrough := networkDeliveryWake(batch)
+		lock, lockErr := connectorLock(ctx, deliveryLockPath, false)
+		if lockErr != nil {
+			if ctx.Err() == nil {
+				fmt.Fprintf(stderr, "crewfold connector delivery lock: %v\n", lockErr)
+				waitContext(ctx, 3*time.Second)
+			}
+			continue
+		}
 		timeout := 15 * time.Second
 		if binding.Provider == "claude" {
 			timeout = 45 * time.Second
@@ -279,6 +318,7 @@ func providerRelayLoop(ctx context.Context, hub remoteHub, binding remoteBinding
 		}
 		var ignored room.NetworkBinding
 		reportErr := client.Call(ctx, "delivery.report", room.NetworkDeliveryResultInput{ParticipantID: binding.ParticipantID, Through: deliveredThrough, Status: status, Error: detail}, &ignored)
+		lock.Close()
 		if reportErr != nil {
 			fmt.Fprintf(stderr, "crewfold connector @%s report: %v\n", binding.Handle, reportErr)
 		}

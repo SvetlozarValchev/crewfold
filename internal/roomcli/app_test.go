@@ -157,6 +157,29 @@ func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(previousDirectory) })
+	// One provider session can use multiple rooms after cd, without rejoining.
+	var secondRoom room.Snapshot
+	if err := client.Call(context.Background(), "room.create", room.CreateRoomInput{Slug: "second", Title: "Second"}, &secondRoom); err != nil {
+		t.Fatal(err)
+	}
+	if code := app.Run(context.Background(), []string{"room", "--socket", socket, "join", "second", "--handle", "second-handle"}); code != 0 {
+		t.Fatalf("second join: %s", stderr.String())
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range [][]string{{"read", "second"}, {"send", "second", "Second room message."}, {"read", "shared"}} {
+		if code := app.Run(context.Background(), append([]string{"room", "--socket", socket}, command...)); code != 0 {
+			t.Fatalf("cross-directory command %v: %s", command, stderr.String())
+		}
+	}
+	secondSnapshot, err := readSnapshot(client, secondRoom.Room.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondSnapshot.Participants) != 1 || secondSnapshot.Participants[0].WorkingDirectory != workingDirectory || secondSnapshot.Messages[len(secondSnapshot.Messages)-1].SenderHandle != "second-handle" {
+		t.Fatalf("second membership changed: %#v", secondSnapshot.Participants)
+	}
 	app.stdin = strings.NewReader("## Finding\n\n- client and service differ\n- owner review needed\n")
 	stdout.Reset()
 	if code := app.Run(context.Background(), []string{"room", "--socket", socket, "send", "shared", "--stdin"}); code != 0 {
@@ -233,6 +256,9 @@ func TestJoinDefaultsToCurrentCodexThread(t *testing.T) {
 	}
 
 	t.Setenv("CODEX_THREAD_ID", "01a09999-7a48-70d2-b540-112ccf94e5bf")
+	if err := os.Chdir(workingDirectory); err != nil {
+		t.Fatal(err)
+	}
 	stdout.Reset()
 	if code := app.Run(context.Background(), []string{"room", "--socket", socket, "join", "shared", "--handle", "service-agent"}); code != 0 {
 		t.Fatalf("rejoin exit %d: %s", code, stderr.String())
@@ -266,6 +292,8 @@ func TestMessageReadabilityRequiresStructuredStdinForSubstantialPosts(t *testing
 }
 
 func TestRemoteConnectJoinAndRoomCommandsRouteThroughHub(t *testing.T) {
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CLAUDECODE", "")
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "hub-state")
 	socket := filepath.Join(root, "hub-runtime", "crewfold.sock")

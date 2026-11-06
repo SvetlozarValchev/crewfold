@@ -171,6 +171,7 @@ func updateRemoteConfig(path string, update func(*remoteConfig) error) error {
 
 type routedCaller struct {
 	configPath string
+	session    callerSession
 }
 
 func (c *routedCaller) isRemote() bool { return c != nil }
@@ -194,7 +195,14 @@ func (c *routedCaller) Call(ctx context.Context, method string, params any, resu
 	directory, _ := os.Getwd()
 	directory = filepath.Clean(directory)
 	identifier := roomIdentifierFromParams(params)
-	route, err := resolveRemoteRoute(*config, method, identifier, directory, params)
+	identity := sessionIdentity{}
+	if method != "participant.join" {
+		identity, err = c.session.get(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	route, err := resolveRemoteRoute(*config, method, identifier, directory, params, identity)
 	if err != nil {
 		return err
 	}
@@ -297,7 +305,11 @@ func listRemoteRooms(ctx context.Context, config *remoteConfig, result any) erro
 	return nil
 }
 
-func resolveRemoteRoute(config remoteConfig, method, identifier, directory string, params any) (remoteRoute, error) {
+func resolveRemoteRoute(config remoteConfig, method, identifier, directory string, params any, identities ...sessionIdentity) (remoteRoute, error) {
+	identity := sessionIdentity{}
+	if len(identities) > 0 {
+		identity = identities[0]
+	}
 	requireBinding := method == "participant.leave" || method == "message.send" || method == "participant.ack" || method == "document.upload" || method == "document.archive" || method == "document.restore"
 	if (strings.HasPrefix(method, "task.") || strings.HasPrefix(method, "question.") || strings.HasPrefix(method, "thread.")) && !strings.HasSuffix(method, ".list") && !strings.HasSuffix(method, ".show") {
 		requireBinding = true
@@ -323,6 +335,21 @@ func resolveRemoteRoute(config remoteConfig, method, identifier, directory strin
 				if binding.RoomID != membership.ID {
 					continue
 				}
+				if identity.Target != "" {
+					if binding.Provider == identity.Provider && binding.Target == identity.Target {
+						if score == 4 {
+							return remoteRoute{}, errors.New("this session has multiple bindings in this room")
+						}
+						copy := *binding
+						selected = &copy
+						score = 4
+					} else if score < 4 && binding.Provider == "none" && binding.Directory == directory {
+						copy := *binding
+						selected = &copy
+						score = 3
+					}
+					continue
+				}
 				if binding.Directory == directory {
 					copy := *binding
 					selected = &copy
@@ -343,6 +370,9 @@ func resolveRemoteRoute(config remoteConfig, method, identifier, directory strin
 	}
 	if len(candidates) == 0 {
 		if requireBinding {
+			if identity.Target != "" {
+				return remoteRoute{}, fmt.Errorf("this agent session has not joined room %q; join once from the intended session", identifier)
+			}
 			return remoteRoute{}, fmt.Errorf("this agent has not joined room %q from %s", identifier, directory)
 		}
 		return remoteRoute{}, fmt.Errorf("room %q is not available to this machine", identifier)

@@ -61,6 +61,10 @@ func (a *App) RunConnector(ctx context.Context, args []string) int {
 		return a.print(a.info, jsonMode, func() { fmt.Fprintf(a.stdout, "Crewfold connector %s (%s)\n", a.info.Version, a.info.Commit) })
 	case "setup":
 		return a.connectorSetup(ctx, args[1:], paths, jsonMode)
+	case "update":
+		return a.connectorUpdate(ctx, args[1:], paths, jsonMode)
+	case "auto-update":
+		return a.connectorAutoUpdate(ctx, args[1:], paths, jsonMode)
 	case "open":
 		return a.connectorOpen(ctx, args[1:], paths, jsonMode)
 	case "service":
@@ -132,7 +136,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	case "network":
 		return a.network(ctx, client, remaining, jsonMode)
 	case "room":
-		return a.room(ctx, client, remaining, paths, jsonMode)
+		return a.room(ctx, &sessionCaller{client: client}, remaining, paths, jsonMode)
 	default:
 		return a.fail(fmt.Errorf("unknown command %q; run crewfold help", args[0]))
 	}
@@ -384,6 +388,15 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 				return a.fail(errors.New("Codex delivery is the default, but CODEX_THREAD_ID is unavailable; run join from inside the Codex session or use --delivery none"))
 			}
 		} else if delivery == "claude" {
+			if session == "" {
+				current, detectErr := (&callerSession{}).get(ctx)
+				if detectErr != nil {
+					return a.fail(detectErr)
+				}
+				if current.Provider == "claude" {
+					session = current.Target
+				}
+			}
 			resolved, resolveErr := (claudequeue.Client{}).ResolveSession(ctx, filepath.Clean(cwd), session)
 			if resolveErr != nil {
 				return a.fail(fmt.Errorf("resolve open Claude Code session: %w", resolveErr))
@@ -522,6 +535,14 @@ func (a *App) room(ctx context.Context, client room.Caller, args []string, paths
 		}
 		cwd, _ := os.Getwd()
 		participant := deliveryParticipant(client, identifier, cwd, snapshot.Participants)
+		if resolver, ok := client.(interface {
+			recipient(context.Context, string, string, []room.Participant) (room.Participant, error)
+		}); ok {
+			participant, err = resolver.recipient(ctx, identifier, cwd, snapshot.Participants)
+			if err != nil {
+				return a.fail(err)
+			}
+		}
 		if participant.ID == "" {
 			return a.fail(errors.New("receive requires a joined participant in this working directory"))
 		}
@@ -980,14 +1001,17 @@ const connectorHelp = `Crewfold connector links independently running agent sess
 It does not run a Crewfold hub, database, owner console, or owner service.
 
 Usage:
-  crewfold-connector setup
+  crewfold-connector setup [--no-auto-update]
+  crewfold-connector update [--check]
+  crewfold-connector auto-update enable|disable|status
   crewfold-connector open
   crewfold-connector service start|stop|restart|status
   crewfold-connector room COMMAND
   crewfold-connector version
 
-Setup is once per machine. Each room invitation is accepted from inside the
-agent session that will participate.
+Setup is once per machine and enables hourly stable-release updates by default.
+Each room invitation is accepted from inside the agent session that will participate.
+Commands resolve that session's membership separately for each room, even after cd.
 `
 
 const connectorRoomHelp = `Participant room commands:
@@ -1034,8 +1058,11 @@ const roomHelp = `Room commands:
 
 Codex delivery is the join default and binds the current CODEX_THREAD_ID. Use
 --delivery claude for an already-open Claude Code session. If exactly one open
-Claude session matches the working directory it is selected automatically;
-otherwise pass --session SESSION_ID. Use --delivery none for a participant that
+Claude session matches the calling process it is selected automatically. Outside
+Claude, a single session in the working directory may be selected; otherwise
+pass --session SESSION_ID. Use --delivery none for a participant that
 cannot receive pushed prompts.
-Participant commands identify the current session by its joined working directory.
+Participant commands use the current provider session's membership in each room,
+independently of the current folder. Outside a recognized provider session,
+commands fall back to the joined working directory.
 `

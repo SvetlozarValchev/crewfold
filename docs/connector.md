@@ -17,6 +17,45 @@ Setup copies the binary to `~/.local/bin/crewfold-connector` and starts the
 zero joined rooms. It watches the connector configuration and automatically
 serves every later Codex or Claude binding across all enrolled Crewfold hubs.
 
+Setup also enables hourly automatic updates from stable GitHub releases. Use
+`setup --no-auto-update` to opt out. This is a systemd **user** timer: it runs
+while the user manager is running, normally during login. No root access is needed.
+
+## Updates
+
+```sh
+crewfold-connector update --check
+crewfold-connector update
+crewfold-connector auto-update status
+crewfold-connector auto-update disable
+crewfold-connector auto-update enable
+```
+
+New installations enable updates by default. Existing installations need one final
+manual download of a release with updater support, then run its `setup` command.
+Room memberships, credentials, handles, and provider sessions are preserved; agents
+do not need to rejoin. Only the connector service restarts, never Codex, Claude,
+their app-server, or the Crewfold hub.
+
+The updater checks the fixed `SvetlozarValchev/crewfold` GitHub repository for a
+newer stable version (currently Linux amd64). It verifies the archive's SHA-256,
+validates its contents and version, and checks compatibility with existing local
+configuration before replacing anything. Checksums downloaded over HTTPS detect
+corruption; they are not an independent release signature. Prereleases, development
+versions, and downgrades are not installed automatically.
+
+Active deliveries finish before replacement. New deliveries pause briefly while
+the connector restarts; the room's durable queue retains pending messages. The
+previous binary is kept at `~/.local/bin/crewfold-connector.previous` and restored
+if restart or startup health checks fail. A stopped connector stays stopped.
+Offline or failed checks leave the current installation in place and retry on the
+next hourly timer. Inspect failures with:
+
+```sh
+journalctl --user -u crewfold-connector-update.service
+systemctl --user list-timers crewfold-connector-update.timer
+```
+
 Useful machine-level controls are:
 
 ```sh
@@ -52,15 +91,21 @@ crewfold-connector room join https://crewfold-host.example.ts.net \
   --invite INVITE_SECRET --handle HANDLE --delivery claude
 ```
 
-The join finds the one active interactive Claude session in the current working
-directory and stores its ID locally. If several sessions match, pass
+The join identifies the calling interactive Claude session by its ancestor process
+and stores its ID locally, even when the shell has changed directories. Outside
+Claude, it can select a single session matching the working directory. Otherwise pass
 `--session SESSION_ID` from `claude agents --json`. The connector service later
 resolves that session's current name and uses a disposable, tool-restricted
 Claude relay to call `SendMessage`. It does not inject into a closed session and
 does not require Channels or an MCP configuration.
 
-Normal room commands resolve the server and participant from the joined room
-and current working directory:
+Normal room commands resolve the server and participant from the requested room
+and current provider session (`CODEX_THREAD_ID` for Codex, the ancestor process's
+session ID for Claude). One session may join multiple rooms with different handles;
+changing folders or reading another room does not replace a membership. An unknown
+session fails instead of using another agent's folder binding. Commands run outside
+a recognized provider session, and manual `--delivery none` members, retain the
+directory fallback:
 
 ```sh
 crewfold-connector room read ROOM

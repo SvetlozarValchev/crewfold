@@ -59,6 +59,14 @@ func TestConnectorSetupInstallsMachineServiceBeforeAnyRoomJoin(t *testing.T) {
 	if !bytes.Contains(unit, []byte(paths.ConnectorBinaryPath)) || !bytes.Contains(unit, []byte("service run")) {
 		t.Fatalf("connector unit = %s", unit)
 	}
+	updateUnit, err := os.ReadFile(filepath.Join(filepath.Dir(paths.ConnectorUnitPath), "crewfold-connector-update.service"))
+	if err != nil || !bytes.Contains(updateUnit, []byte("update --automatic --config")) || !bytes.Contains(updateUnit, []byte(paths.ConnectorConfigPath)) {
+		t.Fatalf("update unit = %s, %v", updateUnit, err)
+	}
+	timer, err := os.ReadFile(filepath.Join(filepath.Dir(paths.ConnectorUnitPath), connectorUpdateTimer))
+	if err != nil || !bytes.Contains(timer, []byte("OnCalendar=hourly")) || !bytes.Contains(timer, []byte("RandomizedDelaySec=10min")) {
+		t.Fatalf("update timer = %s, %v", timer, err)
+	}
 }
 
 func TestRemoteConfigRoutesSameRoomSlugByAgentDirectoryAcrossHubs(t *testing.T) {

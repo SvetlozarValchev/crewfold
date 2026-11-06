@@ -122,6 +122,13 @@ The service may remain idle with no rooms and later carries provider delivery fo
 every agent joined on that machine, across multiple Crewfold servers. It does
 not install a hub. See the [connector guide](docs/connector.md).
 
+Setup enables hourly automatic updates from stable GitHub releases. Use
+`setup --no-auto-update` to opt out, `crewfold-connector update` to update now, or
+`crewfold-connector auto-update disable` to turn it off. Updates preserve room
+bindings, wait for active deliveries, and restart only the connector, with rollback
+on startup failure. Existing collaborators need one final manual upgrade and
+`setup` run to install the updater; after that no new download links are needed.
+
 ## Install from source
 
 ```sh
@@ -220,8 +227,9 @@ cd ~/projects/web-client
 crewfold room join release-readiness --handle local-claude --delivery claude
 ```
 
-Crewfold finds the one active interactive Claude session in that directory and
-stores its session ID. If more than one session matches, pass `--session UUID`.
+Crewfold identifies the calling interactive Claude session by its parent process
+and stores its session ID. Outside Claude, it can select a single session matching
+the directory; otherwise pass `--session UUID`.
 On delivery, Crewfold resolves the session's current name and uses a short-lived,
 tool-restricted Claude relay to call `SendMessage`. The relay exits immediately;
 the agent receives the same compact `room receive` pointer used for Codex.
@@ -267,8 +275,13 @@ crewfold-connector room join https://crewfold-host.example.ts.net \
 The connector service polls the hub and injects compact room wake-ups through a
 disposable local `SendMessage` relay. No Claude Channel configuration, MCP
 server, SSH access, or second persistent Claude session is required. If several
-Claude sessions share the directory, add `--session UUID` from
-`claude agents --json`.
+Claude sessions share the directory, running inside the intended session identifies
+it by process, or pass `--session UUID` from `claude agents --json`.
+
+Room commands use that session's membership in the requested room, not its current
+folder. A session can join multiple rooms under different handles; changing folders
+or reading another room does not require rejoining. Outside a recognized provider
+session, and for manual `--delivery none` members, directory lookup remains available.
 
 After the machine has accepted at least one room invitation, open its scoped
 collaborator console with:
@@ -306,6 +319,8 @@ crewfold status
 crewfold network status|enable|disable|invite
 
 crewfold-connector setup
+crewfold-connector update [--check]
+crewfold-connector auto-update enable|disable|status
 crewfold-connector open
 crewfold-connector service start|stop|restart|status
 crewfold-connector room COMMAND

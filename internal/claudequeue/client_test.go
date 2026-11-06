@@ -26,6 +26,13 @@ printf '%s\n' CREWFOLD_DELIVERED
 	}
 	t.Setenv("CLAUDE_RELAY_LOG", logPath)
 	client := Client{Executable: executable}
+	current, currentErr := client.CallerSession(context.Background(), []int{99, 12, 1})
+	if currentErr != nil || current.SessionID != "session-12" {
+		t.Fatalf("caller session: %#v %v", current, currentErr)
+	}
+	if _, err := client.CallerSession(context.Background(), []int{99, 1}); err == nil {
+		t.Fatal("selected unrelated Claude session")
+	}
 	session, err := client.ResolveSession(context.Background(), directory, "")
 	if err != nil || session.SessionID != "session-12" || session.Name != "worker-12" {
 		t.Fatalf("session = %#v, %v", session, err)
